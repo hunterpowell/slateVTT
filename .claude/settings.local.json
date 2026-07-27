@@ -1,0 +1,13 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(node tools/gen-assets.mjs)",
+      "Bash(npm install *)",
+      "Bash(curl -sf -o /dev/null -w \"dev server still up: %{http_code}\\\\n\" http://127.0.0.1:5173/)",
+      "Read(//c/Users/Hunter/.claude/projects/c--Users-Hunter-source-repos-slate/memory/**)",
+      "Bash(cargo new *)",
+      "Bash(cargo add *)",
+      "Bash(cargo test *)"
+    ]
+  }
+}

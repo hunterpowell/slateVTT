@@ -1,0 +1,16 @@
+{
+  "name": "slate-client",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "watch": "esbuild src/main.ts --bundle --outdir=dist --sourcemap --watch",
+    "build": "esbuild src/main.ts --bundle --outdir=dist --minify",
+    "typecheck": "tsc --noEmit",
+    "check": "npm run typecheck && npm run build"
+  },
+  "devDependencies": {
+    "esbuild": "^0.25.0",
+    "typescript": "^5.7.0"
+  }
+}

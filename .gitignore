@@ -1,0 +1,10 @@
+node_modules/
+client/dist/
+target/
+
+# The saved room. It is the group's game, not source.
+slate-state.json
+slate-state.json.tmp
+
+# Maps the DM uploaded at runtime.
+uploads/
