@@ -9,8 +9,8 @@
 use std::collections::HashMap;
 use std::time::Duration;
 
-use tokio::sync::mpsc;
-use tokio::time::{sleep_until, Instant};
+use tokio::sync::{mpsc, oneshot};
+use tokio::time::{Instant, sleep_until};
 use tracing::{debug, error, warn};
 
 use crate::protocol::{
@@ -52,9 +52,22 @@ const ROSTER: [(&str, &str); 5] = [
 
 pub enum RoomCmd {
     /// Socket opened. No identity yet, so this client is told nothing.
-    Connected { client: ClientId, out: mpsc::Sender<ServerMsg> },
-    Disconnected { client: ClientId },
-    Msg { client: ClientId, msg: ClientMsg },
+    Connected {
+        client: ClientId,
+        out: mpsc::Sender<ServerMsg>,
+    },
+    Disconnected {
+        client: ClientId,
+    },
+    Msg {
+        client: ClientId,
+        msg: ClientMsg,
+    },
+    /// Stop accepting commands, flush any pending save, then acknowledge that
+    /// the room is safely on disk. Used by the process shutdown path.
+    Shutdown {
+        done: oneshot::Sender<bool>,
+    },
 }
 
 #[derive(Clone)]
@@ -67,13 +80,28 @@ impl RoomHandle {
     pub async fn send(&self, cmd: RoomCmd) -> bool {
         self.tx.send(cmd).await.is_ok()
     }
+
+    /// Completes after the room has attempted to flush its last dirty state,
+    /// returning whether that state is safely on disk.
+    pub async fn shutdown(&self) -> bool {
+        let (done, flushed) = oneshot::channel();
+        if self.tx.send(RoomCmd::Shutdown { done }).await.is_ok() {
+            return flushed.await.unwrap_or(false);
+        }
+        false
+    }
 }
 
 /// Internal, and deliberately not `ServerMsg`. They are 1:1 today; keeping them
 /// apart is what lets one event become a different message per recipient.
 #[derive(Debug, Clone)]
 enum Event {
-    TokenMoved { id: TokenId, x: f32, y: f32, dragging: bool },
+    TokenMoved {
+        id: TokenId,
+        x: f32,
+        y: f32,
+        dragging: bool,
+    },
     /// Carries no payload on purpose: `message_for` has `&self` and builds the
     /// panel per recipient. That is the seam where fog of war will one day hide
     /// an unseen monster's row from the players.
@@ -107,13 +135,19 @@ impl Initiative {
     }
 
     fn remove(&mut self, token: &TokenId) {
-        let Some(i) = self.index_of(token) else { return };
+        let Some(i) = self.index_of(token) else {
+            return;
+        };
         self.entries.remove(i);
 
         if self.current.as_ref() == Some(token) {
             // Whoever slid into that slot takes the turn — the natural reading
             // of a creature dropping on its own initiative.
-            self.current = self.entries.get(i).or_else(|| self.entries.first()).map(|e| e.token.clone());
+            self.current = self
+                .entries
+                .get(i)
+                .or_else(|| self.entries.first())
+                .map(|e| e.token.clone());
         }
         if self.entries.is_empty() {
             self.current = None;
@@ -245,6 +279,18 @@ async fn run(mut state: RoomState, mut rx: mpsc::Receiver<RoomCmd>, store: Store
                 false
             }
             RoomCmd::Msg { client, msg } => state.handle(client, msg),
+            RoomCmd::Shutdown { done } => {
+                let saved = if save_at.is_some() {
+                    // A shutdown is allowed to wait for the disk. A failed save
+                    // is still logged by `flush`; there is no useful retry once
+                    // the process has been asked to stop.
+                    flush(&state, &store).await.is_none()
+                } else {
+                    true
+                };
+                let _ = done.send(saved);
+                return;
+            }
         };
 
         if dirty {
@@ -338,7 +384,10 @@ fn can_move(client: &Client, token: &Token) -> bool {
 fn default_roster() -> Vec<RosterEntry> {
     ROSTER
         .iter()
-        .map(|(id, name)| RosterEntry { id: PlayerId::new(id), name: (*name).to_owned() })
+        .map(|(id, name)| RosterEntry {
+            id: PlayerId::new(id),
+            name: (*name).to_owned(),
+        })
         .collect()
 }
 
@@ -350,7 +399,11 @@ impl RoomState {
             dm_secret,
             roster: default_roster(),
             map: saved.map,
-            tokens: saved.tokens.into_iter().map(|t| (t.id.clone(), t)).collect(),
+            tokens: saved
+                .tokens
+                .into_iter()
+                .map(|t| (t.id.clone(), t))
+                .collect(),
             initiative: saved.initiative,
             clients: HashMap::new(),
             pending: HashMap::new(),
@@ -363,7 +416,11 @@ impl RoomState {
         // so without this the file churns on every save and every restart.
         tokens.sort_by(|a, b| a.id.cmp(&b.id));
 
-        Saved { map: self.map.clone(), tokens, initiative: self.initiative.clone() }
+        Saved {
+            map: self.map.clone(),
+            tokens,
+            initiative: self.initiative.clone(),
+        }
     }
 
     /// The room a first boot starts from, with no save on disk yet. Milestone 6
@@ -372,7 +429,13 @@ impl RoomState {
         let specs: [(&str, &str, f32, f32, Owner); 7] = [
             ("t1", "Grog", 3.5, 3.5, Owner::Player(PlayerId::new("grog"))),
             ("t2", "Vex", 4.5, 2.5, Owner::Player(PlayerId::new("vex"))),
-            ("t3", "Pike", 13.5, 2.5, Owner::Player(PlayerId::new("pike"))),
+            (
+                "t3",
+                "Pike",
+                13.5,
+                2.5,
+                Owner::Player(PlayerId::new("pike")),
+            ),
             ("t4", "Nyx", 12.5, 3.5, Owner::Player(PlayerId::new("nyx"))),
             ("t5", "Bram", 5.5, 4.5, Owner::Player(PlayerId::new("bram"))),
             ("t6", "Ogre", 14.5, 9.5, Owner::Dm),
@@ -382,7 +445,10 @@ impl RoomState {
         Self {
             dm_secret,
             roster: default_roster(),
-            map: MapInfo { url: "/assets/map.png".to_owned(), ..MapInfo::default() },
+            map: MapInfo {
+                url: "/assets/map.png".to_owned(),
+                ..MapInfo::default()
+            },
             initiative: Initiative::default(),
             tokens: specs
                 .into_iter()
@@ -408,7 +474,11 @@ impl RoomState {
     fn handle(&mut self, origin: ClientId, msg: ClientMsg) -> bool {
         // The handshake is the one thing an unidentified connection may do, so
         // it runs ahead of the permission check rather than through it.
-        if let ClientMsg::Hello { dm_secret, player_id } = msg {
+        if let ClientMsg::Hello {
+            dm_secret,
+            player_id,
+        } = msg
+        {
             self.hello(origin, dm_secret, player_id);
             // Identity is per-connection and dies with the socket.
             return false;
@@ -430,7 +500,12 @@ impl RoomState {
     /// rather than becoming an identity nobody owns.
     fn hello(&mut self, origin: ClientId, dm_secret: Option<String>, player_id: Option<PlayerId>) {
         if self.clients.contains_key(&origin) {
-            self.send_to(origin, ServerMsg::Error { message: "already joined".to_owned() });
+            self.send_to(
+                origin,
+                ServerMsg::Error {
+                    message: "already joined".to_owned(),
+                },
+            );
             return;
         }
 
@@ -444,8 +519,9 @@ impl RoomState {
                     Some(Identity::Dm)
                 } else {
                     warn!(?origin, "rejected a bad DM secret");
-                    let _ = out
-                        .try_send(ServerMsg::Error { message: "that DM link is not valid".to_owned() });
+                    let _ = out.try_send(ServerMsg::Error {
+                        message: "that DM link is not valid".to_owned(),
+                    });
                     None
                 }
             }
@@ -456,7 +532,9 @@ impl RoomState {
         };
 
         let Some(identity) = identity else {
-            let _ = out.try_send(ServerMsg::ChooseIdentity { roster: self.roster_slots() });
+            let _ = out.try_send(ServerMsg::ChooseIdentity {
+                roster: self.roster_slots(),
+            });
             self.pending.insert(origin, out); // still connected, still anonymous
             return;
         };
@@ -478,7 +556,12 @@ impl RoomState {
             return;
         }
 
-        debug!(?origin, ?identity, connected = self.clients.len() + 1, "client joined");
+        debug!(
+            ?origin,
+            ?identity,
+            connected = self.clients.len() + 1,
+            "client joined"
+        );
         self.clients.insert(origin, Client { out, identity });
         self.refresh_pickers();
     }
@@ -507,7 +590,9 @@ impl RoomState {
         }
         let roster = self.roster_slots();
         for out in self.pending.values() {
-            let _ = out.try_send(ServerMsg::ChooseIdentity { roster: roster.clone() });
+            let _ = out.try_send(ServerMsg::ChooseIdentity {
+                roster: roster.clone(),
+            });
         }
     }
 
@@ -517,7 +602,11 @@ impl RoomState {
         // list order as z-order. Without this, two tabs can disagree about
         // which of two overlapping tokens is on top.
         tokens.sort_by(|a, b| a.id.cmp(&b.id));
-        RoomView { map: self.map.clone(), tokens, initiative: self.initiative.clone() }
+        RoomView {
+            map: self.map.clone(),
+            tokens,
+            initiative: self.initiative.clone(),
+        }
     }
 
     /// Step 2. An unidentified connection can do nothing at all.
@@ -540,7 +629,14 @@ impl RoomState {
                 finite(&[*x, *y])
             }
 
-            ClientMsg::SetMap { url, grid_px, offset_x, offset_y, grid_color, play_area } => {
+            ClientMsg::SetMap {
+                url,
+                grid_px,
+                offset_x,
+                offset_y,
+                grid_color,
+                play_area,
+            } => {
                 require_dm(client)?;
                 if url.is_empty() || url.len() > MAX_URL_LEN {
                     return Err("that is not a usable map URL".to_owned());
@@ -559,7 +655,8 @@ impl RoomState {
                     // Bounded, and not merely positive: the client rules one
                     // grid line per cell across this width, so an absurd size
                     // here is a frozen browser rather than a silly-looking map.
-                    if !(0.0..=MAX_MAP_PX).contains(&area.w) || !(0.0..=MAX_MAP_PX).contains(&area.h)
+                    if !(0.0..=MAX_MAP_PX).contains(&area.w)
+                        || !(0.0..=MAX_MAP_PX).contains(&area.h)
                     {
                         return Err("that play area is not a usable size".to_owned());
                     }
@@ -610,8 +707,22 @@ impl RoomState {
             // so recalibrating changes where a token *draws* without changing
             // which cell it is in — invariant 1, and the whole reason positions
             // are not kept in pixels.
-            ClientMsg::SetMap { url, grid_px, offset_x, offset_y, grid_color, play_area } => {
-                self.map = MapInfo { url, grid_px, offset_x, offset_y, grid_color, play_area };
+            ClientMsg::SetMap {
+                url,
+                grid_px,
+                offset_x,
+                offset_y,
+                grid_color,
+                play_area,
+            } => {
+                self.map = MapInfo {
+                    url,
+                    grid_px,
+                    offset_x,
+                    offset_y,
+                    grid_color,
+                    play_area,
+                };
                 vec![Event::MapChanged]
             }
 
@@ -690,14 +801,16 @@ impl RoomState {
 
             // Built per recipient rather than carried on the event, so a future
             // filter can drop rows this client is not allowed to see.
-            Event::InitiativeChanged => {
-                Some(ServerMsg::InitiativeChanged { initiative: self.initiative.clone() })
-            }
+            Event::InitiativeChanged => Some(ServerMsg::InitiativeChanged {
+                initiative: self.initiative.clone(),
+            }),
 
             // Echoed to the DM who sent it as well. Unlike a token drag there is
             // no local prediction to rubber-band: the client draws the grid the
             // server confirmed, so this frame is how the DM sees the result.
-            Event::MapChanged => Some(ServerMsg::MapChanged { map: self.map.clone() }),
+            Event::MapChanged => Some(ServerMsg::MapChanged {
+                map: self.map.clone(),
+            }),
         }
     }
 
@@ -741,16 +854,32 @@ mod tests {
         rx
     }
 
-    fn join_as_player(state: &mut RoomState, client: ClientId, slot: &str) -> mpsc::Receiver<ServerMsg> {
+    fn join_as_player(
+        state: &mut RoomState,
+        client: ClientId,
+        slot: &str,
+    ) -> mpsc::Receiver<ServerMsg> {
         let mut rx = connect(state, client);
-        state.handle(client, ClientMsg::Hello { dm_secret: None, player_id: Some(PlayerId::new(slot)) });
+        state.handle(
+            client,
+            ClientMsg::Hello {
+                dm_secret: None,
+                player_id: Some(PlayerId::new(slot)),
+            },
+        );
         rx.try_recv().expect("welcome");
         rx
     }
 
     fn join_as_dm(state: &mut RoomState, client: ClientId) -> mpsc::Receiver<ServerMsg> {
         let mut rx = connect(state, client);
-        state.handle(client, ClientMsg::Hello { dm_secret: Some(SECRET.to_owned()), player_id: None });
+        state.handle(
+            client,
+            ClientMsg::Hello {
+                dm_secret: Some(SECRET.to_owned()),
+                player_id: None,
+            },
+        );
         rx.try_recv().expect("welcome");
         rx
     }
@@ -762,13 +891,22 @@ mod tests {
         let mut state = room();
         let mut rx = connect(&mut state, ClientId(1));
 
-        state.handle(ClientId(1), ClientMsg::Hello { dm_secret: None, player_id: None });
+        state.handle(
+            ClientId(1),
+            ClientMsg::Hello {
+                dm_secret: None,
+                player_id: None,
+            },
+        );
 
         match rx.try_recv().expect("a reply") {
             ServerMsg::ChooseIdentity { roster } => assert_eq!(roster.len(), 5),
             other => panic!("expected ChooseIdentity, got {other:?}"),
         }
-        assert!(state.clients.is_empty(), "must not be admitted without an identity");
+        assert!(
+            state.clients.is_empty(),
+            "must not be admitted without an identity"
+        );
     }
 
     #[test]
@@ -776,10 +914,18 @@ mod tests {
         let mut state = room();
         let mut rx = connect(&mut state, ClientId(1));
 
-        state.handle(ClientId(1), ClientMsg::Hello { dm_secret: Some(SECRET.to_owned()), player_id: None });
+        state.handle(
+            ClientId(1),
+            ClientMsg::Hello {
+                dm_secret: Some(SECRET.to_owned()),
+                player_id: None,
+            },
+        );
 
         match rx.try_recv().expect("a reply") {
-            ServerMsg::Welcome { is_dm, player_id, .. } => {
+            ServerMsg::Welcome {
+                is_dm, player_id, ..
+            } => {
                 assert!(is_dm);
                 assert_eq!(player_id, None, "a DM holds no roster slot");
             }
@@ -792,12 +938,24 @@ mod tests {
         let mut state = room();
         let mut rx = connect(&mut state, ClientId(1));
 
-        state.handle(ClientId(1), ClientMsg::Hello { dm_secret: Some("guess".to_owned()), player_id: None });
+        state.handle(
+            ClientId(1),
+            ClientMsg::Hello {
+                dm_secret: Some("guess".to_owned()),
+                player_id: None,
+            },
+        );
 
         assert!(matches!(rx.try_recv(), Ok(ServerMsg::Error { .. })));
-        assert!(matches!(rx.try_recv(), Ok(ServerMsg::ChooseIdentity { .. })));
+        assert!(matches!(
+            rx.try_recv(),
+            Ok(ServerMsg::ChooseIdentity { .. })
+        ));
         assert!(state.clients.is_empty());
-        assert!(state.pending.contains_key(&ClientId(1)), "still connected, still anonymous");
+        assert!(
+            state.pending.contains_key(&ClientId(1)),
+            "still connected, still anonymous"
+        );
     }
 
     #[test]
@@ -808,10 +966,16 @@ mod tests {
         // Stale localStorage from a roster that has since changed.
         state.handle(
             ClientId(1),
-            ClientMsg::Hello { dm_secret: None, player_id: Some(PlayerId::new("ghost")) },
+            ClientMsg::Hello {
+                dm_secret: None,
+                player_id: Some(PlayerId::new("ghost")),
+            },
         );
 
-        assert!(matches!(rx.try_recv(), Ok(ServerMsg::ChooseIdentity { .. })));
+        assert!(matches!(
+            rx.try_recv(),
+            Ok(ServerMsg::ChooseIdentity { .. })
+        ));
         assert!(state.clients.is_empty());
     }
 
@@ -839,7 +1003,10 @@ mod tests {
 
         let own = state.tokens.get(&TokenId::new("t2")).expect("Vex's token");
         let other_player = state.tokens.get(&TokenId::new("t1")).expect("Grog's token");
-        let monster = state.tokens.get(&TokenId::new("t6")).expect("the DM's ogre");
+        let monster = state
+            .tokens
+            .get(&TokenId::new("t6"))
+            .expect("the DM's ogre");
 
         assert!(can_move(client, own));
         assert!(!can_move(client, other_player));
@@ -863,7 +1030,15 @@ mod tests {
         let _rx = join_as_player(&mut state, ClientId(1), "vex");
 
         let err = state
-            .check(ClientId(1), &ClientMsg::MoveToken { id: TokenId::new("t1"), x: 0.0, y: 0.0, dragging: false })
+            .check(
+                ClientId(1),
+                &ClientMsg::MoveToken {
+                    id: TokenId::new("t1"),
+                    x: 0.0,
+                    y: 0.0,
+                    dragging: false,
+                },
+            )
             .expect_err("should be refused");
         assert!(err.contains("Grog"), "error should name the token: {err}");
     }
@@ -873,9 +1048,19 @@ mod tests {
         let mut state = room();
         let _rx = connect(&mut state, ClientId(1));
 
-        assert!(state
-            .check(ClientId(1), &ClientMsg::MoveToken { id: TokenId::new("t1"), x: 0.0, y: 0.0, dragging: false })
-            .is_err());
+        assert!(
+            state
+                .check(
+                    ClientId(1),
+                    &ClientMsg::MoveToken {
+                        id: TokenId::new("t1"),
+                        x: 0.0,
+                        y: 0.0,
+                        dragging: false
+                    }
+                )
+                .is_err()
+        );
     }
 
     #[test]
@@ -885,7 +1070,15 @@ mod tests {
         let mut grog = join_as_player(&mut state, ClientId(2), "grog");
 
         let before = state.tokens.get(&TokenId::new("t1")).expect("t1").x;
-        state.handle(ClientId(1), ClientMsg::MoveToken { id: TokenId::new("t1"), x: 99.0, y: 99.0, dragging: false });
+        state.handle(
+            ClientId(1),
+            ClientMsg::MoveToken {
+                id: TokenId::new("t1"),
+                x: 99.0,
+                y: 99.0,
+                dragging: false,
+            },
+        );
 
         assert_eq!(state.tokens.get(&TokenId::new("t1")).expect("t1").x, before);
         assert!(grog.try_recv().is_err(), "a refusal must not be broadcast");
@@ -898,7 +1091,10 @@ mod tests {
 
         state.handle(
             ClientId(1),
-            ClientMsg::Hello { dm_secret: Some(SECRET.to_owned()), player_id: None },
+            ClientMsg::Hello {
+                dm_secret: Some(SECRET.to_owned()),
+                player_id: None,
+            },
         );
 
         assert!(matches!(rx.try_recv(), Ok(ServerMsg::Error { .. })));
@@ -912,11 +1108,25 @@ mod tests {
     fn drop_frames_snap_and_drag_frames_do_not() {
         let mut state = room();
 
-        let events = state.apply(ClientMsg::MoveToken { id: TokenId::new("t1"), x: 6.83, y: 5.21, dragging: true });
-        assert!(matches!(events.as_slice(), [Event::TokenMoved { x, y, .. }] if *x == 6.83 && *y == 5.21));
+        let events = state.apply(ClientMsg::MoveToken {
+            id: TokenId::new("t1"),
+            x: 6.83,
+            y: 5.21,
+            dragging: true,
+        });
+        assert!(
+            matches!(events.as_slice(), [Event::TokenMoved { x, y, .. }] if *x == 6.83 && *y == 5.21)
+        );
 
-        let events = state.apply(ClientMsg::MoveToken { id: TokenId::new("t1"), x: 6.83, y: 5.21, dragging: false });
-        assert!(matches!(events.as_slice(), [Event::TokenMoved { x, y, .. }] if *x == 6.5 && *y == 5.5));
+        let events = state.apply(ClientMsg::MoveToken {
+            id: TokenId::new("t1"),
+            x: 6.83,
+            y: 5.21,
+            dragging: false,
+        });
+        assert!(
+            matches!(events.as_slice(), [Event::TokenMoved { x, y, .. }] if *x == 6.5 && *y == 5.5)
+        );
 
         let token = state.tokens.get(&TokenId::new("t1")).expect("t1 exists");
         assert_eq!((token.x, token.y), (6.5, 5.5));
@@ -942,11 +1152,21 @@ mod tests {
         let me = ClientId(1);
         let them = ClientId(2);
 
-        let drag = Event::TokenMoved { id: TokenId::new("t1"), x: 1.0, y: 1.0, dragging: true };
+        let drag = Event::TokenMoved {
+            id: TokenId::new("t1"),
+            x: 1.0,
+            y: 1.0,
+            dragging: true,
+        };
         assert!(state.message_for(me, me, &drag).is_none());
         assert!(state.message_for(them, me, &drag).is_some());
 
-        let drop = Event::TokenMoved { id: TokenId::new("t1"), x: 1.5, y: 1.5, dragging: false };
+        let drop = Event::TokenMoved {
+            id: TokenId::new("t1"),
+            x: 1.5,
+            y: 1.5,
+            dragging: false,
+        };
         assert!(state.message_for(me, me, &drop).is_some());
         assert!(state.message_for(them, me, &drop).is_some());
     }
@@ -955,7 +1175,12 @@ mod tests {
     fn unknown_tokens_are_refused() {
         let mut state = room();
         let _rx = join_as_dm(&mut state, ClientId(1));
-        let msg = ClientMsg::MoveToken { id: TokenId::new("nope"), x: 0.0, y: 0.0, dragging: false };
+        let msg = ClientMsg::MoveToken {
+            id: TokenId::new("nope"),
+            x: 0.0,
+            y: 0.0,
+            dragging: false,
+        };
         assert!(state.check(ClientId(1), &msg).is_err());
     }
 
@@ -1003,7 +1228,11 @@ mod tests {
         // first one entered says nothing about who acts first.
         let init = rolled(&[("t1", 12), ("t2", 19), ("t3", 12)]);
         assert_eq!(order(&init), ["t2", "t1", "t3"]);
-        assert_eq!(current(&init), None, "nobody acts until the DM starts combat");
+        assert_eq!(
+            current(&init),
+            None,
+            "nobody acts until the DM starts combat"
+        );
     }
 
     #[test]
@@ -1036,7 +1265,11 @@ mod tests {
         // index: this re-sort shifts t2 from position 1 to position 2.
         init.set(TokenId::new("t3"), 25);
         assert_eq!(order(&init), ["t3", "t1", "t2"]);
-        assert_eq!(current(&init), Some("t2"), "the turn must not follow the index");
+        assert_eq!(
+            current(&init),
+            Some("t2"),
+            "the turn must not follow the index"
+        );
     }
 
     #[test]
@@ -1056,7 +1289,11 @@ mod tests {
         assert_eq!((current(&init), init.round), (Some("t2"), 1));
 
         init.next_turn();
-        assert_eq!((current(&init), init.round), (Some("t1"), 2), "wrapping starts a new round");
+        assert_eq!(
+            (current(&init), init.round),
+            (Some("t1"), 2),
+            "wrapping starts a new round"
+        );
     }
 
     #[test]
@@ -1074,7 +1311,11 @@ mod tests {
     fn reversing_past_the_start_of_combat_does_nothing() {
         let mut init = in_combat(&[("t1", 20), ("t2", 15)]);
         init.previous_turn();
-        assert_eq!((current(&init), init.round), (Some("t1"), 1), "there is no round 0");
+        assert_eq!(
+            (current(&init), init.round),
+            (Some("t1"), 1),
+            "there is no round 0"
+        );
     }
 
     #[test]
@@ -1127,7 +1368,10 @@ mod tests {
         assert_eq!(init.round, 2);
 
         init.clear();
-        assert_eq!((current(&init), init.round, init.entries.len()), (None, 1, 0));
+        assert_eq!(
+            (current(&init), init.round, init.entries.len()),
+            (None, 1, 0)
+        );
     }
 
     #[test]
@@ -1138,8 +1382,13 @@ mod tests {
 
         let commands = || {
             vec![
-                ClientMsg::SetInitiative { token: TokenId::new("t1"), value: 15 },
-                ClientMsg::RemoveFromInitiative { token: TokenId::new("t1") },
+                ClientMsg::SetInitiative {
+                    token: TokenId::new("t1"),
+                    value: 15,
+                },
+                ClientMsg::RemoveFromInitiative {
+                    token: TokenId::new("t1"),
+                },
                 ClientMsg::ClearInitiative,
                 ClientMsg::NextTurn,
                 ClientMsg::PreviousTurn,
@@ -1147,10 +1396,16 @@ mod tests {
         };
 
         for cmd in commands() {
-            assert!(state.check(ClientId(1), &cmd).is_err(), "a player got through: {cmd:?}");
+            assert!(
+                state.check(ClientId(1), &cmd).is_err(),
+                "a player got through: {cmd:?}"
+            );
         }
         for cmd in commands() {
-            assert!(state.check(ClientId(2), &cmd).is_ok(), "the DM was blocked: {cmd:?}");
+            assert!(
+                state.check(ClientId(2), &cmd).is_ok(),
+                "the DM was blocked: {cmd:?}"
+            );
         }
     }
 
@@ -1158,7 +1413,10 @@ mod tests {
     fn initiative_cannot_name_a_token_that_does_not_exist() {
         let mut state = room();
         let _dm = join_as_dm(&mut state, ClientId(1));
-        let cmd = ClientMsg::SetInitiative { token: TokenId::new("ghost"), value: 10 };
+        let cmd = ClientMsg::SetInitiative {
+            token: TokenId::new("ghost"),
+            value: 10,
+        };
         assert!(state.check(ClientId(1), &cmd).is_err());
     }
 
@@ -1166,7 +1424,13 @@ mod tests {
     fn a_players_refused_initiative_edit_changes_nothing() {
         let mut state = room();
         let _player = join_as_player(&mut state, ClientId(1), "vex");
-        state.handle(ClientId(1), ClientMsg::SetInitiative { token: TokenId::new("t1"), value: 99 });
+        state.handle(
+            ClientId(1),
+            ClientMsg::SetInitiative {
+                token: TokenId::new("t1"),
+                value: 99,
+            },
+        );
         assert!(state.initiative.entries.is_empty());
     }
 
@@ -1178,9 +1442,17 @@ mod tests {
         let _vex = join_as_player(&mut state, ClientId(1), "vex");
 
         let slots = state.roster_slots();
-        let claimed: Vec<_> = slots.iter().filter(|s| s.claimed).map(|s| s.id.0.as_str()).collect();
+        let claimed: Vec<_> = slots
+            .iter()
+            .filter(|s| s.claimed)
+            .map(|s| s.id.0.as_str())
+            .collect();
         assert_eq!(claimed, ["vex"]);
-        assert_eq!(slots.len(), 5, "every slot is still offered — claiming is advisory");
+        assert_eq!(
+            slots.len(),
+            5,
+            "every slot is still offered — claiming is advisory"
+        );
     }
 
     #[test]
@@ -1203,7 +1475,13 @@ mod tests {
     fn anyone_still_picking_is_told_when_a_slot_is_taken() {
         let mut state = room();
         let mut watcher = connect(&mut state, ClientId(1));
-        state.handle(ClientId(1), ClientMsg::Hello { dm_secret: None, player_id: None });
+        state.handle(
+            ClientId(1),
+            ClientMsg::Hello {
+                dm_secret: None,
+                player_id: None,
+            },
+        );
         watcher.try_recv().expect("the initial roster");
 
         let _vex = join_as_player(&mut state, ClientId(2), "vex");
@@ -1262,8 +1540,16 @@ mod tests {
         let _player = join_as_player(&mut state, ClientId(1), "vex");
         let _dm = join_as_dm(&mut state, ClientId(2));
 
-        assert!(state.check(ClientId(1), &set_map("/uploads/a.png", 70.0, 3.0, 4.0)).is_err());
-        assert!(state.check(ClientId(2), &set_map("/uploads/a.png", 70.0, 3.0, 4.0)).is_ok());
+        assert!(
+            state
+                .check(ClientId(1), &set_map("/uploads/a.png", 70.0, 3.0, 4.0))
+                .is_err()
+        );
+        assert!(
+            state
+                .check(ClientId(2), &set_map("/uploads/a.png", 70.0, 3.0, 4.0))
+                .is_ok()
+        );
     }
 
     #[test]
@@ -1273,8 +1559,11 @@ mod tests {
         // it — this is the entire reason pixels are not stored.
         let mut state = room();
         let _dm = join_as_dm(&mut state, ClientId(1));
-        let before: Vec<(TokenId, f32, f32)> =
-            state.tokens.values().map(|t| (t.id.clone(), t.x, t.y)).collect();
+        let before: Vec<(TokenId, f32, f32)> = state
+            .tokens
+            .values()
+            .map(|t| (t.id.clone(), t.x, t.y))
+            .collect();
 
         state.handle(ClientId(1), set_map("/assets/map.png", 97.5, 13.0, -21.0));
 
@@ -1293,7 +1582,10 @@ mod tests {
 
         let map = &state.map;
         assert_eq!(map.url, "/uploads/cave.webp");
-        assert_eq!((map.grid_px, map.offset_x, map.offset_y), (70.0, 12.5, 6.25));
+        assert_eq!(
+            (map.grid_px, map.offset_x, map.offset_y),
+            (70.0, 12.5, 6.25)
+        );
     }
 
     #[test]
@@ -1303,12 +1595,22 @@ mod tests {
 
         for px in [0.0, -70.0, 0.5, 1e9] {
             assert!(
-                state.check(ClientId(1), &set_map("/assets/map.png", px, 0.0, 0.0)).is_err(),
+                state
+                    .check(ClientId(1), &set_map("/assets/map.png", px, 0.0, 0.0))
+                    .is_err(),
                 "{px} should be refused"
             );
         }
-        assert!(state.check(ClientId(1), &set_map("/assets/map.png", 4.0, 0.0, 0.0)).is_ok());
-        assert!(state.check(ClientId(1), &set_map("/assets/map.png", 4096.0, 0.0, 0.0)).is_ok());
+        assert!(
+            state
+                .check(ClientId(1), &set_map("/assets/map.png", 4.0, 0.0, 0.0))
+                .is_ok()
+        );
+        assert!(
+            state
+                .check(ClientId(1), &set_map("/assets/map.png", 4096.0, 0.0, 0.0))
+                .is_ok()
+        );
     }
 
     #[test]
@@ -1316,9 +1618,17 @@ mod tests {
         let mut state = room();
         let _dm = join_as_dm(&mut state, ClientId(1));
 
-        assert!(state.check(ClientId(1), &set_map("", 64.0, 0.0, 0.0)).is_err());
+        assert!(
+            state
+                .check(ClientId(1), &set_map("", 64.0, 0.0, 0.0))
+                .is_err()
+        );
         let long = "/uploads/".to_owned() + &"a".repeat(MAX_URL_LEN);
-        assert!(state.check(ClientId(1), &set_map(&long, 64.0, 0.0, 0.0)).is_err());
+        assert!(
+            state
+                .check(ClientId(1), &set_map(&long, 64.0, 0.0, 0.0))
+                .is_err()
+        );
     }
 
     #[test]
@@ -1327,13 +1637,16 @@ mod tests {
         let _dm = join_as_dm(&mut state, ClientId(1));
 
         for good in ["#ffffff52", "#000000ff", "#FFAA0080", "#00000000"] {
-            assert!(state.check(ClientId(1), &set_color(good)).is_ok(), "{good} should be fine");
+            assert!(
+                state.check(ClientId(1), &set_color(good)).is_ok(),
+                "{good} should be fine"
+            );
         }
 
         for bad in [
-            "#ffffff",   // no alpha; the part that matters most would be missing
+            "#ffffff", // no alpha; the part that matters most would be missing
             "#fff",
-            "ffffff52",  // no hash
+            "ffffff52", // no hash
             "#gggggggg",
             "#ffffff521",
             "",
@@ -1341,7 +1654,10 @@ mod tests {
             "white",
             "#ffffff5\u{00e9}", // nine bytes, but not nine hex digits
         ] {
-            assert!(state.check(ClientId(1), &set_color(bad)).is_err(), "{bad:?} should be refused");
+            assert!(
+                state.check(ClientId(1), &set_color(bad)).is_err(),
+                "{bad:?} should be refused"
+            );
         }
     }
 
@@ -1390,20 +1706,30 @@ mod tests {
         let _dm = join_as_dm(&mut state, ClientId(1));
 
         let bad = [
-            rect(0.0, 0.0, 0.0, 100.0),          // no width
-            rect(0.0, 0.0, 100.0, 0.0),          // no height
-            rect(0.0, 0.0, -640.0, 448.0),       // inside out
-            rect(0.0, 0.0, 1.0e9, 448.0),        // more grid lines than frames
+            rect(0.0, 0.0, 0.0, 100.0),    // no width
+            rect(0.0, 0.0, 100.0, 0.0),    // no height
+            rect(0.0, 0.0, -640.0, 448.0), // inside out
+            rect(0.0, 0.0, 1.0e9, 448.0),  // more grid lines than frames
             rect(0.0, 0.0, 640.0, 1.0e9),
             rect(f32::NAN, 0.0, 640.0, 448.0),
-            rect(0.0, 0.0, 10.0, 448.0),         // narrower than one 64 px cell
+            rect(0.0, 0.0, 10.0, 448.0), // narrower than one 64 px cell
         ];
         for area in bad {
-            assert!(state.check(ClientId(1), &set_area(area)).is_err(), "{area:?} should be refused");
+            assert!(
+                state.check(ClientId(1), &set_area(area)).is_err(),
+                "{area:?} should be refused"
+            );
         }
 
-        assert!(state.check(ClientId(1), &set_area(rect(0.0, 0.0, 64.0, 64.0))).is_ok());
-        assert!(state.check(ClientId(1), &set_area(None)).is_ok(), "the whole image is always fine");
+        assert!(
+            state
+                .check(ClientId(1), &set_area(rect(0.0, 0.0, 64.0, 64.0)))
+                .is_ok()
+        );
+        assert!(
+            state.check(ClientId(1), &set_area(None)).is_ok(),
+            "the whole image is always fine"
+        );
     }
 
     #[test]
@@ -1413,7 +1739,11 @@ mod tests {
         // clips to the image before it draws anything.
         let mut state = room();
         let _dm = join_as_dm(&mut state, ClientId(1));
-        assert!(state.check(ClientId(1), &set_area(rect(-320.0, -64.0, 640.0, 448.0))).is_ok());
+        assert!(
+            state
+                .check(ClientId(1), &set_area(rect(-320.0, -64.0, 640.0, 448.0)))
+                .is_ok()
+        );
     }
 
     #[test]
@@ -1423,7 +1753,11 @@ mod tests {
         let state = room();
         let me = ClientId(1);
         assert!(state.message_for(me, me, &Event::MapChanged).is_some());
-        assert!(state.message_for(ClientId(2), me, &Event::MapChanged).is_some());
+        assert!(
+            state
+                .message_for(ClientId(2), me, &Event::MapChanged)
+                .is_some()
+        );
     }
 
     #[test]
@@ -1441,15 +1775,43 @@ mod tests {
         let _dm = join_as_dm(&mut state, ClientId(1));
 
         for bad in [f32::NAN, f32::INFINITY, f32::NEG_INFINITY] {
-            let msg = ClientMsg::MoveToken { id: TokenId::new("t1"), x: bad, y: 0.0, dragging: false };
-            assert!(state.check(ClientId(1), &msg).is_err(), "{bad} should be refused");
+            let msg = ClientMsg::MoveToken {
+                id: TokenId::new("t1"),
+                x: bad,
+                y: 0.0,
+                dragging: false,
+            };
+            assert!(
+                state.check(ClientId(1), &msg).is_err(),
+                "{bad} should be refused"
+            );
 
-            let msg = ClientMsg::MoveToken { id: TokenId::new("t1"), x: 0.0, y: bad, dragging: true };
-            assert!(state.check(ClientId(1), &msg).is_err(), "{bad} should be refused");
+            let msg = ClientMsg::MoveToken {
+                id: TokenId::new("t1"),
+                x: 0.0,
+                y: bad,
+                dragging: true,
+            };
+            assert!(
+                state.check(ClientId(1), &msg).is_err(),
+                "{bad} should be refused"
+            );
 
-            assert!(state.check(ClientId(1), &set_map("/a.png", bad, 0.0, 0.0)).is_err());
-            assert!(state.check(ClientId(1), &set_map("/a.png", 64.0, bad, 0.0)).is_err());
-            assert!(state.check(ClientId(1), &set_map("/a.png", 64.0, 0.0, bad)).is_err());
+            assert!(
+                state
+                    .check(ClientId(1), &set_map("/a.png", bad, 0.0, 0.0))
+                    .is_err()
+            );
+            assert!(
+                state
+                    .check(ClientId(1), &set_map("/a.png", 64.0, bad, 0.0))
+                    .is_err()
+            );
+            assert!(
+                state
+                    .check(ClientId(1), &set_map("/a.png", 64.0, 0.0, bad))
+                    .is_err()
+            );
         }
     }
 
@@ -1472,7 +1834,11 @@ mod tests {
 
         state.handle(ClientId(1), msg);
 
-        assert_eq!(state.tokens.get(&TokenId::new("t1")).expect("t1").x, before, "it got through");
+        assert_eq!(
+            state.tokens.get(&TokenId::new("t1")).expect("t1").x,
+            before,
+            "it got through"
+        );
     }
 
     #[test]
@@ -1481,20 +1847,97 @@ mod tests {
         // is what would have been written to disk, and it does not come back.
         let json = serde_json::to_string(&f32::NAN).expect("encodes");
         assert_eq!(json, "null");
-        assert!(serde_json::from_str::<f32>(&json).is_err(), "a saved NaN is unloadable");
+        assert!(
+            serde_json::from_str::<f32>(&json).is_err(),
+            "a saved NaN is unloadable"
+        );
     }
 
     // --- persistence --------------------------------------------------------
+
+    #[tokio::test]
+    async fn shutdown_flushes_a_change_still_inside_the_debounce_window() {
+        let path = std::env::temp_dir().join(format!(
+            "slate-shutdown-test-{}-{}.json",
+            std::process::id(),
+            uuid::Uuid::new_v4().simple()
+        ));
+        let room = spawn(SECRET.to_owned(), None, Store::new(path.clone()));
+        let (out, mut replies) = mpsc::channel(CLIENT_MAILBOX);
+
+        assert!(
+            room.send(RoomCmd::Connected {
+                client: ClientId(1),
+                out,
+            })
+            .await
+        );
+        assert!(
+            room.send(RoomCmd::Msg {
+                client: ClientId(1),
+                msg: ClientMsg::Hello {
+                    dm_secret: Some(SECRET.to_owned()),
+                    player_id: None,
+                },
+            })
+            .await
+        );
+        assert!(matches!(
+            replies.recv().await,
+            Some(ServerMsg::Welcome { .. })
+        ));
+
+        assert!(
+            room.send(RoomCmd::Msg {
+                client: ClientId(1),
+                msg: ClientMsg::MoveToken {
+                    id: TokenId::new("t6"),
+                    x: 9.2,
+                    y: 11.8,
+                    dragging: false,
+                },
+            })
+            .await
+        );
+
+        // This happens immediately, well before the two-second debounce.
+        assert!(room.shutdown().await);
+
+        let loaded = Store::new(path.clone())
+            .load()
+            .await
+            .expect("shutdown save loads")
+            .expect("shutdown wrote a save");
+        let ogre = loaded
+            .tokens
+            .iter()
+            .find(|token| token.id == TokenId::new("t6"))
+            .expect("the ogre was saved");
+        assert_eq!((ogre.x, ogre.y), (9.5, 11.5));
+
+        let _ = std::fs::remove_file(path);
+    }
 
     #[test]
     fn a_drag_frame_is_not_worth_saving_but_the_drop_is() {
         let mut state = room();
         let _vex = join_as_player(&mut state, ClientId(1), "vex");
 
-        let at = |dragging| ClientMsg::MoveToken { id: TokenId::new("t2"), x: 6.3, y: 5.1, dragging };
+        let at = |dragging| ClientMsg::MoveToken {
+            id: TokenId::new("t2"),
+            x: 6.3,
+            y: 5.1,
+            dragging,
+        };
 
-        assert!(!state.handle(ClientId(1), at(true)), "a drag frame must not hit the disk");
-        assert!(state.handle(ClientId(1), at(false)), "the drop is the position worth keeping");
+        assert!(
+            !state.handle(ClientId(1), at(true)),
+            "a drag frame must not hit the disk"
+        );
+        assert!(
+            state.handle(ClientId(1), at(false)),
+            "the drop is the position worth keeping"
+        );
     }
 
     #[test]
@@ -1503,16 +1946,24 @@ mod tests {
         let _dm = join_as_dm(&mut state, ClientId(1));
 
         let commands = [
-            ClientMsg::SetInitiative { token: TokenId::new("t1"), value: 15 },
+            ClientMsg::SetInitiative {
+                token: TokenId::new("t1"),
+                value: 15,
+            },
             ClientMsg::NextTurn,
             ClientMsg::PreviousTurn,
-            ClientMsg::RemoveFromInitiative { token: TokenId::new("t1") },
+            ClientMsg::RemoveFromInitiative {
+                token: TokenId::new("t1"),
+            },
             ClientMsg::ClearInitiative,
         ];
 
         for cmd in commands {
             let description = format!("{cmd:?}");
-            assert!(state.handle(ClientId(1), cmd), "{description} should be persisted");
+            assert!(
+                state.handle(ClientId(1), cmd),
+                "{description} should be persisted"
+            );
         }
     }
 
@@ -1521,8 +1972,16 @@ mod tests {
         let mut state = room();
         let _vex = join_as_player(&mut state, ClientId(1), "vex");
 
-        let steal = ClientMsg::MoveToken { id: TokenId::new("t1"), x: 1.5, y: 1.5, dragging: false };
-        assert!(!state.handle(ClientId(1), steal), "nothing changed, so nothing to write");
+        let steal = ClientMsg::MoveToken {
+            id: TokenId::new("t1"),
+            x: 1.5,
+            y: 1.5,
+            dragging: false,
+        };
+        assert!(
+            !state.handle(ClientId(1), steal),
+            "nothing changed, so nothing to write"
+        );
     }
 
     #[test]
@@ -1531,17 +1990,37 @@ mod tests {
         let mut state = room();
         let mut rx = connect(&mut state, ClientId(1));
 
-        let hello = ClientMsg::Hello { dm_secret: None, player_id: Some(PlayerId::new("vex")) };
+        let hello = ClientMsg::Hello {
+            dm_secret: None,
+            player_id: Some(PlayerId::new("vex")),
+        };
         assert!(!state.handle(ClientId(1), hello));
-        assert!(matches!(rx.try_recv(), Ok(ServerMsg::Welcome { .. })), "still admitted");
+        assert!(
+            matches!(rx.try_recv(), Ok(ServerMsg::Welcome { .. })),
+            "still admitted"
+        );
     }
 
     #[test]
     fn a_restored_room_is_the_room_that_was_saved() {
         let mut state = room();
         let _dm = join_as_dm(&mut state, ClientId(1));
-        state.handle(ClientId(1), ClientMsg::MoveToken { id: TokenId::new("t6"), x: 9.2, y: 11.8, dragging: false });
-        state.handle(ClientId(1), ClientMsg::SetInitiative { token: TokenId::new("t6"), value: 17 });
+        state.handle(
+            ClientId(1),
+            ClientMsg::MoveToken {
+                id: TokenId::new("t6"),
+                x: 9.2,
+                y: 11.8,
+                dragging: false,
+            },
+        );
+        state.handle(
+            ClientId(1),
+            ClientMsg::SetInitiative {
+                token: TokenId::new("t6"),
+                value: 17,
+            },
+        );
         state.handle(ClientId(1), ClientMsg::NextTurn);
 
         // Through JSON rather than straight through the structs: the file is the
@@ -1551,8 +2030,15 @@ mod tests {
         let restored = RoomState::restored(saved, SECRET.to_owned());
 
         assert_eq!(restored.tokens.len(), state.tokens.len());
-        let ogre = restored.tokens.get(&TokenId::new("t6")).expect("the ogre survived");
-        assert_eq!((ogre.x, ogre.y), (9.5, 11.5), "grid units, exactly as they were stored");
+        let ogre = restored
+            .tokens
+            .get(&TokenId::new("t6"))
+            .expect("the ogre survived");
+        assert_eq!(
+            (ogre.x, ogre.y),
+            (9.5, 11.5),
+            "grid units, exactly as they were stored"
+        );
         assert_eq!(ogre.owner, Owner::Dm);
         assert_eq!(ogre.name, "Ogre");
 
@@ -1560,8 +2046,15 @@ mod tests {
         assert_eq!(restored.initiative.entries.len(), 1);
         assert_eq!(restored.map.url, state.map.url);
 
-        assert!(restored.clients.is_empty(), "nobody is connected to a room off disk");
-        assert_eq!(restored.roster.len(), 5, "the roster comes from the build, not the file");
+        assert!(
+            restored.clients.is_empty(),
+            "nobody is connected to a room off disk"
+        );
+        assert_eq!(
+            restored.roster.len(),
+            5,
+            "the roster comes from the build, not the file"
+        );
     }
 
     #[test]
@@ -1572,9 +2065,18 @@ mod tests {
         let _vex = join_as_player(&mut state, ClientId(1), "vex");
         let client = state.clients.get(&ClientId(1)).expect("joined");
 
-        assert!(can_move(client, state.tokens.get(&TokenId::new("t2")).expect("Vex's token")));
-        assert!(!can_move(client, state.tokens.get(&TokenId::new("t1")).expect("Grog's token")));
-        assert!(!can_move(client, state.tokens.get(&TokenId::new("t6")).expect("the ogre")));
+        assert!(can_move(
+            client,
+            state.tokens.get(&TokenId::new("t2")).expect("Vex's token")
+        ));
+        assert!(!can_move(
+            client,
+            state.tokens.get(&TokenId::new("t1")).expect("Grog's token")
+        ));
+        assert!(!can_move(
+            client,
+            state.tokens.get(&TokenId::new("t6")).expect("the ogre")
+        ));
     }
 
     #[test]
@@ -1582,7 +2084,12 @@ mod tests {
         // `HashMap` order varies per process, so without a sort the file would
         // come out differently on every save and diff against itself.
         let state = room();
-        let ids: Vec<_> = state.to_saved().tokens.iter().map(|t| t.id.clone()).collect();
+        let ids: Vec<_> = state
+            .to_saved()
+            .tokens
+            .iter()
+            .map(|t| t.id.clone())
+            .collect();
         let mut sorted = ids.clone();
         sorted.sort();
         assert_eq!(ids, sorted);
@@ -1602,4 +2109,3 @@ mod tests {
         assert_eq!(ids, sorted);
     }
 }
-

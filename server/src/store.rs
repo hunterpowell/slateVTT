@@ -61,7 +61,10 @@ impl Store {
         // cannot collide with the save itself whatever the path looks like.
         let mut tmp = path.clone().into_os_string();
         tmp.push(".tmp");
-        Self { path, tmp: PathBuf::from(tmp) }
+        Self {
+            path,
+            tmp: PathBuf::from(tmp),
+        }
     }
 
     pub fn path(&self) -> &Path {
@@ -78,7 +81,9 @@ impl Store {
             Err(err) => return Err(StoreError::Io(err)),
         };
 
-        serde_json::from_slice(&bytes).map(Some).map_err(StoreError::Json)
+        serde_json::from_slice(&bytes)
+            .map(Some)
+            .map_err(StoreError::Json)
     }
 
     pub async fn save(&self, saved: &Saved) -> Result<(), StoreError> {
@@ -92,7 +97,9 @@ impl Store {
         }
 
         fs::write(&self.tmp, &json).await.map_err(StoreError::Io)?;
-        fs::rename(&self.tmp, &self.path).await.map_err(StoreError::Io)?;
+        fs::rename(&self.tmp, &self.path)
+            .await
+            .map_err(StoreError::Io)?;
         Ok(())
     }
 }
@@ -141,7 +148,12 @@ mod tests {
                 offset_x: 3.0,
                 offset_y: -4.0,
                 grid_color: "#33ff9980".to_owned(),
-                play_area: Some(Rect { x: 70.0, y: 140.0, w: 700.0, h: 490.0 }),
+                play_area: Some(Rect {
+                    x: 70.0,
+                    y: 140.0,
+                    w: 700.0,
+                    h: 490.0,
+                }),
             },
             tokens: vec![Token {
                 id: TokenId::new("t1"),
@@ -152,7 +164,10 @@ mod tests {
                 img: "/assets/tokens/grog.png".to_owned(),
             }],
             initiative: Initiative {
-                entries: vec![InitiativeEntry { token: TokenId::new("t1"), value: 18 }],
+                entries: vec![InitiativeEntry {
+                    token: TokenId::new("t1"),
+                    value: 18,
+                }],
                 current: Some(TokenId::new("t1")),
                 round: 4,
             },
@@ -170,7 +185,15 @@ mod tests {
         assert_eq!(loaded.map.grid_px, 70.0);
         assert_eq!((loaded.map.offset_x, loaded.map.offset_y), (3.0, -4.0));
         assert_eq!(loaded.map.grid_color, "#33ff9980");
-        assert_eq!(loaded.map.play_area, Some(Rect { x: 70.0, y: 140.0, w: 700.0, h: 490.0 }));
+        assert_eq!(
+            loaded.map.play_area,
+            Some(Rect {
+                x: 70.0,
+                y: 140.0,
+                w: 700.0,
+                h: 490.0
+            })
+        );
 
         let token = loaded.tokens.first().expect("the token");
         // Invariant 1: grid units on the wire, on disk, everywhere but render.
@@ -193,7 +216,10 @@ mod tests {
         let file = TempFile::new();
         std::fs::write(&file.0, b"{ this is not a room").expect("write");
 
-        assert!(file.store().load().await.is_err(), "an empty room here would overwrite the real one");
+        assert!(
+            file.store().load().await.is_err(),
+            "an empty room here would overwrite the real one"
+        );
     }
 
     #[tokio::test]
@@ -207,7 +233,10 @@ mod tests {
         store.save(&later).await.expect("second save");
 
         let loaded = store.load().await.expect("loads").expect("a room");
-        assert_eq!(loaded.initiative.round, 9, "rename must replace an existing file");
+        assert_eq!(
+            loaded.initiative.round, 9,
+            "rename must replace an existing file"
+        );
     }
 
     #[tokio::test]
@@ -216,7 +245,10 @@ mod tests {
         let store = file.store();
 
         store.save(&a_room()).await.expect("saved");
-        assert!(!store.tmp.exists(), "the temp file should have been renamed away");
+        assert!(
+            !store.tmp.exists(),
+            "the temp file should have been renamed away"
+        );
     }
 
     #[tokio::test]
@@ -233,7 +265,10 @@ mod tests {
         let loaded = file.store().load().await.expect("loads").expect("a room");
 
         assert_eq!(loaded.map.url, "/assets/map.png");
-        assert_eq!(loaded.map.grid_px, 64.0, "a missing grid size must not become a divide by zero");
+        assert_eq!(
+            loaded.map.grid_px, 64.0,
+            "a missing grid size must not become a divide by zero"
+        );
         assert_eq!((loaded.map.offset_x, loaded.map.offset_y), (0.0, 0.0));
         assert_eq!(
             loaded.map.grid_color, "#ffffff52",
@@ -246,9 +281,16 @@ mod tests {
 
         let token = loaded.tokens.first().expect("the token");
         assert_eq!((token.x, token.y), (3.5, 12.5));
-        assert_eq!(token.owner, Owner::Dm, "an ownerless token fails closed, not open");
+        assert_eq!(
+            token.owner,
+            Owner::Dm,
+            "an ownerless token fails closed, not open"
+        );
 
-        assert_eq!(loaded.initiative.round, 1, "combat starts on round 1, never round 0");
+        assert_eq!(
+            loaded.initiative.round, 1,
+            "combat starts on round 1, never round 0"
+        );
         assert!(loaded.initiative.entries.is_empty());
     }
 

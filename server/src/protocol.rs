@@ -154,7 +154,11 @@ pub struct Initiative {
 impl Default for Initiative {
     fn default() -> Self {
         // Combat starts on round 1, not round 0.
-        Self { entries: Vec::new(), current: None, round: 1 }
+        Self {
+            entries: Vec::new(),
+            current: None,
+            round: 1,
+        }
     }
 }
 
@@ -174,8 +178,16 @@ pub struct RoomView {
 pub enum ClientMsg {
     /// First frame on every connection. Sent again, with a chosen slot, after
     /// the player picks from the roster.
-    Hello { dm_secret: Option<String>, player_id: Option<PlayerId> },
-    MoveToken { id: TokenId, x: f32, y: f32, dragging: bool },
+    Hello {
+        dm_secret: Option<String>,
+        player_id: Option<PlayerId>,
+    },
+    MoveToken {
+        id: TokenId,
+        x: f32,
+        y: f32,
+        dragging: bool,
+    },
 
     /// The map image and its grid, in one command. DM-only.
     ///
@@ -194,8 +206,13 @@ pub enum ClientMsg {
     // Initiative. All DM-only.
     /// Adds the token at that value, or re-values it if already listed. One
     /// command covers "add" and "reorder", since ordering *is* the value.
-    SetInitiative { token: TokenId, value: i32 },
-    RemoveFromInitiative { token: TokenId },
+    SetInitiative {
+        token: TokenId,
+        value: i32,
+    },
+    RemoveFromInitiative {
+        token: TokenId,
+    },
     ClearInitiative,
     NextTurn,
     PreviousTurn,
@@ -210,7 +227,9 @@ pub enum ServerMsg {
     ///
     /// Re-sent to everyone still choosing whenever a slot is taken or freed, so
     /// a picker left open does not go stale.
-    ChooseIdentity { roster: Vec<RosterSlot> },
+    ChooseIdentity {
+        roster: Vec<RosterSlot>,
+    },
     Welcome {
         your_id: ClientId,
         is_dm: bool,
@@ -218,12 +237,23 @@ pub enum ServerMsg {
         player_id: Option<PlayerId>,
         state: RoomView,
     },
-    TokenMoved { id: TokenId, x: f32, y: f32, dragging: bool },
+    TokenMoved {
+        id: TokenId,
+        x: f32,
+        y: f32,
+        dragging: bool,
+    },
     /// The whole `MapInfo`, for the same reason `InitiativeChanged` carries the
     /// whole panel: it is four fields and only a deliberate DM action moves it.
-    MapChanged { map: MapInfo },
+    MapChanged {
+        map: MapInfo,
+    },
     /// The whole panel, not a per-entry delta. It is a handful of rows and only
     /// changes on a deliberate DM action, so a diff would cost more than it saves.
-    InitiativeChanged { initiative: Initiative },
-    Error { message: String },
+    InitiativeChanged {
+        initiative: Initiative,
+    },
+    Error {
+        message: String,
+    },
 }

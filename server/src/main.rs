@@ -4,8 +4,8 @@ mod store;
 mod ws;
 
 use std::path::Path;
-use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 
 use axum::body::Bytes;
 use axum::extract::{DefaultBodyLimit, State, WebSocketUpgrade};
@@ -26,6 +26,9 @@ use crate::room::RoomHandle;
 /// Big enough for a detailed battle map, small enough that a mistyped upload
 /// cannot fill the disk. axum's own default is 2 MB, which most maps exceed.
 const MAX_MAP_BYTES: usize = 25 * 1024 * 1024;
+/// Protocol frames are tiny JSON commands. Keeping this bounded prevents a
+/// public WebSocket from using one frame to reserve an unreasonable buffer.
+const MAX_WS_MESSAGE_BYTES: usize = 16 * 1024;
 const DM_SECRET_HEADER: &str = "x-slate-dm-secret";
 
 /// Milestone 2 is one hardcoded room, so the handle lives directly in app
@@ -85,15 +88,19 @@ async fn main() {
     std::fs::create_dir_all(&uploads_dir)
         .unwrap_or_else(|err| panic!("could not create {uploads_dir}: {err}"));
 
+    let room = room::spawn(dm_secret.clone(), saved, store);
     let state = AppState {
-        room: room::spawn(dm_secret.clone(), saved, store),
+        room: room.clone(),
         dm_secret: dm_secret.into(),
         uploads: Path::new(&uploads_dir).into(),
     };
 
     let app = Router::new()
         .route("/ws", get(ws_handler))
-        .route("/api/map", post(upload_map).layer(DefaultBodyLimit::max(MAX_MAP_BYTES)))
+        .route(
+            "/api/map",
+            post(upload_map).layer(DefaultBodyLimit::max(MAX_MAP_BYTES)),
+        )
         .nest_service("/uploads", ServeDir::new(&uploads_dir))
         .fallback_service(ServeDir::new(&client_dir).append_index_html_on_directories(true))
         .with_state(state);
@@ -106,12 +113,55 @@ async fn main() {
 
     info!(%addr, %client_dir, %uploads_dir, "slate listening");
 
-    axum::serve(listener, app).await.expect("server stopped unexpectedly");
+    axum::serve(listener, app)
+        .with_graceful_shutdown(async move {
+            shutdown_signal().await;
+            // Closing the room drops its per-client senders, which closes the
+            // WebSockets and lets axum finish draining its active connections.
+            if !room.shutdown().await {
+                error!("room shutdown completed without saving its last change");
+            }
+        })
+        .await
+        .expect("server stopped unexpectedly");
 }
 
 async fn ws_handler(ws: WebSocketUpgrade, State(state): State<AppState>) -> Response {
     let client = ClientId(NEXT_CLIENT_ID.fetch_add(1, Ordering::Relaxed));
-    ws.on_upgrade(move |socket| ws::handle(socket, state.room, client))
+    ws.max_message_size(MAX_WS_MESSAGE_BYTES)
+        .max_frame_size(MAX_WS_MESSAGE_BYTES)
+        .on_upgrade(move |socket| ws::handle(socket, state.room, client))
+}
+
+async fn shutdown_signal() {
+    let ctrl_c = async {
+        if let Err(err) = tokio::signal::ctrl_c().await {
+            error!(%err, "could not listen for Ctrl+C");
+            std::future::pending::<()>().await;
+        }
+    };
+
+    #[cfg(unix)]
+    let terminate = async {
+        match tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate()) {
+            Ok(mut signal) => {
+                let _ = signal.recv().await;
+            }
+            Err(err) => {
+                error!(%err, "could not listen for SIGTERM");
+                std::future::pending::<()>().await;
+            }
+        }
+    };
+
+    #[cfg(not(unix))]
+    let terminate = std::future::pending::<()>();
+
+    tokio::select! {
+        _ = ctrl_c => {}
+        _ = terminate => {}
+    }
+    info!("shutdown requested");
 }
 
 #[derive(Serialize)]
@@ -130,10 +180,15 @@ async fn upload_map(
     headers: HeaderMap,
     body: Bytes,
 ) -> Result<Json<UploadedMap>, (StatusCode, String)> {
-    let offered = headers.get(DM_SECRET_HEADER).and_then(|value| value.to_str().ok());
+    let offered = headers
+        .get(DM_SECRET_HEADER)
+        .and_then(|value| value.to_str().ok());
     if offered != Some(state.dm_secret.as_ref()) {
         warn!("rejected a map upload with a bad DM secret");
-        return Err((StatusCode::FORBIDDEN, "only the DM can change the map".to_owned()));
+        return Err((
+            StatusCode::FORBIDDEN,
+            "only the DM can change the map".to_owned(),
+        ));
     }
 
     let Some(extension) = image_format(&body) else {
@@ -150,11 +205,16 @@ async fn upload_map(
 
     fs::write(&path, &body).await.map_err(|err| {
         error!(%err, path = %path.display(), "could not store the uploaded map");
-        (StatusCode::INTERNAL_SERVER_ERROR, "could not store that map".to_owned())
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "could not store that map".to_owned(),
+        )
     })?;
 
     info!(%name, bytes = body.len(), "stored an uploaded map");
-    Ok(Json(UploadedMap { url: format!("/uploads/{name}") }))
+    Ok(Json(UploadedMap {
+        url: format!("/uploads/{name}"),
+    }))
 }
 
 /// Identifies the format from its magic bytes, and deliberately not from the

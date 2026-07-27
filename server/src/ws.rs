@@ -9,7 +9,7 @@ use tokio::sync::mpsc;
 use tracing::{debug, error, warn};
 
 use crate::protocol::{ClientId, ClientMsg, ServerMsg};
-use crate::room::{RoomCmd, RoomHandle, CLIENT_MAILBOX};
+use crate::room::{CLIENT_MAILBOX, RoomCmd, RoomHandle};
 
 pub async fn handle(socket: WebSocket, room: RoomHandle, client: ClientId) {
     let (mut sink, mut stream) = socket.split();
@@ -17,7 +17,13 @@ pub async fn handle(socket: WebSocket, room: RoomHandle, client: ClientId) {
 
     // Register before spawning anything, so the room can answer the client's
     // Hello the moment it arrives.
-    if !room.send(RoomCmd::Connected { client, out: out_tx }).await {
+    if !room
+        .send(RoomCmd::Connected {
+            client,
+            out: out_tx,
+        })
+        .await
+    {
         return;
     }
 

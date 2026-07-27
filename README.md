@@ -8,7 +8,7 @@ replaces Foundry for one group that only needs a shared map, tokens, and turn or
 - An initiative tracker with round counter and next/previous turn
 - State is saved to a JSON file on disk and restored on restart
 
-See [claude.md](claude.md) for the full architecture, invariants, and non-goals. This game
+See [claude.md](.claude/claude.md) for the full architecture, invariants, and non-goals. This game
 does not include character sheets, dice rolling, chat, or accounts — the group uses physical
 dice and Discord for the rest.
 
