@@ -79,3 +79,14 @@ maps/     reference map images to upload as the DM during play
 cd server && cargo test
 cd client && npm run check   # typecheck + build
 ```
+
+## Hosting a remote session from Windows
+
+Slate can run from a Windows PC only while the group is playing. The included
+PowerShell scripts build the production client and server, keep runtime data
+under `%LOCALAPPDATA%\Slate`, and start the server on the loopback interface.
+A separate Cloudflare Tunnel terminal exposes it without opening an inbound
+firewall port.
+
+See [deploy/windows/README.md](deploy/windows/README.md) for the build, local
+run, Quick Tunnel rehearsal, backup, and troubleshooting procedures.

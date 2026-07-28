@@ -35,7 +35,9 @@ than esbuild. If a dependency is proposed, justify it against "could this be 40 
 
 Persistence: `serde_json` snapshot to a file on disk, debounced. No database.
 
-Deployment target: self-hosted on a Fedora box behind a Cloudflare Tunnel.
+Deployment target: hosted from a Windows PC during game sessions behind a
+Cloudflare Tunnel. Slate runs only while the group is playing; it is not an
+always-on service.
 
 ## Architecture
 
@@ -187,7 +189,7 @@ Do not work ahead. Each milestone should run and be usable before starting the n
 4. Initiative panel — add, reorder, next/previous turn, round counter.
 5. Debounced JSON persistence and restore on boot.
 6. Map upload and grid calibration UI.
-7. Deploy behind the Cloudflare Tunnel.
+7. Package for Windows session hosting and deploy behind a Cloudflare Tunnel.
 
 ## Working agreement
 
