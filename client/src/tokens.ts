@@ -1,0 +1,265 @@
+// The DM's token panel: build a token, edit the one that is selected, delete it.
+//
+// One form does both jobs. With nothing selected it describes a token that does
+// not exist yet and the button says "create"; select a token on the map and the
+// same fields fill in with what that token is, and the button says "save". The
+// alternative — a separate creation dialog — is two ways to say the same five
+// fields, and they drift.
+//
+// Nothing here is predicted locally. A create cannot be, because the id is the
+// server's to invent, and an edit is a deliberate click rather than a drag, so
+// there is no round trip anyone can feel. The panel changes what is on screen
+// only when the server says so.
+//
+// Players never see this. It is only created for a DM connection, and the
+// server re-checks every command regardless.
+
+import type { Vec2 } from './coords.js';
+import type { ClientMsg, Owner, RosterEntry } from './protocol.js';
+import type { Scene, Token } from './scene.js';
+
+export interface TokenToolUi {
+  root: HTMLElement;
+  head: HTMLElement;
+  name: HTMLInputElement;
+  size: HTMLSelectElement;
+  owner: HTMLSelectElement;
+  art: HTMLInputElement;
+  artText: HTMLElement;
+  artPreview: HTMLElement;
+  artClear: HTMLButtonElement;
+  save: HTMLButtonElement;
+  remove: HTMLButtonElement;
+  fresh: HTMLButtonElement;
+  hint: HTMLElement;
+}
+
+export interface TokenTool {
+  /** The token being edited, for the selection ring. Null while building one. */
+  readonly selectedId: string | null;
+  /** From a click on the map, or from this panel's own "new token" button. */
+  select(id: string | null): void;
+  /** Called on Welcome and after every token delta. */
+  update(scene: Scene): void;
+}
+
+/** The DM option in the owner dropdown. A player id is never empty. */
+const DM_OWNER = '';
+/** How far out to look for somewhere to put a new token, in cells. */
+const MAX_SEARCH_RINGS = 6;
+
+export function createTokenTool(
+  ui: TokenToolUi,
+  dmSecret: string,
+  roster: RosterEntry[],
+  send: (msg: ClientMsg) => void,
+  report: (message: string) => void,
+  /** Middle of the DM's view in grid units, or null before the board exists. */
+  viewCentre: () => Vec2 | null,
+): TokenTool {
+  let scene: Scene | null = null;
+  let selectedId: string | null = null;
+  /** The art the form currently describes. Empty means a plain named disc. */
+  let art = '';
+
+  ui.owner.replaceChildren(
+    option(DM_OWNER, 'DM'),
+    ...roster.map((entry) => option(entry.id, entry.name)),
+  );
+
+  // --- reading and writing the form ----------------------------------------
+
+  const selected = (): Token | null =>
+    scene?.tokens.find((t) => t.id === selectedId) ?? null;
+
+  const showArt = (): void => {
+    // No art leaves the grey disc the stylesheet puts underneath, which is the
+    // same one the canvas draws for a token without a picture.
+    ui.artPreview.style.backgroundImage = art === '' ? 'none' : `url("${art}")`;
+    ui.artClear.hidden = art === '';
+  };
+
+  /** Puts a token into the form, or clears it back to a token-to-be. */
+  const show = (token: Token | null): void => {
+    ui.name.value = token?.name ?? '';
+    ui.size.value = String(token?.size ?? 1);
+    ui.owner.value = token === null ? DM_OWNER : ownerValue(token.owner);
+    art = token?.img ?? '';
+
+    ui.head.textContent = token === null ? 'New token' : token.name;
+    ui.save.textContent = token === null ? 'create' : 'save';
+    ui.remove.hidden = token === null;
+    ui.fresh.hidden = token === null;
+    ui.hint.textContent =
+      token === null ? 'Click a token on the map to edit it.' : 'Drag it on the map to move it.';
+    showArt();
+  };
+
+  function select(id: string | null): void {
+    selectedId = id;
+    show(selected());
+  }
+
+  ui.fresh.addEventListener('click', () => {
+    select(null);
+    ui.name.focus();
+  });
+
+  // --- saving ---------------------------------------------------------------
+
+  const size = (): number => Number(ui.size.value);
+
+  const owner = (): Owner =>
+    ui.owner.value === DM_OWNER ? { kind: 'dm' } : { kind: 'player', id: ui.owner.value };
+
+  const save = (): void => {
+    const name = ui.name.value.trim();
+    if (name === '') {
+      report('a token needs a name');
+      ui.name.focus();
+      return;
+    }
+
+    const token = selected();
+    if (token !== null) {
+      send({ type: 'update_token', id: token.id, name, img: art, size: size(), owner: owner() });
+      return;
+    }
+
+    const at = spaceFor(scene, viewCentre());
+    if (at === null) {
+      report('the board is still loading');
+      return;
+    }
+    send({ type: 'create_token', name, img: art, size: size(), owner: owner(), x: at.x, y: at.y });
+    // Deliberately stays on "new token" with the fields as they are: six
+    // goblins is six clicks, and `spaceFor` puts each one in its own cell.
+    ui.name.select();
+  };
+
+  ui.save.addEventListener('click', save);
+
+  // Enter anywhere in the form saves, so a name can be typed and committed
+  // without reaching for the mouse.
+  const saveOnEnter = (e: KeyboardEvent): void => {
+    if (e.key === 'Enter') save();
+  };
+  ui.name.addEventListener('keydown', saveOnEnter);
+  ui.size.addEventListener('keydown', saveOnEnter);
+  ui.owner.addEventListener('keydown', saveOnEnter);
+
+  ui.remove.addEventListener('click', () => {
+    const token = selected();
+    if (token === null) return;
+    // A deleted token takes its initiative row with it and there is no undo.
+    if (!window.confirm(`Delete ${token.name}?`)) return;
+    send({ type: 'delete_token', id: token.id });
+    select(null);
+  });
+
+  // --- art ------------------------------------------------------------------
+
+  ui.artClear.addEventListener('click', () => {
+    art = '';
+    showArt();
+  });
+
+  ui.art.addEventListener('change', () => {
+    const file = ui.art.files?.[0];
+    // Cleared so that picking the same file twice still fires a change event.
+    ui.art.value = '';
+    if (file !== undefined) void upload(file);
+  });
+
+  async function upload(file: File): Promise<void> {
+    ui.root.classList.add('is-busy');
+    ui.artText.textContent = 'uploading…';
+    try {
+      const response = await fetch('/api/token', {
+        method: 'POST',
+        headers: { 'x-slate-dm-secret': dmSecret },
+        body: file,
+      });
+      const body = await response.text();
+      if (!response.ok) throw new Error(body || `upload failed (${response.status})`);
+
+      art = (JSON.parse(body) as { url: string }).url;
+      showArt();
+      // Uploading art for a token that already exists is almost always meant to
+      // be that token's art now, rather than something to press save for.
+      if (selected() !== null) save();
+    } catch (err) {
+      report(err instanceof Error ? err.message : 'could not upload that image');
+    } finally {
+      ui.root.classList.remove('is-busy');
+      ui.artText.textContent = 'upload art…';
+    }
+  }
+
+  return {
+    get selectedId() {
+      return selectedId;
+    },
+
+    select,
+
+    update(next) {
+      scene = next;
+      const token = selected();
+
+      // A token deleted out from under the panel — by this DM on another tab,
+      // or by this one — leaves the form describing something that is gone.
+      if (selectedId !== null && token === null) {
+        select(null);
+        return;
+      }
+
+      // Only the heading, never the fields. The heading names the token as the
+      // server has it, so a rename has to reach it; the fields hold what the DM
+      // has typed but not yet saved, and reloading those would eat the edit.
+      if (token !== null) ui.head.textContent = token.name;
+    },
+  };
+}
+
+function option(value: string, label: string): HTMLOptionElement {
+  const element = document.createElement('option');
+  element.value = value;
+  element.textContent = label;
+  return element;
+}
+
+function ownerValue(owner: Owner): string {
+  return owner.kind === 'player' ? owner.id : DM_OWNER;
+}
+
+/**
+ * Where a new token should go: the middle of the DM's view, stepped aside if
+ * something is already standing there.
+ *
+ * Without this, building six goblins in a row makes one goblin-shaped stack and
+ * five invisible tokens underneath it. The offsets are whole cells, so the
+ * server's snapping — which the client deliberately does not duplicate — cannot
+ * fold two of them back onto each other.
+ */
+function spaceFor(scene: Scene | null, centre: Vec2 | null): Vec2 | null {
+  if (scene === null || centre === null) return null;
+
+  const taken = (x: number, y: number): boolean =>
+    scene.tokens.some((t) => Math.abs(t.x - x) < 0.5 && Math.abs(t.y - y) < 0.5);
+
+  for (let ring = 0; ring <= MAX_SEARCH_RINGS; ring++) {
+    for (let dx = -ring; dx <= ring; dx++) {
+      for (let dy = -ring; dy <= ring; dy++) {
+        // Only the perimeter: the inside of this ring was searched already.
+        if (Math.abs(dx) !== ring && Math.abs(dy) !== ring) continue;
+        if (!taken(centre.x + dx, centre.y + dy)) {
+          return { x: centre.x + dx, y: centre.y + dy };
+        }
+      }
+    }
+  }
+
+  // Everything nearby is occupied. Stacking beats refusing to make the token.
+  return centre;
+}

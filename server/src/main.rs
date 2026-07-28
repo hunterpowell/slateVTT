@@ -27,6 +27,9 @@ use crate::room::RoomHandle;
 /// Big enough for a detailed battle map, small enough that a mistyped upload
 /// cannot fill the disk. axum's own default is 2 MB, which most maps exceed.
 const MAX_MAP_BYTES: usize = 25 * 1024 * 1024;
+/// Token art is drawn inside a circle a cell wide. Anything approaching this is
+/// already far more image than the board can show.
+const MAX_TOKEN_BYTES: usize = 4 * 1024 * 1024;
 /// Protocol frames are tiny JSON commands. Keeping this bounded prevents a
 /// public WebSocket from using one frame to reserve an unreasonable buffer.
 const MAX_WS_MESSAGE_BYTES: usize = 16 * 1024;
@@ -110,9 +113,16 @@ async fn main() {
 
     let app = Router::new()
         .route("/ws", get(ws_handler))
+        // One handler, two routes. A map and a token portrait are the same
+        // operation — prove some bytes are an image, give them a name of ours —
+        // and differ only in how large they are allowed to be.
         .route(
             "/api/map",
-            post(upload_map).layer(DefaultBodyLimit::max(MAX_MAP_BYTES)),
+            post(upload_image).layer(DefaultBodyLimit::max(MAX_MAP_BYTES)),
+        )
+        .route(
+            "/api/token",
+            post(upload_image).layer(DefaultBodyLimit::max(MAX_TOKEN_BYTES)),
         )
         .route("/api/maps", get(list_maps))
         .route("/api/maps/pick", post(pick_map))
@@ -313,25 +323,26 @@ async fn pick_map(
     }))
 }
 
-/// Stores an uploaded image and reports the URL it is now served at.
+/// Stores an uploaded image — a map or a token's portrait — and reports the URL
+/// it is now served at.
 ///
 /// It deliberately does not touch the room. The DM's client follows this with a
-/// `set_map`, so the change that players actually see goes through the same
-/// permission check, event pipeline and visibility filter as everything else,
-/// rather than getting a private back door into `RoomState`.
-async fn upload_map(
+/// `set_map` or a `create_token`, so the change that players actually see goes
+/// through the same permission check, event pipeline and visibility filter as
+/// everything else, rather than getting a private back door into `RoomState`.
+async fn upload_image(
     State(state): State<AppState>,
     headers: HeaderMap,
     body: Bytes,
 ) -> Result<Json<UploadedMap>, (StatusCode, String)> {
     if !is_dm(&state, &headers) {
-        return Err(not_the_dm("change the map"));
+        return Err(not_the_dm("upload images"));
     }
 
     let Some(extension) = image_format(&body) else {
         return Err((
             StatusCode::UNSUPPORTED_MEDIA_TYPE,
-            "a map must be a PNG, JPEG or WebP image".to_owned(),
+            "that has to be a PNG, JPEG or WebP image".to_owned(),
         ));
     };
 
@@ -341,14 +352,14 @@ async fn upload_map(
     let path = state.uploads.join(&name);
 
     fs::write(&path, &body).await.map_err(|err| {
-        error!(%err, path = %path.display(), "could not store the uploaded map");
+        error!(%err, path = %path.display(), "could not store the uploaded image");
         (
             StatusCode::INTERNAL_SERVER_ERROR,
-            "could not store that map".to_owned(),
+            "could not store that image".to_owned(),
         )
     })?;
 
-    info!(%name, bytes = body.len(), "stored an uploaded map");
+    info!(%name, bytes = body.len(), "stored an uploaded image");
     Ok(Json(UploadedMap {
         url: format!("/uploads/{name}"),
     }))

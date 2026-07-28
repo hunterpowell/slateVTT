@@ -174,6 +174,9 @@ mod tests {
                 y: 12.5,
                 owner: Owner::Player(PlayerId::new("grog")),
                 img: "/assets/tokens/grog.png".to_owned(),
+                // Odd, so the position above is a cell centre the snapping rule
+                // would actually produce for a token this wide.
+                size: 3.0,
             }],
             initiative: Initiative {
                 entries: vec![InitiativeEntry {
@@ -221,6 +224,7 @@ mod tests {
         // Invariant 1: grid units on the wire, on disk, everywhere but render.
         assert_eq!((token.x, token.y), (3.5, 12.5));
         assert_eq!(token.owner, Owner::Player(PlayerId::new("grog")));
+        assert_eq!(token.size, 3.0);
 
         assert_eq!(loaded.initiative.round, 4);
         assert_eq!(loaded.initiative.current, Some(TokenId::new("t1")));
@@ -317,6 +321,11 @@ mod tests {
             token.owner,
             Owner::Dm,
             "an ownerless token fails closed, not open"
+        );
+        assert_eq!(
+            token.size, 1.0,
+            "a token saved before sizes existed must be one cell, never zero — \
+             a zero-radius token is invisible and cannot be grabbed back"
         );
 
         assert_eq!(

@@ -32,7 +32,10 @@ export interface WireToken {
   x: number;
   y: number;
   owner: Owner;
+  /** Site-relative, or empty for a token the client draws as a named disc. */
   img: string;
+  /** Width and height in grid cells. One of 0.5, 1, 2, 3, 4 — see TOKEN_SIZES. */
+  size: number;
 }
 
 export interface InitiativeEntry {
@@ -61,6 +64,11 @@ export interface RosterSlot {
   claimed: boolean;
 }
 
+export interface RosterEntry {
+  id: string;
+  name: string;
+}
+
 export interface Welcome {
   type: 'welcome';
   your_id: number;
@@ -68,6 +76,9 @@ export interface Welcome {
   /** null for the DM, who occupies no roster slot. */
   player_id: string | null;
   state: WireRoomView;
+  /** The cast list, so the DM's token panel can offer players by name. Not who
+   *  is connected — that is `RosterSlot`, and only the picker cares. */
+  roster: RosterEntry[];
 }
 
 export interface TokenMoved {
@@ -82,6 +93,9 @@ export type ServerMsg =
   | { type: 'choose_identity'; roster: RosterSlot[] }
   | Welcome
   | TokenMoved
+  /** Created or edited — an id we have never seen is the creation. */
+  | { type: 'token_changed'; token: WireToken }
+  | { type: 'token_removed'; id: string }
   | { type: 'map_changed'; map: WireMapInfo }
   | { type: 'initiative_changed'; initiative: Initiative }
   | { type: 'error'; message: string };
@@ -99,6 +113,11 @@ export type ClientMsg =
       grid_color: string;
       play_area: WireRect | null;
     }
+  /** DM-only. No id: the server invents it. */
+  | { type: 'create_token'; name: string; img: string; size: number; owner: Owner; x: number; y: number }
+  /** DM-only. Every editable field at once; position is `move_token`'s alone. */
+  | { type: 'update_token'; id: string; name: string; img: string; size: number; owner: Owner }
+  | { type: 'delete_token'; id: string }
   | { type: 'set_initiative'; token: string; value: number }
   | { type: 'remove_from_initiative'; token: string }
   | { type: 'clear_initiative' }

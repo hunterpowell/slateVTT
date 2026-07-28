@@ -30,6 +30,9 @@ const TOKEN_RIM = 'rgba(0, 0, 0, 0.55)';
 /** Yours. Warm, so it never reads as the blue "being dragged" state. */
 const OWNED_RING = 'rgba(240, 212, 140, 0.9)';
 const DRAG_RING = 'rgba(120, 190, 255, 0.95)';
+/** The token the DM's panel is editing. Dashed, so it cannot be mistaken for
+ *  ownership or for whose turn it is — both of which are solid rings. */
+const SELECTED_RING = 'rgba(120, 190, 255, 0.9)';
 /** Acting this turn. Neutral white, so it reads against every token hue and
  *  never competes with the ownership ring it sits outside of. */
 const TURN_RING = 'rgba(255, 255, 255, 0.95)';
@@ -52,8 +55,11 @@ export interface Frame {
   scene: Scene;
   identity: Identity;
   map: HTMLImageElement;
+  /** Token art, keyed by image URL — see `loadArt` in main.ts. */
   tokenImages: Map<string, HTMLImageElement>;
   draggingId: string | null;
+  /** The token the DM has selected for editing. Null for everyone else. */
+  selectedId: string | null;
   /** Token acting this turn, or null when combat is not running. */
   currentTurn: string | null;
   /** The DM's in-progress grid reference box. Null for everyone else. */
@@ -177,12 +183,14 @@ function haloFor(color: string): string | null {
 }
 
 function drawTokens(ctx: CanvasRenderingContext2D, frame: Frame): void {
-  const { scene, tokenImages, draggingId, cam, identity, currentTurn } = frame;
-  const radius = scene.grid.px / 2;
+  const { scene, tokenImages, draggingId, cam, identity, currentTurn, selectedId } = frame;
 
   for (const token of scene.tokens) {
+    // Per token, not per map: a token is `size` cells across, so a 2×2 fills
+    // the four cells its centre sits at the corner of.
+    const radius = (scene.grid.px * token.size) / 2;
     const centre = gridToWorld(scene.grid, token.x, token.y);
-    const img = tokenImages.get(token.id);
+    const img = tokenImages.get(token.img);
 
     ctx.save();
 
@@ -224,6 +232,19 @@ function drawTokens(ctx: CanvasRenderingContext2D, frame: Frame): void {
       ctx.lineWidth = 3 / cam.zoom;
       ctx.strokeStyle = TURN_RING;
       ctx.stroke();
+    }
+
+    // Further out again, and dashed. Only the DM ever has a selection, and it
+    // has to survive being drawn on a token that is also owned and also acting.
+    if (token.id === selectedId) {
+      ctx.save();
+      ctx.beginPath();
+      ctx.arc(centre.x, centre.y, radius + 10 / cam.zoom, 0, TAU);
+      ctx.lineWidth = 1.5 / cam.zoom;
+      ctx.strokeStyle = SELECTED_RING;
+      ctx.setLineDash([5 / cam.zoom, 4 / cam.zoom]);
+      ctx.stroke();
+      ctx.restore();
     }
   }
 }
@@ -276,7 +297,6 @@ function drawCalibration(
  */
 function drawLabels(ctx: CanvasRenderingContext2D, frame: Frame): void {
   const { scene, cam } = frame;
-  const radius = scene.grid.px / 2;
 
   ctx.font = '600 12px ui-sans-serif, system-ui, sans-serif';
   ctx.textAlign = 'center';
@@ -288,7 +308,8 @@ function drawLabels(ctx: CanvasRenderingContext2D, frame: Frame): void {
 
   for (const token of scene.tokens) {
     const centre = gridToWorld(scene.grid, token.x, token.y);
-    const p = worldToScreen(cam, centre.x, centre.y + radius);
+    // Under the token's own edge, so a name does not land inside a big one.
+    const p = worldToScreen(cam, centre.x, centre.y + (scene.grid.px * token.size) / 2);
     ctx.strokeText(token.name, p.x, p.y + 4);
     ctx.fillText(token.name, p.x, p.y + 4);
   }

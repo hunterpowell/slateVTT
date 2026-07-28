@@ -100,8 +100,9 @@ export function createPanel(
 
       if (isDm) {
         // Only rebuild the dropdown when the token list itself changes, so a
-        // half-made selection survives every turn advance.
-        const ids = scene.tokens.map((t) => t.id).join(',');
+        // half-made selection survives every turn advance. Names are part of
+        // that: renaming a token has to reach the option that shows it.
+        const ids = scene.tokens.map((t) => `${t.id}:${t.name}`).join(',');
         if (ids !== knownTokenIds) {
           knownTokenIds = ids;
           ui.tokenSelect.replaceChildren(

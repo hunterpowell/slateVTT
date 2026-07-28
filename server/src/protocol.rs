@@ -153,7 +153,7 @@ impl Calibration {
     }
 }
 
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Token {
     pub id: TokenId,
@@ -162,7 +162,34 @@ pub struct Token {
     pub x: f32,
     pub y: f32,
     pub owner: Owner,
+    /// Site-relative, or empty for a token with no art. Empty is a legitimate
+    /// state, not a missing one: the client draws a named disc, so the sixth
+    /// goblin of the evening costs the DM nothing.
     pub img: String,
+    /// Width and height in grid cells. One cell unless the DM says otherwise.
+    ///
+    /// Nothing here knows the words "large" or "huge" — that would be rules
+    /// knowledge. It is a count of squares, and the only thing it changes
+    /// besides the drawing is where the token settles: see `snap_to_cell`.
+    pub size: f32,
+}
+
+impl Default for Token {
+    /// Hand-written for `size` alone. The derived `Default` would make it zero,
+    /// and the container-level `#[serde(default)]` above means every token saved
+    /// before this field existed would load at zero — drawn with no radius, and
+    /// so invisible and impossible to grab. Same trap `MapInfo::grid_px` avoids.
+    fn default() -> Self {
+        Self {
+            id: TokenId::default(),
+            name: String::new(),
+            x: 0.0,
+            y: 0.0,
+            owner: Owner::default(),
+            img: String::new(),
+            size: 1.0,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -240,6 +267,33 @@ pub enum ClientMsg {
         dragging: bool,
     },
 
+    // The token lifecycle. All DM-only, including `owner` — handing a player a
+    // token the DM built is how a wild shape reaches the table.
+    /// Carries no id: that is the server's to invent, so two DMs on two tabs
+    /// cannot propose the same one.
+    CreateToken {
+        name: String,
+        img: String,
+        size: f32,
+        owner: Owner,
+        /// Where it lands, in grid units. Snapped like any other drop.
+        x: f32,
+        y: f32,
+    },
+    /// Every editable field at once, the way `SetMap` carries the whole grid.
+    /// Position is deliberately absent — `MoveToken` owns that, and an edit made
+    /// from a panel must not drag a token out from under whoever is moving it.
+    UpdateToken {
+        id: TokenId,
+        name: String,
+        img: String,
+        size: f32,
+        owner: Owner,
+    },
+    DeleteToken {
+        id: TokenId,
+    },
+
     /// The map image and its grid, in one command. DM-only.
     ///
     /// Uploading a new map and calibrating the grid on the current one are the
@@ -287,12 +341,33 @@ pub enum ServerMsg {
         /// `None` for the DM, who occupies no roster slot.
         player_id: Option<PlayerId>,
         state: RoomView,
+        /// Who the DM can hand a token to.
+        ///
+        /// Not on `RoomView`, and deliberately not `RosterSlot`: this is the
+        /// cast list, not who is connected, so there is nothing here to go
+        /// stale between deltas. A player is sent it too — they were offered
+        /// the same names by the picker — so it is not a filtered field
+        /// pretending to be one.
+        roster: Vec<RosterEntry>,
     },
     TokenMoved {
         id: TokenId,
         x: f32,
         y: f32,
         dragging: bool,
+    },
+    /// A token that was created or edited — one message for both, because the
+    /// client's answer to each is the same: take this token as the truth for
+    /// this id. A `TokenChanged` for an id the client has never seen is the
+    /// creation, and no separate `TokenAdded` has to be kept in step with it.
+    TokenChanged {
+        token: Token,
+    },
+    /// Deleted. Also what a token *becoming invisible to this client* will send
+    /// once tokens can be hidden — which is the whole reason the room's `Event`
+    /// carries an id and this carries a token.
+    TokenRemoved {
+        id: TokenId,
     },
     /// The whole `MapInfo`, for the same reason `InitiativeChanged` carries the
     /// whole panel: it is four fields and only a deliberate DM action moves it.

@@ -555,6 +555,113 @@
       #map-readout.is-preview {
         color: #cfe6ff;
       }
+
+      /* --- token tool (DM only) -------------------------------------------- */
+
+      /* Under the map panel, which is 190px wide and pinned to the same edge.
+         `bottom` rather than a fixed height: the map panel grows when the
+         library or the calibration row opens, and this must not be pushed
+         under the HUD when it does. */
+      #tokentool {
+        position: fixed;
+        top: 340px;
+        bottom: 46px;
+        left: 12px;
+        width: 190px;
+        box-sizing: border-box;
+        padding: 10px;
+        overflow-y: auto;
+        border-radius: 6px;
+        background: rgba(12, 14, 18, 0.88);
+        color: #d8d2c4;
+        font-size: 13px;
+        user-select: none;
+      }
+
+      #tokentool.is-busy {
+        opacity: 0.6;
+        pointer-events: none;
+      }
+
+      #token-head {
+        margin-bottom: 8px;
+        font-weight: 600;
+        /* A long token name must not widen the panel. */
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+      }
+
+      .token-field {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        margin-bottom: 5px;
+        color: #8d939c;
+        font-size: 12px;
+      }
+
+      .token-field > span {
+        width: 40px;
+        flex: none;
+      }
+
+      .token-field input,
+      .token-field select {
+        flex: 1;
+        min-width: 0;
+        padding: 3px 4px;
+        border: 1px solid #2b3038;
+        border-radius: 4px;
+        background: #171a1f;
+        color: #d8d2c4;
+        font: inherit;
+        font-size: 12px;
+      }
+
+      .token-art {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        margin: 8px 0;
+      }
+
+      /* Grey underneath, so a token with no art previews as the same disc the
+         canvas draws for it rather than as an empty box. */
+      .token-art-preview {
+        width: 30px;
+        height: 30px;
+        flex: none;
+        border: 1px solid #2b3038;
+        border-radius: 50%;
+        background-color: #5a6472;
+        background-position: center;
+        background-size: cover;
+      }
+
+      .token-art .map-button {
+        margin-bottom: 0;
+      }
+
+      .token-actions {
+        display: flex;
+        gap: 5px;
+      }
+
+      .token-actions .map-button {
+        margin-bottom: 0;
+      }
+
+      #token-delete {
+        flex: none;
+        width: auto;
+        color: #c98080;
+      }
+
+      #token-delete:hover {
+        border-color: #7a2f2f;
+        color: #f4c4c4;
+      }
     </style>
   </head>
   <body>
@@ -627,6 +734,47 @@
         <span id="map-alpha-label">32%</span>
       </div>
       <div id="map-readout"></div>
+    </aside>
+    <aside id="tokentool" hidden>
+      <div id="token-head">New token</div>
+      <label class="token-field">
+        <span>name</span>
+        <input id="token-name" type="text" maxlength="48" placeholder="Goblin" />
+      </label>
+      <label class="token-field">
+        <span>size</span>
+        <select id="token-size">
+          <!-- Cells across, not creature sizes. What "large" means is a rule. -->
+          <option value="0.5">half a cell</option>
+          <option value="1" selected>1 cell</option>
+          <option value="2">2 cells</option>
+          <option value="3">3 cells</option>
+          <option value="4">4 cells</option>
+        </select>
+      </label>
+      <label class="token-field">
+        <span>owner</span>
+        <select id="token-owner"></select>
+      </label>
+      <div class="token-art">
+        <span id="token-art-preview" class="token-art-preview"></span>
+        <label class="map-button">
+          <input
+            id="token-art"
+            type="file"
+            accept="image/png,image/jpeg,image/webp"
+            hidden
+          />
+          <span id="token-art-text">upload art…</span>
+        </label>
+      </div>
+      <button id="token-art-clear" class="map-subtle" type="button" hidden>remove art</button>
+      <div class="token-actions">
+        <button id="token-save" class="map-button map-primary" type="button">create</button>
+        <button id="token-delete" class="map-button" type="button" hidden>delete</button>
+      </div>
+      <button id="token-new" class="map-subtle" type="button" hidden>+ new token</button>
+      <p class="map-hint" id="token-hint">Click a token on the map to edit it.</p>
     </aside>
     <div id="hud"></div>
     <div id="hint">drag token to move · drag map or middle-drag to pan · wheel to zoom</div>

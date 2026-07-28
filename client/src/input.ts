@@ -15,7 +15,7 @@ const LINE_HEIGHT_PX = 16;
 const DRAG_SEND_INTERVAL_MS = 40;
 
 type Drag =
-  | { kind: 'pan'; pointerId: number; lastX: number; lastY: number }
+  | { kind: 'pan'; pointerId: number; lastX: number; lastY: number; moved: boolean }
   | { kind: 'token'; pointerId: number; token: Token; grabDX: number; grabDY: number }
   | { kind: 'calibrate'; pointerId: number; x0: number; y0: number };
 
@@ -51,6 +51,11 @@ export function attachInput(
   send: (msg: ClientMsg) => void,
   /** The DM's calibration tool. Null for players, who have no such mode. */
   calibration: Calibration | null,
+  /**
+   * Told which token the DM has picked up, or null when a click lands on empty
+   * map. Null for players, who have nothing to select tokens for.
+   */
+  onSelect: ((id: string | null) => void) | null,
 ): InputState {
   let drag: Drag | null = null;
   let lastDragSentAt = 0;
@@ -128,10 +133,11 @@ export function attachInput(
       const g = worldToGrid(scene.grid, w.x, w.y);
       drag = { kind: 'token', pointerId: e.pointerId, token: hit, grabDX: hit.x - g.x, grabDY: hit.y - g.y };
       state.draggingId = hit.id;
+      onSelect?.(hit.id);
       cancelTrailingSend();
       lastDragSentAt = 0; // let the first move through immediately
     } else {
-      drag = { kind: 'pan', pointerId: e.pointerId, lastX: p.x, lastY: p.y };
+      drag = { kind: 'pan', pointerId: e.pointerId, lastX: p.x, lastY: p.y, moved: false };
     }
 
     canvas.setPointerCapture(e.pointerId);
@@ -158,6 +164,7 @@ export function attachInput(
       // Panning is purely local — the camera is not shared state.
       cam.x -= (p.x - drag.lastX) / cam.zoom;
       cam.y -= (p.y - drag.lastY) / cam.zoom;
+      if (p.x !== drag.lastX || p.y !== drag.lastY) drag.moved = true;
       drag.lastX = p.x;
       drag.lastY = p.y;
       return;
@@ -186,6 +193,10 @@ export function attachInput(
       // Not a commit — the tool keeps the box so the cell count can be tuned
       // against it, and stays in calibrate mode until the DM applies.
       calibration?.release({ x0: drag.x0, y0: drag.y0, x1: w.x, y1: w.y });
+    } else if (!drag.moved) {
+      // A click on empty map, as opposed to a pan. Panning is constant, so
+      // losing the selection every time the board moves would be maddening.
+      onSelect?.(null);
     }
 
     drag = null;
@@ -227,11 +238,11 @@ export function attachInput(
  * your own.
  */
 function tokenAt(scene: Scene, identity: Identity, wx: number, wy: number): Token | null {
-  const radius = scene.grid.px / 2;
   for (let i = scene.tokens.length - 1; i >= 0; i--) {
     const token = scene.tokens[i];
     if (token === undefined) continue;
     if (!canMove(identity, token)) continue;
+    const radius = (scene.grid.px * token.size) / 2;
     const centre = gridToWorld(scene.grid, token.x, token.y);
     if (Math.hypot(wx - centre.x, wy - centre.y) <= radius) return token;
   }

@@ -1,4 +1,5 @@
-import type { Camera } from './coords.js';
+import type { Camera, Vec2 } from './coords.js';
+import { screenToWorld, worldToGrid } from './coords.js';
 import type { Identity } from './identity.js';
 import {
   ANONYMOUS,
@@ -19,7 +20,9 @@ import type { ClientMsg, Initiative, TokenMoved, WireToken } from './protocol.js
 import type { Viewport } from './render.js';
 import { render } from './render.js';
 import type { Scene } from './scene.js';
-import { sceneFromView } from './scene.js';
+import { removeToken, sceneFromView, upsertToken } from './scene.js';
+import type { TokenTool } from './tokens.js';
+import { createTokenTool } from './tokens.js';
 
 interface Ui {
   canvas: HTMLCanvasElement;
@@ -62,6 +65,21 @@ interface Ui {
     alpha: HTMLInputElement;
     alphaLabel: HTMLElement;
     readout: HTMLElement;
+  };
+  tokentool: {
+    root: HTMLElement;
+    head: HTMLElement;
+    name: HTMLInputElement;
+    size: HTMLSelectElement;
+    owner: HTMLSelectElement;
+    art: HTMLInputElement;
+    artText: HTMLElement;
+    artPreview: HTMLElement;
+    artClear: HTMLButtonElement;
+    save: HTMLButtonElement;
+    remove: HTMLButtonElement;
+    fresh: HTMLButtonElement;
+    hint: HTMLElement;
   };
 }
 
@@ -119,6 +137,21 @@ function findUi(): Ui {
       alphaLabel: need('#map-alpha-label'),
       readout: need('#map-readout'),
     },
+    tokentool: {
+      root: need('#tokentool'),
+      head: need('#token-head'),
+      name: need<HTMLInputElement>('#token-name'),
+      size: need<HTMLSelectElement>('#token-size'),
+      owner: need<HTMLSelectElement>('#token-owner'),
+      art: need<HTMLInputElement>('#token-art'),
+      artText: need('#token-art-text'),
+      artPreview: need('#token-art-preview'),
+      artClear: need<HTMLButtonElement>('#token-art-clear'),
+      save: need<HTMLButtonElement>('#token-save'),
+      remove: need<HTMLButtonElement>('#token-delete'),
+      fresh: need<HTMLButtonElement>('#token-new'),
+      hint: need('#token-hint'),
+    },
   };
 }
 
@@ -137,6 +170,7 @@ function boot(): void {
   let room: Room | null = null;
   let panel: Panel | null = null;
   let mapTool: MapTool | null = null;
+  let tokenTool: TokenTool | null = null;
   let stage: Stage | null = null;
   let identity: Identity = ANONYMOUS;
 
@@ -149,6 +183,16 @@ function boot(): void {
     forgetPlayerId();
     location.reload();
   });
+
+  /**
+   * Everything that reads the token list, once that list has changed. The
+   * initiative panel names its rows from it, and the DM's token panel may have
+   * been editing a token that no longer exists.
+   */
+  const afterTokens = (current: Room): void => {
+    panel?.update(current.initiative, current.scene);
+    tokenTool?.update(current.scene);
+  };
 
   const net: Net = connect({
     onOpen: () => {
@@ -190,9 +234,22 @@ function boot(): void {
         );
         mapTool.update(room.scene);
         ui.maptool.root.hidden = false;
+
+        tokenTool = createTokenTool(
+          ui.tokentool,
+          dmSecret,
+          welcome.roster,
+          (msg) => net.send(msg),
+          (message) => flash(ui.banner, message),
+          // Lazily, for the same reason: a new token goes wherever the DM is
+          // looking, and the camera does not exist yet.
+          () => stage?.viewCentre() ?? null,
+        );
+        tokenTool.update(room.scene);
+        ui.tokentool.root.hidden = false;
       }
 
-      void start(ui, room, identity, (msg) => net.send(msg), mapTool).then(
+      void start(ui, room, identity, (msg) => net.send(msg), mapTool, tokenTool).then(
         (started) => {
           stage = started;
         },
@@ -209,6 +266,21 @@ function boot(): void {
       // us, so this is either someone else's move or our own settled drop.
       token.x = move.x;
       token.y = move.y;
+    },
+
+    onTokenChanged: (wire) => {
+      if (room === null) return;
+      // An id this client has not seen is the creation; anything else is an
+      // edit. Either way the server's copy replaces whatever we had.
+      upsertToken(room.scene, wire);
+      stage?.loadArt();
+      afterTokens(room);
+    },
+
+    onTokenRemoved: (id) => {
+      if (room === null) return;
+      removeToken(room.scene, id);
+      afterTokens(room);
     },
 
     onMapChanged: (map) => {
@@ -277,8 +349,12 @@ interface Stage {
    * first moment its pixel dimensions are known.
    */
   reloadMap(onLoaded?: () => void): void;
+  /** Fetches art for any token whose image is not in hand yet. */
+  loadArt(): void;
   /** Pixel size of the map image currently on screen. */
   naturalSize(): { width: number; height: number };
+  /** Middle of the viewport, in grid units. Where a new token goes. */
+  viewCentre(): Vec2;
 }
 
 async function start(
@@ -287,25 +363,48 @@ async function start(
   identity: Identity,
   send: (msg: ClientMsg) => void,
   mapTool: MapTool | null,
+  tokenTool: TokenTool | null,
 ): Promise<Stage> {
   const { scene } = room;
   const firstUrl = scene.mapUrl;
   let map = await loadImage(firstUrl);
 
-  // Portraits stream in; render.ts draws a placeholder disc for any that have
-  // not arrived, so a slow or broken image never blocks the map.
+  // Keyed by URL rather than by token, so re-arting a token finds the new
+  // picture and two goblins sharing a portrait share one download. Portraits
+  // stream in; render.ts draws a placeholder disc for any that have not
+  // arrived, so a slow or broken image never blocks the map.
   const tokenImages = new Map<string, HTMLImageElement>();
-  for (const token of scene.tokens) {
-    loadImage(token.img).then(
-      (img) => tokenImages.set(token.id, img),
-      (err: unknown) => console.warn(`token ${token.id}:`, err),
-    );
-  }
+  // Only holds *loaded* images, so the renderer can draw anything it finds
+  // there. What is merely in flight is tracked separately.
+  const requested = new Set<string>();
+  const loadArt = (): void => {
+    for (const token of scene.tokens) {
+      // Empty is a token the DM gave no art; there is nothing to fetch.
+      if (token.img === '' || requested.has(token.img)) continue;
+      const url = token.img;
+      requested.add(url);
+      loadImage(url).then(
+        (img) => tokenImages.set(url, img),
+        // A broken URL leaves the placeholder disc, which is still a token
+        // everyone can see and the DM can drag.
+        (err: unknown) => console.warn(err),
+      );
+    }
+  };
+  loadArt();
 
   const cam: Camera = { x: 0, y: 0, zoom: 1 };
   fitToMap(cam, syncCanvasSize(ui.canvas), map.width, map.height);
 
-  const input = attachInput(ui.canvas, cam, scene, identity, send, mapTool);
+  const input = attachInput(
+    ui.canvas,
+    cam,
+    scene,
+    identity,
+    send,
+    mapTool,
+    tokenTool === null ? null : (id) => tokenTool.select(id),
+  );
 
   const stage: Stage = {
     reloadMap(onLoaded) {
@@ -323,7 +422,13 @@ async function start(
         (err: unknown) => console.warn(err),
       );
     },
+    loadArt,
     naturalSize: () => ({ width: map.width, height: map.height }),
+    viewCentre: () => {
+      const view = syncCanvasSize(ui.canvas);
+      const w = screenToWorld(cam, view.width / 2, view.height / 2);
+      return worldToGrid(scene.grid, w.x, w.y);
+    },
   };
 
   let lastHud = '';
@@ -336,6 +441,7 @@ async function start(
       map,
       tokenImages,
       draggingId: input.draggingId,
+      selectedId: tokenTool?.selectedId ?? null,
       currentTurn: room.initiative.current,
       calibration:
         mapTool !== null && mapTool.box !== null

@@ -12,6 +12,7 @@ use std::time::Duration;
 use tokio::sync::{mpsc, oneshot};
 use tokio::time::{Instant, sleep_until};
 use tracing::{debug, error, warn};
+use uuid::Uuid;
 
 use crate::protocol::{
     Calibration, ClientId, ClientMsg, Initiative, InitiativeEntry, MapInfo, Owner, PlayerId,
@@ -40,6 +41,20 @@ const MAX_URL_LEN: usize = 512;
 /// Larger than any real map image, and small enough that the client cannot be
 /// asked to rule an unbounded number of grid lines.
 const MAX_MAP_PX: f32 = 32768.0;
+
+/// Long enough for "Goblin Archer (bloodied)", short enough that the label
+/// drawn under the token stays a label.
+const MAX_TOKEN_NAME_LEN: usize = 48;
+/// The sizes a token may be, in grid cells. A closed set rather than a range
+/// because the snapping rule is defined per size, and because a dropdown of five
+/// entries is a better answer to "how big is it" than a number field.
+///
+/// The half is for a druid who is currently a rat. It snaps like a single-cell
+/// token and is simply drawn smaller — see `snap_to_cell`.
+const TOKEN_SIZES: [f32; 5] = [0.5, 1.0, 2.0, 3.0, 4.0];
+/// Bounds the save file, and is far past a battle anyone runs. A DM who hits
+/// this has a room that wants clearing out rather than one more goblin.
+const MAX_TOKENS: usize = 200;
 
 /// Five players plus the DM, per the brief. The DM holds no slot.
 const ROSTER: [(&str, &str); 5] = [
@@ -102,6 +117,12 @@ enum Event {
         y: f32,
         dragging: bool,
     },
+    /// A token was created or edited. Carries only the id, so `message_for`
+    /// reads the token off `&self` per recipient — the seam where a hidden
+    /// token will become a `TokenRemoved` for the players and a `TokenChanged`
+    /// for the DM, from this one event.
+    TokenChanged { id: TokenId },
+    TokenRemoved { id: TokenId },
     /// Carries no payload on purpose: `message_for` has `&self` and builds the
     /// panel per recipient. That is the seam where fog of war will one day hide
     /// an unseen monster's row from the players.
@@ -334,14 +355,19 @@ async fn flush(state: &RoomState, store: &Store) -> Option<Instant> {
 fn persists(event: &Event) -> bool {
     match event {
         Event::TokenMoved { dragging, .. } => !dragging,
-        Event::InitiativeChanged | Event::MapChanged => true,
+        Event::TokenChanged { .. }
+        | Event::TokenRemoved { .. }
+        | Event::InitiativeChanged
+        | Event::MapChanged => true,
     }
 }
 
-fn require_dm(client: &Client) -> Result<(), String> {
+/// `what` completes "only the DM can …", so the refusal names the thing that
+/// was refused rather than making the player guess which rule they hit.
+fn require_dm(client: &Client, what: &str) -> Result<(), String> {
     match client.identity {
         Identity::Dm => Ok(()),
-        Identity::Player(_) => Err("only the DM can change initiative".to_owned()),
+        Identity::Player(_) => Err(format!("only the DM can {what}")),
     }
 }
 
@@ -374,8 +400,36 @@ fn is_hex_rgba(s: &str) -> bool {
     s.len() == 9 && s.starts_with('#') && s[1..].bytes().all(|b| b.is_ascii_hexdigit())
 }
 
-/// The permission rule for movement. Token creation and deletion are DM-only
-/// too, but those commands do not exist yet.
+/// Everything a token carries besides its position and its id, checked once for
+/// both the command that creates a token and the command that edits one.
+///
+/// `img` is held to a site-relative path. The DM is trusted, so this is not a
+/// permission check — it keeps the room self-contained. A token pointing at
+/// somebody else's server is art that vanishes the evening that server is down,
+/// and it would be the one thing in a save the uploads directory does not back.
+fn token_fields(name: &str, img: &str, size: f32) -> Result<(), String> {
+    let name = name.trim();
+    if name.is_empty() || name.chars().count() > MAX_TOKEN_NAME_LEN {
+        return Err(format!(
+            "a token needs a name, of at most {MAX_TOKEN_NAME_LEN} characters"
+        ));
+    }
+    // `//host/path` is a protocol-relative URL, which is off-site despite
+    // starting with a slash.
+    if !img.is_empty() && (!img.starts_with('/') || img.starts_with("//")) {
+        return Err("token art has to be a file on this server".to_owned());
+    }
+    if img.len() > MAX_URL_LEN {
+        return Err("that is not a usable image URL".to_owned());
+    }
+    if !TOKEN_SIZES.contains(&size) {
+        return Err("that is not a size a token can be".to_owned());
+    }
+    Ok(())
+}
+
+/// The permission rule for movement. Creating, deleting and editing a token —
+/// including reassigning its `owner` — are DM-only and checked in `check`.
 fn can_move(client: &Client, token: &Token) -> bool {
     match &client.identity {
         Identity::Dm => true,
@@ -467,6 +521,9 @@ impl RoomState {
                         y,
                         owner,
                         img: format!("/assets/tokens/{}.png", name.to_lowercase()),
+                        // The DM resizes anything that should be bigger. A
+                        // first-boot room is a starting point, not a scene.
+                        ..Token::default()
                     };
                     (id, token)
                 })
@@ -556,6 +613,7 @@ impl RoomState {
                 Identity::Player(id) => Some(id.clone()),
             },
             state: self.snapshot_for(&identity),
+            roster: self.roster.clone(),
         };
 
         if out.try_send(welcome).is_err() {
@@ -636,6 +694,45 @@ impl RoomState {
                 finite(&[*x, *y])
             }
 
+            ClientMsg::CreateToken {
+                name,
+                img,
+                size,
+                x,
+                y,
+                ..
+            } => {
+                require_dm(client, "create tokens")?;
+                if self.tokens.len() >= MAX_TOKENS {
+                    return Err(format!("this room already holds {MAX_TOKENS} tokens"));
+                }
+                token_fields(name, img, *size)?;
+                finite(&[*x, *y])
+            }
+
+            ClientMsg::UpdateToken {
+                id,
+                name,
+                img,
+                size,
+                ..
+            } => {
+                require_dm(client, "change a token")?;
+                if !self.tokens.contains_key(id) {
+                    return Err(format!("no such token: {}", id.0));
+                }
+                token_fields(name, img, *size)
+            }
+
+            ClientMsg::DeleteToken { id } => {
+                require_dm(client, "delete tokens")?;
+                if self.tokens.contains_key(id) {
+                    Ok(())
+                } else {
+                    Err(format!("no such token: {}", id.0))
+                }
+            }
+
             ClientMsg::SetMap {
                 url,
                 grid_px,
@@ -644,7 +741,7 @@ impl RoomState {
                 grid_color,
                 play_area,
             } => {
-                require_dm(client)?;
+                require_dm(client, "change the map")?;
                 if url.is_empty() || url.len() > MAX_URL_LEN {
                     return Err("that is not a usable map URL".to_owned());
                 }
@@ -675,7 +772,7 @@ impl RoomState {
             }
 
             ClientMsg::SetInitiative { token, .. } => {
-                require_dm(client)?;
+                require_dm(client, "change initiative")?;
                 if self.tokens.contains_key(token) {
                     Ok(())
                 } else {
@@ -686,7 +783,7 @@ impl RoomState {
             ClientMsg::RemoveFromInitiative { .. }
             | ClientMsg::ClearInitiative
             | ClientMsg::NextTurn
-            | ClientMsg::PreviousTurn => require_dm(client),
+            | ClientMsg::PreviousTurn => require_dm(client, "change initiative"),
         }
     }
 
@@ -703,11 +800,87 @@ impl RoomState {
 
                 // In-flight drag frames stay wherever the pointer is so motion
                 // reads as smooth. The drop is what settles onto the grid.
-                let (x, y) = if dragging { (x, y) } else { snap_to_cell(x, y) };
+                let (x, y) = if dragging {
+                    (x, y)
+                } else {
+                    snap_to_cell(x, y, token.size)
+                };
                 token.x = x;
                 token.y = y;
 
                 vec![Event::TokenMoved { id, x, y, dragging }]
+            }
+
+            ClientMsg::CreateToken {
+                name,
+                img,
+                size,
+                owner,
+                x,
+                y,
+            } => {
+                // The id is invented here rather than accepted from the client,
+                // so nothing a DM sends can collide with a token that exists.
+                let id = TokenId(Uuid::new_v4().simple().to_string());
+                let (x, y) = snap_to_cell(x, y, size);
+                self.tokens.insert(
+                    id.clone(),
+                    Token {
+                        id: id.clone(),
+                        name: name.trim().to_owned(),
+                        x,
+                        y,
+                        owner,
+                        img,
+                        size,
+                    },
+                );
+                vec![Event::TokenChanged { id }]
+            }
+
+            ClientMsg::UpdateToken {
+                id,
+                name,
+                img,
+                size,
+                owner,
+            } => {
+                let Some(token) = self.tokens.get_mut(&id) else {
+                    return Vec::new(); // proved to exist by `check`
+                };
+
+                token.name = name.trim().to_owned();
+                token.img = img;
+                token.owner = owner;
+
+                // Resizing moves which lattice the token belongs on — a 2×2
+                // settles on a cell corner where a 1×1 settles on a centre — so
+                // growing one where it stands would leave it straddling half a
+                // cell until somebody happened to drag it.
+                if token.size != size {
+                    token.size = size;
+                    let (x, y) = snap_to_cell(token.x, token.y, size);
+                    token.x = x;
+                    token.y = y;
+                }
+
+                vec![Event::TokenChanged { id }]
+            }
+
+            ClientMsg::DeleteToken { id } => {
+                if self.tokens.remove(&id).is_none() {
+                    return Vec::new();
+                }
+
+                let mut events = vec![Event::TokenRemoved { id: id.clone() }];
+                // The order would otherwise keep a row pointing at a token that
+                // no longer exists — which the panel renders as a bare id, and
+                // which `next_turn` would hand the turn to.
+                if self.initiative.index_of(&id).is_some() {
+                    self.initiative.remove(&id);
+                    events.push(Event::InitiativeChanged);
+                }
+                events
             }
 
             // Tokens are deliberately untouched. They are stored in grid units,
@@ -827,6 +1000,16 @@ impl RoomState {
                 })
             }
 
+            // Read off `&self` per recipient rather than carried on the event.
+            // Today every client gets the same token; when tokens can be
+            // hidden, this arm is where a player's copy of this event becomes a
+            // `TokenRemoved` — or nothing at all — instead.
+            Event::TokenChanged { id } => self.tokens.get(id).map(|token| ServerMsg::TokenChanged {
+                token: token.clone(),
+            }),
+
+            Event::TokenRemoved { id } => Some(ServerMsg::TokenRemoved { id: id.clone() }),
+
             // Built per recipient rather than carried on the event, so a future
             // filter can drop rows this client is not allowed to see.
             Event::InitiativeChanged => Some(ServerMsg::InitiativeChanged {
@@ -853,13 +1036,29 @@ impl RoomState {
     }
 }
 
-/// Nearest cell centre, in grid units. A token in cell (0,0) is stored at
-/// (0.5, 0.5), which keeps an even-sized token centred on a cell corner.
+/// Where a token of this size settles, in grid units.
+///
+/// A token is a square `size` cells across, centred on the position stored for
+/// it, so where it can settle depends on how wide it is. An odd width has a
+/// middle cell and settles on that cell's centre — a 1×1 in cell (0,0) is at
+/// (0.5, 0.5). An even width has no middle cell and settles on the corner four
+/// cells meet at, so a 2×2 covering cells (0,0) to (1,1) is at (1.0, 1.0).
+/// Either way its edges land on grid lines, which is the point.
+///
+/// Anything smaller than a cell settles like a single-cell token rather than on
+/// a lattice of its own: a druid who is currently a rat belongs in the middle
+/// of a square, next to the party, not tucked into one quarter of one.
 ///
 /// This rule lives only here. The client never snaps; it learns the settled
 /// position from the echoed drop frame.
-fn snap_to_cell(x: f32, y: f32) -> (f32, f32) {
-    (x.floor() + 0.5, y.floor() + 0.5)
+fn snap_to_cell(x: f32, y: f32, size: f32) -> (f32, f32) {
+    let cells = size.max(1.0) as u32;
+    let centre = if cells.is_multiple_of(2) { 0.0 } else { 0.5 };
+    // Not `floor`: the lattice moves with `centre`, and rounding to the nearest
+    // point on it is the same sentence for both cases. `round` also does the
+    // right thing below zero, where a token dragged off the top-left of the map
+    // must land in cell -1 rather than folding back onto the board.
+    ((x - centre).round() + centre, (y - centre).round() + centre)
 }
 
 #[cfg(test)]
@@ -1162,16 +1361,52 @@ mod tests {
 
     #[test]
     fn snapping_is_stable_under_repeated_drops() {
-        let (x, y) = snap_to_cell(6.5, 5.5);
-        assert_eq!((x, y), (6.5, 5.5));
-        assert_eq!(snap_to_cell(x, y), (6.5, 5.5));
+        for size in TOKEN_SIZES {
+            let settled = snap_to_cell(6.4, 5.4, size);
+            assert_eq!(
+                snap_to_cell(settled.0, settled.1, size),
+                settled,
+                "a {size}-cell token drifted when dropped where it already was"
+            );
+        }
     }
 
     #[test]
     fn snapping_handles_negative_coordinates() {
-        // `round`-based snapping would send -0.2 to cell 0; the token belongs in
-        // cell -1. Off-map drags are legal and must not fold onto the map.
-        assert_eq!(snap_to_cell(-0.2, -1.7), (-0.5, -1.5));
+        // A token dragged off the top-left belongs in cell -1, not folded back
+        // onto the board. Off-map drags are legal — that is where the DM stages
+        // the next wave.
+        assert_eq!(snap_to_cell(-0.2, -1.7, 1.0), (-0.5, -1.5));
+        assert_eq!(snap_to_cell(-0.2, -1.7, 2.0), (0.0, -2.0));
+    }
+
+    #[test]
+    fn an_odd_token_settles_on_a_cell_centre_and_an_even_one_on_a_corner() {
+        // The whole size-dependent snapping rule, stated once. A 2×2 covering
+        // cells (0,0) through (1,1) is centred at (1,1) — the corner those four
+        // cells meet at — because it has no middle cell to sit in.
+        assert_eq!(snap_to_cell(6.83, 5.21, 1.0), (6.5, 5.5));
+        assert_eq!(snap_to_cell(6.83, 5.21, 3.0), (6.5, 5.5));
+        assert_eq!(snap_to_cell(6.83, 5.21, 2.0), (7.0, 5.0));
+        assert_eq!(snap_to_cell(6.83, 5.21, 4.0), (7.0, 5.0));
+    }
+
+    #[test]
+    fn shrinking_off_a_corner_picks_one_cell_and_always_the_same_one() {
+        // A 2×2 stands on the corner four cells meet at, so shrinking it is a
+        // four-way tie. `round` breaks it away from zero — down and right on
+        // the board, the other way in the negative space off the top-left of
+        // it. Which cell it picks matters far less than picking the same one
+        // every time, which is what stops a resize from looking like a jitter.
+        assert_eq!(snap_to_cell(9.0, 4.0, 1.0), (9.5, 4.5));
+        assert_eq!(snap_to_cell(-9.0, -4.0, 1.0), (-9.5, -4.5));
+    }
+
+    #[test]
+    fn a_tiny_token_settles_in_the_middle_of_a_square() {
+        // Not on a quarter-cell lattice of its own. A druid who is a rat stands
+        // in a square with everyone else, just drawn small.
+        assert_eq!(snap_to_cell(6.83, 5.21, 0.5), (6.5, 5.5));
     }
 
     #[test]
@@ -1210,6 +1445,485 @@ mod tests {
             dragging: false,
         };
         assert!(state.check(ClientId(1), &msg).is_err());
+    }
+
+    // --- the token lifecycle ------------------------------------------------
+
+    fn create(name: &str, size: f32, owner: Owner) -> ClientMsg {
+        ClientMsg::CreateToken {
+            name: name.to_owned(),
+            img: String::new(),
+            size,
+            owner,
+            x: 6.3,
+            y: 5.1,
+        }
+    }
+
+    /// The token the DM just made, found by name because the id is the server's.
+    ///
+    /// Names must therefore be unique within a test, and must not collide with
+    /// the built-in room's — `HashMap` order is unspecified, so a duplicate
+    /// name is a test that passes or fails depending on the run.
+    fn made(state: &RoomState, name: &str) -> Token {
+        let mut found = state.tokens.values().filter(|t| t.name == name);
+        let token = found
+            .next()
+            .unwrap_or_else(|| panic!("no token called {name}"))
+            .clone();
+        assert!(
+            found.next().is_none(),
+            "two tokens called {name}; this test cannot tell them apart"
+        );
+        token
+    }
+
+    #[test]
+    fn the_dm_can_build_a_token_and_the_server_names_it() {
+        let mut state = room();
+        let _dm = join_as_dm(&mut state, ClientId(1));
+        let before = state.tokens.len();
+
+        assert!(
+            state.handle(ClientId(1), create("Goblin", 1.0, Owner::Dm)),
+            "a new token is worth saving"
+        );
+
+        assert_eq!(state.tokens.len(), before + 1);
+        let goblin = made(&state, "Goblin");
+        assert!(
+            !goblin.id.0.is_empty() && !state.tokens.contains_key(&TokenId::new("t1_")),
+            "the id comes from the server, not the client"
+        );
+        assert_eq!((goblin.x, goblin.y), (6.5, 5.5), "it lands on the grid");
+        assert_eq!(goblin.size, 1.0);
+    }
+
+    #[test]
+    fn two_tokens_built_the_same_way_are_still_two_tokens() {
+        // The id is invented per command, so a DM clicking twice gets a pair
+        // rather than overwriting the first.
+        let mut state = room();
+        let _dm = join_as_dm(&mut state, ClientId(1));
+        state.handle(ClientId(1), create("Goblin", 1.0, Owner::Dm));
+        state.handle(ClientId(1), create("Goblin", 1.0, Owner::Dm));
+
+        let goblins = state.tokens.values().filter(|t| t.name == "Goblin").count();
+        assert_eq!(goblins, 2);
+    }
+
+    #[test]
+    fn a_new_token_lands_on_the_lattice_its_size_belongs_to() {
+        let mut state = room();
+        let _dm = join_as_dm(&mut state, ClientId(1));
+        // Not "Ogre": the built-in room already has one, and `made` matches by
+        // name. Created at (6.3, 5.1) by `create`.
+        state.handle(ClientId(1), create("Dire Wolf", 2.0, Owner::Dm));
+
+        let wolf = made(&state, "Dire Wolf");
+        assert_eq!(
+            (wolf.x, wolf.y),
+            (6.0, 5.0),
+            "an even-sized token settles on a cell corner"
+        );
+    }
+
+    #[test]
+    fn resizing_a_token_moves_it_onto_the_right_lattice() {
+        // The reason `UpdateToken` re-snaps. Left where it stood, a 2×2 grown
+        // from a 1×1 would straddle half a cell in both directions until the
+        // next time somebody happened to drag it.
+        let mut state = room();
+        let _dm = join_as_dm(&mut state, ClientId(1));
+        let ogre = state.tokens.get(&TokenId::new("t6")).expect("t6").clone();
+        assert_eq!((ogre.x, ogre.y), (14.5, 9.5));
+
+        state.handle(
+            ClientId(1),
+            ClientMsg::UpdateToken {
+                id: ogre.id.clone(),
+                name: ogre.name.clone(),
+                img: ogre.img.clone(),
+                size: 2.0,
+                owner: Owner::Dm,
+            },
+        );
+
+        let ogre = state.tokens.get(&TokenId::new("t6")).expect("t6");
+        assert_eq!((ogre.x, ogre.y), (15.0, 10.0));
+    }
+
+    #[test]
+    fn an_edit_that_leaves_the_size_alone_leaves_the_position_alone() {
+        // Renaming a token mid-drag must not teleport it: `MoveToken` owns the
+        // position, and an unsnapped drag frame is a legitimate state to be in.
+        let mut state = room();
+        let _dm = join_as_dm(&mut state, ClientId(1));
+        state.handle(
+            ClientId(1),
+            ClientMsg::MoveToken {
+                id: TokenId::new("t6"),
+                x: 3.27,
+                y: 8.11,
+                dragging: true,
+            },
+        );
+
+        state.handle(
+            ClientId(1),
+            ClientMsg::UpdateToken {
+                id: TokenId::new("t6"),
+                name: "Ogre (bloodied)".to_owned(),
+                img: "/uploads/ogre.png".to_owned(),
+                size: 1.0,
+                owner: Owner::Dm,
+            },
+        );
+
+        let ogre = state.tokens.get(&TokenId::new("t6")).expect("t6");
+        assert_eq!((ogre.x, ogre.y), (3.27, 8.11));
+        assert_eq!(ogre.name, "Ogre (bloodied)");
+    }
+
+    #[test]
+    fn handing_a_token_to_a_player_lets_them_move_it_and_taking_it_back_does_not() {
+        // The wild shape story end to end: the DM builds a big cat, gives it to
+        // Vex, and takes it back when the spell ends.
+        let mut state = room();
+        let _dm = join_as_dm(&mut state, ClientId(1));
+        let _vex = join_as_player(&mut state, ClientId(2), "vex");
+
+        state.handle(ClientId(1), create("Dire Wolf", 2.0, Owner::Dm));
+        let wolf = made(&state, "Dire Wolf");
+
+        let vex = state.clients.get(&ClientId(2)).expect("joined");
+        assert!(!can_move(vex, &wolf), "it starts as the DM's");
+
+        let hand_to = |owner: Owner| ClientMsg::UpdateToken {
+            id: wolf.id.clone(),
+            name: wolf.name.clone(),
+            img: wolf.img.clone(),
+            size: wolf.size,
+            owner,
+        };
+
+        state.handle(ClientId(1), hand_to(Owner::Player(PlayerId::new("vex"))));
+        let vex = state.clients.get(&ClientId(2)).expect("joined");
+        assert!(can_move(vex, &made(&state, "Dire Wolf")));
+
+        state.handle(ClientId(1), hand_to(Owner::Dm));
+        let vex = state.clients.get(&ClientId(2)).expect("joined");
+        assert!(!can_move(vex, &made(&state, "Dire Wolf")));
+    }
+
+    #[test]
+    fn a_player_cannot_touch_the_lifecycle_at_all() {
+        let mut state = room();
+        let _vex = join_as_player(&mut state, ClientId(1), "vex");
+        let _dm = join_as_dm(&mut state, ClientId(2));
+
+        // Including their own token: reassigning `owner` is how a token is given
+        // away, so a player who could edit theirs could take anyone's.
+        let commands = || {
+            vec![
+                create("Goblin", 1.0, Owner::Dm),
+                ClientMsg::UpdateToken {
+                    id: TokenId::new("t2"),
+                    name: "Vex".to_owned(),
+                    img: String::new(),
+                    size: 4.0,
+                    owner: Owner::Player(PlayerId::new("vex")),
+                },
+                ClientMsg::DeleteToken {
+                    id: TokenId::new("t1"),
+                },
+            ]
+        };
+
+        for cmd in commands() {
+            assert!(
+                state.check(ClientId(1), &cmd).is_err(),
+                "a player got through: {cmd:?}"
+            );
+        }
+        for cmd in commands() {
+            assert!(
+                state.check(ClientId(2), &cmd).is_ok(),
+                "the DM was blocked: {cmd:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_players_refused_edit_changes_nothing() {
+        let mut state = room();
+        let _vex = join_as_player(&mut state, ClientId(1), "vex");
+
+        state.handle(
+            ClientId(1),
+            ClientMsg::UpdateToken {
+                id: TokenId::new("t6"),
+                name: "Mine Now".to_owned(),
+                img: String::new(),
+                size: 4.0,
+                owner: Owner::Player(PlayerId::new("vex")),
+            },
+        );
+
+        let ogre = state.tokens.get(&TokenId::new("t6")).expect("t6");
+        assert_eq!(ogre.name, "Ogre");
+        assert_eq!(ogre.owner, Owner::Dm);
+        assert_eq!(ogre.size, 1.0);
+    }
+
+    #[test]
+    fn deleting_a_token_takes_its_initiative_row_with_it() {
+        // Otherwise the order holds a row naming a token that no longer exists,
+        // which the panel draws as a bare id and `next_turn` hands the turn to.
+        let mut state = room();
+        let _dm = join_as_dm(&mut state, ClientId(1));
+
+        for (token, value) in [("t1", 20), ("t6", 15), ("t7", 10)] {
+            state.handle(
+                ClientId(1),
+                ClientMsg::SetInitiative {
+                    token: TokenId::new(token),
+                    value,
+                },
+            );
+        }
+        state.handle(ClientId(1), ClientMsg::NextTurn);
+        state.handle(ClientId(1), ClientMsg::NextTurn);
+        assert_eq!(current(&state.initiative), Some("t6"));
+
+        state.handle(
+            ClientId(1),
+            ClientMsg::DeleteToken {
+                id: TokenId::new("t6"),
+            },
+        );
+
+        assert!(!state.tokens.contains_key(&TokenId::new("t6")));
+        assert_eq!(order(&state.initiative), ["t1", "t7"]);
+        assert_eq!(
+            current(&state.initiative),
+            Some("t7"),
+            "the turn passes to whoever slid into that slot"
+        );
+    }
+
+    #[test]
+    fn deleting_a_token_that_was_not_in_the_order_says_nothing_about_initiative() {
+        let mut state = room();
+        let _dm = join_as_dm(&mut state, ClientId(1));
+        state.handle(
+            ClientId(1),
+            ClientMsg::SetInitiative {
+                token: TokenId::new("t1"),
+                value: 20,
+            },
+        );
+
+        let events = state.apply(ClientMsg::DeleteToken {
+            id: TokenId::new("t6"),
+        });
+
+        assert!(
+            matches!(events.as_slice(), [Event::TokenRemoved { .. }]),
+            "an untouched initiative panel should not be rebuilt: {events:?}"
+        );
+    }
+
+    #[test]
+    fn a_token_that_does_not_exist_cannot_be_edited_or_deleted() {
+        let mut state = room();
+        let _dm = join_as_dm(&mut state, ClientId(1));
+
+        assert!(
+            state
+                .check(
+                    ClientId(1),
+                    &ClientMsg::DeleteToken {
+                        id: TokenId::new("ghost")
+                    }
+                )
+                .is_err()
+        );
+        assert!(
+            state
+                .check(
+                    ClientId(1),
+                    &ClientMsg::UpdateToken {
+                        id: TokenId::new("ghost"),
+                        name: "Ghost".to_owned(),
+                        img: String::new(),
+                        size: 1.0,
+                        owner: Owner::Dm,
+                    }
+                )
+                .is_err()
+        );
+    }
+
+    #[test]
+    fn only_the_five_sizes_are_accepted() {
+        let mut state = room();
+        let _dm = join_as_dm(&mut state, ClientId(1));
+
+        for size in TOKEN_SIZES {
+            assert!(
+                state
+                    .check(ClientId(1), &create("Goblin", size, Owner::Dm))
+                    .is_ok(),
+                "{size} should be fine"
+            );
+        }
+        for size in [0.0, -1.0, 0.25, 1.5, 5.0, 1e9, f32::NAN, f32::INFINITY] {
+            assert!(
+                state
+                    .check(ClientId(1), &create("Goblin", size, Owner::Dm))
+                    .is_err(),
+                "{size} should be refused"
+            );
+        }
+    }
+
+    #[test]
+    fn a_token_needs_a_name_and_cannot_have_an_essay() {
+        let mut state = room();
+        let _dm = join_as_dm(&mut state, ClientId(1));
+
+        for bad in ["", "   ", "\t"] {
+            assert!(
+                state
+                    .check(ClientId(1), &create(bad, 1.0, Owner::Dm))
+                    .is_err(),
+                "{bad:?} should be refused"
+            );
+        }
+        assert!(
+            state
+                .check(
+                    ClientId(1),
+                    &create(&"a".repeat(MAX_TOKEN_NAME_LEN + 1), 1.0, Owner::Dm)
+                )
+                .is_err()
+        );
+    }
+
+    #[test]
+    fn a_name_is_stored_trimmed() {
+        let mut state = room();
+        let _dm = join_as_dm(&mut state, ClientId(1));
+        state.handle(ClientId(1), create("  Goblin  ", 1.0, Owner::Dm));
+        assert_eq!(made(&state, "Goblin").name, "Goblin");
+    }
+
+    #[test]
+    fn token_art_has_to_live_on_this_server() {
+        let mut state = room();
+        let _dm = join_as_dm(&mut state, ClientId(1));
+
+        let with_img = |img: &str| ClientMsg::CreateToken {
+            name: "Goblin".to_owned(),
+            img: img.to_owned(),
+            size: 1.0,
+            owner: Owner::Dm,
+            x: 0.0,
+            y: 0.0,
+        };
+
+        for good in ["", "/uploads/abc.png", "/assets/tokens/ogre.png"] {
+            assert!(
+                state.check(ClientId(1), &with_img(good)).is_ok(),
+                "{good:?} should be fine"
+            );
+        }
+        for bad in [
+            "https://example.com/goblin.png",
+            "//example.com/goblin.png", // protocol-relative, so still off-site
+            "uploads/abc.png",
+            "data:image/png;base64,AAAA",
+        ] {
+            assert!(
+                state.check(ClientId(1), &with_img(bad)).is_err(),
+                "{bad:?} should be refused"
+            );
+        }
+    }
+
+    #[test]
+    fn a_room_cannot_be_filled_with_tokens_without_limit() {
+        let mut state = room();
+        let _dm = join_as_dm(&mut state, ClientId(1));
+
+        // `apply` rather than `handle`: the cap being tested lives in `check`,
+        // and filling the room through the whole pipeline would only fill this
+        // test's outbound mailbox and get the DM dropped as a wedged client.
+        for _ in state.tokens.len()..MAX_TOKENS {
+            state.apply(create("Goblin", 1.0, Owner::Dm));
+        }
+
+        assert_eq!(state.tokens.len(), MAX_TOKENS);
+        assert!(
+            state
+                .check(ClientId(1), &create("Goblin", 1.0, Owner::Dm))
+                .is_err()
+        );
+    }
+
+    #[test]
+    fn a_created_token_reaches_the_dm_who_made_it() {
+        // There is no local prediction to rubber-band — the client cannot know
+        // the id — so this echo is how the DM's panel learns what it just built.
+        let mut state = room();
+        let mut dm = join_as_dm(&mut state, ClientId(1));
+        let mut vex = join_as_player(&mut state, ClientId(2), "vex");
+
+        state.handle(ClientId(1), create("Goblin", 1.0, Owner::Dm));
+
+        for (who, rx) in [("the DM", &mut dm), ("a player", &mut vex)] {
+            match rx.try_recv() {
+                Ok(ServerMsg::TokenChanged { token }) => assert_eq!(token.name, "Goblin"),
+                other => panic!("{who} should have been told: {other:?}"),
+            }
+        }
+    }
+
+    #[test]
+    fn a_deleted_token_reaches_everyone() {
+        let mut state = room();
+        let mut dm = join_as_dm(&mut state, ClientId(1));
+        let mut vex = join_as_player(&mut state, ClientId(2), "vex");
+
+        state.handle(
+            ClientId(1),
+            ClientMsg::DeleteToken {
+                id: TokenId::new("t6"),
+            },
+        );
+
+        for (who, rx) in [("the DM", &mut dm), ("a player", &mut vex)] {
+            match rx.try_recv() {
+                Ok(ServerMsg::TokenRemoved { id }) => assert_eq!(id, TokenId::new("t6")),
+                other => panic!("{who} should have been told: {other:?}"),
+            }
+        }
+    }
+
+    #[test]
+    fn a_new_token_survives_the_save_file() {
+        let mut state = room();
+        let _dm = join_as_dm(&mut state, ClientId(1));
+        state.handle(ClientId(1), create("Dire Wolf", 2.0, Owner::Dm));
+
+        let json = serde_json::to_vec(&state.to_saved()).expect("encodes");
+        let saved: Saved = serde_json::from_slice(&json).expect("decodes");
+        let restored = RoomState::restored(saved, SECRET.to_owned());
+
+        let wolf = made(&restored, "Dire Wolf");
+        assert_eq!(wolf.size, 2.0);
+        assert_eq!((wolf.x, wolf.y), (6.0, 5.0));
     }
 
     // --- initiative ---------------------------------------------------------

@@ -6,6 +6,7 @@ import type {
   TokenMoved,
   Welcome,
   WireMapInfo,
+  WireToken,
 } from './protocol.js';
 
 export interface Handlers {
@@ -16,6 +17,9 @@ export interface Handlers {
   /** Called synchronously on the Welcome frame, before any delta can be handled. */
   onWelcome(welcome: Welcome): void;
   onTokenMoved(move: TokenMoved): void;
+  /** A token created or edited. An id we have not seen is a creation. */
+  onTokenChanged(token: WireToken): void;
+  onTokenRemoved(id: string): void;
   onMapChanged(map: WireMapInfo): void;
   onInitiativeChanged(initiative: Initiative): void;
   onError(message: string): void;
@@ -57,6 +61,12 @@ export function connect(on: Handlers): Net {
         break;
       case 'token_moved':
         on.onTokenMoved(msg);
+        break;
+      case 'token_changed':
+        on.onTokenChanged(msg.token);
+        break;
+      case 'token_removed':
+        on.onTokenRemoved(msg.id);
         break;
       case 'map_changed':
         on.onMapChanged(msg.map);
