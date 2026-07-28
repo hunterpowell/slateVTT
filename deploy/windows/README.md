@@ -113,6 +113,11 @@ With Slate stopped, back up that whole directory. The JSON file and uploads
 belong together: the saved map stores a URL referring to a file under
 `uploads\`.
 
+To set your own DM secret instead of the random one the launcher generates,
+stop Slate and edit `dm-secret.txt` to whatever you want — letters, digits, `-`
+and `_` only, since it is placed unencoded into both the DM URL and an HTTP
+header.
+
 To reset to the built-in room, stop Slate and move this directory somewhere
 safe. Starting again creates a new secret and data directory. Moving rather
 than deleting keeps the old game recoverable.

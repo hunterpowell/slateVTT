@@ -1,3 +1,4 @@
+mod library;
 mod protocol;
 mod room;
 mod store;
@@ -13,7 +14,7 @@ use axum::http::{HeaderMap, StatusCode};
 use axum::response::Response;
 use axum::routing::{get, post};
 use axum::{Json, Router};
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use tokio::fs;
 use tower_http::services::ServeDir;
 use tracing::{error, info, warn};
@@ -41,6 +42,9 @@ struct AppState {
     /// because an HTTP upload never reaches the room actor to be checked there.
     dm_secret: Arc<str>,
     uploads: Arc<Path>,
+    /// The library the DM picks maps out of. Never served directly — a pick
+    /// copies into `uploads`, so there stays one kind of map URL.
+    maps: Arc<Path>,
 }
 
 static NEXT_CLIENT_ID: AtomicU64 = AtomicU64::new(1);
@@ -88,11 +92,20 @@ async fn main() {
     std::fs::create_dir_all(&uploads_dir)
         .unwrap_or_else(|err| panic!("could not create {uploads_dir}: {err}"));
 
+    // Deliberately not created if it is absent. It holds maps someone put there
+    // on purpose, so an empty one conjured at boot would hide a mistyped
+    // SLATE_MAPS behind a picker that simply looks empty.
+    let maps_dir = std::env::var("SLATE_MAPS").unwrap_or_else(|_| "../maps".to_owned());
+    if !Path::new(&maps_dir).is_dir() {
+        warn!(%maps_dir, "no map library there; the DM can still upload maps");
+    }
+
     let room = room::spawn(dm_secret.clone(), saved, store);
     let state = AppState {
         room: room.clone(),
         dm_secret: dm_secret.into(),
         uploads: Path::new(&uploads_dir).into(),
+        maps: Path::new(&maps_dir).into(),
     };
 
     let app = Router::new()
@@ -101,6 +114,8 @@ async fn main() {
             "/api/map",
             post(upload_map).layer(DefaultBodyLimit::max(MAX_MAP_BYTES)),
         )
+        .route("/api/maps", get(list_maps))
+        .route("/api/maps/pick", post(pick_map))
         .nest_service("/uploads", ServeDir::new(&uploads_dir))
         .fallback_service(ServeDir::new(&client_dir).append_index_html_on_directories(true))
         .with_state(state);
@@ -111,7 +126,7 @@ async fn main() {
         .await
         .unwrap_or_else(|err| panic!("could not bind {addr}: {err}"));
 
-    info!(%addr, %client_dir, %uploads_dir, "slate listening");
+    info!(%addr, %client_dir, %uploads_dir, %maps_dir, "slate listening");
 
     axum::serve(listener, app)
         .with_graceful_shutdown(async move {
@@ -169,6 +184,135 @@ struct UploadedMap {
     url: String,
 }
 
+/// The DM secret is the only credential this project has, and every endpoint
+/// under `/api` wants it. A player has none to offer, which is the point: giving
+/// them one would be the authentication Slate deliberately does not build.
+fn is_dm(state: &AppState, headers: &HeaderMap) -> bool {
+    headers
+        .get(DM_SECRET_HEADER)
+        .and_then(|value| value.to_str().ok())
+        == Some(state.dm_secret.as_ref())
+}
+
+fn not_the_dm(what: &str) -> (StatusCode, String) {
+    warn!(%what, "rejected a request with a bad DM secret");
+    (StatusCode::FORBIDDEN, format!("only the DM can {what}"))
+}
+
+#[derive(Serialize)]
+struct MapLibrary {
+    maps: Vec<String>,
+}
+
+/// Everything in the map library, as paths to hand back to `pick_map`.
+///
+/// DM-only. No room state is involved, so this is not invariant 4 in the strict
+/// sense, but a player reading off the names of every map the DM has prepared is
+/// the same problem wearing a different hat.
+async fn list_maps(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+) -> Result<Json<MapLibrary>, (StatusCode, String)> {
+    if !is_dm(&state, &headers) {
+        return Err(not_the_dm("browse the map library"));
+    }
+
+    Ok(Json(MapLibrary {
+        maps: library::list(&state.maps).await,
+    }))
+}
+
+#[derive(Deserialize)]
+struct PickRequest {
+    /// Relative to the library root, exactly as `list_maps` reported it.
+    path: String,
+}
+
+/// Copies a map out of the library into the uploads directory and reports the
+/// URL it is now served at.
+///
+/// The response is deliberately the same shape `upload_map` returns: from the
+/// client's point of view a pick and an upload differ only in where the bytes
+/// came from, and both are followed by an ordinary `set_map`.
+async fn pick_map(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Json(request): Json<PickRequest>,
+) -> Result<Json<UploadedMap>, (StatusCode, String)> {
+    if !is_dm(&state, &headers) {
+        return Err(not_the_dm("pick a map"));
+    }
+
+    let pick = library::resolve(&state.maps, &request.path).map_err(|err| match err {
+        library::PickError::Rejected => {
+            warn!(path = %request.path, "refused a map path that left the library");
+            (
+                StatusCode::BAD_REQUEST,
+                "that is not a map in the library".to_owned(),
+            )
+        }
+        library::PickError::Missing => (
+            StatusCode::NOT_FOUND,
+            "there is no such map in the library".to_owned(),
+        ),
+    })?;
+
+    // Checked before the read rather than after, so a file that does not belong
+    // in a library cannot be pulled into memory just to be rejected.
+    let size = fs::metadata(&pick.path).await.map_err(|err| {
+        error!(%err, path = %pick.path.display(), "could not read that map");
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "could not read that map".to_owned(),
+        )
+    })?;
+    if size.len() > MAX_MAP_BYTES as u64 {
+        return Err((
+            StatusCode::PAYLOAD_TOO_LARGE,
+            "that map is too large".to_owned(),
+        ));
+    }
+
+    let bytes = fs::read(&pick.path).await.map_err(|err| {
+        error!(%err, path = %pick.path.display(), "could not read that map");
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "could not read that map".to_owned(),
+        )
+    })?;
+
+    // Sniffed rather than taken from the name, for the same reason an upload is:
+    // the extension decides the `Content-Type` the copy is later served with, and
+    // a file's name is not evidence of what is inside it.
+    let Some(extension) = image_format(&bytes) else {
+        return Err((
+            StatusCode::UNSUPPORTED_MEDIA_TYPE,
+            "that file is not a PNG, JPEG or WebP image".to_owned(),
+        ));
+    };
+
+    let name = library::copy_name(&pick.key, extension);
+    let path = state.uploads.join(&name);
+
+    // The name is derived from the source path, so an existing copy is already
+    // this map. Rewriting it would only churn the disk and, worse, break the URL
+    // the calibration table is keyed on if the write failed halfway.
+    if fs::metadata(&path).await.is_err() {
+        fs::write(&path, &bytes).await.map_err(|err| {
+            error!(%err, path = %path.display(), "could not copy that map");
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "could not copy that map".to_owned(),
+            )
+        })?;
+        info!(%name, source = %pick.key, bytes = bytes.len(), "copied a map out of the library");
+    }
+
+    Ok(Json(UploadedMap {
+        url: format!("/uploads/{name}"),
+    }))
+}
+
 /// Stores an uploaded image and reports the URL it is now served at.
 ///
 /// It deliberately does not touch the room. The DM's client follows this with a
@@ -180,15 +324,8 @@ async fn upload_map(
     headers: HeaderMap,
     body: Bytes,
 ) -> Result<Json<UploadedMap>, (StatusCode, String)> {
-    let offered = headers
-        .get(DM_SECRET_HEADER)
-        .and_then(|value| value.to_str().ok());
-    if offered != Some(state.dm_secret.as_ref()) {
-        warn!("rejected a map upload with a bad DM secret");
-        return Err((
-            StatusCode::FORBIDDEN,
-            "only the DM can change the map".to_owned(),
-        ));
+    if !is_dm(&state, &headers) {
+        return Err(not_the_dm("change the map"));
     }
 
     let Some(extension) = image_format(&body) else {

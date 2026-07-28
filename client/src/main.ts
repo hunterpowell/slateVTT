@@ -46,6 +46,8 @@ interface Ui {
     root: HTMLElement;
     file: HTMLInputElement;
     uploadText: HTMLElement;
+    library: HTMLButtonElement;
+    libraryList: HTMLElement;
     calibrate: HTMLButtonElement;
     cellsRow: HTMLElement;
     cells: HTMLInputElement;
@@ -100,6 +102,8 @@ function findUi(): Ui {
       root: need('#maptool'),
       file: need<HTMLInputElement>('#map-file'),
       uploadText: need('#map-upload-text'),
+      library: need<HTMLButtonElement>('#map-library'),
+      libraryList: need('#map-library-list'),
       calibrate: need<HTMLButtonElement>('#map-calibrate'),
       cellsRow: need('#map-cells-row'),
       cells: need<HTMLInputElement>('#map-cells'),

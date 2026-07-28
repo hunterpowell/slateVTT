@@ -22,6 +22,8 @@ export interface MapToolUi {
   root: HTMLElement;
   file: HTMLInputElement;
   uploadText: HTMLElement;
+  library: HTMLButtonElement;
+  libraryList: HTMLElement;
   calibrate: HTMLButtonElement;
   cellsRow: HTMLElement;
   cells: HTMLInputElement;
@@ -251,6 +253,36 @@ export function createMapTool(
     if (e.key === 'Enter' && pending !== null) ui.apply.click();
   });
 
+  // --- putting a new image on the board -------------------------------------
+
+  /**
+   * Both ways of getting a map end here, because from this side they are the
+   * same thing: some bytes are now served at `url` and the board should show
+   * them.
+   */
+  const showNewMap = (url: string): void => {
+    if (scene === null || confirmed === null) return;
+
+    discard(); // a half-tuned grid means nothing on an image being replaced
+    // The cell size carries over — a DM's maps tend to come out of one tool at
+    // one resolution — but the offsets cannot: they describe where the grid
+    // began on an image this one has just replaced. Nor can the play area, so
+    // a new map is playable end to end until the DM says otherwise.
+    //
+    // For a map picked out of the library this is only an opening bid. The
+    // server keys what it remembers on the URL, so a map calibrated in an
+    // earlier session comes back the way it was left and the map_changed that
+    // lands here overrides all of it.
+    sendMap({ px: confirmed.grid.px, offsetX: 0, offsetY: 0 }, scene.gridColor, null, url);
+  };
+
+  /** Both endpoints answer with plain text on failure and JSON on success. */
+  const mapUrlFrom = async (response: Response, whenItFails: string): Promise<string> => {
+    const body = await response.text();
+    if (!response.ok) throw new Error(body || `${whenItFails} (${response.status})`);
+    return (JSON.parse(body) as { url: string }).url;
+  };
+
   // --- upload ---------------------------------------------------------------
 
   ui.file.addEventListener('change', () => {
@@ -271,24 +303,104 @@ export function createMapTool(
         headers: { 'x-slate-dm-secret': dmSecret },
         body: file,
       });
-
-      // The endpoint answers with plain text on failure and JSON on success, so
-      // read the body once and decide afterwards.
-      const body = await response.text();
-      if (!response.ok) throw new Error(body || `upload failed (${response.status})`);
-      const { url } = JSON.parse(body) as { url: string };
-
-      discard(); // a half-tuned grid means nothing on an image being replaced
-      // The cell size carries over — a DM's maps tend to come out of one tool at
-      // one resolution — but the offsets cannot: they describe where the grid
-      // began on an image this one has just replaced. Nor can the play area, so
-      // a new map is playable end to end until the DM says otherwise.
-      sendMap({ px: confirmed.grid.px, offsetX: 0, offsetY: 0 }, scene.gridColor, null, url);
+      showNewMap(await mapUrlFrom(response, 'upload failed'));
     } catch (err) {
       report(err instanceof Error ? err.message : 'could not upload that map');
     } finally {
       ui.root.classList.remove('is-busy');
       ui.uploadText.textContent = 'upload image…';
+    }
+  }
+
+  // --- the library ----------------------------------------------------------
+
+  let libraryOpen = false;
+
+  const closeLibrary = (): void => {
+    libraryOpen = false;
+    ui.libraryList.hidden = true;
+    ui.library.classList.remove('is-active');
+  };
+
+  const note = (text: string): void => {
+    const line = document.createElement('p');
+    line.className = 'map-library-note';
+    line.textContent = text;
+    ui.libraryList.replaceChildren(line);
+  };
+
+  const entry = (path: string): HTMLButtonElement => {
+    const button = document.createElement('button');
+    button.type = 'button';
+    // The list is one line per map and the panel is narrow, so the full path
+    // has to be reachable somewhere.
+    button.title = path;
+
+    const cut = path.lastIndexOf('/');
+    if (cut !== -1) {
+      const folder = document.createElement('span');
+      folder.className = 'map-library-dir';
+      folder.textContent = path.slice(0, cut + 1);
+      button.append(folder);
+    }
+    button.append(path.slice(cut + 1));
+
+    button.addEventListener('click', () => void pick(path));
+    return button;
+  };
+
+  ui.library.addEventListener('click', () => {
+    if (libraryOpen) {
+      closeLibrary();
+      return;
+    }
+    libraryOpen = true;
+    ui.library.classList.add('is-active');
+    ui.libraryList.hidden = false;
+    // Re-read every time rather than caching: a DM who drops a file into the
+    // folder mid-session should find it by reopening the list.
+    void showLibrary();
+  });
+
+  async function showLibrary(): Promise<void> {
+    note('reading the library…');
+    try {
+      const response = await fetch('/api/maps', {
+        headers: { 'x-slate-dm-secret': dmSecret },
+      });
+      const body = await response.text();
+      if (!response.ok) {
+        throw new Error(body || `could not read the library (${response.status})`);
+      }
+
+      const { maps } = JSON.parse(body) as { maps: string[] };
+      if (maps.length === 0) {
+        note('no maps in the library');
+        return;
+      }
+      ui.libraryList.replaceChildren(...maps.map(entry));
+    } catch (err) {
+      note(err instanceof Error ? err.message : 'could not read the library');
+    }
+  }
+
+  async function pick(path: string): Promise<void> {
+    if (scene === null || confirmed === null) return;
+
+    ui.root.classList.add('is-busy');
+    try {
+      const response = await fetch('/api/maps/pick', {
+        method: 'POST',
+        headers: { 'x-slate-dm-secret': dmSecret, 'content-type': 'application/json' },
+        body: JSON.stringify({ path }),
+      });
+      const url = await mapUrlFrom(response, 'could not pick that map');
+      closeLibrary();
+      showNewMap(url);
+    } catch (err) {
+      report(err instanceof Error ? err.message : 'could not pick that map');
+    } finally {
+      ui.root.classList.remove('is-busy');
     }
   }
 

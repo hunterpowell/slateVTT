@@ -14,8 +14,8 @@ use tokio::time::{Instant, sleep_until};
 use tracing::{debug, error, warn};
 
 use crate::protocol::{
-    ClientId, ClientMsg, Initiative, InitiativeEntry, MapInfo, Owner, PlayerId, RoomView,
-    RosterEntry, RosterSlot, ServerMsg, Token, TokenId,
+    Calibration, ClientId, ClientMsg, Initiative, InitiativeEntry, MapInfo, Owner, PlayerId,
+    RoomView, RosterEntry, RosterSlot, ServerMsg, Token, TokenId,
 };
 use crate::store::{Saved, Store};
 
@@ -221,6 +221,10 @@ pub struct RoomState {
     map: MapInfo,
     tokens: HashMap<TokenId, Token>,
     initiative: Initiative,
+    /// How each map URL was last calibrated. Server-side only — it never enters
+    /// a snapshot or a message, because the finished `MapInfo` already says
+    /// everything a client needs.
+    calibrations: HashMap<String, Calibration>,
     /// Identified clients. Only these receive events.
     clients: HashMap<ClientId, Client>,
     /// Connected but not yet identified. They hold a sender and nothing else.
@@ -405,6 +409,7 @@ impl RoomState {
                 .map(|t| (t.id.clone(), t))
                 .collect(),
             initiative: saved.initiative,
+            calibrations: saved.calibrations,
             clients: HashMap::new(),
             pending: HashMap::new(),
         }
@@ -420,6 +425,7 @@ impl RoomState {
             map: self.map.clone(),
             tokens,
             initiative: self.initiative.clone(),
+            calibrations: self.calibrations.clone(),
         }
     }
 
@@ -465,6 +471,7 @@ impl RoomState {
                     (id, token)
                 })
                 .collect(),
+            calibrations: HashMap::new(),
             clients: HashMap::new(),
             pending: HashMap::new(),
         }
@@ -715,14 +722,35 @@ impl RoomState {
                 grid_color,
                 play_area,
             } => {
-                self.map = MapInfo {
-                    url,
+                let given = Calibration {
                     grid_px,
                     offset_x,
                     offset_y,
                     grid_color,
                     play_area,
                 };
+
+                // The URL alone says which of the two things this is. A URL the
+                // room is not already showing is a map being loaded, so anything
+                // remembered for it wins over what the client sent — which is
+                // how re-picking a map comes back calibrated without the client
+                // knowing the table exists. A URL that matches the current map
+                // is the DM recalibrating it, which is applied as given.
+                //
+                // Recording only in the second case, and on a load of a map with
+                // nothing remembered yet, is what keeps the two halves from
+                // cancelling: if a load recorded too, a remembered calibration
+                // would immediately overwrite itself with the client's guess.
+                let loading = url != self.map.url;
+                let calibration = match self.calibrations.get(&url) {
+                    Some(remembered) if loading => remembered.clone(),
+                    _ => {
+                        self.calibrations.insert(url.clone(), given.clone());
+                        given
+                    }
+                };
+
+                self.map = calibration.into_map(url);
                 vec![Event::MapChanged]
             }
 
@@ -1586,6 +1614,185 @@ mod tests {
             (map.grid_px, map.offset_x, map.offset_y),
             (70.0, 12.5, 6.25)
         );
+    }
+
+    // --- remembered calibration ----------------------------------------------
+
+    /// A `set_map` with every calibrated field distinct, so a test can tell
+    /// which of two calibrations came back.
+    fn calibrate(url: &str, grid_px: f32, offset: f32, color: &str) -> ClientMsg {
+        ClientMsg::SetMap {
+            url: url.to_owned(),
+            grid_px,
+            offset_x: offset,
+            offset_y: -offset,
+            grid_color: color.to_owned(),
+            play_area: rect(offset, offset, grid_px * 10.0, grid_px * 8.0),
+        }
+    }
+
+    #[test]
+    fn re_picking_a_map_comes_back_calibrated() {
+        // The whole point of the table: the DM calibrated this map weeks ago and
+        // should not have to do it again.
+        let mut state = room();
+        let _dm = join_as_dm(&mut state, ClientId(1));
+
+        state.handle(
+            ClientId(1),
+            calibrate("/uploads/cave.png", 82.0, 7.0, "#11223344"),
+        );
+        state.handle(
+            ClientId(1),
+            calibrate("/uploads/keep.png", 51.0, 2.0, "#aabbccdd"),
+        );
+        // Back to the first, with whatever defaults the client happened to send.
+        state.handle(
+            ClientId(1),
+            calibrate("/uploads/cave.png", 64.0, 0.0, "#ffffff52"),
+        );
+
+        let map = &state.map;
+        assert_eq!(map.url, "/uploads/cave.png");
+        assert_eq!(map.grid_px, 82.0, "the remembered grid should have won");
+        assert_eq!((map.offset_x, map.offset_y), (7.0, -7.0));
+        assert_eq!(map.grid_color, "#11223344");
+        assert_eq!(map.play_area, rect(7.0, 7.0, 820.0, 656.0));
+    }
+
+    #[test]
+    fn the_current_map_can_still_be_recalibrated() {
+        // The failure this guards against is total: if a remembered calibration
+        // also won here, a map could never be corrected once it had been set.
+        let mut state = room();
+        let _dm = join_as_dm(&mut state, ClientId(1));
+
+        state.handle(
+            ClientId(1),
+            calibrate("/uploads/cave.png", 82.0, 7.0, "#11223344"),
+        );
+        state.handle(
+            ClientId(1),
+            calibrate("/uploads/cave.png", 96.0, 3.0, "#99887766"),
+        );
+
+        let map = &state.map;
+        assert_eq!(map.grid_px, 96.0, "the DM's correction should have stuck");
+        assert_eq!((map.offset_x, map.offset_y), (3.0, -3.0));
+        assert_eq!(map.grid_color, "#99887766");
+    }
+
+    #[test]
+    fn a_recalibration_is_what_gets_remembered() {
+        let mut state = room();
+        let _dm = join_as_dm(&mut state, ClientId(1));
+
+        state.handle(
+            ClientId(1),
+            calibrate("/uploads/cave.png", 82.0, 7.0, "#11223344"),
+        );
+        state.handle(
+            ClientId(1),
+            calibrate("/uploads/cave.png", 96.0, 3.0, "#99887766"),
+        );
+        state.handle(
+            ClientId(1),
+            calibrate("/uploads/keep.png", 51.0, 2.0, "#aabbccdd"),
+        );
+        state.handle(
+            ClientId(1),
+            calibrate("/uploads/cave.png", 64.0, 0.0, "#ffffff52"),
+        );
+
+        assert_eq!(
+            state.map.grid_px, 96.0,
+            "the corrected calibration should have replaced the first one"
+        );
+    }
+
+    #[test]
+    fn a_map_nobody_has_calibrated_keeps_what_the_client_sent() {
+        let mut state = room();
+        let _dm = join_as_dm(&mut state, ClientId(1));
+
+        state.handle(
+            ClientId(1),
+            calibrate("/uploads/new.png", 77.0, 5.0, "#12345678"),
+        );
+
+        assert_eq!(state.map.grid_px, 77.0);
+        assert_eq!(
+            state
+                .calibrations
+                .get("/uploads/new.png")
+                .map(|c| c.grid_px),
+            Some(77.0),
+            "a first sighting is worth remembering too"
+        );
+    }
+
+    #[test]
+    fn a_remembered_calibration_never_reaches_a_client() {
+        // It is server-side only. Everything a client needs is already in the
+        // `MapInfo` the room sends back.
+        let mut state = room();
+        let _dm = join_as_dm(&mut state, ClientId(1));
+        state.handle(
+            ClientId(1),
+            calibrate("/uploads/cave.png", 82.0, 7.0, "#11223344"),
+        );
+
+        let view = state.snapshot_for(&Identity::Dm);
+        let json = serde_json::to_string(&view).expect("serialises");
+        assert!(
+            !json.contains("calibration"),
+            "the table has no business on the wire: {json}"
+        );
+    }
+
+    #[test]
+    fn the_calibration_table_is_saved() {
+        let mut state = room();
+        let _dm = join_as_dm(&mut state, ClientId(1));
+        state.handle(
+            ClientId(1),
+            calibrate("/uploads/cave.png", 82.0, 7.0, "#11223344"),
+        );
+
+        let saved = state.to_saved();
+        assert_eq!(
+            saved
+                .calibrations
+                .get("/uploads/cave.png")
+                .map(|c| c.grid_px),
+            Some(82.0)
+        );
+
+        // And survives the trip back, which is when it actually matters — the
+        // group is not playing between sessions.
+        let restored = RoomState::restored(saved, SECRET.to_owned());
+        assert_eq!(
+            restored
+                .calibrations
+                .get("/uploads/cave.png")
+                .map(|c| c.grid_px),
+            Some(82.0)
+        );
+    }
+
+    #[test]
+    fn a_refused_calibration_is_not_remembered() {
+        let mut state = room();
+        let _dm = join_as_dm(&mut state, ClientId(1));
+
+        // Rejected by `check`, so `apply` never runs and nothing is recorded.
+        state.handle(
+            ClientId(1),
+            calibrate("/uploads/cave.png", 0.5, 7.0, "#11223344"),
+        );
+
+        assert!(state.calibrations.is_empty());
+        assert_ne!(state.map.url, "/uploads/cave.png");
     }
 
     #[test]

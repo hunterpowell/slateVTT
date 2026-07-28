@@ -5,12 +5,13 @@
 //! written by an older build still loads against a newer schema, and a field
 //! this build has never heard of is ignored rather than fatal.
 
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 use tokio::fs;
 
-use crate::protocol::{Initiative, MapInfo, Token};
+use crate::protocol::{Calibration, Initiative, MapInfo, Token};
 
 /// What actually goes to disk.
 ///
@@ -26,6 +27,17 @@ pub struct Saved {
     /// token, and the room rebuilds its `HashMap` on load.
     pub tokens: Vec<Token>,
     pub initiative: Initiative,
+    /// Remembered grid calibrations, keyed by map URL.
+    ///
+    /// The first thing here that is not part of any client's view of the room.
+    /// It is persisted because Slate only runs while the group is playing — an
+    /// in-memory table would be empty at the start of every session, which is
+    /// exactly when re-picking last week's map wants to find one.
+    ///
+    /// It grows by an entry per distinct map ever set and is never pruned. At a
+    /// hundred bytes an entry that is not worth a cap; a DM would have to load
+    /// tens of thousands of maps before this rivalled a single token image.
+    pub calibrations: HashMap<String, Calibration>,
 }
 
 #[derive(Debug)]
@@ -171,6 +183,16 @@ mod tests {
                 current: Some(TokenId::new("t1")),
                 round: 4,
             },
+            calibrations: HashMap::from([(
+                "/uploads/digital-goblin-camp-1a2b3c4d.jpg".to_owned(),
+                Calibration {
+                    grid_px: 82.0,
+                    offset_x: 11.0,
+                    offset_y: -6.0,
+                    grid_color: "#00ff00ff".to_owned(),
+                    play_area: None,
+                },
+            )]),
         }
     }
 
@@ -203,6 +225,16 @@ mod tests {
         assert_eq!(loaded.initiative.round, 4);
         assert_eq!(loaded.initiative.current, Some(TokenId::new("t1")));
         assert_eq!(loaded.initiative.entries.len(), 1);
+
+        // Slate is off between sessions, so a calibration that did not survive
+        // the file would never be found again.
+        let remembered = loaded
+            .calibrations
+            .get("/uploads/digital-goblin-camp-1a2b3c4d.jpg")
+            .expect("the remembered calibration");
+        assert_eq!(remembered.grid_px, 82.0);
+        assert_eq!((remembered.offset_x, remembered.offset_y), (11.0, -6.0));
+        assert_eq!(remembered.grid_color, "#00ff00ff");
     }
 
     #[tokio::test]
@@ -292,6 +324,11 @@ mod tests {
             "combat starts on round 1, never round 0"
         );
         assert!(loaded.initiative.entries.is_empty());
+
+        assert!(
+            loaded.calibrations.is_empty(),
+            "a save predating the table means nothing has been calibrated yet"
+        );
     }
 
     #[tokio::test]

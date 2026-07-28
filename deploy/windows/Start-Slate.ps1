@@ -11,6 +11,10 @@ $scriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
 $repoRoot = (Resolve-Path -LiteralPath (Join-Path $scriptDir '..\..')).Path
 $clientDir = Join-Path $repoRoot 'client'
 $serverExe = Join-Path $repoRoot 'server\target\release\slate-server.exe'
+# The library the DM picks from. It stays in the repo rather than moving under
+# the data directory: picking copies into uploads, so what is backed up there is
+# still every map the room has actually used.
+$mapsDir = Join-Path $repoRoot 'maps'
 
 if (-not (Test-Path -LiteralPath $serverExe -PathType Leaf)) {
     throw 'The release server has not been built. Run .\deploy\windows\Build-Slate.ps1 first.'
@@ -35,8 +39,11 @@ $null = New-Item -ItemType Directory -Path $uploadsDir -Force
 
 if (Test-Path -LiteralPath $secretPath -PathType Leaf) {
     $dmSecret = (Get-Content -LiteralPath $secretPath -Raw).Trim()
-    if ($dmSecret -notmatch '^[0-9a-f]{32}$') {
-        throw "The DM secret in $secretPath is not a 32-character lowercase hexadecimal value."
+    # Letters, digits, - and _ only: this is pasted raw into the DM URL's query
+    # string and sent raw as a header value, and neither is encoded on the way
+    # out, so a space or a character like & or # would corrupt one or the other.
+    if ($dmSecret -notmatch '^[A-Za-z0-9_-]+$') {
+        throw "The DM secret in $secretPath must be letters, digits, - and _ only (got: $dmSecret)."
     }
 }
 else {
@@ -50,6 +57,7 @@ $env:SLATE_ADDR = "127.0.0.1:$Port"
 $env:SLATE_CLIENT_DIR = $clientDir
 $env:SLATE_STATE = $statePath
 $env:SLATE_UPLOADS = $uploadsDir
+$env:SLATE_MAPS = $mapsDir
 $env:SLATE_DM_SECRET = $dmSecret
 
 Write-Host ''
@@ -57,6 +65,7 @@ Write-Host 'Slate session host' -ForegroundColor Cyan
 Write-Host "  Player URL: $localUrl/"
 Write-Host "  DM URL:     $localUrl/?dm=$dmSecret"
 Write-Host "  Data:       $dataDir"
+Write-Host "  Maps:       $mapsDir"
 Write-Host ''
 Write-Host 'For a remote rehearsal, leave this running and open another terminal:'
 Write-Host "  cloudflared tunnel --url $localUrl"

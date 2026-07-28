@@ -102,6 +102,57 @@ impl Default for MapInfo {
     }
 }
 
+/// A `MapInfo` with the URL taken off: everything the DM sets by calibrating.
+///
+/// The room keeps one of these per map URL so that re-picking a map out of the
+/// library comes back the way it was left. Persisted, but never sent — it is not
+/// on `RoomView` and no `ServerMsg` carries it. The room applies it and the
+/// finished `MapInfo` is what reaches the wire, so remembering a calibration
+/// adds no client state and no message.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct Calibration {
+    pub grid_px: f32,
+    pub offset_x: f32,
+    pub offset_y: f32,
+    pub grid_color: String,
+    pub play_area: Option<Rect>,
+}
+
+impl Default for Calibration {
+    /// Taken from `MapInfo` rather than restated, so the grid size that must
+    /// never be zero cannot quietly become zero on this side.
+    fn default() -> Self {
+        MapInfo::default().into()
+    }
+}
+
+impl From<MapInfo> for Calibration {
+    fn from(map: MapInfo) -> Self {
+        Self {
+            grid_px: map.grid_px,
+            offset_x: map.offset_x,
+            offset_y: map.offset_y,
+            grid_color: map.grid_color,
+            play_area: map.play_area,
+        }
+    }
+}
+
+impl Calibration {
+    /// The map this describes, once it is known which image it belongs to.
+    pub fn into_map(self, url: String) -> MapInfo {
+        MapInfo {
+            url,
+            grid_px: self.grid_px,
+            offset_x: self.offset_x,
+            offset_y: self.offset_y,
+            grid_color: self.grid_color,
+            play_area: self.play_area,
+        }
+    }
+}
+
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Token {

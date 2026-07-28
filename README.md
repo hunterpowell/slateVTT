@@ -59,6 +59,7 @@ for local use:
 | `SLATE_DM_SECRET`  | random per boot  | Set this to keep the DM link stable across restarts |
 | `SLATE_STATE`      | `slate-state.json` | Path to the persisted room snapshot         |
 | `SLATE_UPLOADS`    | `uploads`        | Directory for DM-uploaded map images          |
+| `SLATE_MAPS`       | `../maps`        | Map library the DM picks from. Never served directly — a pick is copied into `SLATE_UPLOADS` |
 
 The player roster (currently Grog, Vex, Pike, Nyx, Bram) is a constant in
 [server/src/room.rs](server/src/room.rs), not runtime config — edit it there for a different
@@ -70,7 +71,7 @@ group.
 client/   TypeScript source, canvas rendering, esbuild config
 server/   axum server: room actor, wire protocol, JSON persistence
 tools/    gen-assets.mjs — generates placeholder map/token art for local dev
-maps/     reference map images to upload as the DM during play
+maps/     the map library — the DM picks from these in-app during play
 ```
 
 ## Testing
