@@ -1,5 +1,7 @@
 import type { Camera, Vec2 } from './coords.js';
 import { screenToWorld, worldToGrid } from './coords.js';
+import type { DrawTool } from './drawtool.js';
+import { createDrawTool } from './drawtool.js';
 import type { Identity } from './identity.js';
 import {
   ANONYMOUS,
@@ -23,6 +25,8 @@ import type { Rulers } from './ruler.js';
 import { createRulers } from './ruler.js';
 import type { Scene } from './scene.js';
 import { boardFromWire, removeToken, sceneFromView, shownBoard, upsertToken } from './scene.js';
+import type { Sketches } from './shapes.js';
+import { createSketches, shapeFromWire } from './shapes.js';
 import type { TokenTool } from './tokens.js';
 import { createTokenTool } from './tokens.js';
 
@@ -74,6 +78,13 @@ interface Ui {
     alpha: HTMLInputElement;
     alphaLabel: HTMLElement;
     readout: HTMLElement;
+  };
+  drawtool: {
+    root: HTMLElement;
+    tools: HTMLElement;
+    swatches: HTMLElement;
+    clear: HTMLButtonElement;
+    hint: HTMLElement;
   };
   tokentool: {
     root: HTMLElement;
@@ -156,6 +167,13 @@ function findUi(): Ui {
       alphaLabel: need('#map-alpha-label'),
       readout: need('#map-readout'),
     },
+    drawtool: {
+      root: need('#drawtool'),
+      tools: need('#draw-tools'),
+      swatches: need('#draw-swatches'),
+      clear: need<HTMLButtonElement>('#draw-clear'),
+      hint: need('#draw-hint'),
+    },
     tokentool: {
       root: need('#tokentool'),
       head: need('#token-head'),
@@ -194,10 +212,14 @@ function boot(): void {
   let mapTool: MapTool | null = null;
   let tokenTool: TokenTool | null = null;
   let stage: Stage | null = null;
+  let drawTool: DrawTool | null = null;
   let identity: Identity = ANONYMOUS;
   // Outlives any one drag and is fed from both directions — our own pointer in
   // input.ts, and everyone else's drag frames below.
   const rulers = createRulers();
+  // The same arrangement for sweeps: ours goes in from input.ts, everyone
+  // else's from the frames below.
+  const sketches = createSketches();
 
   const picker = createPicker(ui.picker, (playerId) => {
     // Not stored yet — only a Welcome proves the server accepted the claim.
@@ -262,6 +284,11 @@ function boot(): void {
       panel = createPanel(ui.panel, identity, (msg) => net.send(msg));
       panel.update(room.initiative, room.scene);
 
+      // Built for everyone, unlike the two panels below it. Anyone may draw —
+      // this is the first thing a player can add to the room, and the only
+      // thing that differs by identity here is the clear-all button.
+      drawTool = createDrawTool(ui.drawtool, identity.isDm, (msg) => net.send(msg));
+
       // `isDm` is only ever true because we sent a secret that the server
       // accepted, so it is in hand — but uploads need it, so prove it here.
       if (identity.isDm && dmSecret !== null) {
@@ -280,6 +307,10 @@ function boot(): void {
             // panel describing something not on screen is a panel lying.
             document.body.classList.toggle('previewing', previewing);
             tokenTool?.select(null);
+            // The staged map has no shapes, so a tool left armed over it would
+            // sit there looking like it could do something. Put it away for the
+            // same reason the token selection goes.
+            drawTool?.stop();
             // No prompt to size the grid — a staged map was offered one when it
             // was staged, and the live map when it arrived.
             stage?.reloadMap();
@@ -302,7 +333,17 @@ function boot(): void {
         ui.tokentool.root.hidden = false;
       }
 
-      void start(ui, room, identity, (msg) => net.send(msg), mapTool, tokenTool, rulers).then(
+      void start(
+        ui,
+        room,
+        identity,
+        (msg) => net.send(msg),
+        mapTool,
+        tokenTool,
+        rulers,
+        drawTool,
+        sketches,
+      ).then(
         (started) => {
           stage = started;
         },
@@ -397,6 +438,30 @@ function boot(): void {
       panel.update(initiative, room.scene);
     },
 
+    // Somebody else's sweep. Never our own — the server does not echo it, for
+    // the same reason it does not echo our drag frames.
+    onSketch: (frame) => {
+      sketches.seen(frame.by, {
+        kind: frame.kind,
+        at: frame.at,
+        to: frame.to,
+        color: frame.color,
+      });
+    },
+
+    // Released, or that client vanished mid-sweep and the room said so. Nothing
+    // here has to expire on a timer, which is the one way this is simpler than
+    // the movement ruler.
+    onSketchEnded: (by) => sketches.ended(by),
+
+    // The whole list, replacing whatever we held. Nothing is predicted locally:
+    // a shape's id is the server's to invent, and an erase is a click rather
+    // than a drag, so there is no round trip anybody can feel.
+    onShapesChanged: (shapes) => {
+      if (room === null) return;
+      room.scene.shapes = shapes.map(shapeFromWire);
+    },
+
     onError: (message) => {
       console.warn('server rejected a command:', message);
       flash(ui.banner, message);
@@ -449,6 +514,8 @@ async function start(
   mapTool: MapTool | null,
   tokenTool: TokenTool | null,
   rulers: Rulers,
+  drawTool: DrawTool,
+  sketches: Sketches,
 ): Promise<Stage> {
   const { scene } = room;
   const firstUrl = shownBoard(scene).mapUrl;
@@ -509,6 +576,8 @@ async function start(
     mapTool,
     tokenTool === null ? null : (id) => tokenTool.select(id),
     rulers,
+    drawTool,
+    sketches,
   );
 
   const stage: Stage = {
@@ -557,6 +626,11 @@ async function start(
       // Swept here rather than in the renderer: a client that vanished mid-drag
       // sends no drop frame, and nothing else in a frame is watching a clock.
       rulers: rulers.active(performance.now()),
+      // Not swept for staleness the way the rulers are: a sweep ends on its
+      // release frame or on the `sketch_ended` the room sends when a socket
+      // closes, so there is no case left for a clock to catch.
+      sketches: sketches.all(),
+      hoveredShapeId: input.hoveredShapeId,
       selectedId: tokenTool?.selectedId ?? null,
       currentTurn: room.initiative.current,
       calibration:

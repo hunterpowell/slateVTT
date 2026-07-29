@@ -11,7 +11,7 @@ use std::path::{Path, PathBuf};
 use serde::{Deserialize, Serialize};
 use tokio::fs;
 
-use crate::protocol::{Calibration, Initiative, MapInfo, Token};
+use crate::protocol::{Calibration, Initiative, MapInfo, Shape, Token};
 
 /// What actually goes to disk.
 ///
@@ -35,6 +35,14 @@ pub struct Saved {
     /// token, and the room rebuilds its `HashMap` on load.
     pub tokens: Vec<Token>,
     pub initiative: Initiative,
+    /// Drawn shapes, in draw order. Already a `Vec` in the room, so unlike the
+    /// tokens there is nothing to sort on the way out.
+    ///
+    /// Persisted for the reason staging is: Slate runs only while the group is
+    /// playing, so an area the DM places while prepping would otherwise be gone
+    /// before the party arrived. Sketches are not here and never will be — one
+    /// lasts as long as a mouse is held down.
+    pub shapes: Vec<Shape>,
     /// Remembered grid calibrations, keyed by map URL.
     ///
     /// The first thing here that is not part of any client's view of the room.
@@ -129,7 +137,9 @@ mod tests {
     use std::sync::atomic::{AtomicU32, Ordering};
 
     use super::*;
-    use crate::protocol::{Hp, InitiativeEntry, Owner, PlayerId, Pos, Rect, TokenId};
+    use crate::protocol::{
+        Hp, InitiativeEntry, Origin, Owner, PlayerId, Pos, Rect, ShapeId, ShapeKind, TokenId,
+    };
 
     static NEXT: AtomicU32 = AtomicU32::new(0);
 
@@ -208,6 +218,16 @@ mod tests {
                 current: Some(TokenId::new("t1")),
                 round: 4,
             },
+            // One anchored to the token above, since that is the shape with a
+            // reference in it and so the one a round trip could break.
+            shapes: vec![Shape {
+                id: ShapeId("s1".to_owned()),
+                kind: ShapeKind::Circle,
+                from: Origin::Token(TokenId::new("t1")),
+                to: Pos { x: 4.0, y: 0.0 },
+                by: Owner::Player(PlayerId::new("grog")),
+                color: "#ff8c42e6".to_owned(),
+            }],
             calibrations: HashMap::from([(
                 "/uploads/digital-goblin-camp-1a2b3c4d.jpg".to_owned(),
                 Calibration {

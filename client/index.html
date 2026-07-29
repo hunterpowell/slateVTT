@@ -821,6 +821,100 @@
         border-color: #7a2f2f;
         color: #f4c4c4;
       }
+
+      /* --- draw tool (everyone) --------------------------------------------- */
+
+      /* Pinned to the bottom of the rail rather than left to flow: it is the one
+         panel a player has, and on a player's screen the two above it are hidden,
+         so in normal flow it would float alone at the top. `margin-top: auto`
+         puts it where a toolbar belongs on both screens. */
+      #drawtool {
+        flex: 0 0 auto;
+        margin-top: auto;
+        box-sizing: border-box;
+        width: 100%;
+        padding: 10px;
+        border-radius: 6px;
+        background: rgba(12, 14, 18, 0.88);
+        color: #d8d2c4;
+        font-size: 13px;
+        user-select: none;
+      }
+
+      .draw-tools {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 4px;
+      }
+
+      .draw-tool {
+        padding: 4px 0;
+        border: 1px solid #2b3038;
+        border-radius: 4px;
+        background: #171a1f;
+        color: #8d939c;
+        font: inherit;
+        font-size: 11px;
+        cursor: pointer;
+      }
+
+      .draw-tool:hover {
+        color: #d8d2c4;
+      }
+
+      /* The same blue the calibration box and a drag use, and for the same
+         reason: it means the left button is doing something other than usual. */
+      .draw-tool.is-on {
+        border-color: #4d90c8;
+        background: rgba(120, 190, 255, 0.14);
+        color: #cfe6ff;
+      }
+
+      .draw-swatches {
+        display: flex;
+        gap: 5px;
+        margin: 8px 0;
+      }
+
+      .draw-swatch {
+        width: 20px;
+        height: 20px;
+        flex: none;
+        padding: 0;
+        border: 1px solid #2b3038;
+        border-radius: 50%;
+        cursor: pointer;
+      }
+
+      .draw-swatch.is-on {
+        border-color: #e8e6e1;
+        box-shadow: 0 0 0 1px #e8e6e1;
+      }
+
+      #draw-clear {
+        color: #c98080;
+      }
+
+      #draw-clear:hover {
+        border-color: #7a2f2f;
+        color: #f4c4c4;
+      }
+
+      /* A shape tool takes the left button, exactly as calibrating does, and
+         that has to be visible from the middle of the map rather than only in
+         the panel. Everything on the rail stays interactive; the canvas is what
+         changes meaning. */
+      body.drawing #hint::after {
+        content: ' · drawing: drag to sweep, click a shape to erase';
+        color: #cfe6ff;
+      }
+
+      /* Preview has no shapes to draw on, so the tool is put away rather than
+         left looking armed over a map it cannot touch. */
+      body.previewing #drawtool {
+        opacity: 0.45;
+        pointer-events: none;
+      }
     </style>
   </head>
   <body>
@@ -960,6 +1054,16 @@
         </div>
         <button id="token-new" class="map-subtle" type="button" hidden>+ new token</button>
         <p class="map-hint" id="token-hint">Click a token on the map to edit it.</p>
+      </aside>
+      <!-- The one panel everybody gets. Anyone may draw, so unlike the two above
+           it is built on a player connection too; the only thing that differs by
+           identity is the clear-all button. -->
+      <aside id="drawtool" hidden>
+        <div class="map-head">Draw</div>
+        <div id="draw-tools" class="draw-tools"></div>
+        <div id="draw-swatches" class="draw-swatches"></div>
+        <button id="draw-clear" class="map-subtle" type="button" hidden>erase everything</button>
+        <p class="map-hint" id="draw-hint"></p>
       </aside>
     </div>
     <div id="hud"></div>

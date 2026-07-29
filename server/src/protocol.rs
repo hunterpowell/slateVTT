@@ -19,6 +19,9 @@ pub struct PlayerId(pub String);
 #[derive(Debug, Clone, Default, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 pub struct TokenId(pub String);
 
+#[derive(Debug, Clone, Default, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+pub struct ShapeId(pub String);
+
 impl TokenId {
     pub fn new(s: &str) -> Self {
         Self(s.to_owned())
@@ -328,6 +331,94 @@ impl Token {
     }
 }
 
+/// The four things anyone can draw on the board. A closed set, checked by serde
+/// rather than by hand — an unknown kind fails to deserialize, the way an
+/// unknown `ClientMsg` does.
+///
+/// Nothing here knows what a spell is. A cone is a wedge as wide as it is long,
+/// which is geometry; that it happens to be how a breath weapon is measured is
+/// the table's business, not this file's.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ShapeKind {
+    /// Two points and the distance between them. The default because it is the
+    /// one kind that encloses nothing: a save from a schema that predates this
+    /// field cannot invent an area out of it.
+    #[default]
+    Line,
+    /// Centred on the origin, out to the second point.
+    Circle,
+    /// Apex at the origin, pointing at the second point.
+    Cone,
+    /// The two points are opposite corners.
+    Rect,
+}
+
+/// Where a shape's first point is.
+///
+/// An enum rather than a position beside an `Option<TokenId>`, for the reason
+/// `Identity` is one: an anchored shape carrying a position nothing reads is a
+/// field that can go stale, and the pair could disagree. Here they cannot.
+///
+/// `Token` is the anchor the roadmap asks for — an aura that follows the
+/// creature it belongs to. It needs no position updates on the wire at all,
+/// because every client already holds the token and derives the rest.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "kind", content = "at", rename_all = "snake_case")]
+pub enum Origin {
+    /// A cell on the board, in grid units like everything else a token knows.
+    Point(Pos),
+    /// A token, wherever it currently stands.
+    Token(TokenId),
+}
+
+impl Default for Origin {
+    fn default() -> Self {
+        Self::Point(Pos::default())
+    }
+}
+
+/// A drawn shape: a spell area, or anything else worth putting on the board.
+///
+/// Unlike `Token` this reaches the wire as itself, and deliberately: there is no
+/// `ShapeView` because there is nothing on it one client may hold and another
+/// may not. Fog will gate a shape *whole* — all-or-nothing on whether any cell
+/// it covers is visible — so the seam is `message_for`, which drops it, rather
+/// than a view type, which would have no field to redact.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(default)]
+pub struct Shape {
+    pub id: ShapeId,
+    pub kind: ShapeKind,
+    pub from: Origin,
+    /// The second point, as an offset from the origin in grid units.
+    ///
+    /// An offset rather than a position so that an anchored shape translates
+    /// with its token instead of stretching towards a fixed cell. Grid units,
+    /// not pixels: a shape is measured in cells the way a token is placed in
+    /// them, so recalibrating the grid leaves a 20 ft circle 20 ft across.
+    pub to: Pos,
+    /// Who drew it, and so who may delete it besides the DM. The same type a
+    /// token's `owner` is, and the same idea — but a shape is nobody's to move,
+    /// so this is named for what it actually answers.
+    pub by: Owner,
+    /// `#rrggbbaa`, like `MapInfo::grid_color` and validated by the same rule.
+    /// The client picks from a small palette; the server only checks the shape.
+    pub color: String,
+}
+
+impl Shape {
+    /// The token this shape follows, if it follows one. Every filter asks this
+    /// rather than matching on `from` itself — the same reason `Token::unseen`
+    /// exists.
+    pub fn anchor(&self) -> Option<&TokenId> {
+        match &self.from {
+            Origin::Token(id) => Some(id),
+            Origin::Point(_) => None,
+        }
+    }
+}
+
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(default)]
 pub struct RosterEntry {
@@ -395,6 +486,14 @@ pub struct RoomView {
     /// `current` with them. A row the players can read but not explain is the
     /// bare id of the thing `hidden` was supposed to conceal.
     pub initiative: Initiative,
+    /// Draw order, and already filtered: a shape anchored to a token this
+    /// client cannot see is absent, because an aura on a hidden monster is that
+    /// monster's position drawn in colour.
+    ///
+    /// Sketches are not here. One lasts as long as somebody is holding the
+    /// mouse down, so a client that joins mid-sweep missing it is not a state
+    /// to reconcile — it is a line that was about to vanish anyway.
+    pub shapes: Vec<Shape>,
 }
 
 /// Inbound. Not `#[serde(default)]`: a malformed frame from a client should be
@@ -504,6 +603,44 @@ pub enum ClientMsg {
     /// Throw the staged map away, and the plans made on it with it. DM-only.
     ClearStaged,
 
+    // Drawing. Anyone may draw — this is the first part of the room a player
+    // can add to.
+    /// A shape being swept out right now, relayed to everyone watching and
+    /// stored by nobody. `drawing: false` is the release that ends it.
+    ///
+    /// The `dragging` shape one scale up: in-flight frames are throttled
+    /// client-side, never reach the sender back, and are not worth a disk write.
+    /// What a release *means* is the client's business — the measuring tool
+    /// stops here and the area tools follow with an `AddShape`. The server is
+    /// uniform over all four kinds and never learns which tool was in hand, the
+    /// same way it never learns the DM is previewing.
+    ///
+    /// It carries no anchor. A sketch lives for a second or two, during which
+    /// nothing it could anchor to is going anywhere, so absolute cells say
+    /// everything and the anchor is a question only a kept shape has to answer.
+    Sketch {
+        kind: ShapeKind,
+        at: Pos,
+        to: Pos,
+        color: String,
+        drawing: bool,
+    },
+    /// Keep the shape just swept out. Carries no id — that is the server's to
+    /// invent, like a token's.
+    AddShape {
+        kind: ShapeKind,
+        from: Origin,
+        to: Pos,
+        color: String,
+    },
+    /// Whoever drew it, or the DM. Not a permission a player has anywhere else,
+    /// and the reason `Shape::by` is stored at all.
+    RemoveShape {
+        id: ShapeId,
+    },
+    /// Sweep the board. DM-only: it reaches into five other people's drawings.
+    ClearShapes,
+
     // Initiative. All DM-only.
     /// Adds the token at that value, or re-values it if already listed. One
     /// command covers "add" and "reorder", since ordering *is* the value.
@@ -596,6 +733,38 @@ pub enum ServerMsg {
     /// receives, so the DM's panel and the players' genuinely differ.
     InitiativeChanged {
         initiative: Initiative,
+    },
+    /// Somebody else's in-progress sweep. `by` is their connection, which is
+    /// what a client keys the drawing on — one sweep per socket, so a DM with
+    /// two tabs open can be measuring two things at once and both are drawn.
+    ///
+    /// Never sent back to the client doing the sweeping: they are already
+    /// drawing it from their own pointer, and echoing it is the rubber-banding
+    /// that `TokenMoved` avoids for the same reason.
+    Sketch {
+        by: ClientId,
+        kind: ShapeKind,
+        at: Pos,
+        to: Pos,
+        color: String,
+    },
+    /// That sweep is over — released, or the client holding it went away.
+    ///
+    /// The second case is why this exists rather than a client-side timeout:
+    /// the room is told when a socket closes, so it can say so. A movement
+    /// ruler has to guess, because nothing announces that a drag stopped.
+    SketchEnded {
+        by: ClientId,
+    },
+    /// Every shape this client may see. The whole list rather than a per-shape
+    /// delta, for the reason `InitiativeChanged` carries the whole panel: it is
+    /// a handful of entries that only change on a deliberate act.
+    ///
+    /// Built per recipient, and that is load-bearing rather than tidy — hiding
+    /// a monster takes the aura anchored to it off the table's board and leaves
+    /// it on the DM's, from this one message.
+    ShapesChanged {
+        shapes: Vec<Shape>,
     },
     Error {
         message: String,

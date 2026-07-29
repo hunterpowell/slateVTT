@@ -8,6 +8,8 @@ import type { Ruler } from './ruler.js';
 import { feetMoved } from './ruler.js';
 import type { Board, Scene, Token } from './scene.js';
 import { shownBoard, shownPos, showingStaged } from './scene.js';
+import type { Shape, Sketch } from './shapes.js';
+import { CONE_HALF_ANGLE, coveredCells, isArea, labelFor, shapeEnd, shapeOrigin } from './shapes.js';
 
 const TAU = Math.PI * 2;
 
@@ -101,6 +103,24 @@ const HP_HEALTHY = 'rgba(122, 184, 116, 0.95)';
 const HP_HURT = 'rgba(214, 173, 84, 0.95)';
 const HP_LOW = 'rgba(200, 92, 92, 0.95)';
 
+/**
+ * How solidly a drawn shape's outline and its cell tint go down.
+ *
+ * The colour on the wire carries its own alpha, and these multiply it: an
+ * outline is meant to be read and a fill is meant to be seen through, because
+ * whatever is standing under a spell area is the thing anyone is actually
+ * looking at. A sketch is drawn fainter still — it is a proposal, not a fact.
+ */
+const SHAPE_FILL_ALPHA = 0.24;
+const SHAPE_EDGE_ALPHA = 1;
+const SKETCH_ALPHA = 0.75;
+const SHAPE_EDGE_WIDTH = 2;
+/** The shape the pointer would erase, so a click is never a surprise. */
+const SHAPE_HOVER_ALPHA = 0.4;
+const SHAPE_FONT = '600 12px ui-sans-serif, system-ui, sans-serif';
+/** Between a shape's far point and its reading. */
+const SHAPE_TEXT_GAP = 8;
+
 /** Canvas size in CSS pixels, plus the backing-store scale factor. */
 export interface Viewport {
   width: number;
@@ -120,6 +140,12 @@ export interface Frame {
   rulers: ReadonlyMap<string, Ruler>;
   /** The token the DM has selected for editing. Null for everyone else. */
   selectedId: string | null;
+  /** Every sweep in progress — ours and everyone else's. */
+  sketches: readonly Sketch[];
+  /** The shape the pointer is over and could erase, or null. Only ever set
+   *  while the draw tool is in hand, since that is the only time clicking a
+   *  shape means anything. */
+  hoveredShapeId: string | null;
   /** Token acting this turn, or null when combat is not running. */
   currentTurn: string | null;
   /** The DM's in-progress grid reference box. Null for everyone else. */
@@ -153,12 +179,25 @@ export function render(ctx: CanvasRenderingContext2D, view: Viewport, frame: Fra
 
   drawTokens(ctx, frame, board);
 
+  // Over the tokens, not under them. A spell area is being asked about *now* —
+  // where it reaches and who is caught in it — so it has to read across the
+  // creatures inside it rather than being hidden by the two of them standing on
+  // top. The fill is translucent enough that a token under one is still a
+  // token, and its name and hit points are drawn later still, in screen space,
+  // so nothing a shape covers becomes unreadable.
+  //
+  // Nothing is drawn while previewing. Shapes belong to the board, the staged
+  // map has none, and painting the board's onto the map being prepared would
+  // put a fireball on a dungeon it was never cast in.
+  if (!showingStaged(frame.scene)) drawShapes(ctx, frame, board);
+
   if (frame.calibration !== null) drawCalibration(ctx, cam, frame.calibration);
 
   ctx.setTransform(1, 0, 0, 1, 0, 0);
   ctx.scale(view.dpr, view.dpr);
   // Under the chrome: a name or a hit point bar is worth more than the line
   // that happens to be passing behind it.
+  if (!showingStaged(frame.scene)) drawShapeLabels(ctx, frame, board);
   drawRulers(ctx, frame, board);
   drawTokenChrome(ctx, frame, board);
 }
@@ -266,6 +305,166 @@ function haloFor(color: string): string | null {
   const light = (0.299 * r + 0.587 * g + 0.114 * b) / 255 > 0.5;
 
   return `rgba(${light ? '0, 0, 0' : '255, 255, 255'}, ${alpha * HALO_ALPHA_RATIO})`;
+}
+
+/**
+ * Everything drawn on the board, and every sweep in progress on top of it.
+ *
+ * Kept shapes and sketches go through one function because they are the same
+ * picture — the only difference is that one of them is a fact and the other is
+ * somebody's mouse still being held down, which is what the dash says.
+ */
+function drawShapes(ctx: CanvasRenderingContext2D, frame: Frame, board: Board): void {
+  const { scene } = frame;
+
+  for (const shape of scene.shapes) {
+    // Null is an anchor we do not hold, which the room should never let happen.
+    // Drawing nothing beats drawing it at cell zero.
+    const origin = shapeOrigin(scene, shape);
+    if (origin === null) continue;
+    const fill = shape.id === frame.hoveredShapeId ? SHAPE_HOVER_ALPHA : SHAPE_FILL_ALPHA;
+    paintShape(ctx, frame, board, shape.kind, origin, shape.to, shape.color, fill, 1, false);
+  }
+
+  for (const sketch of frame.sketches) {
+    paintShape(
+      ctx,
+      frame,
+      board,
+      sketch.kind,
+      sketch.at,
+      sketch.to,
+      sketch.color,
+      SHAPE_FILL_ALPHA,
+      SKETCH_ALPHA,
+      true,
+    );
+  }
+}
+
+/**
+ * One shape in world space: the cells it covers, then its outline.
+ *
+ * `globalAlpha` multiplies whatever alpha the colour already carries, which is
+ * how one palette entry gives a readable edge and a fill you can see a goblin
+ * through without the wire format carrying two colours.
+ */
+function paintShape(
+  ctx: CanvasRenderingContext2D,
+  frame: Frame,
+  board: Board,
+  kind: Shape['kind'],
+  origin: { x: number; y: number },
+  to: { x: number; y: number },
+  color: string,
+  fillAlpha: number,
+  alpha: number,
+  dashed: boolean,
+): void {
+  const { grid } = board;
+  const o = gridToWorld(grid, origin.x, origin.y);
+  const end = shapeEnd(origin, to);
+  const e = gridToWorld(grid, end.x, end.y);
+
+  ctx.save();
+
+  if (isArea(kind)) {
+    // Every cell whose centre falls inside, as one path and one fill. A rect per
+    // cell would be a few hundred fill calls a frame on a large area; a few
+    // hundred `rect`s into one path is the same picture for one of them.
+    const cells = coveredCells(kind, origin, to);
+    if (cells.length > 0) {
+      ctx.beginPath();
+      for (let i = 0; i < cells.length; i += 2) {
+        const cx = cells[i] ?? 0;
+        const cy = cells[i + 1] ?? 0;
+        const corner = gridToWorld(grid, cx, cy);
+        ctx.rect(corner.x, corner.y, grid.px, grid.px);
+      }
+      ctx.globalAlpha = alpha * fillAlpha;
+      ctx.fillStyle = color;
+      ctx.fill();
+    }
+  }
+
+  ctx.globalAlpha = alpha * SHAPE_EDGE_ALPHA;
+  ctx.strokeStyle = color;
+  // Constant on screen at any zoom, like the grid and the rings.
+  ctx.lineWidth = SHAPE_EDGE_WIDTH / frame.cam.zoom;
+  if (dashed) ctx.setLineDash([7 / frame.cam.zoom, 5 / frame.cam.zoom]);
+  ctx.lineJoin = 'round';
+
+  ctx.beginPath();
+  switch (kind) {
+    case 'line':
+      ctx.moveTo(o.x, o.y);
+      ctx.lineTo(e.x, e.y);
+      break;
+
+    case 'circle':
+      ctx.arc(o.x, o.y, Math.hypot(e.x - o.x, e.y - o.y), 0, TAU);
+      break;
+
+    case 'rect':
+      ctx.rect(o.x, o.y, e.x - o.x, e.y - o.y);
+      break;
+
+    case 'cone': {
+      // Apex, out along one edge, round the far end, back along the other. The
+      // arc rather than a flat base because the far edge of a wedge is every
+      // point at the same distance from the apex, which is what it is measured
+      // in — the same reason a circle is not a square.
+      const length = Math.hypot(e.x - o.x, e.y - o.y);
+      const heading = Math.atan2(e.y - o.y, e.x - o.x);
+      ctx.moveTo(o.x, o.y);
+      ctx.arc(o.x, o.y, length, heading - CONE_HALF_ANGLE, heading + CONE_HALF_ANGLE);
+      ctx.closePath();
+      break;
+    }
+  }
+  ctx.stroke();
+
+  ctx.restore();
+}
+
+/**
+ * What each shape measures, beside its far point.
+ *
+ * Screen space, like the token names and the movement ruler, and for the same
+ * reason: it is an annotation on the board rather than something painted on the
+ * map, so it keeps its size as the camera moves.
+ */
+function drawShapeLabels(ctx: CanvasRenderingContext2D, frame: Frame, board: Board): void {
+  const { scene, cam } = frame;
+
+  ctx.save();
+  ctx.font = SHAPE_FONT;
+  ctx.textAlign = 'left';
+  ctx.textBaseline = 'middle';
+  ctx.lineJoin = 'round';
+  ctx.lineWidth = 3;
+
+  const label = (shape: Shape | Sketch, origin: { x: number; y: number }): void => {
+    // Nothing has been swept yet. The movement ruler drops its reading at zero
+    // for the same reason: a "0 ft" flashing under the cursor is noise.
+    if (shape.to.x === 0 && shape.to.y === 0) return;
+    const end = shapeEnd(origin, shape.to);
+    const world = gridToWorld(board.grid, end.x, end.y);
+    const at = worldToScreen(cam, world.x, world.y);
+    const text = labelFor(shape);
+    ctx.strokeStyle = LABEL_HALO;
+    ctx.strokeText(text, at.x + SHAPE_TEXT_GAP, at.y);
+    ctx.fillStyle = LABEL_TEXT;
+    ctx.fillText(text, at.x + SHAPE_TEXT_GAP, at.y);
+  };
+
+  for (const shape of scene.shapes) {
+    const origin = shapeOrigin(scene, shape);
+    if (origin !== null) label(shape, origin);
+  }
+  for (const sketch of frame.sketches) label(sketch, sketch.at);
+
+  ctx.restore();
 }
 
 function drawTokens(ctx: CanvasRenderingContext2D, frame: Frame, board: Board): void {

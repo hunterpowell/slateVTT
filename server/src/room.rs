@@ -15,8 +15,9 @@ use tracing::{debug, error, warn};
 use uuid::Uuid;
 
 use crate::protocol::{
-    Calibration, ClientId, ClientMsg, Hp, Initiative, InitiativeEntry, MapInfo, Owner, PlayerId,
-    Pos, RoomView, RosterEntry, RosterSlot, ServerMsg, Token, TokenId, TokenView,
+    Calibration, ClientId, ClientMsg, Hp, Initiative, InitiativeEntry, MapInfo, Origin, Owner,
+    PlayerId, Pos, RoomView, RosterEntry, RosterSlot, ServerMsg, Shape, ShapeId, ShapeKind, Token,
+    TokenId, TokenView,
 };
 use crate::store::{Saved, Store};
 
@@ -59,6 +60,18 @@ const MAX_TOKENS: usize = 200;
 /// because a DM tracking how far past nothing something went is bookkeeping, not
 /// a rule — this only stops the save file growing through a number field.
 const MAX_HP: i32 = 9999;
+
+/// Bounds the save file the way `MAX_TOKENS` does. Well past what a fight puts
+/// on the board, and low enough that a board nobody has cleared in a month is
+/// still a board the client can draw.
+const MAX_SHAPES: usize = 64;
+/// How far a shape may reach from its origin, in cells — 150 feet.
+///
+/// Not fussiness either, and the same failure as `MIN_GRID_PX`: an area shape
+/// tints every cell it covers, so the client walks the cells inside its bounding
+/// box. A circle a million cells across is a frozen browser on five other
+/// machines, and a sketch reaches them before anybody has decided to keep it.
+const MAX_SHAPE_CELLS: f32 = 30.0;
 
 /// Five players plus the DM, per the brief. The DM holds no slot.
 const ROSTER: [(&str, &str); 5] = [
@@ -190,6 +203,30 @@ enum Event {
     /// promote. The first event that survives for one recipient and not another
     /// because of *who they are* rather than what they just did.
     StagedChanged,
+
+    /// Somebody is sweeping out a shape. Carries its payload, unlike the events
+    /// above that are rebuilt per recipient, because a sketch is the same line
+    /// for everyone allowed to see it — there is nothing in it to redact.
+    ///
+    /// Worth no disk write and no state: it is gone when the mouse comes up.
+    Sketching {
+        by: ClientId,
+        kind: ShapeKind,
+        at: Pos,
+        to: Pos,
+        color: String,
+    },
+    /// A sweep ended — released, or its client disconnected. `by` is enough to
+    /// find it, because there is only ever one per connection.
+    SketchEnded { by: ClientId },
+    /// The drawn shapes changed. Payload-free like `InitiativeChanged`, and for
+    /// the same reason twice over: the list is short, and the copy the table may
+    /// hold is not the copy the DM may hold.
+    ///
+    /// One event for adding, deleting, clearing, and for the three things that
+    /// reach in from outside — a token being deleted, a token being hidden or
+    /// revealed, and a new map arriving on the board.
+    ShapesChanged,
 }
 
 impl Initiative {
@@ -306,6 +343,14 @@ pub struct RoomState {
     staged: Option<MapInfo>,
     tokens: HashMap<TokenId, Token>,
     initiative: Initiative,
+    /// Everything drawn on the board, in draw order.
+    ///
+    /// A `Vec` rather than a `HashMap` keyed by id, unlike the tokens: the list
+    /// is short, it is only ever looked up by id when something is deleted, and
+    /// its order is the z-order — which a map would have to be sorted back into
+    /// on every send. Shapes belong to the live board alone; the staged map has
+    /// none, so there is nothing here that forks.
+    shapes: Vec<Shape>,
     /// How each map URL was last calibrated. Server-side only — it never enters
     /// a snapshot or a message, because the finished `MapInfo` already says
     /// everything a client needs.
@@ -363,6 +408,16 @@ async fn run(mut state: RoomState, mut rx: mpsc::Receiver<RoomCmd>, store: Store
                     // That slot just came free; anyone still on the picker
                     // should see it immediately.
                     state.refresh_pickers();
+                    // A client that vanishes mid-sweep sends no release, and
+                    // its line would sit on five other screens until somebody
+                    // reloaded. Sent unconditionally, because "was that client
+                    // sketching" is state the room would have to keep to answer
+                    // and an id nobody is drawing is a no-op on arrival.
+                    //
+                    // This is what a movement ruler cannot have: nothing tells
+                    // the room a drag stopped, so that one guesses with a
+                    // timeout. Here the socket closing *is* the news.
+                    state.dispatch(client, &[Event::SketchEnded { by: client }]);
                 }
                 // Who happens to be connected is not part of the room.
                 false
@@ -428,7 +483,12 @@ fn persists(event: &Event) -> bool {
         | Event::Promoted { .. }
         | Event::InitiativeChanged
         | Event::MapChanged
-        | Event::StagedChanged => true,
+        | Event::StagedChanged
+        | Event::ShapesChanged => true,
+        // A sketch is not in the room to be saved. It is the one thing here
+        // that exists only between two pointer events, which is exactly why a
+        // measuring line costs the disk nothing at all.
+        Event::Sketching { .. } | Event::SketchEnded { .. } => false,
     }
 }
 
@@ -512,6 +572,49 @@ fn token_fields(name: &str, img: &str, size: f32, hp: Option<Hp>) -> Result<(), 
     Ok(())
 }
 
+/// The geometry a sketch and a kept shape have in common, checked once for both.
+///
+/// The extent bound is the load-bearing half. Everything else here is the usual
+/// hygiene; that one stops a single frame from walking a million cells on five
+/// other people's machines, and it has to be checked on the sketch as well as on
+/// the shape, because the sketch is what reaches them first.
+fn shape_fields(to: Pos, color: &str) -> Result<(), String> {
+    finite(&[to.x, to.y])?;
+    if to.x.abs() > MAX_SHAPE_CELLS || to.y.abs() > MAX_SHAPE_CELLS {
+        return Err(format!(
+            "a shape can reach at most {} feet",
+            MAX_SHAPE_CELLS as i32 * 5
+        ));
+    }
+    if !is_hex_rgba(color) {
+        return Err("a shape colour must look like #rrggbbaa".to_owned());
+    }
+    Ok(())
+}
+
+/// Who a client is, as a shape records it. The one place `Identity` becomes
+/// `Owner`: they say the same thing, but `Identity` is who is connected and
+/// `Owner` is what a token or a drawing remembers about them.
+fn drawn_by(client: &Client) -> Owner {
+    match &client.identity {
+        Identity::Dm => Owner::Dm,
+        Identity::Player(id) => Owner::Player(id.clone()),
+    }
+}
+
+/// The permission rule for erasing. The DM may clear anything; everyone else may
+/// take back what they drew.
+///
+/// This is the only thing in the room a player may destroy, and the only reason
+/// `Shape::by` is stored. It is deliberately not `can_move`'s shape — a shape is
+/// nobody's to move, and nothing but this asks who drew one.
+fn can_erase(client: &Client, shape: &Shape) -> bool {
+    match &client.identity {
+        Identity::Dm => true,
+        Identity::Player(id) => matches!(&shape.by, Owner::Player(by) if by == id),
+    }
+}
+
 /// The permission rule for movement. Creating, deleting and editing a token —
 /// including reassigning its `owner` — are DM-only and checked in `check`.
 fn can_move(client: &Client, token: &Token) -> bool {
@@ -548,6 +651,7 @@ impl RoomState {
                 .map(|t| (t.id.clone(), t))
                 .collect(),
             initiative: saved.initiative,
+            shapes: saved.shapes,
             calibrations: saved.calibrations,
             clients: HashMap::new(),
             pending: HashMap::new(),
@@ -565,6 +669,7 @@ impl RoomState {
             staged: self.staged.clone(),
             tokens,
             initiative: self.initiative.clone(),
+            shapes: self.shapes.clone(),
             calibrations: self.calibrations.clone(),
         }
     }
@@ -615,6 +720,7 @@ impl RoomState {
                     (id, token)
                 })
                 .collect(),
+            shapes: Vec::new(),
             calibrations: HashMap::new(),
             clients: HashMap::new(),
             pending: HashMap::new(),
@@ -640,7 +746,7 @@ impl RoomState {
             return false;
         }
 
-        let events = self.apply(msg);
+        let events = self.apply(origin, msg);
         self.dispatch(origin, &events);
         events.iter().any(persists)
     }
@@ -779,7 +885,49 @@ impl RoomState {
             },
             tokens,
             initiative: self.initiative_for(is_dm),
+            shapes: self.shapes_for(is_dm),
         }
+    }
+
+    /// The drawings as this recipient may see them.
+    ///
+    /// One rule today: a shape anchored to a token they cannot see is not sent.
+    /// The roadmap files that under fog of war, but it is due now — `hidden`
+    /// already exists, and an aura drawn on a monster the DM has taken off the
+    /// board is that monster's position rendered in colour. Invariant 4 does not
+    /// wait for the milestone that motivated it.
+    ///
+    /// Asked through `Token::unseen`, so a shape anchored to something built on
+    /// the next map is withheld by the same line. A shape whose anchor is not in
+    /// the room at all cannot happen — deleting a token takes its shapes — and
+    /// is withheld anyway, because this fails closed on purpose.
+    ///
+    /// Unanchored shapes are visible to everyone. Fog will narrow that to the
+    /// cells they cover; there is nothing to narrow it by yet.
+    fn shapes_for(&self, is_dm: bool) -> Vec<Shape> {
+        self.shapes
+            .iter()
+            .filter(|shape| is_dm || self.shape_seen(shape))
+            .cloned()
+            .collect()
+    }
+
+    /// Whether the table may see this shape at all.
+    fn shape_seen(&self, shape: &Shape) -> bool {
+        match shape.anchor() {
+            None => true,
+            Some(id) => self.tokens.get(id).is_some_and(|t| !t.unseen()),
+        }
+    }
+
+    /// Whether anything drawn follows this token — the question that decides
+    /// whether hiding or deleting it has to rebuild anyone's board.
+    ///
+    /// Gating on it matters: emitting `ShapesChanged` every time a token is
+    /// hidden would tell the table *something happened* on every hide, which is
+    /// news they are not entitled to. Same rule the initiative panel follows.
+    fn anchors_a_shape(&self, id: &TokenId) -> bool {
+        self.shapes.iter().any(|s| s.anchor() == Some(id))
     }
 
     /// The turn order as this recipient may see it: rows naming a token they
@@ -981,6 +1129,66 @@ impl RoomState {
                 }
             }
 
+            // No `require_dm` anywhere in this group but the last: anyone may
+            // draw. The permission that does exist is on erasing, and it is
+            // per-shape rather than per-role.
+            ClientMsg::Sketch {
+                at, to, color, ..
+            } => {
+                finite(&[at.x, at.y])?;
+                shape_fields(*to, color)
+            }
+
+            ClientMsg::AddShape {
+                from, to, color, ..
+            } => {
+                if self.shapes.len() >= MAX_SHAPES {
+                    return Err(format!("this board already holds {MAX_SHAPES} drawings"));
+                }
+                match from {
+                    Origin::Point(at) => finite(&[at.x, at.y])?,
+                    Origin::Token(id) => {
+                        // Refused for a token this client cannot see, and with
+                        // the same words either way. Answering "no such token"
+                        // for one that does exist but is hidden would make this
+                        // an oracle: sweep the id space and the refusals map
+                        // out the DM's monsters.
+                        let seen = self
+                            .tokens
+                            .get(id)
+                            .is_some_and(|t| client.identity == Identity::Dm || !t.unseen());
+                        if !seen {
+                            return Err(format!("no such token: {}", id.0));
+                        }
+                    }
+                }
+                shape_fields(*to, color)
+            }
+
+            ClientMsg::RemoveShape { id } => {
+                // Filtered before it is found, so a shape this client is not
+                // sent is a shape that does not exist as far as they are
+                // concerned — they cannot erase it, and the refusal cannot tell
+                // them apart from an id nobody ever held.
+                let Some(shape) = self
+                    .shapes
+                    .iter()
+                    .find(|s| &s.id == id)
+                    .filter(|s| client.identity == Identity::Dm || self.shape_seen(s))
+                else {
+                    return Err("that drawing is already gone".to_owned());
+                };
+                if can_erase(client, shape) {
+                    Ok(())
+                } else {
+                    Err("that is not yours to erase".to_owned())
+                }
+            }
+
+            // The one DM-only command here, because it reaches into five other
+            // people's drawings rather than only their own.
+            ClientMsg::ClearShapes => require_dm(client, "clear the board"),
+
             ClientMsg::SetInitiative { token, .. } => {
                 require_dm(client, "change initiative")?;
                 let Some(named) = self.tokens.get(token) else {
@@ -1004,7 +1212,13 @@ impl RoomState {
     }
 
     /// Step 3. Mutates state, returns what happened.
-    fn apply(&mut self, msg: ClientMsg) -> Vec<Event> {
+    ///
+    /// `origin` is here for the drawing commands and nothing else. Every command
+    /// before them was checked against who sent it and then applied identically
+    /// whoever that was; a sketch belongs to the connection that swept it, and a
+    /// kept shape records who drew it, so these are the first whose *effect*
+    /// depends on the sender rather than only their permission to send it.
+    fn apply(&mut self, origin: ClientId, msg: ClientMsg) -> Vec<Event> {
         match msg {
             ClientMsg::Hello { .. } => Vec::new(),
             ClientMsg::MoveToken {
@@ -1148,6 +1362,17 @@ impl RoomState {
                 if was_unseen != now_unseen && self.initiative.index_of(&id).is_some() {
                     events.push(Event::InitiativeChanged);
                 }
+                // And the same again for what is drawn on it. An aura anchored
+                // to a monster the DM has just hidden has to leave the table's
+                // board with it, or the shape stays exactly where the creature
+                // is standing — which is the whole of what was withheld.
+                //
+                // Gated on something actually being anchored to it, not merely
+                // on the flip: an unconditional rebuild would tell the table
+                // that *something happened* every time the DM hid anything.
+                if was_unseen != now_unseen && self.anchors_a_shape(&id) {
+                    events.push(Event::ShapesChanged);
+                }
                 events
             }
 
@@ -1232,7 +1457,18 @@ impl RoomState {
                     // the staged map, which this command has not touched — the
                     // plans are still about the map they were made on.
                     self.map = finished;
-                    vec![Event::MapChanged]
+                    let mut events = vec![Event::MapChanged];
+                    // The drawings are the opposite case, and turn on the same
+                    // `loading`: they describe cells on *this* board, and a new
+                    // image is a new dungeon where those cells mean nothing. A
+                    // recalibration must leave them alone, exactly as it leaves
+                    // the plans alone — this is the arm that gets missed, and it
+                    // is the one fog and walls will be added to.
+                    if loading && !self.shapes.is_empty() {
+                        self.shapes.clear();
+                        events.push(Event::ShapesChanged);
+                    }
+                    events
                 }
             }
 
@@ -1251,6 +1487,14 @@ impl RoomState {
                 // has emptied — which is what ends the DM's preview — every
                 // token already holds the position it landed on.
                 let mut events = self.promote_staged_tokens();
+                // A promote is a new map arriving on the board, so the drawings
+                // go the way they go for any other load. Nothing carries over:
+                // there are no staged shapes to adopt, because the staged map
+                // has none to draw on.
+                if !self.shapes.is_empty() {
+                    self.shapes.clear();
+                    events.push(Event::ShapesChanged);
+                }
                 // Then the two that were always here, because two things
                 // happened: the board changed for everyone, and the slot emptied
                 // for the DM.
@@ -1264,6 +1508,66 @@ impl RoomState {
                 self.staged = None;
                 events.push(Event::StagedChanged);
                 events
+            }
+
+            // Relayed and forgotten. The room does not hold the sweep at all —
+            // there is nothing to hold, since the next frame replaces it and the
+            // release ends it. That is what makes a measuring line cost the save
+            // file nothing, and it is why a client joining mid-sweep is sent no
+            // sketch: `RoomView` can only describe what the room knows.
+            ClientMsg::Sketch {
+                kind,
+                at,
+                to,
+                color,
+                drawing,
+            } => {
+                if drawing {
+                    vec![Event::Sketching {
+                        by: origin,
+                        kind,
+                        at,
+                        to,
+                        color,
+                    }]
+                } else {
+                    vec![Event::SketchEnded { by: origin }]
+                }
+            }
+
+            ClientMsg::AddShape {
+                kind,
+                from,
+                to,
+                color,
+            } => {
+                // The id is the server's to invent, like a token's, so two
+                // people drawing at once cannot propose the same one.
+                let by = match self.clients.get(&origin) {
+                    Some(client) => drawn_by(client),
+                    // Proved to be a client by `check`. Falling back to the DM
+                    // is the closed door: it is the identity that can erase it.
+                    None => Owner::Dm,
+                };
+                self.shapes.push(Shape {
+                    id: ShapeId(Uuid::new_v4().simple().to_string()),
+                    kind,
+                    from,
+                    to,
+                    by,
+                    color,
+                });
+                vec![Event::ShapesChanged]
+            }
+
+            ClientMsg::RemoveShape { id } => {
+                self.shapes.retain(|s| s.id != id);
+                vec![Event::ShapesChanged]
+            }
+
+            ClientMsg::ClearShapes => {
+                self.shapes.clear();
+                vec![Event::ShapesChanged]
             }
 
             ClientMsg::SetInitiative { token, value } => {
@@ -1310,6 +1614,14 @@ impl RoomState {
         if self.initiative.index_of(id).is_some() {
             self.initiative.remove(id);
             events.push(Event::InitiativeChanged);
+        }
+        // Anything anchored to it goes the same way, and for the same reason the
+        // initiative row does: a shape following a token that no longer exists
+        // has no position to be drawn at. The roadmap called this one in
+        // advance, and it is the second thing deleting a token now reaches into.
+        if self.anchors_a_shape(id) {
+            self.shapes.retain(|s| s.anchor() != Some(id));
+            events.push(Event::ShapesChanged);
         }
         events
     }
@@ -1572,6 +1884,39 @@ impl RoomState {
             // frame does not exist for them at all.
             Event::StagedChanged => self.is_dm(recipient).then(|| ServerMsg::StagedChanged {
                 map: self.staged.clone(),
+            }),
+
+            // Keyed on `by` rather than on `origin`, which are the same client
+            // for a live sweep and are not on a disconnect — the frame that ends
+            // a stranded sketch is dispatched with the departed client as both,
+            // and it is the recipients who are still here that matter.
+            //
+            // The sweeper is skipped for `TokenMoved`'s reason: they are drawing
+            // it from their own pointer already, and an echo arriving a round
+            // trip later is a line that lags behind the cursor.
+            Event::Sketching {
+                by,
+                kind,
+                at,
+                to,
+                color,
+            } => (recipient != *by).then(|| ServerMsg::Sketch {
+                by: *by,
+                kind: *kind,
+                at: *at,
+                to: *to,
+                color: color.clone(),
+            }),
+
+            Event::SketchEnded { by } => {
+                (recipient != *by).then_some(ServerMsg::SketchEnded { by: *by })
+            }
+
+            // Built per recipient, like the initiative panel and for the same
+            // reason: the DM's board and the table's genuinely differ, and this
+            // is the seam an aura on a hidden monster is dropped at.
+            Event::ShapesChanged => Some(ServerMsg::ShapesChanged {
+                shapes: self.shapes_for(self.is_dm(recipient)),
             }),
         }
     }
@@ -1889,24 +2234,30 @@ mod tests {
     fn drop_frames_snap_and_drag_frames_do_not() {
         let mut state = room();
 
-        let events = state.apply(ClientMsg::MoveToken {
-            id: TokenId::new("t1"),
-            x: 6.83,
-            y: 5.21,
-            dragging: true,
-            staged: false,
-        });
+        let events = state.apply(
+            ClientId(1),
+            ClientMsg::MoveToken {
+                id: TokenId::new("t1"),
+                x: 6.83,
+                y: 5.21,
+                dragging: true,
+                staged: false,
+            },
+        );
         assert!(
             matches!(events.as_slice(), [Event::TokenMoved { x, y, .. }] if *x == 6.83 && *y == 5.21)
         );
 
-        let events = state.apply(ClientMsg::MoveToken {
-            id: TokenId::new("t1"),
-            x: 6.83,
-            y: 5.21,
-            dragging: false,
-            staged: false,
-        });
+        let events = state.apply(
+            ClientId(1),
+            ClientMsg::MoveToken {
+                id: TokenId::new("t1"),
+                x: 6.83,
+                y: 5.21,
+                dragging: false,
+                staged: false,
+            },
+        );
         assert!(
             matches!(events.as_slice(), [Event::TokenMoved { x, y, .. }] if *x == 6.5 && *y == 5.5)
         );
@@ -2387,9 +2738,12 @@ mod tests {
             },
         );
 
-        let events = state.apply(ClientMsg::DeleteToken {
-            id: TokenId::new("t6"),
-        });
+        let events = state.apply(
+            ClientId(1),
+            ClientMsg::DeleteToken {
+                id: TokenId::new("t6"),
+            },
+        );
 
         assert!(
             matches!(events.as_slice(), [Event::TokenRemoved { .. }]),
@@ -2529,7 +2883,7 @@ mod tests {
         // and filling the room through the whole pipeline would only fill this
         // test's outbound mailbox and get the DM dropped as a wedged client.
         for _ in state.tokens.len()..MAX_TOKENS {
-            state.apply(create("Goblin", 1.0, Owner::Dm));
+            state.apply(ClientId(1), create("Goblin", 1.0, Owner::Dm));
         }
 
         assert_eq!(state.tokens.len(), MAX_TOKENS);
@@ -3038,7 +3392,7 @@ mod tests {
             },
         );
 
-        let events = state.apply(edit(&token(&state, "t6")));
+        let events = state.apply(ClientId(1), edit(&token(&state, "t6")));
 
         assert!(
             matches!(events.as_slice(), [Event::TokenChanged { .. }]),
@@ -4710,6 +5064,454 @@ mod tests {
         let mut state = room();
         let _dm = join_as_dm(&mut state, ClientId(1));
         assert!(state.handle(ClientId(1), set_map("/uploads/cave.webp", 70.0, 1.0, 2.0)));
+    }
+
+    // --- drawings -------------------------------------------------------------
+
+    const INK: &str = "#ff8c42e6";
+
+    fn add_shape(kind: ShapeKind, from: Origin, to: (f32, f32)) -> ClientMsg {
+        ClientMsg::AddShape {
+            kind,
+            from,
+            to: Pos { x: to.0, y: to.1 },
+            color: INK.to_owned(),
+        }
+    }
+
+    /// An unanchored circle, which is the ordinary case.
+    fn circle_at(x: f32, y: f32) -> ClientMsg {
+        add_shape(ShapeKind::Circle, Origin::Point(Pos { x, y }), (4.0, 0.0))
+    }
+
+    fn sketch(at: (f32, f32), drawing: bool) -> ClientMsg {
+        ClientMsg::Sketch {
+            kind: ShapeKind::Line,
+            at: Pos { x: at.0, y: at.1 },
+            to: Pos { x: 3.0, y: 4.0 },
+            color: INK.to_owned(),
+            drawing,
+        }
+    }
+
+    /// The shapes as one recipient is actually sent them.
+    fn shapes_seen(state: &RoomState, who: &Identity) -> Vec<ShapeId> {
+        state
+            .snapshot_for(who)
+            .shapes
+            .into_iter()
+            .map(|s| s.id)
+            .collect()
+    }
+
+    fn only_shape(state: &RoomState) -> Shape {
+        match state.shapes.as_slice() {
+            [shape] => shape.clone(),
+            other => panic!("expected exactly one shape, found {}", other.len()),
+        }
+    }
+
+    #[test]
+    fn anyone_may_draw_and_the_server_names_the_shape() {
+        // The first thing a player may add to the room. No `require_dm` on the
+        // way in, unlike every other command that creates something.
+        let mut state = room();
+        let _vex = join_as_player(&mut state, ClientId(2), "vex");
+
+        assert!(state.handle(ClientId(2), circle_at(3.0, 4.0)));
+
+        let shape = only_shape(&state);
+        assert!(!shape.id.0.is_empty(), "the server invents the id");
+        assert_eq!(shape.by, Owner::Player(PlayerId::new("vex")));
+        assert_eq!(shape.kind, ShapeKind::Circle);
+        assert_eq!(shape.anchor(), None);
+    }
+
+    #[test]
+    fn a_player_may_erase_their_own_drawing_and_not_someone_elses() {
+        let mut state = room();
+        let _dm = join_as_dm(&mut state, ClientId(1));
+        let _vex = join_as_player(&mut state, ClientId(2), "vex");
+        let _grog = join_as_player(&mut state, ClientId(3), "grog");
+
+        state.handle(ClientId(2), circle_at(3.0, 4.0));
+        let id = only_shape(&state).id;
+
+        assert_eq!(
+            state.check(ClientId(3), &ClientMsg::RemoveShape { id: id.clone() }),
+            Err("that is not yours to erase".to_owned()),
+            "grog did not draw it"
+        );
+        // The DM may erase anything, and so may whoever drew it.
+        assert!(
+            state
+                .check(ClientId(1), &ClientMsg::RemoveShape { id: id.clone() })
+                .is_ok()
+        );
+        assert!(
+            state
+                .check(ClientId(2), &ClientMsg::RemoveShape { id: id.clone() })
+                .is_ok()
+        );
+
+        state.handle(ClientId(2), ClientMsg::RemoveShape { id });
+        assert!(state.shapes.is_empty());
+    }
+
+    #[test]
+    fn only_the_dm_may_sweep_the_board() {
+        let mut state = room();
+        let _vex = join_as_player(&mut state, ClientId(2), "vex");
+        state.handle(ClientId(2), circle_at(3.0, 4.0));
+
+        assert_eq!(
+            state.check(ClientId(2), &ClientMsg::ClearShapes),
+            Err("only the DM can clear the board".to_owned())
+        );
+        assert_eq!(state.shapes.len(), 1, "and nothing was cleared");
+    }
+
+    #[test]
+    fn an_aura_on_a_hidden_monster_is_not_on_the_tables_board() {
+        // The leak this milestone had to close early. The roadmap files anchor
+        // visibility under fog of war, but `hidden` exists now, and a shape that
+        // follows a token is that token's position drawn in colour.
+        let mut state = room();
+        let _dm = join_as_dm(&mut state, ClientId(1));
+        state.handle(ClientId(1), create_hidden("Ambusher"));
+        let ambusher = made(&state, "Ambusher").id;
+
+        state.handle(
+            ClientId(1),
+            add_shape(
+                ShapeKind::Circle,
+                Origin::Token(ambusher.clone()),
+                (2.0, 0.0),
+            ),
+        );
+
+        assert_eq!(shapes_seen(&state, &as_player("vex")), Vec::new());
+        assert_eq!(shapes_seen(&state, &Identity::Dm).len(), 1);
+
+        // And not merely absent from the list — the id must not be in the bytes
+        // at all, which is how invariant 4 has to be checked.
+        let json = serde_json::to_string(&state.snapshot_for(&as_player("vex"))).expect("encodes");
+        assert!(!json.contains(&ambusher.0));
+    }
+
+    #[test]
+    fn revealing_a_monster_brings_what_is_drawn_on_it_along() {
+        let mut state = room();
+        let _dm = join_as_dm(&mut state, ClientId(1));
+        let mut vex = join_as_player(&mut state, ClientId(2), "vex");
+        state.handle(ClientId(1), create_hidden("Ambusher"));
+        let monster = made(&state, "Ambusher");
+
+        state.handle(
+            ClientId(1),
+            add_shape(ShapeKind::Circle, Origin::Token(monster.id.clone()), (2.0, 0.0)),
+        );
+        drain(&mut vex);
+
+        state.handle(ClientId(1), set_hidden(&monster, false));
+
+        let frames = drain(&mut vex);
+        let shapes = frames.iter().find_map(|f| match f {
+            ServerMsg::ShapesChanged { shapes } => Some(shapes),
+            _ => None,
+        });
+        assert_eq!(
+            shapes.map(Vec::len),
+            Some(1),
+            "the aura arrives with the monster"
+        );
+
+        // And hiding it again takes it back off their board.
+        let monster = made(&state, "Ambusher");
+        state.handle(ClientId(1), set_hidden(&monster, true));
+        assert_eq!(shapes_seen(&state, &as_player("vex")), Vec::new());
+    }
+
+    #[test]
+    fn hiding_a_token_nothing_is_drawn_on_says_nothing_about_shapes() {
+        // The gate that keeps this from becoming an announcement. A player who
+        // is sent a `ShapesChanged` every time the DM hides something learns
+        // that the DM hid something, which is the thing being withheld.
+        let mut state = room();
+        let _dm = join_as_dm(&mut state, ClientId(1));
+        let mut vex = join_as_player(&mut state, ClientId(2), "vex");
+        state.handle(ClientId(1), circle_at(3.0, 4.0));
+        let ogre = token(&state, "t6");
+        drain(&mut vex);
+
+        state.handle(ClientId(1), set_hidden(&ogre, true));
+
+        assert!(
+            !drain(&mut vex)
+                .iter()
+                .any(|f| matches!(f, ServerMsg::ShapesChanged { .. })),
+            "nothing was anchored to the ogre"
+        );
+    }
+
+    #[test]
+    fn a_player_cannot_anchor_to_a_token_they_cannot_see() {
+        // Refused in the same words a token that does not exist is refused. Two
+        // different answers here would turn this into an oracle: sweep the id
+        // space, and the refusals map out the DM's monsters.
+        let mut state = room();
+        let _dm = join_as_dm(&mut state, ClientId(1));
+        let _vex = join_as_player(&mut state, ClientId(2), "vex");
+        state.handle(ClientId(1), create_hidden("Ambusher"));
+        let hidden = made(&state, "Ambusher").id;
+
+        let refusal = state.check(
+            ClientId(2),
+            &add_shape(ShapeKind::Circle, Origin::Token(hidden.clone()), (2.0, 0.0)),
+        );
+        assert_eq!(refusal, Err(format!("no such token: {}", hidden.0)));
+        assert_eq!(
+            state.check(
+                ClientId(2),
+                &add_shape(
+                    ShapeKind::Circle,
+                    Origin::Token(TokenId::new("nonsense")),
+                    (2.0, 0.0)
+                ),
+            ),
+            Err("no such token: nonsense".to_owned()),
+            "and a token nobody has is refused identically"
+        );
+
+        // The DM may anchor to it: it is their monster and their board.
+        assert!(
+            state
+                .check(
+                    ClientId(1),
+                    &add_shape(ShapeKind::Circle, Origin::Token(hidden), (2.0, 0.0))
+                )
+                .is_ok()
+        );
+    }
+
+    #[test]
+    fn a_player_cannot_erase_a_drawing_they_are_not_sent() {
+        let mut state = room();
+        let _dm = join_as_dm(&mut state, ClientId(1));
+        let _vex = join_as_player(&mut state, ClientId(2), "vex");
+        state.handle(ClientId(1), create_hidden("Ambusher"));
+        let monster = made(&state, "Ambusher").id;
+        state.handle(
+            ClientId(1),
+            add_shape(ShapeKind::Circle, Origin::Token(monster), (2.0, 0.0)),
+        );
+        let id = only_shape(&state).id;
+
+        assert_eq!(
+            state.check(ClientId(2), &ClientMsg::RemoveShape { id }),
+            Err("that drawing is already gone".to_owned()),
+            "and not 'not yours', which would confirm it exists"
+        );
+    }
+
+    #[test]
+    fn deleting_a_token_takes_what_is_drawn_on_it() {
+        let mut state = room();
+        let _dm = join_as_dm(&mut state, ClientId(1));
+        let ogre = token(&state, "t6");
+
+        state.handle(
+            ClientId(1),
+            add_shape(ShapeKind::Circle, Origin::Token(ogre.id.clone()), (2.0, 0.0)),
+        );
+        // One that follows nothing, to prove the sweep is not indiscriminate.
+        state.handle(ClientId(1), circle_at(20.0, 20.0));
+
+        state.handle(ClientId(1), ClientMsg::DeleteToken { id: ogre.id });
+
+        assert_eq!(state.shapes.len(), 1);
+        assert_eq!(only_shape(&state).anchor(), None);
+    }
+
+    #[test]
+    fn a_new_map_clears_the_drawings_and_a_recalibration_does_not() {
+        // The same split the plans for the next room turn on, and the same arm
+        // that gets missed: a shape describes cells on this board, so a new
+        // image throws it away and correcting the grid must not.
+        let mut state = room();
+        let _dm = join_as_dm(&mut state, ClientId(1));
+        state.handle(ClientId(1), circle_at(3.0, 4.0));
+
+        state.handle(ClientId(1), set_map("/assets/map.png", 80.0, 3.0, 4.0));
+        assert_eq!(state.shapes.len(), 1, "recalibrating the map on the board");
+
+        state.handle(ClientId(1), set_map("/uploads/cave.webp", 70.0, 0.0, 0.0));
+        assert!(state.shapes.is_empty(), "a different dungeon");
+    }
+
+    #[test]
+    fn staging_and_promoting_leave_the_board_swept() {
+        let mut state = room();
+        let _dm = join_as_dm(&mut state, ClientId(1));
+        state.handle(ClientId(1), circle_at(3.0, 4.0));
+
+        // Staging a map is not a change to the board, and shapes belong to the
+        // board. Nothing is drawn on the map being prepared, so nothing goes.
+        stage(&mut state, ClientId(1), "/uploads/next.webp");
+        assert_eq!(state.shapes.len(), 1);
+
+        // Promoting is a new map arriving, which is where they go.
+        state.handle(ClientId(1), ClientMsg::PromoteStaged);
+        assert!(state.shapes.is_empty());
+    }
+
+    #[test]
+    fn a_sketch_reaches_everyone_but_the_client_sweeping_it() {
+        let mut state = room();
+        let mut dm = join_as_dm(&mut state, ClientId(1));
+        let mut vex = join_as_player(&mut state, ClientId(2), "vex");
+        drain(&mut dm);
+        drain(&mut vex);
+
+        state.handle(ClientId(2), sketch((1.0, 1.0), true));
+
+        assert!(matches!(
+            drain(&mut dm).as_slice(),
+            [ServerMsg::Sketch { by, .. }] if *by == ClientId(2)
+        ));
+        assert!(
+            drain(&mut vex).is_empty(),
+            "the sweeper draws it from their own pointer"
+        );
+
+        state.handle(ClientId(2), sketch((1.0, 1.0), false));
+        assert!(matches!(
+            drain(&mut dm).as_slice(),
+            [ServerMsg::SketchEnded { by }] if *by == ClientId(2)
+        ));
+    }
+
+    #[test]
+    fn a_sketch_is_never_stored_and_never_saved() {
+        // The whole of what makes a measuring line free: it is not in the room,
+        // so there is nothing to filter, nothing to snapshot, nothing to write.
+        let mut state = room();
+        let _vex = join_as_player(&mut state, ClientId(2), "vex");
+
+        assert!(!state.handle(ClientId(2), sketch((1.0, 1.0), true)));
+        assert!(!state.handle(ClientId(2), sketch((2.0, 2.0), false)));
+        assert!(state.shapes.is_empty());
+        assert!(state.snapshot_for(&Identity::Dm).shapes.is_empty());
+    }
+
+    #[test]
+    fn a_client_that_vanishes_mid_sweep_does_not_strand_its_line() {
+        let mut state = room();
+        let mut dm = join_as_dm(&mut state, ClientId(1));
+        let _vex = join_as_player(&mut state, ClientId(2), "vex");
+        state.handle(ClientId(2), sketch((1.0, 1.0), true));
+        drain(&mut dm);
+
+        // What `RoomCmd::Disconnected` does, without the task around it.
+        state.clients.remove(&ClientId(2));
+        state.dispatch(ClientId(2), &[Event::SketchEnded { by: ClientId(2) }]);
+
+        assert!(matches!(
+            drain(&mut dm).as_slice(),
+            [ServerMsg::SketchEnded { by }] if *by == ClientId(2)
+        ));
+    }
+
+    #[test]
+    fn a_shape_cannot_be_stretched_across_the_world() {
+        // Bounded because every client walks the cells an area covers. An absurd
+        // one is a frozen browser on five other machines, and the sketch reaches
+        // them before anybody has decided to keep it.
+        let mut state = room();
+        let _vex = join_as_player(&mut state, ClientId(2), "vex");
+
+        let huge = ClientMsg::Sketch {
+            kind: ShapeKind::Circle,
+            at: Pos { x: 0.0, y: 0.0 },
+            to: Pos { x: 9_000.0, y: 0.0 },
+            color: INK.to_owned(),
+            drawing: true,
+        };
+        assert!(state.check(ClientId(2), &huge).is_err());
+        assert!(
+            state
+                .check(
+                    ClientId(2),
+                    &add_shape(ShapeKind::Circle, Origin::default(), (9_000.0, 0.0))
+                )
+                .is_err(),
+            "and keeping one is bounded the same way"
+        );
+    }
+
+    #[test]
+    fn a_drawing_needs_a_colour_the_client_could_actually_use() {
+        let mut state = room();
+        let _vex = join_as_player(&mut state, ClientId(2), "vex");
+
+        for bad in ["", "red", "#ff8c42", "#ff8c42e6ff"] {
+            let msg = ClientMsg::AddShape {
+                kind: ShapeKind::Circle,
+                from: Origin::default(),
+                to: Pos { x: 2.0, y: 0.0 },
+                color: bad.to_owned(),
+            };
+            assert_eq!(
+                state.check(ClientId(2), &msg),
+                Err("a shape colour must look like #rrggbbaa".to_owned()),
+                "{bad:?} is not a colour"
+            );
+        }
+    }
+
+    #[test]
+    fn a_board_cannot_be_filled_with_drawings_without_limit() {
+        let mut state = room();
+        let _vex = join_as_player(&mut state, ClientId(2), "vex");
+
+        // `apply` rather than `handle`, like the token cap above and for the
+        // same reason: the rule under test is in `check`, and running sixty-four
+        // of these through the whole pipeline only fills this test's outbound
+        // mailbox and gets the drawer dropped as a wedged client.
+        for _ in 0..MAX_SHAPES {
+            state.apply(ClientId(2), circle_at(3.0, 4.0));
+        }
+        assert_eq!(state.shapes.len(), MAX_SHAPES);
+        assert!(state.check(ClientId(2), &circle_at(3.0, 4.0)).is_err());
+    }
+
+    #[test]
+    fn a_drawing_survives_the_save_file() {
+        let mut state = room();
+        let _dm = join_as_dm(&mut state, ClientId(1));
+        let ogre = token(&state, "t6");
+        state.handle(
+            ClientId(1),
+            add_shape(ShapeKind::Cone, Origin::Token(ogre.id.clone()), (3.0, 3.0)),
+        );
+
+        let json = serde_json::to_vec(&state.to_saved()).expect("encodes");
+        let saved: Saved = serde_json::from_slice(&json).expect("decodes");
+        let restored = RoomState::restored(saved, SECRET.to_owned());
+
+        let shape = only_shape(&restored);
+        assert_eq!(shape.kind, ShapeKind::Cone);
+        assert_eq!(shape.anchor(), Some(&ogre.id));
+        assert_eq!((shape.to.x, shape.to.y), (3.0, 3.0));
+    }
+
+    #[test]
+    fn a_room_saved_before_drawings_existed_still_loads() {
+        // Invariant 2, checked on the field this milestone added rather than
+        // trusted: an older save carries no `shapes` at all.
+        let saved: Saved = serde_json::from_str("{}").expect("an empty room decodes");
+        let restored = RoomState::restored(saved, SECRET.to_owned());
+        assert!(restored.shapes.is_empty());
     }
 
     // --- non-finite numbers -------------------------------------------------

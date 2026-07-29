@@ -69,6 +69,33 @@ export interface WireToken {
   staged_only: boolean;
 }
 
+/** The four things anyone can draw. A closed set on the Rust side too — an
+ *  unknown kind does not deserialize. */
+export type ShapeKind = 'line' | 'circle' | 'cone' | 'rect';
+
+/** Where a shape's first point is: a cell, or a token it follows.
+ *
+ *  Adjacently tagged like `Owner`, and an enum for the same reason `Owner` is
+ *  one — an anchored shape carrying a position nothing reads is a field that can
+ *  go stale. */
+export type WireOrigin = { kind: 'point'; at: WirePos } | { kind: 'token'; at: string };
+
+/** A drawn shape. Unlike a token this is the server's own type rather than a
+ *  view of it: there is nothing on it one client may hold and another may not.
+ *  A shape the table cannot see is absent, not redacted. */
+export interface WireShape {
+  id: string;
+  kind: ShapeKind;
+  from: WireOrigin;
+  /** The second point, as an offset from the origin in grid units. An offset so
+   *  an anchored shape translates with its token instead of stretching. */
+  to: WirePos;
+  /** Who drew it, and so who may erase it besides the DM. */
+  by: Owner;
+  /** `#rrggbbaa`, like the grid colour. */
+  color: string;
+}
+
 export interface InitiativeEntry {
   token: string;
   value: number;
@@ -90,6 +117,9 @@ export interface WireRoomView {
   staged: WireMapInfo | null;
   tokens: WireToken[];
   initiative: Initiative;
+  /** Draw order, already filtered: a shape anchored to a token we cannot see
+   *  never arrives, because an aura on a hidden monster is its position. */
+  shapes: WireShape[];
 }
 
 export interface RosterSlot {
@@ -138,6 +168,13 @@ export type ServerMsg =
   /** The staged slot, or null once there is not one. DM connections only. */
   | { type: 'staged_changed'; map: WireMapInfo | null }
   | { type: 'initiative_changed'; initiative: Initiative }
+  /** Somebody else's in-progress sweep, keyed by their connection. Never our
+   *  own: we are already drawing that one from our own pointer. */
+  | { type: 'sketch'; by: number; kind: ShapeKind; at: WirePos; to: WirePos; color: string }
+  /** That sweep is over — released, or its client went away. */
+  | { type: 'sketch_ended'; by: number }
+  /** Every shape we may see. The whole list, like the initiative panel. */
+  | { type: 'shapes_changed'; shapes: WireShape[] }
   | { type: 'error'; message: string };
 
 export type ClientMsg =
@@ -200,6 +237,26 @@ export type ClientMsg =
       hp: Hp | null;
     }
   | { type: 'delete_token'; id: string }
+  /** A shape being swept out right now: relayed to everyone watching, stored by
+   *  nobody. `drawing: false` is the release that ends it.
+   *
+   *  Whether a release keeps anything is ours alone to decide — the measuring
+   *  tool stops here and the area tools follow with an `add_shape`. The server
+   *  is uniform over all four kinds and never learns which tool was in hand. */
+  | {
+      type: 'sketch';
+      kind: ShapeKind;
+      at: WirePos;
+      to: WirePos;
+      color: string;
+      drawing: boolean;
+    }
+  /** Keep the shape just swept. No id — the server invents it, like a token's. */
+  | { type: 'add_shape'; kind: ShapeKind; from: WireOrigin; to: WirePos; color: string }
+  /** Whoever drew it, or the DM. */
+  | { type: 'remove_shape'; id: string }
+  /** DM-only: it reaches into five other people's drawings. */
+  | { type: 'clear_shapes' }
   | { type: 'set_initiative'; token: string; value: number }
   | { type: 'remove_from_initiative'; token: string }
   | { type: 'clear_initiative' }

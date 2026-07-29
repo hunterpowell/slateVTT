@@ -3,6 +3,8 @@
 
 import type { GridSpec, Rect, Vec2 } from './coords.js';
 import type { Hp, Owner, WireMapInfo, WireRoomView, WireToken } from './protocol.js';
+import type { Shape } from './shapes.js';
+import { shapeFromWire } from './shapes.js';
 
 export interface Token {
   id: string;
@@ -54,6 +56,11 @@ export interface Scene {
   previewing: boolean;
   /** Draw order; later entries render on top and win hit-tests. */
   tokens: Token[];
+  /** What is drawn on the board, in draw order. Belongs to the live board
+   *  alone — there is nothing to draw on a map the table has not been shown, so
+   *  unlike tokens these do not fork. Replaced wholesale by every
+   *  `shapes_changed`, which is why nothing here is predicted locally. */
+  shapes: Shape[];
 }
 
 /**
@@ -105,6 +112,7 @@ export function sceneFromView(view: WireRoomView): Scene {
     staged: view.staged === null ? null : boardFromWire(view.staged),
     previewing: false,
     tokens: view.tokens.map(tokenFromWire),
+    shapes: view.shapes.map(shapeFromWire),
   };
 }
 

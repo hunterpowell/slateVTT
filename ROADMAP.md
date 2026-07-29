@@ -22,7 +22,7 @@ Do not work ahead. Each milestone should run and be usable before starting the n
 6. Map upload and grid calibration UI.
 7. Package for Windows session hosting and deploy behind a Cloudflare Tunnel.
 
-Milestones 1–13 are done. Everything from 8 on was planned after the original seven, and the
+Milestones 1–14 are done. Everything from 8 on was planned after the original seven, and the
 order of what remains is deliberate:
 
 8. **Done.** Map library — list `maps/`, pick one, remember its calibration. The smallest thing
@@ -92,7 +92,30 @@ order of what remains is deliberate:
     `pointermove`, so a drag that pauses sends nothing at all; a ruler that expires after a second
     of silence vanishes off the table's screens while the DM is still holding the token. Caught by
     driving two clients at once, which is the only way that arm shows up.
-14. Drawing layer.
+14. **Done.** Drawing layer. See *Drawings* in CLAUDE.md.
+
+    Two decisions made this bigger than the state model, and both were the more expensive branch.
+
+    An ephemeral shape is *shared* — everyone watches the sweep — which means it is on the wire
+    rather than local, and so it needed the `dragging` protocol a second time at shape scale. What
+    it did not need was the ruler's timeout: the room is told when a socket closes, so a stranded
+    sketch dies on `Disconnected`. Nothing announces that a *drag* stopped, which is why milestone
+    13 had to guess and this one does not.
+
+    And a circle tints the cells it covers as well as drawing an outline, which meant a point-in-
+    shape test — and that turned out to pay for itself twice, because it is also what makes
+    click-to-erase free. The tint is where this feature openly disagrees with *Distance*: a
+    diagonal step costs one cell there, so "within 20 ft" is a square, while a circle here is a
+    circle. Different questions, left different on purpose.
+
+    The thing worth knowing before fog: **anchor visibility could not wait for it.** This file
+    filed "an aura on a monster in the dark advertises where it is standing" under fog of war, but
+    `hidden` has existed since milestone 11, so the rule shipped here — through `Token::unseen`, so
+    both reasons compose. Adding shapes without it would have been a leak the day it landed.
+
+    `Event::ShapesChanged` also had to be gated: emitting it on every token hide would tell the
+    table *something happened* even when nothing was drawn on that token. Same gate the initiative
+    panel already used, and the second time that trap has come up.
 15. Wall and door editor. Polyline authoring — click, click, double-click to end — snapped to
     grid corners, with a modifier for free placement. This is not polish: per-segment click-drag
     across a two-hundred-segment dungeon is what makes people quietly stop using fog of war.
@@ -100,21 +123,16 @@ order of what remains is deliberate:
 
 ## Drawings
 
-Spell areas and measuring shapes: line, circle, cone, rectangle. Anyone may draw. Only the
-person who drew a shape, or the DM, may delete it.
-
-A shape may anchor to a token, `anchor: Option<TokenId>`, so an aura follows the creature it
-belongs to. An anchored shape needs no position updates on the wire at all — the client has the
-anchor's position already and derives the rest. Deleting a token deletes the shapes anchored to it.
-
-Measuring lines are ephemeral and vanish when released. Spell areas persist until deleted.
+Built — see *Drawings* in CLAUDE.md for what shipped. What remains here is the part that is still
+design, because it depends on a milestone that does not exist yet:
 
 Once fog exists, shapes are filtered server-side like everything else, all-or-nothing on
 overlap: if any cell a shape covers is visible, the whole shape is sent. Drawing shapes
 underneath the fog overlay and calling them hidden would put the data on the client and paint
-over it, which is precisely what invariant 4 forbids. An anchored shape's visibility follows
-its anchor token's rather than its own footprint — otherwise an aura on a monster in the dark
-advertises exactly where that monster is standing.
+over it, which is precisely what invariant 4 forbids. That filtering goes in `shapes_for`, which
+already exists and already withholds a shape whose *anchor* the recipient cannot see — the arm
+that could not wait for fog, since `hidden` predates it. An anchored shape's visibility follows its
+anchor token's rather than its own footprint, which is what that arm already does.
 
 ## Fog of war and walls
 
@@ -125,6 +143,8 @@ added without a rewrite — they are already reflected in the rules in CLAUDE.md
 - `Event` separate from `ServerMsg`
 - `snapshot_for(client)` instead of `snapshot()`
 - Grid-unit token positions, which make the token-to-cell lookup free
+- `coveredCells`, which already answers "which cells does this shape occupy" for the drawing
+  layer — the same question a shape's fog visibility asks, on the client side of it
 
 Cell-based visibility over the grid, using symmetric shadowcasting.
 

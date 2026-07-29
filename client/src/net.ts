@@ -6,6 +6,7 @@ import type {
   TokenMoved,
   Welcome,
   WireMapInfo,
+  WireShape,
   WireToken,
 } from './protocol.js';
 
@@ -25,6 +26,11 @@ export interface Handlers {
    *  player. Null means the slot is now empty. */
   onStagedChanged(map: WireMapInfo | null): void;
   onInitiativeChanged(initiative: Initiative): void;
+  /** Somebody else's sweep, keyed by their connection. Never our own. */
+  onSketch(sketch: Extract<ServerMsg, { type: 'sketch' }>): void;
+  onSketchEnded(by: number): void;
+  /** Every shape we may see, replacing whatever we held. */
+  onShapesChanged(shapes: WireShape[]): void;
   onError(message: string): void;
   onClose(): void;
 }
@@ -79,6 +85,15 @@ export function connect(on: Handlers): Net {
         break;
       case 'initiative_changed':
         on.onInitiativeChanged(msg.initiative);
+        break;
+      case 'sketch':
+        on.onSketch(msg);
+        break;
+      case 'sketch_ended':
+        on.onSketchEnded(msg.by);
+        break;
+      case 'shapes_changed':
+        on.onShapesChanged(msg.shapes);
         break;
       case 'error':
         on.onError(msg.message);
