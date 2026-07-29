@@ -121,8 +121,12 @@ enum Event {
     /// reads the token off `&self` per recipient — the seam where a hidden
     /// token will become a `TokenRemoved` for the players and a `TokenChanged`
     /// for the DM, from this one event.
-    TokenChanged { id: TokenId },
-    TokenRemoved { id: TokenId },
+    TokenChanged {
+        id: TokenId,
+    },
+    TokenRemoved {
+        id: TokenId,
+    },
     /// Carries no payload on purpose: `message_for` has `&self` and builds the
     /// panel per recipient. That is the seam where fog of war will one day hide
     /// an unseen monster's row from the players.
@@ -130,6 +134,10 @@ enum Event {
     /// A new image, a recalibrated grid, or both. Payload-free for the same
     /// reason as above — terrain is exactly what fog of war filters first.
     MapChanged,
+    /// The staged slot changed: filled, recalibrated, discarded, or emptied by a
+    /// promote. The first event that survives for one recipient and not another
+    /// because of *who they are* rather than what they just did.
+    StagedChanged,
 }
 
 impl Initiative {
@@ -240,6 +248,10 @@ pub struct RoomState {
     dm_secret: String,
     roster: Vec<RosterEntry>,
     map: MapInfo,
+    /// The map the DM is preparing for later, which the table cannot see. It is
+    /// stripped in `snapshot_for` and filtered out in `message_for`; walls will
+    /// leave by the same two doors.
+    staged: Option<MapInfo>,
     tokens: HashMap<TokenId, Token>,
     initiative: Initiative,
     /// How each map URL was last calibrated. Server-side only — it never enters
@@ -358,7 +370,8 @@ fn persists(event: &Event) -> bool {
         Event::TokenChanged { .. }
         | Event::TokenRemoved { .. }
         | Event::InitiativeChanged
-        | Event::MapChanged => true,
+        | Event::MapChanged
+        | Event::StagedChanged => true,
     }
 }
 
@@ -457,6 +470,7 @@ impl RoomState {
             dm_secret,
             roster: default_roster(),
             map: saved.map,
+            staged: saved.staged,
             tokens: saved
                 .tokens
                 .into_iter()
@@ -477,6 +491,7 @@ impl RoomState {
 
         Saved {
             map: self.map.clone(),
+            staged: self.staged.clone(),
             tokens,
             initiative: self.initiative.clone(),
             calibrations: self.calibrations.clone(),
@@ -509,6 +524,7 @@ impl RoomState {
                 url: "/assets/map.png".to_owned(),
                 ..MapInfo::default()
             },
+            staged: None,
             initiative: Initiative::default(),
             tokens: specs
                 .into_iter()
@@ -661,7 +677,10 @@ impl RoomState {
         }
     }
 
-    fn snapshot_for(&self, _identity: &Identity) -> RoomView {
+    /// Invariant 3. The staged map is the first thing this actually withholds
+    /// rather than merely being shaped to: a player's snapshot does not contain
+    /// the next dungeon, so there is nothing in devtools to find.
+    fn snapshot_for(&self, identity: &Identity) -> RoomView {
         let mut tokens: Vec<Token> = self.tokens.values().cloned().collect();
         // `HashMap` iteration order varies per process, and the client treats
         // list order as z-order. Without this, two tabs can disagree about
@@ -669,9 +688,25 @@ impl RoomState {
         tokens.sort_by(|a, b| a.id.cmp(&b.id));
         RoomView {
             map: self.map.clone(),
+            staged: match identity {
+                Identity::Dm => self.staged.clone(),
+                Identity::Player(_) => None,
+            },
             tokens,
             initiative: self.initiative.clone(),
         }
+    }
+
+    /// Whether a connected client is the DM. `message_for` holds `&self` and a
+    /// recipient id rather than a `Client`, so the lookup lives here.
+    fn is_dm(&self, client: ClientId) -> bool {
+        matches!(
+            self.clients.get(&client),
+            Some(Client {
+                identity: Identity::Dm,
+                ..
+            })
+        )
     }
 
     /// Step 2. An unidentified connection can do nothing at all.
@@ -733,6 +768,9 @@ impl RoomState {
                 }
             }
 
+            // Which slot this is for makes no difference here: a grid size or a
+            // play area is no more or less usable for being staged, so both go
+            // through one set of bounds rather than two that could drift.
             ClientMsg::SetMap {
                 url,
                 grid_px,
@@ -740,6 +778,7 @@ impl RoomState {
                 offset_y,
                 grid_color,
                 play_area,
+                staged: _,
             } => {
                 require_dm(client, "change the map")?;
                 if url.is_empty() || url.len() > MAX_URL_LEN {
@@ -769,6 +808,19 @@ impl RoomState {
                     }
                 }
                 Ok(())
+            }
+
+            // Refused rather than quietly doing nothing, the way deleting a
+            // token that is not there is refused: both mean the DM's panel and
+            // the room disagree about what exists, and saying so is how that
+            // gets noticed.
+            ClientMsg::PromoteStaged | ClientMsg::ClearStaged => {
+                require_dm(client, "change the map")?;
+                if self.staged.is_some() {
+                    Ok(())
+                } else {
+                    Err("there is no map staged".to_owned())
+                }
             }
 
             ClientMsg::SetInitiative { token, .. } => {
@@ -894,6 +946,7 @@ impl RoomState {
                 offset_y,
                 grid_color,
                 play_area,
+                staged,
             } => {
                 let given = Calibration {
                     grid_px,
@@ -904,17 +957,26 @@ impl RoomState {
                 };
 
                 // The URL alone says which of the two things this is. A URL the
-                // room is not already showing is a map being loaded, so anything
+                // slot is not already showing is a map being loaded, so anything
                 // remembered for it wins over what the client sent — which is
                 // how re-picking a map comes back calibrated without the client
-                // knowing the table exists. A URL that matches the current map
-                // is the DM recalibrating it, which is applied as given.
+                // knowing the table exists. A URL that matches what the slot
+                // holds is the DM recalibrating it, which is applied as given.
                 //
                 // Recording only in the second case, and on a load of a map with
                 // nothing remembered yet, is what keeps the two halves from
                 // cancelling: if a load recorded too, a remembered calibration
                 // would immediately overwrite itself with the client's guess.
-                let loading = url != self.map.url;
+                //
+                // An empty staged slot holds no URL, so filling it is always a
+                // load — which is what makes a map come back calibrated the
+                // moment it is staged rather than only once it is promoted.
+                let showing = if staged {
+                    self.staged.as_ref().map(|map| &map.url)
+                } else {
+                    Some(&self.map.url)
+                };
+                let loading = showing != Some(&url);
                 let calibration = match self.calibrations.get(&url) {
                     Some(remembered) if loading => remembered.clone(),
                     _ => {
@@ -923,8 +985,36 @@ impl RoomState {
                     }
                 };
 
-                self.map = calibration.into_map(url);
-                vec![Event::MapChanged]
+                // One table, keyed by URL, for both slots. Calibrating a map
+                // while it is staged is what makes it arrive on the board
+                // already calibrated when it is promoted.
+                let finished = calibration.into_map(url);
+                if staged {
+                    self.staged = Some(finished);
+                    vec![Event::StagedChanged]
+                } else {
+                    self.map = finished;
+                    vec![Event::MapChanged]
+                }
+            }
+
+            // Tokens are untouched here too, and for a stronger reason than a
+            // recalibration: they are stored in cells, and there is no sensible
+            // way to carry a cell across to an unrelated image. They keep their
+            // coordinates and the DM repositions them.
+            ClientMsg::PromoteStaged => {
+                let Some(map) = self.staged.take() else {
+                    return Vec::new(); // proved to exist by `check`
+                };
+                self.map = map;
+                // Two events, because two things happened: the board changed for
+                // everyone, and the slot emptied for the DM.
+                vec![Event::MapChanged, Event::StagedChanged]
+            }
+
+            ClientMsg::ClearStaged => {
+                self.staged = None;
+                vec![Event::StagedChanged]
             }
 
             ClientMsg::SetInitiative { token, value } => {
@@ -1004,9 +1094,11 @@ impl RoomState {
             // Today every client gets the same token; when tokens can be
             // hidden, this arm is where a player's copy of this event becomes a
             // `TokenRemoved` — or nothing at all — instead.
-            Event::TokenChanged { id } => self.tokens.get(id).map(|token| ServerMsg::TokenChanged {
-                token: token.clone(),
-            }),
+            Event::TokenChanged { id } => {
+                self.tokens.get(id).map(|token| ServerMsg::TokenChanged {
+                    token: token.clone(),
+                })
+            }
 
             Event::TokenRemoved { id } => Some(ServerMsg::TokenRemoved { id: id.clone() }),
 
@@ -1021,6 +1113,15 @@ impl RoomState {
             // server confirmed, so this frame is how the DM sees the result.
             Event::MapChanged => Some(ServerMsg::MapChanged {
                 map: self.map.clone(),
+            }),
+
+            // The filter doing its actual job. Every arm above drops a message
+            // for something the recipient *did*; this one drops it for who the
+            // recipient is, which is the shape hidden tokens and fog need. A
+            // player is not sent a staged map and told not to draw it — the
+            // frame does not exist for them at all.
+            Event::StagedChanged => self.is_dm(recipient).then(|| ServerMsg::StagedChanged {
+                map: self.staged.clone(),
             }),
         }
     }
@@ -2247,6 +2348,7 @@ mod tests {
             offset_y,
             grid_color: "#ffffff52".to_owned(),
             play_area: None,
+            staged: false,
         }
     }
 
@@ -2258,6 +2360,7 @@ mod tests {
             offset_y: 0.0,
             grid_color: color.to_owned(),
             play_area: None,
+            staged: false,
         }
     }
 
@@ -2269,6 +2372,33 @@ mod tests {
             offset_y: 0.0,
             grid_color: "#ffffff52".to_owned(),
             play_area: area,
+            staged: false,
+        }
+    }
+
+    /// The same command aimed at the staged slot. Every map helper here builds a
+    /// live `set_map`; this is how a test asks for the staged one, so the two
+    /// slots are always exercised with identical commands.
+    fn staged(msg: ClientMsg) -> ClientMsg {
+        match msg {
+            ClientMsg::SetMap {
+                url,
+                grid_px,
+                offset_x,
+                offset_y,
+                grid_color,
+                play_area,
+                staged: _,
+            } => ClientMsg::SetMap {
+                url,
+                grid_px,
+                offset_x,
+                offset_y,
+                grid_color,
+                play_area,
+                staged: true,
+            },
+            other => other,
         }
     }
 
@@ -2342,6 +2472,7 @@ mod tests {
             offset_y: -offset,
             grid_color: color.to_owned(),
             play_area: rect(offset, offset, grid_px * 10.0, grid_px * 8.0),
+            staged: false,
         }
     }
 
@@ -2507,6 +2638,306 @@ mod tests {
 
         assert!(state.calibrations.is_empty());
         assert_ne!(state.map.url, "/uploads/cave.png");
+    }
+
+    // --- the staged map -------------------------------------------------------
+
+    /// Stages a map and drains the DM's echo, leaving the receiver empty so a
+    /// test can assert on what arrives next.
+    fn stage(state: &mut RoomState, dm: ClientId, url: &str) {
+        state.handle(dm, staged(set_map(url, 80.0, 0.0, 0.0)));
+    }
+
+    #[test]
+    fn a_staged_map_is_not_in_a_players_snapshot() {
+        // Invariant 4. Not sent-and-not-drawn — absent, so there is nothing in
+        // devtools to find.
+        let mut state = room();
+        let _dm = join_as_dm(&mut state, ClientId(1));
+        stage(&mut state, ClientId(1), "/uploads/next.png");
+
+        let view = state.snapshot_for(&Identity::Player(PlayerId::new("vex")));
+        assert!(view.staged.is_none());
+
+        let json = serde_json::to_string(&view).expect("serialises");
+        assert!(
+            !json.contains("next.png"),
+            "the next dungeon leaked into a player's snapshot: {json}"
+        );
+    }
+
+    #[test]
+    fn the_dm_sees_the_staged_map_in_their_snapshot() {
+        let mut state = room();
+        let _dm = join_as_dm(&mut state, ClientId(1));
+        stage(&mut state, ClientId(1), "/uploads/next.png");
+
+        let view = state.snapshot_for(&Identity::Dm);
+        assert_eq!(view.staged.map(|m| m.url), Some("/uploads/next.png".into()));
+    }
+
+    #[test]
+    fn a_staged_map_never_reaches_a_player_as_a_delta() {
+        // The other half of invariant 3: filtering the join snapshot is worth
+        // nothing if the deltas leak it afterwards.
+        let mut state = room();
+        let dm = ClientId(1);
+        let player = ClientId(2);
+        let mut dm_rx = join_as_dm(&mut state, dm);
+        let mut player_rx = join_as_player(&mut state, player, "vex");
+
+        stage(&mut state, dm, "/uploads/next.png");
+
+        assert!(
+            matches!(dm_rx.try_recv(), Ok(ServerMsg::StagedChanged { map: Some(m) }) if m.url == "/uploads/next.png")
+        );
+        assert!(
+            player_rx.try_recv().is_err(),
+            "a player should have been sent nothing at all"
+        );
+    }
+
+    #[test]
+    fn staging_a_map_leaves_the_board_alone() {
+        let mut state = room();
+        let _dm = join_as_dm(&mut state, ClientId(1));
+        let before = state.map.url.clone();
+
+        stage(&mut state, ClientId(1), "/uploads/next.png");
+
+        assert_eq!(state.map.url, before, "the table is still on the old map");
+        assert_eq!(
+            state.staged.as_ref().map(|m| m.grid_px),
+            Some(80.0),
+            "and the staged slot holds what was sent"
+        );
+    }
+
+    #[test]
+    fn a_player_cannot_stage_promote_or_discard() {
+        let mut state = room();
+        let _player = join_as_player(&mut state, ClientId(1), "vex");
+        let _dm = join_as_dm(&mut state, ClientId(2));
+        stage(&mut state, ClientId(2), "/uploads/next.png");
+
+        for msg in [
+            staged(set_map("/uploads/theirs.png", 64.0, 0.0, 0.0)),
+            ClientMsg::PromoteStaged,
+            ClientMsg::ClearStaged,
+        ] {
+            assert!(
+                state.check(ClientId(1), &msg).is_err(),
+                "{msg:?} should be DM-only"
+            );
+            assert!(state.check(ClientId(2), &msg).is_ok());
+        }
+    }
+
+    #[test]
+    fn promoting_puts_the_staged_map_on_the_board_and_empties_the_slot() {
+        let mut state = room();
+        let _dm = join_as_dm(&mut state, ClientId(1));
+        stage(&mut state, ClientId(1), "/uploads/next.png");
+
+        state.handle(ClientId(1), ClientMsg::PromoteStaged);
+
+        assert_eq!(state.map.url, "/uploads/next.png");
+        assert_eq!(state.map.grid_px, 80.0, "calibrated while staged");
+        assert!(state.staged.is_none(), "one slot, and it has been spent");
+    }
+
+    #[test]
+    fn promoting_reaches_the_table_but_the_empty_slot_reaches_only_the_dm() {
+        let mut state = room();
+        let dm = ClientId(1);
+        let player = ClientId(2);
+        let mut dm_rx = join_as_dm(&mut state, dm);
+        let mut player_rx = join_as_player(&mut state, player, "vex");
+        stage(&mut state, dm, "/uploads/next.png");
+        let _staged_echo = dm_rx.try_recv().expect("the staging echo");
+
+        state.handle(dm, ClientMsg::PromoteStaged);
+
+        assert!(
+            matches!(player_rx.try_recv(), Ok(ServerMsg::MapChanged { map }) if map.url == "/uploads/next.png")
+        );
+        assert!(
+            player_rx.try_recv().is_err(),
+            "the slot emptying is not a player's business"
+        );
+
+        assert!(matches!(dm_rx.try_recv(), Ok(ServerMsg::MapChanged { .. })));
+        assert!(matches!(
+            dm_rx.try_recv(),
+            Ok(ServerMsg::StagedChanged { map: None })
+        ));
+    }
+
+    #[test]
+    fn promoting_does_not_move_a_single_token() {
+        // Tokens are stored in cells, so there is nothing sensible to carry them
+        // across two unrelated images by. They stay put and the DM repositions.
+        let mut state = room();
+        let _dm = join_as_dm(&mut state, ClientId(1));
+        let before: Vec<(TokenId, f32, f32)> = state
+            .tokens
+            .values()
+            .map(|t| (t.id.clone(), t.x, t.y))
+            .collect();
+
+        stage(&mut state, ClientId(1), "/uploads/next.png");
+        state.handle(ClientId(1), ClientMsg::PromoteStaged);
+
+        for (id, x, y) in before {
+            let token = state.tokens.get(&id).expect("token survived");
+            assert_eq!((token.x, token.y), (x, y), "{} moved", token.name);
+        }
+    }
+
+    #[test]
+    fn discarding_empties_the_slot_and_leaves_the_board_alone() {
+        let mut state = room();
+        let _dm = join_as_dm(&mut state, ClientId(1));
+        let before = state.map.url.clone();
+        stage(&mut state, ClientId(1), "/uploads/next.png");
+
+        state.handle(ClientId(1), ClientMsg::ClearStaged);
+
+        assert!(state.staged.is_none());
+        assert_eq!(state.map.url, before);
+    }
+
+    #[test]
+    fn promoting_or_discarding_nothing_is_refused() {
+        let mut state = room();
+        let _dm = join_as_dm(&mut state, ClientId(1));
+
+        for msg in [ClientMsg::PromoteStaged, ClientMsg::ClearStaged] {
+            let refusal = state.check(ClientId(1), &msg).expect_err("nothing staged");
+            assert!(refusal.contains("no map staged"), "{refusal}");
+        }
+    }
+
+    #[test]
+    fn a_calibration_made_while_staged_is_remembered() {
+        // Which is what makes the promoted map arrive already calibrated, and
+        // what makes re-picking it weeks later come back the same.
+        let mut state = room();
+        let _dm = join_as_dm(&mut state, ClientId(1));
+
+        state.handle(
+            ClientId(1),
+            staged(calibrate("/uploads/next.png", 91.0, 4.0, "#aabbccdd")),
+        );
+
+        assert_eq!(
+            state
+                .calibrations
+                .get("/uploads/next.png")
+                .map(|c| c.grid_px),
+            Some(91.0)
+        );
+
+        state.handle(ClientId(1), ClientMsg::PromoteStaged);
+        assert_eq!(state.map.grid_px, 91.0);
+        assert_eq!(state.map.grid_color, "#aabbccdd");
+    }
+
+    #[test]
+    fn staging_a_map_calibrated_earlier_comes_back_calibrated() {
+        // The staged slot is empty, so this is a load — and a load loses to
+        // whatever the room already remembers for that URL.
+        let mut state = room();
+        let _dm = join_as_dm(&mut state, ClientId(1));
+        state.handle(
+            ClientId(1),
+            calibrate("/uploads/cave.png", 82.0, 7.0, "#11223344"),
+        );
+
+        state.handle(
+            ClientId(1),
+            staged(calibrate("/uploads/cave.png", 64.0, 0.0, "#ffffff52")),
+        );
+
+        assert_eq!(
+            state.staged.as_ref().map(|m| m.grid_px),
+            Some(82.0),
+            "the client's opening bid should have lost to the remembered value"
+        );
+    }
+
+    #[test]
+    fn the_staged_map_can_still_be_recalibrated() {
+        // The other half of the URL rule, in the staged slot: a URL the slot is
+        // already showing is a correction, and it must win.
+        let mut state = room();
+        let _dm = join_as_dm(&mut state, ClientId(1));
+        state.handle(
+            ClientId(1),
+            staged(calibrate("/uploads/next.png", 64.0, 0.0, "#ffffff52")),
+        );
+
+        state.handle(
+            ClientId(1),
+            staged(calibrate("/uploads/next.png", 96.0, 3.0, "#aabbccdd")),
+        );
+
+        assert_eq!(state.staged.as_ref().map(|m| m.grid_px), Some(96.0));
+        assert_eq!(
+            state
+                .calibrations
+                .get("/uploads/next.png")
+                .map(|c| c.grid_px),
+            Some(96.0),
+            "and the correction is what gets remembered"
+        );
+    }
+
+    #[test]
+    fn a_staged_map_is_worth_saving_and_survives_the_trip() {
+        // Slate is off between sessions, so a map staged on Sunday for next week
+        // is only useful if the file holds it.
+        let mut state = room();
+        let _dm = join_as_dm(&mut state, ClientId(1));
+        assert!(
+            state.handle(
+                ClientId(1),
+                staged(set_map("/uploads/next.png", 80.0, 0.0, 0.0))
+            ),
+            "staging should mark the room dirty"
+        );
+
+        let json = serde_json::to_vec(&state.to_saved()).expect("encodes");
+        let saved: Saved = serde_json::from_slice(&json).expect("decodes");
+        let restored = RoomState::restored(saved, SECRET.to_owned());
+
+        assert_eq!(
+            restored.staged.as_ref().map(|m| m.url.as_str()),
+            Some("/uploads/next.png")
+        );
+        assert_eq!(restored.staged.as_ref().map(|m| m.grid_px), Some(80.0));
+    }
+
+    #[test]
+    fn only_the_dm_is_told_the_staged_slot_changed() {
+        let mut state = room();
+        let dm = ClientId(1);
+        let player = ClientId(2);
+        let _dm_rx = join_as_dm(&mut state, dm);
+        let _player_rx = join_as_player(&mut state, player, "vex");
+
+        assert!(state.message_for(dm, dm, &Event::StagedChanged).is_some());
+        assert!(
+            state
+                .message_for(player, dm, &Event::StagedChanged)
+                .is_none()
+        );
+        assert!(
+            state
+                .message_for(ClientId(3), dm, &Event::StagedChanged)
+                .is_none(),
+            "a connection with no identity is told nothing either"
+        );
     }
 
     #[test]

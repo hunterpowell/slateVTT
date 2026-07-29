@@ -1,6 +1,16 @@
 // The DM's map panel: upload an image, calibrate the grid to it, and set how
 // the overlay is drawn.
 //
+// The panel has two modes, and the toggle at the top of it decides which map
+// everything below is about: the board the table is looking at, or the one being
+// prepared for later. Nothing else in the panel changes between them — an upload
+// is an upload and a calibration is a calibration either way — which is why it is
+// one toggle rather than a second copy of the whole panel.
+//
+// Switching to "next map" while something is staged is also preview mode: the
+// board on screen becomes the staged image so it can be calibrated, because
+// calibrating a map means looking at it. The table sees none of this.
+//
 // Calibration is a two-step: dragging a box only *proposes* a grid, which is
 // previewed locally so the count can be corrected against it, and nothing
 // reaches the table or the save file until the DM applies. That local preview
@@ -16,10 +26,17 @@ import type { Box, Calibration } from './calibrate.js';
 import { gridFromBox, MAX_CELLS, MIN_GRID_PX, playAreaFromBox } from './calibrate.js';
 import type { GridSpec, Rect } from './coords.js';
 import type { ClientMsg } from './protocol.js';
-import type { Scene } from './scene.js';
+import type { Board, Scene } from './scene.js';
 
 export interface MapToolUi {
   root: HTMLElement;
+  head: HTMLElement;
+  live: HTMLButtonElement;
+  next: HTMLButtonElement;
+  stagedRow: HTMLElement;
+  stagedNote: HTMLElement;
+  promote: HTMLButtonElement;
+  discard: HTMLButtonElement;
   file: HTMLInputElement;
   uploadText: HTMLElement;
   library: HTMLButtonElement;
@@ -41,7 +58,7 @@ export interface MapToolUi {
 }
 
 export interface MapTool extends Calibration {
-  /** Called once on Welcome, then on every map_changed. */
+  /** Called once on Welcome, then on every map_changed and staged_changed. */
   update(scene: Scene): void;
   /** Offers the whole image as the reference box. See below. */
   proposeWholeMap(): void;
@@ -59,12 +76,26 @@ export function createMapTool(
   report: (message: string) => void,
   /** Pixel size of the map image on screen, or null before one has loaded. */
   mapSize: () => { width: number; height: number } | null,
+  /** Told when the board on screen becomes, or stops being, the staged map. */
+  onPreview: (previewing: boolean) => void,
 ): MapTool {
   // The live scene object, so reading through it always gives the map as it
   // stands. Assigned before the panel is ever shown.
   let scene: Scene | null = null;
   /** What the server last confirmed. Where a cancelled preview goes back to. */
   let confirmed: { grid: GridSpec; area: Rect | null } | null = null;
+
+  /** Which slot everything in this panel is about. */
+  let mode: 'live' | 'staged' = 'live';
+
+  /**
+   * The board being edited: the staged one in "next map" mode, and null there
+   * until a map has actually been staged. Everything below reads through this
+   * rather than through `scene.live`, which is what stops a staged preview from
+   * ever being written into the map the table is looking at.
+   */
+  const target = (): Board | null =>
+    scene === null ? null : mode === 'staged' ? scene.staged : scene.live;
 
   let active = false;
   /** Mid-drag. */
@@ -99,17 +130,16 @@ export function createMapTool(
   // Same split as a token drag, and for the same reason — the table does not
   // need to watch someone hunt for a shade.
   const previewColor = (): void => {
-    if (scene === null) return;
-    scene.gridColor = composeColor();
+    const board = target();
+    if (board === null) return;
+    board.gridColor = composeColor();
     ui.alphaLabel.textContent = `${ui.alpha.value}%`;
   };
 
   const sendColor = (): void => {
     // Deliberately the *confirmed* state, not what is on screen: an unapplied
     // calibration preview must not be committed by a fiddle with the colour.
-    if (scene !== null && confirmed !== null) {
-      sendMap(confirmed.grid, composeColor(), confirmed.area);
-    }
+    if (confirmed !== null) sendMap(confirmed.grid, composeColor(), confirmed.area);
   };
 
   for (const input of [ui.color, ui.alpha]) {
@@ -130,33 +160,39 @@ export function createMapTool(
    * predicted locally the way the grid is — main.ts reloads the image by
    * noticing that the incoming URL differs from the one on the scene, and a
    * prediction here would hide the change from it.
+   *
+   * `staged` says which slot, and is simply which mode the panel is in. An empty
+   * staged slot has no URL of its own, so only an explicit one can fill it.
    */
   const sendMap = (grid: GridSpec, color: string, area: Rect | null, url?: string): void => {
-    if (scene === null) return;
+    const to = url ?? target()?.mapUrl;
+    if (to === undefined) return;
     send({
       type: 'set_map',
-      url: url ?? scene.mapUrl,
+      url: to,
       grid_px: grid.px,
       offset_x: grid.offsetX,
       offset_y: grid.offsetY,
       grid_color: color,
       play_area: area,
+      staged: mode === 'staged',
     });
   };
 
   /** Recomputes the previewed grid and play area from the box and the count. */
   const repreview = (): void => {
-    if (scene === null || pending === null) return;
+    const board = target();
+    if (board === null || pending === null) return;
 
     const grid = gridFromBox(pending, cellsAcross());
     if (grid === null) {
       report(`that box is too small — each square must come out at ${MIN_GRID_PX} px or more`);
       return;
     }
-    scene.grid = grid;
+    board.grid = grid;
     // The whole image is stored as null rather than its own measurements, so it
     // stays true if the same URL is ever served a different-sized image.
-    scene.playArea = pendingWholeImage ? null : playAreaFromBox(pending, grid);
+    board.playArea = pendingWholeImage ? null : playAreaFromBox(pending, grid);
     showReadout();
   };
 
@@ -186,7 +222,7 @@ export function createMapTool(
    */
   function proposeWholeMap(): void {
     const size = mapSize();
-    if (scene === null || confirmed === null || size === null) return;
+    if (target() === null || confirmed === null || size === null) return;
 
     // The map is drawn from the world origin, so the image *is* this box.
     const box: Box = { x0: 0, y0: 0, x1: size.width, y1: size.height };
@@ -213,9 +249,10 @@ export function createMapTool(
 
   /** Leaves calibrate mode and puts the board back the way the server has it. */
   const discard = (): void => {
-    if (scene !== null && confirmed !== null && pending !== null) {
-      scene.grid = confirmed.grid;
-      scene.playArea = confirmed.area;
+    const board = target();
+    if (board !== null && confirmed !== null && pending !== null) {
+      board.grid = confirmed.grid;
+      board.playArea = confirmed.area;
     }
     setActive(false);
   };
@@ -224,9 +261,10 @@ export function createMapTool(
   ui.cancel.addEventListener('click', discard);
 
   ui.apply.addEventListener('click', () => {
-    if (scene === null || pending === null) return;
-    // The scene holds the preview, which is exactly what is on screen.
-    sendMap(scene.grid, scene.gridColor, scene.playArea);
+    const board = target();
+    if (board === null || pending === null) return;
+    // The board holds the preview, which is exactly what is on screen.
+    sendMap(board.grid, board.gridColor, board.playArea);
     pending = null;
     setActive(false);
   });
@@ -253,27 +291,93 @@ export function createMapTool(
     if (e.key === 'Enter' && pending !== null) ui.apply.click();
   });
 
+  // --- the two slots --------------------------------------------------------
+
+  /** Panel chrome that depends on which slot is being edited. */
+  const showMode = (): void => {
+    const staging = mode === 'staged';
+    const board = target();
+
+    ui.head.textContent = staging ? 'Next map' : 'Map';
+    ui.live.classList.toggle('is-active', !staging);
+    ui.next.classList.toggle('is-active', staging);
+    ui.stagedRow.hidden = !staging;
+    ui.stagedNote.textContent =
+      board === null
+        ? 'Upload or choose a map to prepare it out of sight of the table.'
+        : 'Only you can see this. Promote it to put it on the table.';
+    ui.promote.disabled = board === null;
+    ui.discard.disabled = board === null;
+    // There is nothing to calibrate until a map has been staged.
+    ui.calibrate.disabled = board === null;
+  };
+
+  /** Re-reads everything the panel shows from the board it is now editing. */
+  const refresh = (): void => {
+    const board = target();
+    confirmed = board === null ? null : { grid: { ...board.grid }, area: board.playArea };
+    // Whatever the server just said, or whichever slot is now selected,
+    // supersedes anything being tried out here.
+    pending = null;
+    ui.applyRow.hidden = true;
+    if (board !== null) showColor(board.gridColor);
+    showReadout();
+    showMode();
+  };
+
+  const setMode = (next: 'live' | 'staged'): void => {
+    if (mode === next || scene === null) return;
+    // Before the switch: a half-tuned grid belongs to the map it was drawn on.
+    discard();
+    mode = next;
+
+    // Switching to a slot that holds a map is what preview mode *is*. There is
+    // no separate toggle, because calibrating a map means looking at it.
+    const previewing = mode === 'staged' && scene.staged !== null;
+    if (previewing !== scene.previewing) {
+      scene.previewing = previewing;
+      onPreview(previewing);
+    }
+    refresh();
+  };
+
+  ui.live.addEventListener('click', () => setMode('live'));
+  ui.next.addEventListener('click', () => setMode('staged'));
+
+  ui.promote.addEventListener('click', () => {
+    discard();
+    send({ type: 'promote_staged' });
+  });
+
+  ui.discard.addEventListener('click', () => {
+    discard();
+    send({ type: 'clear_staged' });
+  });
+
   // --- putting a new image on the board -------------------------------------
 
   /**
    * Both ways of getting a map end here, because from this side they are the
-   * same thing: some bytes are now served at `url` and the board should show
-   * them.
+   * same thing: some bytes are now served at `url` and the slot this panel is
+   * pointed at should show them.
    */
   const showNewMap = (url: string): void => {
-    if (scene === null || confirmed === null) return;
+    if (scene === null) return;
 
     discard(); // a half-tuned grid means nothing on an image being replaced
-    // The cell size carries over — a DM's maps tend to come out of one tool at
-    // one resolution — but the offsets cannot: they describe where the grid
-    // began on an image this one has just replaced. Nor can the play area, so
-    // a new map is playable end to end until the DM says otherwise.
+    // Falls back to the live board when the staged slot is still empty: there is
+    // nothing staged to carry anything over from, and one DM's maps tend to come
+    // out of one tool at one resolution either way.
+    const from = target() ?? scene.live;
+    // The cell size carries over, but the offsets cannot: they describe where
+    // the grid began on an image this one has just replaced. Nor can the play
+    // area, so a new map is playable end to end until the DM says otherwise.
     //
     // For a map picked out of the library this is only an opening bid. The
     // server keys what it remembers on the URL, so a map calibrated in an
-    // earlier session comes back the way it was left and the map_changed that
-    // lands here overrides all of it.
-    sendMap({ px: confirmed.grid.px, offsetX: 0, offsetY: 0 }, scene.gridColor, null, url);
+    // earlier session comes back the way it was left and the frame that lands
+    // here overrides all of it.
+    sendMap({ px: from.grid.px, offsetX: 0, offsetY: 0 }, from.gridColor, null, url);
   };
 
   /** Both endpoints answer with plain text on failure and JSON on success. */
@@ -293,7 +397,7 @@ export function createMapTool(
   });
 
   async function upload(file: File): Promise<void> {
-    if (scene === null || confirmed === null) return;
+    if (scene === null) return;
 
     ui.root.classList.add('is-busy');
     ui.uploadText.textContent = 'uploading…';
@@ -385,7 +489,7 @@ export function createMapTool(
   }
 
   async function pick(path: string): Promise<void> {
-    if (scene === null || confirmed === null) return;
+    if (scene === null) return;
 
     ui.root.classList.add('is-busy');
     try {
@@ -407,8 +511,13 @@ export function createMapTool(
   // --- readout --------------------------------------------------------------
 
   function showReadout(): void {
-    if (scene === null) return;
-    const { px, offsetX, offsetY } = scene.grid;
+    const board = target();
+    if (board === null) {
+      ui.readout.textContent = 'nothing staged';
+      ui.readout.classList.remove('is-preview');
+      return;
+    }
+    const { px, offsetX, offsetY } = board.grid;
     const prefix = pending === null ? '' : 'preview · ';
     ui.readout.textContent = `${prefix}${round(px)} px/cell · offset ${round(offsetX)}, ${round(offsetY)}`;
     ui.readout.classList.toggle('is-preview', pending !== null);
@@ -458,12 +567,18 @@ export function createMapTool(
 
     update(next) {
       scene = next;
-      confirmed = { grid: { ...next.grid }, area: next.playArea };
-      // Whatever the server just said supersedes anything being tried out here.
-      pending = null;
-      ui.applyRow.hidden = true;
-      showColor(next.gridColor);
-      showReadout();
+
+      // A slot that has emptied — promoted or discarded — has nothing left to
+      // edit, so the panel goes back to the board rather than sitting in a mode
+      // with no map in it.
+      if (mode === 'staged' && next.staged === null) mode = 'live';
+
+      const previewing = mode === 'staged' && next.staged !== null;
+      if (previewing !== next.previewing) {
+        next.previewing = previewing;
+        onPreview(previewing);
+      }
+      refresh();
     },
   };
 }

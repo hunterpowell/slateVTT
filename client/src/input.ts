@@ -5,6 +5,7 @@ import type { Identity } from './identity.js';
 import { canMove } from './identity.js';
 import type { ClientMsg } from './protocol.js';
 import type { Scene, Token } from './scene.js';
+import { shownBoard } from './scene.js';
 
 const MIN_ZOOM = 0.1;
 const MAX_ZOOM = 4;
@@ -38,6 +39,10 @@ export interface InputState {
  *
  * While the DM has calibrate mode on, left-drag draws a grid reference box
  * instead. Middle-drag still pans, so the map can be moved without leaving it.
+ *
+ * While the DM is previewing a staged map, no token is grabbable at all: what
+ * is on screen is not the board, and dragging a token across it would mean
+ * moving something on a map the table cannot see.
  *
  * Tokens that are not yours are transparent to the pointer, so dragging across
  * one pans the map instead of feeling broken. The server re-checks regardless;
@@ -108,6 +113,9 @@ export function attachInput(
     return tokenAt(scene, identity, w.x, w.y) !== null ? 'pointer' : 'grab';
   };
 
+  /** Grid units under a screen point, on whichever board is being shown. */
+  const gridUnder = (w: Vec2): Vec2 => worldToGrid(shownBoard(scene).grid, w.x, w.y);
+
   canvas.addEventListener('pointerdown', (e) => {
     if (drag !== null) return;
     if (e.button !== 0 && e.button !== 1) return;
@@ -130,7 +138,7 @@ export function attachInput(
 
     if (hit !== null) {
       // Grab offset keeps the token from snapping its centre to the cursor.
-      const g = worldToGrid(scene.grid, w.x, w.y);
+      const g = gridUnder(w);
       drag = { kind: 'token', pointerId: e.pointerId, token: hit, grabDX: hit.x - g.x, grabDY: hit.y - g.y };
       state.draggingId = hit.id;
       onSelect?.(hit.id);
@@ -147,7 +155,7 @@ export function attachInput(
   canvas.addEventListener('pointermove', (e) => {
     const p = localPoint(e);
     const w = screenToWorld(cam, p.x, p.y);
-    state.cursorGrid = worldToGrid(scene.grid, w.x, w.y);
+    state.cursorGrid = gridUnder(w);
 
     if (drag === null) {
       canvas.style.cursor = restingCursor(w);
@@ -160,6 +168,7 @@ export function attachInput(
       return;
     }
 
+
     if (drag.kind === 'pan') {
       // Panning is purely local — the camera is not shared state.
       cam.x -= (p.x - drag.lastX) / cam.zoom;
@@ -170,7 +179,7 @@ export function attachInput(
       return;
     }
 
-    const g = worldToGrid(scene.grid, w.x, w.y);
+    const g = gridUnder(w);
     drag.token.x = g.x + drag.grabDX;
     drag.token.y = g.y + drag.grabDY;
     sendDragFrame(drag.token);
@@ -236,14 +245,20 @@ export function attachInput(
  * draw order. Tokens you cannot move are skipped rather than returned-and-
  * rejected, so a token sitting on top of yours never blocks you from grabbing
  * your own.
+ *
+ * Nothing is grabbable while a staged map is being previewed: those tokens are
+ * ghosts showing where the party would land, not pieces on a board.
  */
 function tokenAt(scene: Scene, identity: Identity, wx: number, wy: number): Token | null {
+  const board = shownBoard(scene);
+  if (board !== scene.live) return null;
+
   for (let i = scene.tokens.length - 1; i >= 0; i--) {
     const token = scene.tokens[i];
     if (token === undefined) continue;
     if (!canMove(identity, token)) continue;
-    const radius = (scene.grid.px * token.size) / 2;
-    const centre = gridToWorld(scene.grid, token.x, token.y);
+    const radius = (board.grid.px * token.size) / 2;
+    const centre = gridToWorld(board.grid, token.x, token.y);
     if (Math.hypot(wx - centre.x, wy - centre.y) <= radius) return token;
   }
   return null;

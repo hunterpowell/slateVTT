@@ -23,6 +23,14 @@ use crate::protocol::{Calibration, Initiative, MapInfo, Token};
 #[serde(default)]
 pub struct Saved {
     pub map: MapInfo,
+    /// The map the DM is preparing. Persisted, but never part of a player's
+    /// view — the second thing here the whole room holds and one client's copy
+    /// of it does not, after `calibrations`.
+    ///
+    /// It is saved for the reason the calibration table is: Slate runs only
+    /// while the group is playing, so a map staged at the end of one evening
+    /// for the next would otherwise be gone before it was ever wanted.
+    pub staged: Option<MapInfo>,
     /// A list rather than a map keyed by id: the id already lives inside each
     /// token, and the room rebuilds its `HashMap` on load.
     pub tokens: Vec<Token>,
@@ -167,6 +175,11 @@ mod tests {
                     h: 490.0,
                 }),
             },
+            staged: Some(MapInfo {
+                url: "/uploads/next-week.jpg".to_owned(),
+                grid_px: 96.0,
+                ..MapInfo::default()
+            }),
             tokens: vec![Token {
                 id: TokenId::new("t1"),
                 name: "Grog".to_owned(),
@@ -219,6 +232,12 @@ mod tests {
                 h: 490.0
             })
         );
+
+        // A map staged on one evening for the next is only useful if it is still
+        // staged when the server comes back up.
+        let staged = loaded.staged.as_ref().expect("the staged map");
+        assert_eq!(staged.url, "/uploads/next-week.jpg");
+        assert_eq!(staged.grid_px, 96.0);
 
         let token = loaded.tokens.first().expect("the token");
         // Invariant 1: grid units on the wire, on disk, everywhere but render.
@@ -337,6 +356,10 @@ mod tests {
         assert!(
             loaded.calibrations.is_empty(),
             "a save predating the table means nothing has been calibrated yet"
+        );
+        assert!(
+            loaded.staged.is_none(),
+            "a save predating staging has no next map waiting"
         );
     }
 

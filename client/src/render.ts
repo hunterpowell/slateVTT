@@ -3,7 +3,8 @@ import type { Camera, Rect } from './coords.js';
 import { firstLineAt, gridToWorld, playRect, worldToScreen } from './coords.js';
 import type { Identity } from './identity.js';
 import { ownsToken } from './identity.js';
-import type { Scene } from './scene.js';
+import type { Board, Scene } from './scene.js';
+import { shownBoard } from './scene.js';
 
 const TAU = Math.PI * 2;
 
@@ -42,6 +43,12 @@ const LABEL_HALO = 'rgba(0, 0, 0, 0.85)';
 const CAL_FILL = 'rgba(120, 190, 255, 0.10)';
 const CAL_EDGE = 'rgba(120, 190, 255, 0.95)';
 const CAL_DIVISION = 'rgba(120, 190, 255, 0.55)';
+/**
+ * How solidly tokens draw over a staged map. They are there to show where the
+ * party lands on a promote — they keep their cells — but nothing on that image
+ * is the board yet, and a token that looks draggable and is not reads as broken.
+ */
+const GHOST_ALPHA = 0.35;
 
 /** Canvas size in CSS pixels, plus the backing-store scale factor. */
 export interface Viewport {
@@ -68,6 +75,11 @@ export interface Frame {
 
 export function render(ctx: CanvasRenderingContext2D, view: Viewport, frame: Frame): void {
   const { cam, map } = frame;
+  // The staged map while the DM is previewing, the live one otherwise. Read
+  // once and passed down, so no two things in a frame can disagree about which
+  // map they are drawing on.
+  const board = shownBoard(frame.scene);
+  const ghosting = board !== frame.scene.live;
 
   ctx.setTransform(1, 0, 0, 1, 0, 0);
   ctx.fillStyle = VOID;
@@ -80,17 +92,28 @@ export function render(ctx: CanvasRenderingContext2D, view: Viewport, frame: Fra
 
   ctx.drawImage(map, 0, 0);
 
-  const area = playRect(frame.scene.playArea, map.width, map.height);
+  const area = playRect(board.playArea, map.width, map.height);
   // Before the grid and the tokens: the board should read as lit, and a token
   // staged off the board should stay perfectly legible.
-  if (frame.scene.playArea !== null) drawOutsidePlayArea(ctx, area, map.width, map.height);
-  drawGrid(ctx, frame, area);
-  drawTokens(ctx, frame);
+  if (board.playArea !== null) drawOutsidePlayArea(ctx, area, map.width, map.height);
+  drawGrid(ctx, frame, board, area);
+
+  ctx.save();
+  if (ghosting) ctx.globalAlpha = GHOST_ALPHA;
+  drawTokens(ctx, frame, board);
+  ctx.restore();
+
   if (frame.calibration !== null) drawCalibration(ctx, cam, frame.calibration);
 
   ctx.setTransform(1, 0, 0, 1, 0, 0);
   ctx.scale(view.dpr, view.dpr);
-  drawLabels(ctx, frame);
+  // Paired, like the block above. `globalAlpha` is canvas state, not an
+  // argument: left set, it survives into the next frame and washes out the map
+  // itself — including the fill that is supposed to clear the previous one.
+  ctx.save();
+  if (ghosting) ctx.globalAlpha = GHOST_ALPHA;
+  drawLabels(ctx, frame, board);
+  ctx.restore();
 }
 
 /**
@@ -102,9 +125,14 @@ export function render(ctx: CanvasRenderingContext2D, view: Viewport, frame: Fra
  * the pair the map does not match is the one you see. It is the same trick the
  * token labels already use for text.
  */
-function drawGrid(ctx: CanvasRenderingContext2D, frame: Frame, area: Rect): void {
-  const { grid } = frame.scene;
-  const halo = haloFor(frame.scene.gridColor);
+function drawGrid(
+  ctx: CanvasRenderingContext2D,
+  frame: Frame,
+  board: Board,
+  area: Rect,
+): void {
+  const { grid } = board;
+  const halo = haloFor(board.gridColor);
   if (halo === null) return; // fully transparent: the DM turned the grid off
   if (grid.px <= 0 || area.w <= 0 || area.h <= 0) return;
 
@@ -135,7 +163,7 @@ function drawGrid(ctx: CanvasRenderingContext2D, frame: Frame, area: Rect): void
   }
 
   // The same path, stroked again — building it twice would be the only cost.
-  ctx.strokeStyle = frame.scene.gridColor;
+  ctx.strokeStyle = board.gridColor;
   ctx.lineWidth = GRID_CORE_WIDTH / frame.cam.zoom;
   ctx.stroke();
 }
@@ -182,14 +210,14 @@ function haloFor(color: string): string | null {
   return `rgba(${light ? '0, 0, 0' : '255, 255, 255'}, ${alpha * HALO_ALPHA_RATIO})`;
 }
 
-function drawTokens(ctx: CanvasRenderingContext2D, frame: Frame): void {
+function drawTokens(ctx: CanvasRenderingContext2D, frame: Frame, board: Board): void {
   const { scene, tokenImages, draggingId, cam, identity, currentTurn, selectedId } = frame;
 
   for (const token of scene.tokens) {
     // Per token, not per map: a token is `size` cells across, so a 2×2 fills
     // the four cells its centre sits at the corner of.
-    const radius = (scene.grid.px * token.size) / 2;
-    const centre = gridToWorld(scene.grid, token.x, token.y);
+    const radius = (board.grid.px * token.size) / 2;
+    const centre = gridToWorld(board.grid, token.x, token.y);
     const img = tokenImages.get(token.img);
 
     ctx.save();
@@ -295,7 +323,7 @@ function drawCalibration(
  * Labels are drawn in screen space so they keep a fixed size as the camera
  * zooms — the one thing on the map that should not scale with the world.
  */
-function drawLabels(ctx: CanvasRenderingContext2D, frame: Frame): void {
+function drawLabels(ctx: CanvasRenderingContext2D, frame: Frame, board: Board): void {
   const { scene, cam } = frame;
 
   ctx.font = '600 12px ui-sans-serif, system-ui, sans-serif';
@@ -307,9 +335,9 @@ function drawLabels(ctx: CanvasRenderingContext2D, frame: Frame): void {
   ctx.fillStyle = LABEL_TEXT;
 
   for (const token of scene.tokens) {
-    const centre = gridToWorld(scene.grid, token.x, token.y);
+    const centre = gridToWorld(board.grid, token.x, token.y);
     // Under the token's own edge, so a name does not land inside a big one.
-    const p = worldToScreen(cam, centre.x, centre.y + (scene.grid.px * token.size) / 2);
+    const p = worldToScreen(cam, centre.x, centre.y + (board.grid.px * token.size) / 2);
     ctx.strokeText(token.name, p.x, p.y + 4);
     ctx.fillText(token.name, p.x, p.y + 4);
   }

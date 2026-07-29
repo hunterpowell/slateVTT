@@ -20,7 +20,7 @@ import type { ClientMsg, Initiative, TokenMoved, WireToken } from './protocol.js
 import type { Viewport } from './render.js';
 import { render } from './render.js';
 import type { Scene } from './scene.js';
-import { removeToken, sceneFromView, upsertToken } from './scene.js';
+import { boardFromWire, removeToken, sceneFromView, shownBoard, upsertToken } from './scene.js';
 import type { TokenTool } from './tokens.js';
 import { createTokenTool } from './tokens.js';
 
@@ -47,6 +47,13 @@ interface Ui {
   };
   maptool: {
     root: HTMLElement;
+    head: HTMLElement;
+    live: HTMLButtonElement;
+    next: HTMLButtonElement;
+    stagedRow: HTMLElement;
+    stagedNote: HTMLElement;
+    promote: HTMLButtonElement;
+    discard: HTMLButtonElement;
     file: HTMLInputElement;
     uploadText: HTMLElement;
     library: HTMLButtonElement;
@@ -118,6 +125,13 @@ function findUi(): Ui {
     },
     maptool: {
       root: need('#maptool'),
+      head: need('#map-head'),
+      live: need<HTMLButtonElement>('#map-slot-live'),
+      next: need<HTMLButtonElement>('#map-slot-next'),
+      stagedRow: need('#map-staged-row'),
+      stagedNote: need('#map-staged-note'),
+      promote: need<HTMLButtonElement>('#map-promote'),
+      discard: need<HTMLButtonElement>('#map-discard'),
       file: need<HTMLInputElement>('#map-file'),
       uploadText: need('#map-upload-text'),
       library: need<HTMLButtonElement>('#map-library'),
@@ -194,6 +208,23 @@ function boot(): void {
     tokenTool?.update(current.scene);
   };
 
+  /**
+   * Fetches the image for whichever board is on screen now, if that changed.
+   *
+   * `wasShowing` is the URL that was on screen before the delta landed, which is
+   * the only way to tell a change the DM can see from one they cannot: a promote
+   * replaces the live map while they are looking at the staged one, and there is
+   * nothing to reload until the preview ends.
+   *
+   * A brand new image also means the grid inherited from the last one is
+   * meaningless, so the DM is asked to size it — but only once it has loaded and
+   * its dimensions are known, and only if it is the map they are looking at.
+   */
+  const afterBoardChanged = (wasShowing: string, newImage: boolean): void => {
+    if (room === null || shownBoard(room.scene).mapUrl === wasShowing) return;
+    stage?.reloadMap(newImage ? () => mapTool?.proposeWholeMap() : undefined);
+  };
+
   const net: Net = connect({
     onOpen: () => {
       // A DM link wins over any remembered slot: it is an explicit, deliberate
@@ -231,6 +262,16 @@ function boot(): void {
           // Read lazily: the board does not exist yet at this point, and the
           // size changes under it every time a new map is loaded.
           () => stage?.naturalSize() ?? null,
+          (previewing) => {
+            // What is on screen is no longer the board, so nothing on it is a
+            // piece: the token panel goes away and any selection with it.
+            document.body.classList.toggle('previewing', previewing);
+            tokenTool?.select(null);
+            ui.tokentool.root.hidden = previewing;
+            // No prompt to size the grid — a staged map was offered one when it
+            // was staged, and the live map when it arrived.
+            stage?.reloadMap();
+          },
         );
         mapTool.update(room.scene);
         ui.maptool.root.hidden = false;
@@ -285,26 +326,31 @@ function boot(): void {
 
     onMapChanged: (map) => {
       if (room === null) return;
-      const newImage = room.scene.mapUrl !== map.url;
+      const scene = room.scene;
+      const wasShowing = shownBoard(scene).mapUrl;
+      const newImage = scene.live.mapUrl !== map.url;
 
-      room.scene.mapUrl = map.url;
       // Replaced rather than mutated field by field so the render loop can never
       // read a half-applied grid. Tokens are untouched: they are stored in grid
       // units, so recalibrating moves where they draw, not which cell they are
       // in — invariant 1.
-      room.scene.grid = { px: map.grid_px, offsetX: map.offset_x, offsetY: map.offset_y };
-      room.scene.gridColor = map.grid_color;
-      room.scene.playArea = map.play_area;
-      mapTool?.update(room.scene);
+      scene.live = boardFromWire(map);
+      mapTool?.update(scene);
+      afterBoardChanged(wasShowing, newImage);
+    },
 
-      // Only a new image needs fetching; the grid is read fresh every frame.
-      // If the board has not finished starting, `start` is already loading from
-      // `scene.mapUrl` and will pick this up on its own.
-      //
-      // A new image also means the grid inherited from the last one is
-      // meaningless, so the DM is asked to size it — once the image has loaded
-      // and its dimensions are known.
-      if (newImage) stage?.reloadMap(() => mapTool?.proposeWholeMap());
+    // Never reaches a player: the server sends this frame to the DM alone.
+    onStagedChanged: (map) => {
+      if (room === null) return;
+      const scene = room.scene;
+      const wasShowing = shownBoard(scene).mapUrl;
+      const newImage = map !== null && scene.staged?.mapUrl !== map.url;
+
+      scene.staged = map === null ? null : boardFromWire(map);
+      // Leaves preview mode when the slot has emptied — promoted or discarded —
+      // and reports it, which is what puts the token panel back.
+      mapTool?.update(scene);
+      afterBoardChanged(wasShowing, newImage);
     },
 
     onInitiativeChanged: (initiative) => {
@@ -344,8 +390,8 @@ function showWhoami(ui: Ui, identity: Identity, tokens: WireToken[]): void {
 /** The running board, for the few things that have to reach into it later. */
 interface Stage {
   /**
-   * Loads whatever `scene.mapUrl` now points at, then refits the camera to it.
-   * `onLoaded` runs once the new image is actually on screen — which is the
+   * Loads the image for whichever board is shown now, then refits the camera to
+   * it. `onLoaded` runs once that image is actually on screen — which is the
    * first moment its pixel dimensions are known.
    */
   reloadMap(onLoaded?: () => void): void;
@@ -366,8 +412,27 @@ async function start(
   tokenTool: TokenTool | null,
 ): Promise<Stage> {
   const { scene } = room;
-  const firstUrl = scene.mapUrl;
+  const firstUrl = shownBoard(scene).mapUrl;
   let map = await loadImage(firstUrl);
+  /** The image on screen. Not `map.src`, which the browser has made absolute. */
+  let showing = firstUrl;
+
+  // Two maps at most — the board and whatever is staged — but cached by URL like
+  // the token art, so toggling in and out of preview does not re-fetch several
+  // megabytes each time. Promises rather than images: a promise is the answer
+  // whether or not it has arrived, so two callers asking at once share one
+  // download instead of racing.
+  const mapImages = new Map<string, Promise<HTMLImageElement>>([[firstUrl, Promise.resolve(map)]]);
+  const fetchMap = (url: string): Promise<HTMLImageElement> => {
+    let arriving = mapImages.get(url);
+    if (arriving === undefined) {
+      arriving = loadImage(url);
+      mapImages.set(url, arriving);
+      // A failure is not an answer worth keeping — the next attempt should try.
+      arriving.catch(() => mapImages.delete(url));
+    }
+    return arriving;
+  };
 
   // Keyed by URL rather than by token, so re-arting a token finds the new
   // picture and two goblins sharing a portrait share one download. Portraits
@@ -408,12 +473,20 @@ async function start(
 
   const stage: Stage = {
     reloadMap(onLoaded) {
-      const url = scene.mapUrl;
-      loadImage(url).then(
+      const url = shownBoard(scene).mapUrl;
+      // Already up. The callback still runs: it is the prompt to size a grid,
+      // not a redraw, and it is owed to whoever asked.
+      if (url === showing) {
+        onLoaded?.();
+        return;
+      }
+
+      fetchMap(url).then(
         (img) => {
           // A newer map may have arrived while this one was downloading.
-          if (scene.mapUrl !== url) return;
+          if (shownBoard(scene).mapUrl !== url) return;
           map = img;
+          showing = url;
           // A different image is a different battle, and it may be a completely
           // different size — showing all of it beats holding the old camera.
           fitToMap(cam, syncCanvasSize(ui.canvas), map.width, map.height);
@@ -427,7 +500,7 @@ async function start(
     viewCentre: () => {
       const view = syncCanvasSize(ui.canvas);
       const w = screenToWorld(cam, view.width / 2, view.height / 2);
-      return worldToGrid(scene.grid, w.x, w.y);
+      return worldToGrid(shownBoard(scene).grid, w.x, w.y);
     },
   };
 
@@ -463,7 +536,7 @@ async function start(
   requestAnimationFrame(frame);
 
   // The map may have been replaced while that first image was downloading.
-  if (scene.mapUrl !== firstUrl) stage.reloadMap();
+  if (shownBoard(scene).mapUrl !== firstUrl) stage.reloadMap();
   return stage;
 }
 

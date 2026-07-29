@@ -2,7 +2,7 @@
 // from a Welcome frame and mutated by deltas or by local prediction.
 
 import type { GridSpec, Rect } from './coords.js';
-import type { Owner, WireRoomView, WireToken } from './protocol.js';
+import type { Owner, WireMapInfo, WireRoomView, WireToken } from './protocol.js';
 
 export interface Token {
   id: string;
@@ -17,7 +17,8 @@ export interface Token {
   size: number;
 }
 
-export interface Scene {
+/** One map image and how the grid sits on it. Live and staged are the same shape. */
+export interface Board {
   mapUrl: string;
   grid: GridSpec;
   /** The overlay colour as `#rrggbbaa`. Not part of `GridSpec`, which is
@@ -25,8 +26,28 @@ export interface Scene {
   gridColor: string;
   /** The playable region, or null for the whole image. */
   playArea: Rect | null;
+}
+
+export interface Scene {
+  /** What the table is looking at. */
+  live: Board;
+  /** The map the DM is preparing, or null. Always null for a player: the
+   *  server never sends them one. */
+  staged: Board | null;
+  /** The DM is looking at `staged` instead of `live`. Purely local — no
+   *  command, no event, nothing persisted, and nobody else can tell. */
+  previewing: boolean;
   /** Draw order; later entries render on top and win hit-tests. */
   tokens: Token[];
+}
+
+/**
+ * The board on screen. Everything that draws or hit-tests goes through this
+ * rather than reaching for `scene.live`, which is what keeps preview mode from
+ * being a special case in each of them.
+ */
+export function shownBoard(scene: Scene): Board {
+  return scene.previewing && scene.staged !== null ? scene.staged : scene.live;
 }
 
 /**
@@ -35,11 +56,19 @@ export interface Scene {
  */
 export function sceneFromView(view: WireRoomView): Scene {
   return {
-    mapUrl: view.map.url,
-    grid: { px: view.map.grid_px, offsetX: view.map.offset_x, offsetY: view.map.offset_y },
-    gridColor: view.map.grid_color,
-    playArea: view.map.play_area,
+    live: boardFromWire(view.map),
+    staged: view.staged === null ? null : boardFromWire(view.staged),
+    previewing: false,
     tokens: view.tokens.map(tokenFromWire),
+  };
+}
+
+export function boardFromWire(map: WireMapInfo): Board {
+  return {
+    mapUrl: map.url,
+    grid: { px: map.grid_px, offsetX: map.offset_x, offsetY: map.offset_y },
+    gridColor: map.grid_color,
+    playArea: map.play_area,
   };
 }
 

@@ -77,6 +77,38 @@
         cursor: not-allowed;
       }
 
+      /* Nor must a map the table cannot see. The DM is looking at something
+         nobody else is, and mistaking it for the board is the one way this
+         feature can go wrong — hence a border round the whole viewport and a
+         label, rather than a note tucked into a panel. */
+      #preview-tag {
+        position: fixed;
+        top: 12px;
+        left: 50%;
+        transform: translateX(-50%);
+        padding: 4px 12px;
+        border-radius: 4px;
+        background: rgba(200, 163, 74, 0.92);
+        color: #211a08;
+        font-size: 12px;
+        font-weight: 600;
+        letter-spacing: 0.04em;
+        pointer-events: none;
+        user-select: none;
+      }
+
+      body:not(.previewing) #preview-tag {
+        display: none;
+      }
+
+      body.previewing::after {
+        content: '';
+        position: fixed;
+        inset: 0;
+        border: 2px solid rgba(200, 163, 74, 0.75);
+        pointer-events: none;
+      }
+
       #whoami {
         position: fixed;
         top: 12px;
@@ -316,11 +348,33 @@
 
       /* --- map tool (DM only) ---------------------------------------------- */
 
-      #maptool {
+      /* The DM's two panels, stacked. They are in normal flow inside this rather
+         than each being pinned at its own offset: the map panel's height depends
+         on what is open in it — the library list, the calibration row, the staged
+         row — so any fixed offset for the one below it is a number that a later
+         feature makes wrong. `bottom` keeps the pair clear of the HUD. */
+      #left-rail {
         position: fixed;
         top: 50px;
+        bottom: 46px;
         left: 12px;
+        display: flex;
+        flex-direction: column;
+        gap: 10px;
         width: 190px;
+        /* The rail spans the viewport's height, and the gaps and any space under
+           the panels are still map that has to be draggable. */
+        pointer-events: none;
+      }
+
+      #left-rail > * {
+        pointer-events: auto;
+      }
+
+      #maptool {
+        flex: 0 0 auto;
+        box-sizing: border-box;
+        width: 100%;
         padding: 10px;
         border-radius: 6px;
         background: rgba(12, 14, 18, 0.88);
@@ -332,6 +386,57 @@
       .map-head {
         margin-bottom: 8px;
         font-weight: 600;
+      }
+
+      .map-slots {
+        display: flex;
+        gap: 4px;
+        margin-bottom: 8px;
+      }
+
+      .map-slots button {
+        flex: 1;
+        padding: 3px 0;
+        border: 1px solid #2b3038;
+        border-radius: 4px;
+        background: #171a1f;
+        color: #6f7681;
+        font: inherit;
+        font-size: 11px;
+        cursor: pointer;
+      }
+
+      .map-slots button:hover {
+        color: #b6bcc6;
+      }
+
+      /* Amber rather than the calibration blue: this says "not on the table",
+         which is a different kind of state from "in progress". */
+      .map-slots button.is-active {
+        border-color: #c8a34a;
+        background: rgba(200, 163, 74, 0.14);
+        color: #f0d48c;
+      }
+
+      #map-staged-row {
+        margin-bottom: 8px;
+        padding: 8px;
+        border-radius: 4px;
+        background: rgba(200, 163, 74, 0.09);
+      }
+
+      #map-staged-note {
+        margin-top: 0;
+      }
+
+      .map-staged-actions {
+        display: flex;
+        gap: 5px;
+        margin-top: 8px;
+      }
+
+      .map-staged-actions .map-button {
+        margin-bottom: 0;
       }
 
       .map-button {
@@ -365,6 +470,16 @@
       #maptool.is-busy .map-library {
         opacity: 0.5;
         pointer-events: none;
+      }
+
+      .map-button:disabled {
+        opacity: 0.4;
+        cursor: default;
+      }
+
+      .map-button:disabled:hover {
+        border-color: #2b3038;
+        color: #b6bcc6;
       }
 
       /* The library holds more maps than the panel is tall, and the panel is
@@ -558,17 +673,15 @@
 
       /* --- token tool (DM only) -------------------------------------------- */
 
-      /* Under the map panel, which is 190px wide and pinned to the same edge.
-         `bottom` rather than a fixed height: the map panel grows when the
-         library or the calibration row opens, and this must not be pushed
-         under the HUD when it does. */
+      /* Takes whatever height the map panel above it leaves, and scrolls inside
+         that rather than growing past it. `min-height` because a flex item will
+         not shrink below its content without it, which is what would push this
+         off the bottom of the rail when the library is open. */
       #tokentool {
-        position: fixed;
-        top: 340px;
-        bottom: 46px;
-        left: 12px;
-        width: 190px;
+        flex: 1 1 auto;
+        min-height: 0;
         box-sizing: border-box;
+        width: 100%;
         padding: 10px;
         overflow-y: auto;
         border-radius: 6px;
@@ -694,89 +807,105 @@
       </form>
       <button id="init-clear" type="button" hidden>clear order</button>
     </aside>
-    <aside id="maptool" hidden>
-      <div class="map-head">Map</div>
-      <label class="map-button">
-        <input id="map-file" type="file" accept="image/png,image/jpeg,image/webp" hidden />
-        <span id="map-upload-text">upload image…</span>
-      </label>
-      <button id="map-library" class="map-button" type="button">choose from library…</button>
-      <div id="map-library-list" class="map-library" hidden></div>
-      <button id="map-calibrate" class="map-button" type="button">calibrate grid</button>
-      <div id="map-cells-row" hidden>
-        <div class="map-cells-label">
-          <span>cells across</span>
-          <span class="map-stepper">
-            <button id="map-cells-down" type="button" title="Fewer cells">&minus;</button>
-            <input id="map-cells" type="number" min="1" max="200" step="1" value="4" />
-            <button id="map-cells-up" type="button" title="More cells">+</button>
-          </span>
+    <div id="left-rail">
+      <aside id="maptool" hidden>
+        <div class="map-head" id="map-head">Map</div>
+        <!-- Which slot everything below is about. Turning on "next map" while
+             something is staged is also what preview mode is. -->
+        <div class="map-slots">
+          <button id="map-slot-live" class="is-active" type="button">map</button>
+          <button id="map-slot-next" type="button">next map</button>
         </div>
-        <button id="map-whole" class="map-subtle" type="button">use the whole image</button>
-        <p class="map-hint" id="map-hint">Drag a box across that many whole squares.</p>
-        <div id="map-apply-row" hidden>
-          <button id="map-apply" class="map-button map-primary" type="button">apply</button>
-          <button id="map-cancel" class="map-button" type="button">cancel</button>
+        <div id="map-staged-row" hidden>
+          <p class="map-hint" id="map-staged-note"></p>
+          <div class="map-staged-actions">
+            <button id="map-promote" class="map-button map-primary" type="button">promote</button>
+            <button id="map-discard" class="map-button" type="button">discard</button>
+          </div>
         </div>
-      </div>
-      <div class="map-color-row">
-        <span>grid</span>
-        <input id="map-color" type="color" value="#ffffff" aria-label="Grid colour" />
-        <input
-          id="map-alpha"
-          type="range"
-          min="0"
-          max="100"
-          step="1"
-          value="32"
-          aria-label="Grid opacity"
-        />
-        <span id="map-alpha-label">32%</span>
-      </div>
-      <div id="map-readout"></div>
-    </aside>
-    <aside id="tokentool" hidden>
-      <div id="token-head">New token</div>
-      <label class="token-field">
-        <span>name</span>
-        <input id="token-name" type="text" maxlength="48" placeholder="Goblin" />
-      </label>
-      <label class="token-field">
-        <span>size</span>
-        <select id="token-size">
-          <!-- Cells across, not creature sizes. What "large" means is a rule. -->
-          <option value="0.5">half a cell</option>
-          <option value="1" selected>1 cell</option>
-          <option value="2">2 cells</option>
-          <option value="3">3 cells</option>
-          <option value="4">4 cells</option>
-        </select>
-      </label>
-      <label class="token-field">
-        <span>owner</span>
-        <select id="token-owner"></select>
-      </label>
-      <div class="token-art">
-        <span id="token-art-preview" class="token-art-preview"></span>
         <label class="map-button">
-          <input
-            id="token-art"
-            type="file"
-            accept="image/png,image/jpeg,image/webp"
-            hidden
-          />
-          <span id="token-art-text">upload art…</span>
+          <input id="map-file" type="file" accept="image/png,image/jpeg,image/webp" hidden />
+          <span id="map-upload-text">upload image…</span>
         </label>
-      </div>
-      <button id="token-art-clear" class="map-subtle" type="button" hidden>remove art</button>
-      <div class="token-actions">
-        <button id="token-save" class="map-button map-primary" type="button">create</button>
-        <button id="token-delete" class="map-button" type="button" hidden>delete</button>
-      </div>
-      <button id="token-new" class="map-subtle" type="button" hidden>+ new token</button>
-      <p class="map-hint" id="token-hint">Click a token on the map to edit it.</p>
-    </aside>
+        <button id="map-library" class="map-button" type="button">choose from library…</button>
+        <div id="map-library-list" class="map-library" hidden></div>
+        <button id="map-calibrate" class="map-button" type="button">calibrate grid</button>
+        <div id="map-cells-row" hidden>
+          <div class="map-cells-label">
+            <span>cells across</span>
+            <span class="map-stepper">
+              <button id="map-cells-down" type="button" title="Fewer cells">&minus;</button>
+              <input id="map-cells" type="number" min="1" max="200" step="1" value="4" />
+              <button id="map-cells-up" type="button" title="More cells">+</button>
+            </span>
+          </div>
+          <button id="map-whole" class="map-subtle" type="button">use the whole image</button>
+          <p class="map-hint" id="map-hint">Drag a box across that many whole squares.</p>
+          <div id="map-apply-row" hidden>
+            <button id="map-apply" class="map-button map-primary" type="button">apply</button>
+            <button id="map-cancel" class="map-button" type="button">cancel</button>
+          </div>
+        </div>
+        <div class="map-color-row">
+          <span>grid</span>
+          <input id="map-color" type="color" value="#ffffff" aria-label="Grid colour" />
+          <input
+            id="map-alpha"
+            type="range"
+            min="0"
+            max="100"
+            step="1"
+            value="32"
+            aria-label="Grid opacity"
+          />
+          <span id="map-alpha-label">32%</span>
+        </div>
+        <div id="map-readout"></div>
+      </aside>
+      <aside id="tokentool" hidden>
+        <div id="token-head">New token</div>
+        <label class="token-field">
+          <span>name</span>
+          <input id="token-name" type="text" maxlength="48" placeholder="Goblin" />
+        </label>
+        <label class="token-field">
+          <span>size</span>
+          <select id="token-size">
+            <!-- Cells across, not creature sizes. What "large" means is a rule. -->
+            <option value="0.5">half a cell</option>
+            <option value="1" selected>1 cell</option>
+            <option value="2">2 cells</option>
+            <option value="3">3 cells</option>
+            <option value="4">4 cells</option>
+          </select>
+        </label>
+        <label class="token-field">
+          <span>owner</span>
+          <select id="token-owner"></select>
+        </label>
+        <div class="token-art">
+          <span id="token-art-preview" class="token-art-preview"></span>
+          <label class="map-button">
+            <input
+              id="token-art"
+              type="file"
+              accept="image/png,image/jpeg,image/webp"
+              hidden
+            />
+            <span id="token-art-text">upload art…</span>
+          </label>
+        </div>
+        <button id="token-art-clear" class="map-subtle" type="button" hidden>remove art</button>
+        <div class="token-actions">
+          <button id="token-save" class="map-button map-primary" type="button">create</button>
+          <button id="token-delete" class="map-button" type="button" hidden>delete</button>
+        </div>
+        <button id="token-new" class="map-subtle" type="button" hidden>+ new token</button>
+        <p class="map-hint" id="token-hint">Click a token on the map to edit it.</p>
+      </aside>
+    </div>
     <div id="hud"></div>
+    <div id="preview-tag">NEXT MAP · not on the table</div>
     <div id="hint">drag token to move · drag map or middle-drag to pan · wheel to zoom</div>
     <script type="module" src="/dist/main.js"></script>
   </body>

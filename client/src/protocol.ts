@@ -53,6 +53,10 @@ export interface Initiative {
 
 export interface WireRoomView {
   map: WireMapInfo;
+  /** The DM's next map. Always null for a player — and null also means nothing
+   *  is staged, so the two are indistinguishable from here. That is deliberate:
+   *  the server withholds it rather than sending it and asking us not to draw. */
+  staged: WireMapInfo | null;
   tokens: WireToken[];
   initiative: Initiative;
 }
@@ -97,13 +101,16 @@ export type ServerMsg =
   | { type: 'token_changed'; token: WireToken }
   | { type: 'token_removed'; id: string }
   | { type: 'map_changed'; map: WireMapInfo }
+  /** The staged slot, or null once there is not one. DM connections only. */
+  | { type: 'staged_changed'; map: WireMapInfo | null }
   | { type: 'initiative_changed'; initiative: Initiative }
   | { type: 'error'; message: string };
 
 export type ClientMsg =
   | { type: 'hello'; dm_secret: string | null; player_id: string | null }
   | { type: 'move_token'; id: string; x: number; y: number; dragging: boolean }
-  /** Image and grid together. A calibration repeats the URL it already had. */
+  /** Image and grid together. A calibration repeats the URL it already had.
+   *  `staged` names which slot that comparison runs against, and nothing else. */
   | {
       type: 'set_map';
       url: string;
@@ -112,7 +119,12 @@ export type ClientMsg =
       offset_y: number;
       grid_color: string;
       play_area: WireRect | null;
+      staged: boolean;
     }
+  /** DM-only. The staged map becomes the board; tokens keep their cells. */
+  | { type: 'promote_staged' }
+  /** DM-only. Throw the staged map away. */
+  | { type: 'clear_staged' }
   /** DM-only. No id: the server invents it. */
   | { type: 'create_token'; name: string; img: string; size: number; owner: Owner; x: number; y: number }
   /** DM-only. Every editable field at once; position is `move_token`'s alone. */

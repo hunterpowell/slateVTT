@@ -3,11 +3,18 @@
 A minimal virtual tabletop for a private, remote D&D game. Five players plus a DM.
 It replaces Foundry for one specific group that only needs a shared map, tokens, and turn order.
 
+This file describes Slate as it is today. Design for what is not built yet, and the milestone
+order, live in `ROADMAP.md` at the repository root — which is not loaded into a session, so read
+it when starting a milestone. (Referenced in backticks on purpose: a bare `@` path here would be
+an import, and importing it would load it into every session, which is what moving it out
+avoided.)
+
 ## What it does
 
 - Displays a background map image with pan and zoom
 - Shows tokens on that map; the DM moves any token, players move only their own
 - Tracks initiative order and the current turn
+- Lets the DM prepare the next map out of sight of the table, then promote it
 
 ## Non-goals
 
@@ -82,14 +89,19 @@ messages for different recipients.
 struct RoomState {
     id: RoomId,
     map: MapInfo,
+    /// The map the DM is preparing. DM-only — see *Staged maps*.
+    staged: Option<MapInfo>,
     tokens: HashMap<TokenId, Token>,
     initiative: Initiative,
     clients: HashMap<ClientId, Client>,
 }
 
-struct MapInfo { url: String, grid_px: f32, offset_x: f32, offset_y: f32 }
+struct MapInfo {
+    url: String, grid_px: f32, offset_x: f32, offset_y: f32,
+    grid_color: String, play_area: Option<Rect>,
+}
 
-struct Token { id: TokenId, name: String, x: f32, y: f32, owner: Owner, img: String }
+struct Token { id: TokenId, name: String, x: f32, y: f32, owner: Owner, img: String, size: f32 }
 
 enum Owner { Dm, Player(PlayerId) }
 ```
@@ -146,9 +158,17 @@ JSON over WebSocket, serde tagged enums:
 Do not switch to a binary format. Human-readable frames in devtools are worth more than the
 bandwidth during drag-sync debugging.
 
-On join, the server sends `ServerMsg::Welcome { your_id, is_dm, state }` containing a full
-filtered snapshot. Everything after that is a delta. Reconnection is just another join —
-there is no diffing or resync protocol.
+On join, the server sends `ServerMsg::Welcome { your_id, is_dm, player_id, state, roster }`
+containing a full filtered snapshot. Everything after that is a delta. Reconnection is just
+another join — there is no diffing or resync protocol.
+
+`state` is a `RoomView`, which is the room as that one client may see it — for a player that
+means `staged` is stripped from it. See *Staged maps*.
+
+`roster` is the cast list, not who is connected. The DM never sees the identity picker, so this
+is the only way their token panel learns the names a token can be handed to; a player is sent it
+too, having already been offered the same names. Because it describes no connections there is
+nothing in it to go stale between deltas — that is `RosterSlot`, and only the picker wants it.
 
 ## Drag semantics
 
@@ -162,6 +182,40 @@ Token movement uses two message rates:
 The client predicts locally — it moves its own token immediately rather than waiting for the
 round trip, and corrects only if the server rejects. The server must not echo drag frames back
 to the originating client; doing so causes visible rubber-banding.
+
+## Tokens
+
+A token is a square `size` cells across, centred on the position stored for it. `size` is one of
+`0.5, 1, 2, 3, 4` — a closed set, checked on the server and offered to the DM as a dropdown rather
+than a number field. Nothing here knows the words "large" or "huge"; that is rules knowledge. The
+half exists for a druid who is currently a rat.
+
+**Where a token settles depends on how wide it is.** An odd width has a middle cell and settles on
+that cell's centre; an even width has no middle cell and settles on the corner four cells meet at.
+Either way its edges land on grid lines, which is the point. Anything below one cell settles like a
+single-cell token rather than on a sub-cell lattice of its own — a tiny creature belongs in a
+square with the rest of the party, not tucked into a quarter of one. Resizing re-snaps, or a token
+grown from 1×1 to 2×2 straddles half a cell until somebody happens to drag it. This rule lives in
+`snap_to_cell` on the server and nowhere else; the client never snaps.
+
+Creating, deleting and editing a token are DM-only, and the id is the server's to invent. One
+`UpdateToken` carries every editable field, the way `SetMap` carries the whole grid — position is
+deliberately not among them, because `MoveToken` owns that and an edit made from a panel must not
+drag a token out from under whoever is moving it. `TokenChanged` covers creation and editing alike:
+an id the client has not seen is the creation. That is one message instead of two that would have
+to be kept in step, and it is what a hidden token will one day become a `TokenRemoved` for players
+and a `TokenChanged` for the DM out of.
+
+**Deleting a token takes its initiative row with it**, and will have to take its anchored drawings
+too. The order otherwise holds a row naming something that no longer exists, which the panel draws
+as a bare id and `next_turn` hands the turn to.
+
+Token art is optional: a token without it draws as a named disc, so the sixth goblin of the evening
+costs the DM nothing. `img` is held to a site-relative path — art on somebody else's server is art
+that vanishes the evening that server is down, and the one thing in a save the uploads directory
+would not back. Uploading it shares the map upload's handler, since proving some bytes are an image
+and giving them a name of ours is the same operation either way; the two routes differ only in the
+size they cap at.
 
 ## Distance
 
@@ -181,7 +235,7 @@ world coordinates. Hit-testing happens in world coordinates too.
 Getting this layer right is the hardest part of the client. Build and verify it standalone,
 against a hardcoded map with no networking, before any WebSocket code exists.
 
-## Maps, library, and staging (designed, not yet built)
+## Maps and the map library
 
 The DM picks a map out of the repository's `maps/` folder instead of re-uploading one every
 session: list what is there, then pick one by path. The directory is `SLATE_MAPS`, defaulting to
@@ -226,134 +280,67 @@ same reason walls will.
 An uploaded map gets a fresh UUID each time and so will not match an earlier calibration — that
 asymmetry is deliberate, and content-hashing uploads to close it is not worth the change.
 
-**Staging.** `staged: Option<MapInfo>` lets the DM prepare the next map while the table is still
-looking at the current one. Promoting moves it into `map` and clears the slot.
+## Staged maps
 
-`staged` is DM-only, stripped in `snapshot_for` and in the filter exactly like walls. A staged map
-that ships to every client and is merely not drawn is the next dungeon sitting in devtools, which
-is what invariant 4 exists to stop. This is the first feature where that filtering is real rather
-than structural, which is why it comes before the others that depend on it.
+`staged: Option<MapInfo>` is the map the DM is preparing while the table is still looking at the
+current one. Promoting moves it into `map` and empties the slot. There is one slot, not a list: a
+full scene concept — several maps each owning its own walls, fog and token positions — is a much
+larger feature and is not being built.
 
-Calibrating a staged map means looking at it, so the DM's client gets a preview mode that points
-the renderer at the staged image while players keep seeing the live one. Token interaction is off
-in that mode — dragging tokens over a map that is not the board is only confusing.
+**This is the first thing the visibility filter genuinely withholds.** It is absent from a
+player's `snapshot_for`, and `Event::StagedChanged` becomes a message for a DM recipient and
+`None` for everyone else. Every other arm of `message_for` drops a message for something the
+recipient *did*; this one drops it for who they are, which is the shape `hidden` tokens, hit
+points and fog all need. A staged map that shipped to every client and was merely not drawn would
+be the next dungeon sitting in devtools — invariant 4.
 
-On promote, tokens keep their grid coordinates and the DM repositions them; fog and walls clear,
-which is already the rule for a new map. There is one staged slot, not a list. A full scene
-concept — several maps each owning its own walls, fog, and token positions — is a much larger
-feature and is not being built, and staging pre-traced walls waits for it.
+`None` is both "nothing is staged" and "you are not the DM", so the two are indistinguishable
+from the client side. Staging is persisted, for the same reason the calibration table is: Slate
+runs only while the group is playing, so a map staged at the end of one evening for the next
+would otherwise be gone before it was wanted.
 
-## Drawings (designed, not yet built)
+**`SetMap` carries a `staged` flag rather than there being a second command.** It names the slot
+and nothing else — the rule that a URL alone decides between loading and recalibrating is
+unchanged, it just runs against that slot's URL. An empty staged slot holds no URL, so filling it
+is always a load, which is what makes a map arrive already calibrated the moment it is staged.
+Calibrations are one table keyed by URL across both slots, so calibrating while staged is what
+makes the map land on the board correct when it is promoted. `PromoteStaged` and `ClearStaged`
+are refused when nothing is staged, the way deleting a token that does not exist is refused.
 
-Spell areas and measuring shapes: line, circle, cone, rectangle. Anyone may draw. Only the
-person who drew a shape, or the DM, may delete it.
+On promote, tokens keep their grid coordinates and the DM repositions them. There is no sensible
+way to carry a cell across to an unrelated image, and pretending otherwise would move tokens for
+reasons nobody asked for. Fog and walls will clear, which is already the rule for a new map.
 
-A shape may anchor to a token, `anchor: Option<TokenId>`, so an aura follows the creature it
-belongs to. An anchored shape needs no position updates on the wire at all — the client has the
-anchor's position already and derives the rest. Deleting a token deletes the shapes anchored to it.
+### Preview
 
-Measuring lines are ephemeral and vanish when released. Spell areas persist until deleted.
+Calibrating a staged map means looking at it, so the DM's client points the renderer at the
+staged image while the table keeps seeing the live one. There is no separate preview toggle:
+the map panel's `Map | Next map` switch decides which slot everything in it is about, and
+selecting a slot that holds a map *is* preview mode.
 
-Once fog exists, shapes are filtered server-side like everything else, all-or-nothing on
-overlap: if any cell a shape covers is visible, the whole shape is sent. Drawing shapes
-underneath the fog overlay and calling them hidden would put the data on the client and paint
-over it, which is precisely what invariant 4 forbids. An anchored shape's visibility follows
-its anchor token's rather than its own footprint — otherwise an aura on a monster in the dark
-advertises exactly where that monster is standing.
+The client's `Scene` therefore holds two `Board`s — live and staged — and everything that draws
+or hit-tests reads `shownBoard(scene)` rather than reaching for the live one. That indirection is
+the whole client-side feature; without it, a staged calibration preview writes into the grid the
+table is looking at.
 
-## Fog of war and walls (designed, not yet built)
-
-Do not implement this ahead of its milestone. The following constraints exist so it can be
-added without a rewrite — they are already reflected in the rules above:
-
-- Per-client `mpsc` instead of `broadcast`
-- `Event` separate from `ServerMsg`
-- `snapshot_for(client)` instead of `snapshot()`
-- Grid-unit token positions, which make the token-to-cell lookup free
-
-Cell-based visibility over the grid, using symmetric shadowcasting.
-
-**Fog is party-shared, not per-player.** One `revealed` bitset (explored terrain, persistent)
-and one `visible` bitset (current line of sight), each the union over every player-owned token.
-Five people narrating to each other on Discord get nothing out of per-player fog but confusion
-and five times the state. Terrain gates on `revealed`; tokens gate on `visible`. Vision comes
-from tokens a player *owns*, so handing a token over grants vision with no extra rule.
-
-**Walls are `Vec<Segment>` in image pixels.** A wall traces a feature painted on the map, so it
-is anchored to the art and not to a cell; stored in grid units, every wall would slide off the
-wall it was tracing the moment the DM recalibrated. See invariant 1 — this is not an exception
-to it. Calibrate the grid before tracing walls.
-
-**Walls and doors never enter a player's snapshot.** Not sent-and-not-rendered — genuinely
-absent, per invariant 4. Players infer the geometry from the edges of the fog.
-
-Doors are walls carrying an open/closed state, toggled by the DM only. Tokens do not block line
-of sight; only walls do. The play-area boundary is an implicit wall, so vision does not spill
-into the void off the edge of the map.
-
-Vision range is one DM-set radius per map, stored in feet on `MapInfo` and converted to cells
-where it is used. It needs a generous value in `MapInfo`'s `Default` impl: the container-level
-`#[serde(default)]` means a save written before the field existed would otherwise load it as
-zero, and every restored room would go pitch black.
-
-The DM also gets a manual override, independent of line of sight. It is a tri-state per cell —
-`Auto`, `ForceRevealed`, `ForceHidden` — and *not* a write into `revealed`, because a manual
-hide that merely clears `revealed` evaporates the next time a token has line of sight on that
-cell. The reveal tool is a flood fill bounded by walls, and it previews before it commits: one
-gap in a traced room otherwise reveals the whole dungeon in a single click, and there is no undo.
-
-Visibility is recomputed in `apply`, never in the visibility filter — the filter runs against
-`&self` while the client map is borrowed, so it cannot mutate bitsets, and it is better kept
-pure regardless. Recompute on drop, not on drag frames: the shadowcast is cheap enough at 30 Hz,
-but shipping a bitset thirty times a second is not. A bitset does not fit the frame cap as a
-JSON array of per-cell values either — pack it into a single string field. That is still one
-readable frame in devtools, which is what the wire protocol rule actually protects.
-
-Recalibrating the grid invalidates the bitsets, which are inherently grid-space. Loading a new
-map clears them outright.
-
-## Build order
-
-Do not work ahead. Each milestone should run and be usable before starting the next.
-
-1. Client only, no server. Hardcoded map image, pan, zoom, drag a token around. No networking.
-2. Server with a single hardcoded room, no identity, no permissions. Two browser tabs stay in sync.
-3. Identity (DM secret, player roster) and the permission check.
-4. Initiative panel — add, reorder, next/previous turn, round counter.
-5. Debounced JSON persistence and restore on boot.
-6. Map upload and grid calibration UI.
-7. Package for Windows session hosting and deploy behind a Cloudflare Tunnel.
-
-Milestones 1–7 are done. What follows was planned afterwards, and the order is deliberate:
-
-8. Map library — list `maps/`, pick one, remember its calibration. The smallest thing on this
-   list and the only one that touches nothing else.
-9. Token lifecycle — the DM creates and deletes tokens, with a custom image, a size in grid
-   units, and a reassignable `owner`. That last part is the whole wild shape story: build a
-   large token, hand it to the player, take it back or delete it when the spell ends. Note that
-   snapping becomes size-dependent — an even-sized token centres on a cell corner, not a cell
-   centre — and that deleting a token has to reach into initiative and anchored drawings, or it
-   leaves entries pointing at something that no longer exists.
-10. Staged map, and the DM preview mode that makes it calibratable. This is where
-    `snapshot_for` starts genuinely filtering rather than merely having the shape for it.
-11. `hidden` on tokens, then hit points. Both DM-only-visible, and both the same filtering
-    pattern staging established. Deliberately before fog: a mistake here costs one monster's
-    hit points rather than the entire map.
-12. Movement ruler.
-13. Drawing layer.
-14. Wall and door editor. Polyline authoring — click, click, double-click to end — snapped to
-    grid corners, with a modifier for free placement. This is not polish: per-segment click-drag
-    across a two-hundred-segment dungeon is what makes people quietly stop using fog of war.
-15. Fog of war.
+Tokens draw ghosted and nothing is grabbable while previewing: they keep their cells through a
+promote, so showing them says where the party lands, but what is on screen is not the board and a
+token that looks draggable and is not reads as broken. The token panel is hidden for the same
+reason. (This is the one part of staging that a queued milestone deliberately reverses — see
+*Preparing the next room* in `ROADMAP.md` before building on it.) Preview is client-only — no command, no event, nothing persisted, and nobody else can
+tell it is happening. Because it is that invisible, the DM's own screen has to say so loudly:
+mistaking a staged map for the board is the one way this feature goes wrong.
 
 ## Working agreement
 
 - When a requirement is ambiguous, ask before implementing. A wrong guess costs more than a question.
 - State uncertainty plainly. Do not present a guess about a crate's API or behavior as fact —
   check it or say you are unsure.
+- Read `ROADMAP.md` before starting a milestone, and update it when one lands. Nothing loads it
+  for you.
 - Stay within the milestone currently being worked on. Do not scaffold future milestones,
-  do not add abstraction for features that are not being built yet. The invariants, and the
-  sections marked *designed, not yet built*, are the only forward-looking design permitted.
+  do not add abstraction for features that are not being built yet. The invariants here, and the
+  design in `ROADMAP.md`, are the only forward-looking work permitted.
 - Prefer the smaller change. Prefer deleting code to adding a flag.
 - No `unwrap()` outside tests and startup. Errors that can happen at runtime get handled.
 - Do not add dependencies without flagging it and giving the reason.

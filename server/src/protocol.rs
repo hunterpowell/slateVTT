@@ -245,6 +245,12 @@ impl Default for Initiative {
 #[derive(Debug, Clone, Serialize)]
 pub struct RoomView {
     pub map: MapInfo,
+    /// The map the DM is preparing, if there is one — and only if this view
+    /// belongs to the DM. A player's copy is always `None`, which is also what
+    /// "nothing is staged" looks like, so the two are indistinguishable from the
+    /// client side. That is the point: invariant 4 wants the next dungeon
+    /// genuinely absent from a player's snapshot, not merely undrawn.
+    pub staged: Option<MapInfo>,
     pub tokens: Vec<Token>,
     pub initiative: Initiative,
 }
@@ -306,7 +312,25 @@ pub enum ClientMsg {
         offset_y: f32,
         grid_color: String,
         play_area: Option<Rect>,
+        /// Which slot this is about: the board the table is looking at, or the
+        /// one the DM is preparing.
+        ///
+        /// It names the slot and nothing else. The rule that a URL alone decides
+        /// between loading a map and recalibrating one is unchanged — this only
+        /// says which slot's URL that comparison runs against, and an empty
+        /// staged slot is therefore always a load.
+        staged: bool,
     },
+    /// The staged map becomes the board. DM-only, and refused when nothing is
+    /// staged rather than quietly doing nothing.
+    ///
+    /// Tokens keep their grid coordinates and the DM repositions them: they are
+    /// stored in cells, so there is no sensible way to carry them across two
+    /// unrelated images, and pretending otherwise would move them for reasons
+    /// nobody asked for.
+    PromoteStaged,
+    /// Throw the staged map away. DM-only.
+    ClearStaged,
 
     // Initiative. All DM-only.
     /// Adds the token at that value, or re-values it if already listed. One
@@ -373,6 +397,17 @@ pub enum ServerMsg {
     /// whole panel: it is four fields and only a deliberate DM action moves it.
     MapChanged {
         map: MapInfo,
+    },
+    /// The staged map, or `None` once there is not one. Reaches the DM and
+    /// nobody else — this is the first message that exists for one identity
+    /// rather than for one action.
+    ///
+    /// One message covers staging, recalibrating, discarding, and the slot
+    /// emptying on a promote, for the same reason `TokenChanged` covers both
+    /// creation and editing: two messages would have to be kept in step, and
+    /// the client's answer to all four is the same — this is the staged slot now.
+    StagedChanged {
+        map: Option<MapInfo>,
     },
     /// The whole panel, not a per-entry delta. It is a handful of rows and only
     /// changes on a deliberate DM action, so a diff would cost more than it saves.
