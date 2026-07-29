@@ -19,6 +19,8 @@ import { createPicker } from './picker.js';
 import type { ClientMsg, Initiative, TokenMoved, WireToken } from './protocol.js';
 import type { Viewport } from './render.js';
 import { render } from './render.js';
+import type { Rulers } from './ruler.js';
+import { createRulers } from './ruler.js';
 import type { Scene } from './scene.js';
 import { boardFromWire, removeToken, sceneFromView, shownBoard, upsertToken } from './scene.js';
 import type { TokenTool } from './tokens.js';
@@ -193,6 +195,9 @@ function boot(): void {
   let tokenTool: TokenTool | null = null;
   let stage: Stage | null = null;
   let identity: Identity = ANONYMOUS;
+  // Outlives any one drag and is fed from both directions — our own pointer in
+  // input.ts, and everyone else's drag frames below.
+  const rulers = createRulers();
 
   const picker = createPicker(ui.picker, (playerId) => {
     // Not stored yet — only a Welcome proves the server accepted the claim.
@@ -297,7 +302,7 @@ function boot(): void {
         ui.tokentool.root.hidden = false;
       }
 
-      void start(ui, room, identity, (msg) => net.send(msg), mapTool, tokenTool).then(
+      void start(ui, room, identity, (msg) => net.send(msg), mapTool, tokenTool, rulers).then(
         (started) => {
           stage = started;
         },
@@ -309,6 +314,21 @@ function boot(): void {
       if (room === null) return;
       const token = room.scene.tokens.find((t) => t.id === move.id);
       if (token === undefined) return;
+
+      // Where our copy stands *before* the frame is applied. Until the first
+      // drag frame lands that is the settled position the drag began from, and
+      // this is the only chance to learn it — nothing on the wire says where a
+      // drag started, and the next frame has already moved the token.
+      const from =
+        move.staged && token.stagedPos !== null ? token.stagedPos : { x: token.x, y: token.y };
+      if (move.dragging) {
+        rulers.seen(move.id, from, move.staged, performance.now());
+      } else {
+        // The drop. Ours never reaches here — the server does not echo our own
+        // drag frames — and input.ts has already ended that one on pointerup.
+        rulers.end(move.id);
+      }
+
       // The server is authoritative, including over our own prediction.
       // Mid-drag frames for the token we are dragging are never sent back to
       // us, so this is either someone else's move or our own settled drop.
@@ -336,6 +356,9 @@ function boot(): void {
     onTokenRemoved: (id) => {
       if (room === null) return;
       removeToken(room.scene, id);
+      // Deleted, or just hidden from us mid-drag. Either way there is no longer
+      // a token for a ruler to measure to.
+      rulers.end(id);
       afterTokens(room);
     },
 
@@ -425,6 +448,7 @@ async function start(
   send: (msg: ClientMsg) => void,
   mapTool: MapTool | null,
   tokenTool: TokenTool | null,
+  rulers: Rulers,
 ): Promise<Stage> {
   const { scene } = room;
   const firstUrl = shownBoard(scene).mapUrl;
@@ -484,6 +508,7 @@ async function start(
     send,
     mapTool,
     tokenTool === null ? null : (id) => tokenTool.select(id),
+    rulers,
   );
 
   const stage: Stage = {
@@ -529,6 +554,9 @@ async function start(
       map,
       tokenImages,
       draggingId: input.draggingId,
+      // Swept here rather than in the renderer: a client that vanished mid-drag
+      // sends no drop frame, and nothing else in a frame is watching a clock.
+      rulers: rulers.active(performance.now()),
       selectedId: tokenTool?.selectedId ?? null,
       currentTurn: room.initiative.current,
       calibration:

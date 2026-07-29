@@ -57,11 +57,22 @@ export interface Scene {
 }
 
 /**
+ * Whether the board on screen is the staged one. `shownBoard` answers which
+ * board to draw on; this is the same question as a yes or no, for the callers
+ * that compare it against something rather than draw on it.
+ */
+export function showingStaged(scene: Scene): boolean {
+  return scene.previewing && scene.staged !== null;
+}
+
+/**
  * The board on screen. Everything that draws or hit-tests goes through this
  * rather than reaching for `scene.live`, which is what keeps preview mode from
  * being a special case in each of them.
  */
 export function shownBoard(scene: Scene): Board {
+  // Spelled out rather than asking `showingStaged`, whose answer does not narrow
+  // `staged` away from null for the type checker.
   return scene.previewing && scene.staged !== null ? scene.staged : scene.live;
 }
 

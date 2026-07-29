@@ -22,7 +22,7 @@ Do not work ahead. Each milestone should run and be usable before starting the n
 6. Map upload and grid calibration UI.
 7. Package for Windows session hosting and deploy behind a Cloudflare Tunnel.
 
-Milestones 1–12 are done. Everything from 8 on was planned after the original seven, and the
+Milestones 1–13 are done. Everything from 8 on was planned after the original seven, and the
 order of what remains is deliberate:
 
 8. **Done.** Map library — list `maps/`, pick one, remember its calibration. The smallest thing
@@ -76,7 +76,22 @@ order of what remains is deliberate:
     The client half was the milestone-10 shape again: `shownPos` is `shownBoard`'s twin, one
     function answering "where is this token on the board that is on screen", and everything that
     draws or hit-tests goes through it. Ghosting was deleted rather than adjusted, as predicted.
-13. Movement ruler.
+13. **Done.** Movement ruler. See *Distance* in CLAUDE.md, which was reworded rather than the code
+    bent to fit it: counting a diagonal step as one cell makes every reading a multiple of five,
+    which is what the table counts in, and "straight-line" no longer described what ships.
+
+    The drawing was the easy half. Two things were not.
+
+    A ruler is not the dragger's alone — every client draws one for any token it sees moving — and
+    that turned out to need nothing new on the wire. `TokenMoved` already carries `dragging`, and a
+    watcher's copy of a token sits at its settled position until the first drag frame lands, which
+    is exactly the origin. Read it a frame later and the ruler measures from itself.
+
+    What it does need is a timeout for the client that disconnects mid-drag and never sends its
+    drop, and the first guess at that was wrong by an order of magnitude. Drag frames come from
+    `pointermove`, so a drag that pauses sends nothing at all; a ruler that expires after a second
+    of silence vanishes off the table's screens while the DM is still holding the token. Caught by
+    driving two clients at once, which is the only way that arm shows up.
 14. Drawing layer.
 15. Wall and door editor. Polyline authoring — click, click, double-click to end — snapped to
     grid corners, with a modifier for free placement. This is not polish: per-segment click-drag

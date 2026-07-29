@@ -4,8 +4,9 @@ import { gridToWorld, screenToWorld, worldToGrid } from './coords.js';
 import type { Identity } from './identity.js';
 import { canMove } from './identity.js';
 import type { ClientMsg } from './protocol.js';
+import type { Rulers } from './ruler.js';
 import type { Scene, Token } from './scene.js';
-import { shownBoard, shownPos } from './scene.js';
+import { shownBoard, shownPos, showingStaged } from './scene.js';
 
 const MIN_ZOOM = 0.1;
 const MAX_ZOOM = 4;
@@ -74,6 +75,12 @@ export function attachInput(
    * map. Null for players, who have nothing to select tokens for.
    */
   onSelect: ((id: string | null) => void) | null,
+  /**
+   * Movement rulers. This is where our own drag's origin is captured — nothing
+   * on the wire says where a drag began, and by the time the first frame is sent
+   * the token has already moved.
+   */
+  rulers: Rulers,
 ): InputState {
   let drag: Drag | null = null;
   let lastDragSentAt = 0;
@@ -86,7 +93,7 @@ export function attachInput(
   };
 
   /** Whether what is on screen is the staged map, and so what a drag writes. */
-  const previewing = (): boolean => scene.previewing && scene.staged !== null;
+  const previewing = (): boolean => showingStaged(scene);
 
   /** Moves a token, or its plan, to a cell — the local prediction half. */
   const predict = (drag: Extract<Drag, { kind: 'token' }>, x: number, y: number): void => {
@@ -190,6 +197,9 @@ export function attachInput(
         grabDY: from.y - g.y,
         staged: previewing(),
       };
+      // The same settled position the grab offset is measured from, and the
+      // last moment it is knowable: the next pointermove overwrites it.
+      rulers.begin(hit.id, from, drag.staged);
       state.draggingId = hit.id;
       onSelect?.(hit.id);
       cancelTrailingSend();
@@ -247,6 +257,9 @@ export function attachInput(
       // Always sent, never throttled: this frame carries the final position and
       // is what the server snaps to the grid and echoes back.
       sendMove(drag, false);
+      // The measuring is over the moment the token is let go. Everyone else
+      // drops theirs on the drop frame this just sent.
+      rulers.end(drag.token.id);
     } else if (drag.kind === 'calibrate') {
       // Not a commit — the tool keeps the box so the cell count can be tuned
       // against it, and stays in calibrate mode until the DM applies.

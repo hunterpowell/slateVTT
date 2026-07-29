@@ -4,8 +4,10 @@ import { firstLineAt, gridToWorld, playRect, worldToScreen } from './coords.js';
 import type { Identity } from './identity.js';
 import { ownsToken } from './identity.js';
 import type { Hp } from './protocol.js';
+import type { Ruler } from './ruler.js';
+import { feetMoved } from './ruler.js';
 import type { Board, Scene, Token } from './scene.js';
-import { shownBoard, shownPos } from './scene.js';
+import { shownBoard, shownPos, showingStaged } from './scene.js';
 
 const TAU = Math.PI * 2;
 
@@ -66,6 +68,22 @@ const HIDDEN_RING = 'rgba(178, 156, 232, 0.95)';
  */
 const STAGED_ONLY_RING = 'rgba(96, 200, 190, 0.95)';
 
+/**
+ * The movement ruler, in the same blue as a drag — it only ever exists during
+ * one, and "in progress" is exactly what it means. Haloed like the labels are,
+ * because it has to read on parchment and on a cave floor alike.
+ */
+const RULER_LINE = 'rgba(120, 190, 255, 0.95)';
+const RULER_HALO = 'rgba(0, 0, 0, 0.65)';
+const RULER_WIDTH = 2;
+const RULER_HALO_WIDTH = 4;
+/** The dot left on the cell the drag began in. */
+const RULER_ORIGIN_R = 3.5;
+const RULER_FONT = '600 12px ui-sans-serif, system-ui, sans-serif';
+/** Between the token's edge and the reading, which sits beside the token: above
+ *  and below are taken by the hit point bar and the name. */
+const RULER_TEXT_GAP = 10;
+
 /** The hit point bar, in screen pixels — it does not scale with the camera, for
  *  the same reason a name does not. */
 const HP_BAR_H = 5;
@@ -98,6 +116,8 @@ export interface Frame {
   /** Token art, keyed by image URL — see `loadArt` in main.ts. */
   tokenImages: Map<string, HTMLImageElement>;
   draggingId: string | null;
+  /** Movement rulers by token id — ours and everyone else's alike. */
+  rulers: ReadonlyMap<string, Ruler>;
   /** The token the DM has selected for editing. Null for everyone else. */
   selectedId: string | null;
   /** Token acting this turn, or null when combat is not running. */
@@ -137,6 +157,9 @@ export function render(ctx: CanvasRenderingContext2D, view: Viewport, frame: Fra
 
   ctx.setTransform(1, 0, 0, 1, 0, 0);
   ctx.scale(view.dpr, view.dpr);
+  // Under the chrome: a name or a hit point bar is worth more than the line
+  // that happens to be passing behind it.
+  drawRulers(ctx, frame, board);
   drawTokenChrome(ctx, frame, board);
 }
 
@@ -377,6 +400,83 @@ function drawCalibration(
   ctx.lineWidth = 2 / cam.zoom;
   ctx.strokeStyle = CAL_EDGE;
   ctx.strokeRect(left, top, width, height);
+}
+
+/**
+ * How far each token being dragged has come from where its drag began — ours as
+ * we drag it, and everyone else's as their frames arrive.
+ *
+ * Screen space like the names and the hit point bars: a ruler is an annotation
+ * on the board rather than something painted on the map, so it keeps its weight
+ * at every zoom. It is deliberately not faded for a hidden token the way the
+ * chrome above it is — it lasts a couple of seconds and its entire job is to be
+ * read.
+ */
+function drawRulers(ctx: CanvasRenderingContext2D, frame: Frame, board: Board): void {
+  const { scene, cam, rulers } = frame;
+  if (rulers.size === 0) return;
+  const staged = showingStaged(scene);
+
+  ctx.save();
+  ctx.lineJoin = 'round';
+  ctx.lineCap = 'round';
+  ctx.font = RULER_FONT;
+  ctx.textAlign = 'left';
+  ctx.textBaseline = 'middle';
+
+  for (const [id, ruler] of rulers) {
+    // A ruler belongs to one of the two boards, and only the one on screen
+    // draws: a live drag measured over a staged map is a line between two cells
+    // nobody is looking at.
+    if (ruler.staged !== staged) continue;
+
+    const token = scene.tokens.find((t) => t.id === id);
+    if (token === undefined) continue;
+    const at = shownPos(scene, token);
+    if (at === null) continue;
+
+    const feet = feetMoved(ruler.from, at);
+    // Still in the cell it was picked up from. There is nothing to report, and
+    // a "0 ft" flashing under the cursor on every click is noise.
+    if (feet === 0) continue;
+
+    const start = gridToWorld(board.grid, ruler.from.x, ruler.from.y);
+    const now = gridToWorld(board.grid, at.x, at.y);
+    const from = worldToScreen(cam, start.x, start.y);
+    const to = worldToScreen(cam, now.x, now.y);
+    const radius = (board.grid.px * token.size * cam.zoom) / 2;
+
+    // Stopped at the token's edge rather than run under it, so the line points
+    // at what is moving instead of crossing the art. A 4×4 dragged one cell has
+    // not left its own radius, and gets the reading without the line.
+    const dx = to.x - from.x;
+    const dy = to.y - from.y;
+    const len = Math.hypot(dx, dy);
+
+    ctx.beginPath();
+    ctx.arc(from.x, from.y, RULER_ORIGIN_R, 0, TAU);
+    if (len > radius) {
+      ctx.moveTo(from.x, from.y);
+      ctx.lineTo(to.x - (dx / len) * radius, to.y - (dy / len) * radius);
+    }
+    ctx.strokeStyle = RULER_HALO;
+    ctx.lineWidth = RULER_HALO_WIDTH;
+    ctx.stroke();
+    ctx.strokeStyle = RULER_LINE;
+    ctx.lineWidth = RULER_WIDTH;
+    ctx.stroke();
+
+    // Beside the token rather than above or below it, where the hit point bar
+    // and the name already are.
+    const text = `${feet} ft`;
+    ctx.lineWidth = 3;
+    ctx.strokeStyle = LABEL_HALO;
+    ctx.strokeText(text, to.x + radius + RULER_TEXT_GAP, to.y);
+    ctx.fillStyle = LABEL_TEXT;
+    ctx.fillText(text, to.x + radius + RULER_TEXT_GAP, to.y);
+  }
+
+  ctx.restore();
 }
 
 /**

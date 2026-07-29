@@ -389,11 +389,35 @@ single missing branch.
 
 ## Distance
 
-A grid cell is five feet. Measured distance is straight-line. The 5e variant where every other
-diagonal costs double is a rule, and rules knowledge is a non-goal.
+A grid cell is five feet, and distance is counted in cells crossed — a diagonal step costs what an
+orthogonal one costs, so every reading is a multiple of five. This section used to say
+"straight-line", which would make a one-cell diagonal 7 ft; the table counts in fives and the
+wording changed to match. The 5e variant where every *other* diagonal costs double is still a rule
+and still a non-goal, and nothing here knows a creature's speed: that is a character sheet.
 
-The movement ruler shows how far the token being dragged has travelled from where its drag
-began. It is client-only — no command, no event, nothing persisted.
+The movement ruler shows how far the token being dragged has come from where its drag began.
+`feetMoved` rounds the delta to whole cells before converting, which needs no knowledge of where a
+token settles — a drag starts from a settled position and the lattice is one cell apart whatever
+the token's size, so the difference between the two ends is a whole number of cells. Which cell it
+lands *in* is `snap_to_cell`'s business, and stays on the server as the only copy of that rule.
+
+**Every client draws a ruler for any token it sees moving, not only the one dragging it.** That
+costs nothing on the wire, which is what makes it affordable: `TokenMoved` already says whether a
+frame is a drag or a drop, and a watcher's copy of a token sits at its settled position until the
+first drag frame lands — that position *is* the origin. So it is read before the frame is applied
+and ignored on every frame after, or the ruler measures from itself. No command, no event, nothing
+persisted. Nothing can leak, either: the frames it is built from are the ones the room already
+decided to send, so a hidden token's ruler goes exactly where a hidden token goes.
+
+A drop frame ends a ruler. The backstop for a client that vanishes mid-drag is a timeout, and it
+has to be a generous one — drag frames come from `pointermove`, so a drag that merely pauses sends
+nothing at all, and silence means "they stopped moving the mouse" far more often than "they are
+gone". A ruler that expires while the DM is still holding a token is worse than a line left on
+screen for a few seconds by a browser that closed.
+
+A ruler belongs to the board its drag is happening on, and only the board on screen draws it —
+`shownBoard` again. The DM planning a move on the staged map measures there, and the table, who
+are sent no such frame, see nothing.
 
 ## Frontend
 
