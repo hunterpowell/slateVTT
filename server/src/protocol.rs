@@ -167,6 +167,19 @@ pub struct Hp {
     pub max: i32,
 }
 
+/// A position in grid units, for the one place a token has a second one.
+///
+/// It exists so that "half a position" is unrepresentable: two bare
+/// `Option<f32>` fields could be set one at a time, and a plan with an x and no
+/// y is not a cell anything can land on. Same reason `Hp` keeps its pair
+/// together, and the same reason `Identity` is an enum.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct Pos {
+    pub x: f32,
+    pub y: f32,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Token {
@@ -196,6 +209,22 @@ pub struct Token {
     /// The DM's note on a creature, and nobody else's business. `None` is the
     /// usual state — most tokens are party members the DM keeps no total for.
     pub hp: Option<Hp>,
+    /// Where this token lands when the staged map is promoted, in grid units
+    /// like `x, y`. `None` is "staying where it is".
+    ///
+    /// DM-only, and a plan rather than a position: it is adopted into `x, y` by
+    /// a promote and thrown away with the staged map by anything else. Only
+    /// position and existence fork between the two boards — a rename, a resize
+    /// or a re-art applies to one token and therefore to both.
+    pub staged_pos: Option<Pos>,
+    /// This token does not exist on the live board yet: it was built on the map
+    /// the DM is preparing, and the table learns of it when that map is
+    /// promoted. DM-only, and cleared by the promote that makes it real.
+    ///
+    /// Absent from the DM's own live board too. Switching back to `Map` mode
+    /// has to show the board as the table sees it, or the DM loses the one view
+    /// they have of what everyone else is looking at.
+    pub staged_only: bool,
 }
 
 impl Default for Token {
@@ -206,7 +235,8 @@ impl Default for Token {
     ///
     /// `hidden` is the opposite case and the derived `false` is right: a token
     /// saved before the field existed was one the table could see, and defaulting
-    /// it to `true` would make an upgrade empty the board.
+    /// it to `true` would make an upgrade empty the board. `staged_only` is the
+    /// same shape and takes the same answer.
     fn default() -> Self {
         Self {
             id: TokenId::default(),
@@ -218,6 +248,8 @@ impl Default for Token {
             size: 1.0,
             hidden: false,
             hp: None,
+            staged_pos: None,
+            staged_only: false,
         }
     }
 }
@@ -250,11 +282,22 @@ pub struct TokenView {
     /// this creature — the two are indistinguishable from the client side, the
     /// way `staged` being `None` is both "nothing staged" and "not the DM".
     pub hp: Option<Hp>,
+    /// `None` for a player, always — a plan for a map they cannot see is a fact
+    /// about that map. Also `None` for a DM whose token is staying put.
+    pub staged_pos: Option<Pos>,
+    /// Only ever true on the DM's copy: a player is not sent a token that does
+    /// not exist on their board yet, so this is false for them by construction.
+    pub staged_only: bool,
 }
 
 impl Token {
-    /// The copy this recipient is allowed to hold. Callers decide whether a
-    /// hidden token is sent at all; this decides what is in it once it is.
+    /// The copy this recipient is allowed to hold. Callers decide whether an
+    /// unseen token is sent at all; this decides what is in it once it is.
+    ///
+    /// Adding a field here is the deliberate act of deciding the DM's own client
+    /// needs it. `staged_pos` and `staged_only` are here because the DM's board
+    /// is what draws a plan — leaving them out would have reached nobody, which
+    /// is the direction this type fails in.
     pub fn view_for(&self, is_dm: bool) -> TokenView {
         TokenView {
             id: self.id.clone(),
@@ -266,7 +309,22 @@ impl Token {
             size: self.size,
             hidden: self.hidden,
             hp: if is_dm { self.hp } else { None },
+            staged_pos: if is_dm { self.staged_pos } else { None },
+            staged_only: is_dm && self.staged_only,
         }
+    }
+
+    /// Whether the table cannot see this token at all — the one question every
+    /// filter in `room.rs` asks, and now two fields answer.
+    ///
+    /// `hidden` is a creature the DM took off the board; `staged_only` is one
+    /// that was never on it. Different facts about different maps, and they
+    /// compose: a monster built on the next map and hidden there is both, and
+    /// stays unseen through the promote that settles the second of them.
+    /// Anything that filters on one and forgets the other is a leak, so nothing
+    /// in the room asks this question of either field directly.
+    pub fn unseen(&self) -> bool {
+        self.hidden || self.staged_only
     }
 }
 
@@ -329,7 +387,8 @@ pub struct RoomView {
     /// client side. That is the point: invariant 4 wants the next dungeon
     /// genuinely absent from a player's snapshot, not merely undrawn.
     pub staged: Option<MapInfo>,
-    /// Already filtered *and* redacted: hidden tokens are absent rather than
+    /// Already filtered *and* redacted: a token the table cannot see — hidden,
+    /// or built on the next map and not here yet — is absent rather than
     /// flagged, and what survives carries only the fields this client may hold.
     pub tokens: Vec<TokenView>,
     /// Rows naming a token this client cannot see are gone from here, and
@@ -354,6 +413,14 @@ pub enum ClientMsg {
         x: f32,
         y: f32,
         dragging: bool,
+        /// Which of the token's two positions this is: where it stands now, or
+        /// where it lands when the staged map is promoted.
+        ///
+        /// Intent rides on the command rather than on a mode because the server
+        /// does not know the DM is previewing and must not learn — preview is
+        /// client-only state. DM-only, and refused when nothing is staged: a
+        /// plan needs a map to be a plan about.
+        staged: bool,
     },
 
     // The token lifecycle. All DM-only, including `owner` — handing a player a
@@ -372,6 +439,12 @@ pub enum ClientMsg {
         /// when the party walks in is one command, not a create and a hide.
         hidden: bool,
         hp: Option<Hp>,
+        /// Built on the map the DM is preparing rather than on the board: `x, y`
+        /// becomes the token's plan and it does not exist for the table, or for
+        /// the DM's own live board, until the promote.
+        ///
+        /// The same flag `SetMap` and `MoveToken` carry, naming the same slot.
+        staged: bool,
     },
     /// Every editable field at once, the way `SetMap` carries the whole grid.
     /// Position is deliberately absent — `MoveToken` owns that, and an edit made
@@ -380,6 +453,11 @@ pub enum ClientMsg {
     /// `hidden` and `hp` are editable fields like the rest. Taking damage is
     /// this command with a new `hp`, which is why there is no `SetHp`: it would
     /// carry one field of the five the panel already sends together.
+    ///
+    /// No `staged` flag, unlike its two neighbours. Every field here is shared
+    /// by both boards — nobody wants a goblin with different art on two maps —
+    /// so an edit applies immediately and everywhere, which is the honest
+    /// behaviour rather than a special case. Only position and existence fork.
     UpdateToken {
         id: TokenId,
         name: String,
@@ -414,15 +492,16 @@ pub enum ClientMsg {
         /// staged slot is therefore always a load.
         staged: bool,
     },
-    /// The staged map becomes the board. DM-only, and refused when nothing is
-    /// staged rather than quietly doing nothing.
+    /// The staged map becomes the board, and every plan made on it comes true.
+    /// DM-only, and refused when nothing is staged rather than quietly doing
+    /// nothing.
     ///
-    /// Tokens keep their grid coordinates and the DM repositions them: they are
-    /// stored in cells, so there is no sensible way to carry them across two
-    /// unrelated images, and pretending otherwise would move them for reasons
-    /// nobody asked for.
+    /// A token with no plan keeps its grid coordinates and the DM repositions
+    /// it: cells mean nothing across two unrelated images, and pretending
+    /// otherwise would move tokens for reasons nobody asked for. A plan is how
+    /// the DM says where one should land instead.
     PromoteStaged,
-    /// Throw the staged map away. DM-only.
+    /// Throw the staged map away, and the plans made on it with it. DM-only.
     ClearStaged,
 
     // Initiative. All DM-only.
@@ -472,6 +551,10 @@ pub enum ServerMsg {
         x: f32,
         y: f32,
         dragging: bool,
+        /// Which position this frame is: the token's, or its plan for the staged
+        /// map. The DM's client has to know which of the two to write, and a
+        /// frame carrying a plan reaches nobody else.
+        staged: bool,
     },
     /// A token that was created or edited — one message for both, because the
     /// client's answer to each is the same: take this token as the truth for

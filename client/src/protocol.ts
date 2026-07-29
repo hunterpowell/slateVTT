@@ -31,9 +31,17 @@ export interface Hp {
   max: number;
 }
 
+/** A position in grid units. Its own type so that "half a position" cannot be
+ *  sent — the same reason `Hp` keeps its pair together. */
+export interface WirePos {
+  x: number;
+  y: number;
+}
+
 /** A token as *this* client may see it — `TokenView` on the Rust side, not
- *  `Token`. A hidden token never arrives at all, and `hp` is redacted out on the
- *  way to anyone but the DM, so the two shapes genuinely differ. */
+ *  `Token`. A token the table cannot see never arrives at all, and `hp` and the
+ *  two staged fields are redacted out on the way to anyone but the DM, so the
+ *  two shapes genuinely differ. */
 export interface WireToken {
   id: string;
   name: string;
@@ -51,6 +59,14 @@ export interface WireToken {
   /** Null for a player, always — and also null for a DM keeping no total on
    *  this creature. The two are indistinguishable from here, deliberately. */
   hp: Hp | null;
+  /** Where this token lands when the staged map is promoted, or null for one
+   *  staying put. Null for a player always: a plan is a cell on a map they have
+   *  not been shown. */
+  staged_pos: WirePos | null;
+  /** Not on the live board yet — built on the map the DM is preparing. Only
+   *  ever true on a DM connection, and false for a player by construction:
+   *  they are not sent the token at all. */
+  staged_only: boolean;
 }
 
 export interface InitiativeEntry {
@@ -106,6 +122,9 @@ export interface TokenMoved {
   x: number;
   y: number;
   dragging: boolean;
+  /** Which of the token's two positions this frame is: where it stands, or
+   *  where it lands on a promote. Never true on a player's connection. */
+  staged: boolean;
 }
 
 export type ServerMsg =
@@ -123,7 +142,17 @@ export type ServerMsg =
 
 export type ClientMsg =
   | { type: 'hello'; dm_secret: string | null; player_id: string | null }
-  | { type: 'move_token'; id: string; x: number; y: number; dragging: boolean }
+  /** `staged` names which of the token's two positions this writes. Intent
+   *  rides on the command because the server does not know we are previewing
+   *  and must not learn — preview is ours alone. DM-only when true. */
+  | {
+      type: 'move_token';
+      id: string;
+      x: number;
+      y: number;
+      dragging: boolean;
+      staged: boolean;
+    }
   /** Image and grid together. A calibration repeats the URL it already had.
    *  `staged` names which slot that comparison runs against, and nothing else. */
   | {
@@ -140,7 +169,8 @@ export type ClientMsg =
   | { type: 'promote_staged' }
   /** DM-only. Throw the staged map away. */
   | { type: 'clear_staged' }
-  /** DM-only. No id: the server invents it. */
+  /** DM-only. No id: the server invents it. `staged` builds it on the map being
+   *  prepared, where it exists for nobody until the promote. */
   | {
       type: 'create_token';
       name: string;
@@ -151,9 +181,14 @@ export type ClientMsg =
       y: number;
       hidden: boolean;
       hp: Hp | null;
+      staged: boolean;
     }
   /** DM-only. Every editable field at once; position is `move_token`'s alone.
-   *  Taking damage is this command with a new `hp` — there is no `set_hp`. */
+   *  Taking damage is this command with a new `hp` — there is no `set_hp`.
+   *
+   *  No `staged` flag, unlike its neighbours: every field here is shared by both
+   *  boards, so an edit applies everywhere at once. Only position and existence
+   *  fork. */
   | {
       type: 'update_token';
       id: string;

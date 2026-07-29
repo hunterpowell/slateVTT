@@ -1,7 +1,7 @@
 // What the client renders. The server is authoritative: this is only ever built
 // from a Welcome frame and mutated by deltas or by local prediction.
 
-import type { GridSpec, Rect } from './coords.js';
+import type { GridSpec, Rect, Vec2 } from './coords.js';
 import type { Hp, Owner, WireMapInfo, WireRoomView, WireToken } from './protocol.js';
 
 export interface Token {
@@ -21,6 +21,15 @@ export interface Token {
   hidden: boolean;
   /** The DM's running total, or null. Null on every token for a player. */
   hp: Hp | null;
+  /** Where this token lands when the staged map is promoted, or null for one
+   *  staying put. Null on every token for a player. In grid units like `x, y` —
+   *  a plan is a cell, which is what makes recalibrating the staged map after
+   *  placing monsters safe. */
+  stagedPos: Vec2 | null;
+  /** Built on the map the DM is preparing and not on the board yet. Only ever
+   *  true on the DM's client, and absent from their live board as much as from
+   *  everyone else's: `Map` mode has to show what the table is looking at. */
+  stagedOnly: boolean;
 }
 
 /** One map image and how the grid sits on it. Live and staged are the same shape. */
@@ -57,6 +66,25 @@ export function shownBoard(scene: Scene): Board {
 }
 
 /**
+ * Where a token draws, given which board is on screen — or null when it is not
+ * on that board at all.
+ *
+ * The token-shaped twin of `shownBoard`, and for the same reason: without one
+ * function answering this, a planned position gets written into the live one by
+ * a single missing branch, and a token that does not exist yet gets drawn on the
+ * board the table is looking at. Every draw and every hit-test goes through it.
+ *
+ * A token with no plan shows at its own position while previewing, because that
+ * is where it lands on a promote — tokens keep their cells.
+ */
+export function shownPos(scene: Scene, token: Token): Vec2 | null {
+  if (scene.previewing && scene.staged !== null) {
+    return token.stagedPos ?? { x: token.x, y: token.y };
+  }
+  return token.stagedOnly ? null : { x: token.x, y: token.y };
+}
+
+/**
  * The server sends tokens in a stable order, and that order is z-order, so it
  * is preserved verbatim here.
  */
@@ -89,6 +117,8 @@ function tokenFromWire(t: WireToken): Token {
     size: t.size,
     hidden: t.hidden,
     hp: t.hp,
+    stagedPos: t.staged_pos,
+    stagedOnly: t.staged_only,
   };
 }
 

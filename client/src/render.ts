@@ -5,7 +5,7 @@ import type { Identity } from './identity.js';
 import { ownsToken } from './identity.js';
 import type { Hp } from './protocol.js';
 import type { Board, Scene, Token } from './scene.js';
-import { shownBoard } from './scene.js';
+import { shownBoard, shownPos } from './scene.js';
 
 const TAU = Math.PI * 2;
 
@@ -45,12 +45,6 @@ const CAL_FILL = 'rgba(120, 190, 255, 0.10)';
 const CAL_EDGE = 'rgba(120, 190, 255, 0.95)';
 const CAL_DIVISION = 'rgba(120, 190, 255, 0.55)';
 /**
- * How solidly tokens draw over a staged map. They are there to show where the
- * party lands on a promote — they keep their cells — but nothing on that image
- * is the board yet, and a token that looks draggable and is not reads as broken.
- */
-const GHOST_ALPHA = 0.35;
-/**
  * How solidly a token the table cannot see draws on the DM's board. Faded and
  * dashed together, because faded alone is what a slow-loading portrait looks
  * like and dashed alone is what the selection already is.
@@ -59,6 +53,18 @@ const HIDDEN_ALPHA = 0.55;
 /** Hidden. Violet, so it collides with nothing the ring vocabulary already
  *  means: gold is yours, blue is in progress, white is the turn. */
 const HIDDEN_RING = 'rgba(178, 156, 232, 0.95)';
+/**
+ * Does not exist on the board yet — only on the map being prepared. Teal, the
+ * last hue the ring vocabulary has left, and solid: this token is as draggable
+ * as any other, which is the whole of what replaced ghosting.
+ *
+ * Tokens no longer fade over a staged map. Fading meant "not a piece", and
+ * everything on that board is a piece now; what is worth drawing instead is
+ * which of them are real yet. Hidden still fades and still dashes, so a monster
+ * built on the next map *and* hidden reads as teal, faint and dashed — three
+ * marks for three independent facts, none of which cancels another.
+ */
+const STAGED_ONLY_RING = 'rgba(96, 200, 190, 0.95)';
 
 /** The hit point bar, in screen pixels — it does not scale with the camera, for
  *  the same reason a name does not. */
@@ -104,9 +110,9 @@ export function render(ctx: CanvasRenderingContext2D, view: Viewport, frame: Fra
   const { cam, map } = frame;
   // The staged map while the DM is previewing, the live one otherwise. Read
   // once and passed down, so no two things in a frame can disagree about which
-  // map they are drawing on.
+  // map they are drawing on. Where each *token* sits on it is `shownPos`, asked
+  // per token for the same reason.
   const board = shownBoard(frame.scene);
-  const ghosting = board !== frame.scene.live;
 
   ctx.setTransform(1, 0, 0, 1, 0, 0);
   ctx.fillStyle = VOID;
@@ -125,25 +131,24 @@ export function render(ctx: CanvasRenderingContext2D, view: Viewport, frame: Fra
   if (board.playArea !== null) drawOutsidePlayArea(ctx, area, map.width, map.height);
   drawGrid(ctx, frame, board, area);
 
-  drawTokens(ctx, frame, board, ghosting);
+  drawTokens(ctx, frame, board);
 
   if (frame.calibration !== null) drawCalibration(ctx, cam, frame.calibration);
 
   ctx.setTransform(1, 0, 0, 1, 0, 0);
   ctx.scale(view.dpr, view.dpr);
-  drawTokenChrome(ctx, frame, board, ghosting);
+  drawTokenChrome(ctx, frame, board);
 }
 
 /**
- * How solidly a token draws. Two independent reasons to fade, so they multiply:
- * a hidden token on a staged map is both, and either one alone must still read.
+ * How solidly a token draws. One reason to fade now: the table cannot see it.
  *
  * `globalAlpha` is canvas state rather than an argument, so every caller pairs
  * its set with a `restore`. Left set, it survives into the next frame and washes
  * out the map itself — including the fill meant to clear the previous one.
  */
-function alphaFor(token: Token, ghosting: boolean): number {
-  return (ghosting ? GHOST_ALPHA : 1) * (token.hidden ? HIDDEN_ALPHA : 1);
+function alphaFor(token: Token): number {
+  return token.hidden ? HIDDEN_ALPHA : 1;
 }
 
 /**
@@ -240,25 +245,25 @@ function haloFor(color: string): string | null {
   return `rgba(${light ? '0, 0, 0' : '255, 255, 255'}, ${alpha * HALO_ALPHA_RATIO})`;
 }
 
-function drawTokens(
-  ctx: CanvasRenderingContext2D,
-  frame: Frame,
-  board: Board,
-  ghosting: boolean,
-): void {
+function drawTokens(ctx: CanvasRenderingContext2D, frame: Frame, board: Board): void {
   const { scene, tokenImages, draggingId, cam, identity, currentTurn, selectedId } = frame;
 
   for (const token of scene.tokens) {
+    // Null is a token that is not on this board — one built on the map being
+    // prepared, seen from the live one. Absent, not faint.
+    const at = shownPos(scene, token);
+    if (at === null) continue;
+
     // Per token, not per map: a token is `size` cells across, so a 2×2 fills
     // the four cells its centre sits at the corner of.
     const radius = (board.grid.px * token.size) / 2;
-    const centre = gridToWorld(board.grid, token.x, token.y);
+    const centre = gridToWorld(board.grid, at.x, at.y);
     const img = tokenImages.get(token.img);
 
     // Wraps the rings as well as the art: fading only the picture and leaving a
     // full-strength outline round it is what a hidden token must not look like.
     ctx.save();
-    ctx.globalAlpha = alphaFor(token, ghosting);
+    ctx.globalAlpha = alphaFor(token);
 
     ctx.save();
 
@@ -282,22 +287,26 @@ function drawTokens(
 
     ctx.restore();
 
-    // One ring, four meanings now: being dragged, hidden, yours, or none of
-    // them. The dash is what says hidden — it survives a token being dragged,
-    // which is when the colour is wanted for something else.
+    // One ring, five meanings now: being dragged, not on the board yet, hidden,
+    // yours, or none of them. The dash is separate from the colour and says
+    // hidden on its own, so a token that is both teal and dashed reads as both
+    // rather than as whichever the precedence happened to pick.
     const dragging = token.id === draggingId;
     const mine = ownsToken(identity, token);
 
     ctx.beginPath();
     ctx.arc(centre.x, centre.y, radius, 0, TAU);
-    ctx.lineWidth = (dragging || mine || token.hidden ? 2.5 : 1.5) / cam.zoom;
+    ctx.lineWidth =
+      (dragging || mine || token.hidden || token.stagedOnly ? 2.5 : 1.5) / cam.zoom;
     ctx.strokeStyle = dragging
       ? DRAG_RING
-      : token.hidden
-        ? HIDDEN_RING
-        : mine
-          ? OWNED_RING
-          : TOKEN_RIM;
+      : token.stagedOnly
+        ? STAGED_ONLY_RING
+        : token.hidden
+          ? HIDDEN_RING
+          : mine
+            ? OWNED_RING
+            : TOKEN_RIM;
     if (token.hidden) ctx.setLineDash([6 / cam.zoom, 4 / cam.zoom]);
     ctx.stroke();
     ctx.setLineDash([]);
@@ -375,12 +384,7 @@ function drawCalibration(
  * space so they keep a fixed size as the camera zooms — the things on the map
  * that should not scale with the world.
  */
-function drawTokenChrome(
-  ctx: CanvasRenderingContext2D,
-  frame: Frame,
-  board: Board,
-  ghosting: boolean,
-): void {
+function drawTokenChrome(ctx: CanvasRenderingContext2D, frame: Frame, board: Board): void {
   const { scene, cam } = frame;
 
   ctx.save();
@@ -388,9 +392,14 @@ function drawTokenChrome(
   ctx.lineJoin = 'round';
 
   for (const token of scene.tokens) {
-    ctx.globalAlpha = alphaFor(token, ghosting);
+    // Same question, same answer, same skip: a token with no name drawn under
+    // it is better than one whose name floats over a board it is not on.
+    const at = shownPos(scene, token);
+    if (at === null) continue;
 
-    const centre = gridToWorld(board.grid, token.x, token.y);
+    ctx.globalAlpha = alphaFor(token);
+
+    const centre = gridToWorld(board.grid, at.x, at.y);
     const radius = (board.grid.px * token.size) / 2;
 
     if (token.hp !== null) {

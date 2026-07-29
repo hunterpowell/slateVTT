@@ -16,7 +16,7 @@ use uuid::Uuid;
 
 use crate::protocol::{
     Calibration, ClientId, ClientMsg, Hp, Initiative, InitiativeEntry, MapInfo, Owner, PlayerId,
-    RoomView, RosterEntry, RosterSlot, ServerMsg, Token, TokenId, TokenView,
+    Pos, RoomView, RosterEntry, RosterSlot, ServerMsg, Token, TokenId, TokenView,
 };
 use crate::store::{Saved, Store};
 
@@ -120,6 +120,9 @@ enum Event {
         x: f32,
         y: f32,
         dragging: bool,
+        /// The token's plan for the staged map rather than its position. Reaches
+        /// the DM alone, because that is a field only they hold.
+        staged: bool,
     },
     /// A token was created or edited. Carries only the id, so `message_for`
     /// reads the token off `&self` per recipient — the seam where a hidden
@@ -132,9 +135,13 @@ enum Event {
         /// has already overwritten it, and it is what separates "it just
         /// vanished" from "you were never told it was there".
         ///
-        /// A token that has just been created counts as hidden: nobody holds
-        /// it yet, so a create that lands hidden is nothing to announce.
-        was_hidden: bool,
+        /// "Unseen" and not "hidden": a token built on the next map is equally
+        /// absent from the table's board and has to travel the same three arms.
+        /// See `Token::unseen`.
+        ///
+        /// A token that has just been created counts as unseen: nobody holds it
+        /// yet, so a create that lands out of sight is nothing to announce.
+        was_unseen: bool,
     },
     TokenRemoved {
         id: TokenId,
@@ -142,7 +149,34 @@ enum Event {
         /// out of the room, so whether the table knew it existed cannot be
         /// looked up any more. A player who was never told it was there is not
         /// told it is gone — that frame would name an id they should not hold.
-        was_hidden: bool,
+        was_unseen: bool,
+    },
+    /// Only the half of a token that the DM alone holds changed: its plan for
+    /// the staged map, and nothing the table could observe either way.
+    ///
+    /// Filtered by *who the recipient is*, like `StagedChanged`, rather than by
+    /// anything anyone did. That is the whole point of it existing rather than
+    /// reusing `TokenChanged`: a player's copy of this token is byte-identical
+    /// before and after, so a frame for them would carry no data and still
+    /// announce, to anyone with devtools open, the moment the DM threw a plan
+    /// away. Invariant 4 is about what a client may know, and *that something
+    /// happened* is something to know.
+    TokenPlanChanged { id: TokenId },
+    /// A promote applied this token's plan: it came into existence on the board,
+    /// or it moved, or both.
+    ///
+    /// Its own variant because it is the one event that leaves in three genuinely
+    /// different shapes at once — a full token for the DM, whose staged fields
+    /// have just been emptied and who cannot learn that from a `TokenMoved`; a
+    /// creation for a player meeting it for the first time; and a plain move for
+    /// a player who has been watching it all along.
+    Promoted {
+        id: TokenId,
+        /// As above — read before `apply` cleared `staged_only`.
+        was_unseen: bool,
+        /// Its live position changed, which is to say it had a plan. False for a
+        /// token that only came into existence where it already stood.
+        moved: bool,
     },
     /// Carries no payload on purpose: `message_for` has `&self` and builds the
     /// panel per recipient. That seam is now load-bearing — a hidden creature's
@@ -384,9 +418,14 @@ async fn flush(state: &RoomState, store: &Store) -> Option<Instant> {
 /// continuously for the length of every drag to record a position nobody chose.
 fn persists(event: &Event) -> bool {
     match event {
+        // Which slot the frame was for makes no difference: a plan is dragged
+        // into place exactly like a position, and the frames it passes through
+        // are worth no more than the ones a live drag passes through.
         Event::TokenMoved { dragging, .. } => !dragging,
         Event::TokenChanged { .. }
         | Event::TokenRemoved { .. }
+        | Event::TokenPlanChanged { .. }
+        | Event::Promoted { .. }
         | Event::InitiativeChanged
         | Event::MapChanged
         | Event::StagedChanged => true,
@@ -465,7 +504,10 @@ fn token_fields(name: &str, img: &str, size: f32, hp: Option<Hp>) -> Result<(), 
     if let Some(hp) = hp
         && (!(-MAX_HP..=MAX_HP).contains(&hp.current) || !(-MAX_HP..=MAX_HP).contains(&hp.max))
     {
-        return Err(format!("hit points must be between {} and {MAX_HP}", -MAX_HP));
+        return Err(format!(
+            "hit points must be between {} and {MAX_HP}",
+            -MAX_HP
+        ));
     }
     Ok(())
 }
@@ -721,7 +763,7 @@ impl RoomState {
         let mut tokens: Vec<TokenView> = self
             .tokens
             .values()
-            .filter(|token| is_dm || !token.hidden)
+            .filter(|token| is_dm || !token.unseen())
             .map(|token| token.view_for(is_dm))
             .collect();
         // `HashMap` iteration order varies per process, and the client treats
@@ -754,10 +796,12 @@ impl RoomState {
             return self.initiative.clone();
         }
 
-        let hidden = |token: &TokenId| {
+        let unseen = |token: &TokenId| {
             // An entry naming no token cannot happen — deleting a token takes
             // its row — but treating it as visible keeps this total either way.
-            self.tokens.get(token).is_some_and(|t| t.hidden)
+            // Nor can one name a staged-only token, which `check` refuses; the
+            // predicate covers it anyway rather than depending on that.
+            self.tokens.get(token).is_some_and(Token::unseen)
         };
 
         Initiative {
@@ -765,10 +809,10 @@ impl RoomState {
                 .initiative
                 .entries
                 .iter()
-                .filter(|entry| !hidden(&entry.token))
+                .filter(|entry| !unseen(&entry.token))
                 .cloned()
                 .collect(),
-            current: self.initiative.current.clone().filter(|t| !hidden(t)),
+            current: self.initiative.current.clone().filter(|t| !unseen(t)),
             round: self.initiative.round,
         }
     }
@@ -785,6 +829,23 @@ impl RoomState {
         )
     }
 
+    /// Refuses anything about the staged slot while that slot is empty. `what`
+    /// completes "there is no map to …".
+    ///
+    /// This is not the server learning that the DM is previewing — preview is
+    /// client-only and stays that way. It is the same rule `PromoteStaged` and
+    /// `ClearStaged` already follow: staged token state belongs to the staged
+    /// map, so without one there is nothing for it to belong to. Allowing it
+    /// would mint a token absent from the live board with no staged board to
+    /// appear on either, which is a token nobody — the DM included — can reach.
+    fn staged_slot(&self, what: &str) -> Result<(), String> {
+        if self.staged.is_some() {
+            Ok(())
+        } else {
+            Err(format!("there is no map to {what}"))
+        }
+    }
+
     /// Step 2. An unidentified connection can do nothing at all.
     fn check(&self, origin: ClientId, msg: &ClientMsg) -> Result<(), String> {
         let Some(client) = self.clients.get(&origin) else {
@@ -795,10 +856,25 @@ impl RoomState {
             // Handled ahead of this in `handle`; reaching it means a client that
             // already has an identity tried to change it.
             ClientMsg::Hello { .. } => Err("already joined".to_owned()),
-            ClientMsg::MoveToken { id, x, y, .. } => {
+            ClientMsg::MoveToken {
+                id, x, y, staged, ..
+            } => {
                 let Some(token) = self.tokens.get(id) else {
                     return Err(format!("no such token: {}", id.0));
                 };
+                if *staged {
+                    // A plan is a DM-only field about a map only the DM has.
+                    require_dm(client, "plan where a token lands")?;
+                    self.staged_slot("plan a move on")?;
+                } else if token.staged_only {
+                    // The complement of the rule above rather than a new one:
+                    // this token has no position on the board to move, only a
+                    // plan for one. The client never offers it — a staged-only
+                    // token is absent from the live board — so reaching here
+                    // means a frame that would write a field the next promote
+                    // immediately overwrites.
+                    return Err(format!("{} is not on the board yet", token.name));
+                }
                 if !can_move(client, token) {
                     return Err(format!("{} is not yours to move", token.name));
                 }
@@ -812,9 +888,13 @@ impl RoomState {
                 x,
                 y,
                 hp,
+                staged,
                 ..
             } => {
                 require_dm(client, "create tokens")?;
+                if *staged {
+                    self.staged_slot("build a token on")?;
+                }
                 if self.tokens.len() >= MAX_TOKENS {
                     return Err(format!("this room already holds {MAX_TOKENS} tokens"));
                 }
@@ -903,11 +983,17 @@ impl RoomState {
 
             ClientMsg::SetInitiative { token, .. } => {
                 require_dm(client, "change initiative")?;
-                if self.tokens.contains_key(token) {
-                    Ok(())
-                } else {
-                    Err(format!("no such token: {}", token.0))
+                let Some(named) = self.tokens.get(token) else {
+                    return Err(format!("no such token: {}", token.0));
+                };
+                // Refused the way a token that does not exist is refused, and
+                // for the same reason: on the board it is a creature that is not
+                // there. Combat is the fight happening now, and building next
+                // room's order in advance needs rolls nobody has made.
+                if named.staged_only {
+                    return Err(format!("{} is not on the board yet", named.name));
                 }
+                Ok(())
             }
 
             ClientMsg::RemoveFromInitiative { .. }
@@ -921,7 +1007,13 @@ impl RoomState {
     fn apply(&mut self, msg: ClientMsg) -> Vec<Event> {
         match msg {
             ClientMsg::Hello { .. } => Vec::new(),
-            ClientMsg::MoveToken { id, x, y, dragging } => {
+            ClientMsg::MoveToken {
+                id,
+                x,
+                y,
+                dragging,
+                staged,
+            } => {
                 let Some(token) = self.tokens.get_mut(&id) else {
                     // `check` already proved this exists; belt and braces so a
                     // future reordering of the pipeline cannot panic here.
@@ -935,10 +1027,23 @@ impl RoomState {
                 } else {
                     snap_to_cell(x, y, token.size)
                 };
-                token.x = x;
-                token.y = y;
+                // The whole of routing a drag to the plan instead of the board.
+                // Everything either side of this line — the throttle, the snap,
+                // the debounce — is unaware there are two positions.
+                if staged {
+                    token.staged_pos = Some(Pos { x, y });
+                } else {
+                    token.x = x;
+                    token.y = y;
+                }
 
-                vec![Event::TokenMoved { id, x, y, dragging }]
+                vec![Event::TokenMoved {
+                    id,
+                    x,
+                    y,
+                    dragging,
+                    staged,
+                }]
             }
 
             ClientMsg::CreateToken {
@@ -950,6 +1055,7 @@ impl RoomState {
                 y,
                 hidden,
                 hp,
+                staged,
             } => {
                 // The id is invented here rather than accepted from the client,
                 // so nothing a DM sends can collide with a token that exists.
@@ -960,6 +1066,11 @@ impl RoomState {
                     Token {
                         id: id.clone(),
                         name: name.trim().to_owned(),
+                        // A staged-only token's `x, y` is a placeholder its own
+                        // plan overwrites on promote, so it is set to the same
+                        // cell rather than to zero: nothing ever reads it, and
+                        // if the invariant that it is unreachable were ever to
+                        // break, the token would be found where it was built.
                         x,
                         y,
                         owner,
@@ -967,14 +1078,16 @@ impl RoomState {
                         size,
                         hidden,
                         hp,
+                        staged_pos: staged.then_some(Pos { x, y }),
+                        staged_only: staged,
                     },
                 );
                 // Nobody held this token a moment ago, which is the same
-                // position the table is in for one created hidden: there is
-                // nothing to take away from them.
+                // position the table is in for one created hidden or built on
+                // the next map: there is nothing to take away from them.
                 vec![Event::TokenChanged {
                     id,
-                    was_hidden: true,
+                    was_unseen: true,
                 }]
             }
 
@@ -991,7 +1104,7 @@ impl RoomState {
                     return Vec::new(); // proved to exist by `check`
                 };
 
-                let was_hidden = token.hidden;
+                let was_unseen = token.unseen();
                 token.name = name.trim().to_owned();
                 token.img = img;
                 token.owner = owner;
@@ -1007,11 +1120,20 @@ impl RoomState {
                     let (x, y) = snap_to_cell(token.x, token.y, size);
                     token.x = x;
                     token.y = y;
+                    // The plan is a position on the same lattice and goes the
+                    // same way. Missed, a token resized after being planned
+                    // straddles half a cell the moment it is promoted — the
+                    // original bug, deferred to the one place nobody looks.
+                    token.staged_pos = token.staged_pos.map(|at| {
+                        let (x, y) = snap_to_cell(at.x, at.y, size);
+                        Pos { x, y }
+                    });
                 }
+                let now_unseen = token.unseen();
 
                 let mut events = vec![Event::TokenChanged {
                     id: id.clone(),
-                    was_hidden,
+                    was_unseen,
                 }];
                 // Hiding something mid-fight takes its row off the table's panel
                 // and unhiding puts it back, so the panel has to be rebuilt for
@@ -1019,30 +1141,20 @@ impl RoomState {
                 // players keep a row naming a token their client has just been
                 // told to forget, which draws as a bare id — precisely the thing
                 // `hidden` was asked to conceal.
-                if was_hidden != hidden && self.initiative.index_of(&id).is_some() {
+                //
+                // Asked of `unseen` rather than of `hidden`, so that toggling
+                // the flag on a staged-only token — which the table cannot see
+                // either way — rebuilds nothing.
+                if was_unseen != now_unseen && self.initiative.index_of(&id).is_some() {
                     events.push(Event::InitiativeChanged);
                 }
                 events
             }
 
-            ClientMsg::DeleteToken { id } => {
-                let Some(gone) = self.tokens.remove(&id) else {
-                    return Vec::new();
-                };
-
-                let mut events = vec![Event::TokenRemoved {
-                    id: id.clone(),
-                    was_hidden: gone.hidden,
-                }];
-                // The order would otherwise keep a row pointing at a token that
-                // no longer exists — which the panel renders as a bare id, and
-                // which `next_turn` would hand the turn to.
-                if self.initiative.index_of(&id).is_some() {
-                    self.initiative.remove(&id);
-                    events.push(Event::InitiativeChanged);
-                }
-                events
-            }
+            // Its plan goes with it, like any other field on it. Nothing extra
+            // to do: the plan lives on the token rather than beside it, which
+            // is most of why it lives on the token.
+            ClientMsg::DeleteToken { id } => self.delete_token(&id),
 
             // Tokens are deliberately untouched. They are stored in grid units,
             // so recalibrating changes where a token *draws* without changing
@@ -1099,31 +1211,59 @@ impl RoomState {
                 // already calibrated when it is promoted.
                 let finished = calibration.into_map(url);
                 if staged {
+                    // Staged token state belongs to the staged map and dies with
+                    // it. `loading` is what tells the two cases apart, and it is
+                    // the same `loading` the calibration table already turns on:
+                    // a *different* map is a different next room, so the
+                    // monsters placed for the last one go. A recalibration is
+                    // not, and must not sweep them away — correcting the grid
+                    // after placing an ambush is an ordinary thing to do, and
+                    // this is the arm that gets missed.
+                    let mut events = if loading {
+                        self.clear_staged_tokens()
+                    } else {
+                        Vec::new()
+                    };
                     self.staged = Some(finished);
-                    vec![Event::StagedChanged]
+                    events.push(Event::StagedChanged);
+                    events
                 } else {
+                    // Deliberately not cleared here. A plan describes a cell on
+                    // the staged map, which this command has not touched — the
+                    // plans are still about the map they were made on.
                     self.map = finished;
                     vec![Event::MapChanged]
                 }
             }
 
-            // Tokens are untouched here too, and for a stronger reason than a
-            // recalibration: they are stored in cells, and there is no sensible
-            // way to carry a cell across to an unrelated image. They keep their
-            // coordinates and the DM repositions them.
+            // A token with no plan is still untouched here, and for a stronger
+            // reason than a recalibration: it is stored in cells, and there is
+            // no sensible way to carry a cell across to an unrelated image. It
+            // keeps its coordinates and the DM repositions it. A plan is how the
+            // DM says otherwise in advance, and this is where it comes true.
             ClientMsg::PromoteStaged => {
                 let Some(map) = self.staged.take() else {
                     return Vec::new(); // proved to exist by `check`
                 };
                 self.map = map;
-                // Two events, because two things happened: the board changed for
-                // everyone, and the slot emptied for the DM.
-                vec![Event::MapChanged, Event::StagedChanged]
+
+                // Tokens first, so that by the time a client is told the slot
+                // has emptied — which is what ends the DM's preview — every
+                // token already holds the position it landed on.
+                let mut events = self.promote_staged_tokens();
+                // Then the two that were always here, because two things
+                // happened: the board changed for everyone, and the slot emptied
+                // for the DM.
+                events.push(Event::MapChanged);
+                events.push(Event::StagedChanged);
+                events
             }
 
             ClientMsg::ClearStaged => {
+                let mut events = self.clear_staged_tokens();
                 self.staged = None;
-                vec![Event::StagedChanged]
+                events.push(Event::StagedChanged);
+                events
             }
 
             ClientMsg::SetInitiative { token, value } => {
@@ -1147,6 +1287,115 @@ impl RoomState {
                 vec![Event::InitiativeChanged]
             }
         }
+    }
+
+    /// Takes a token out of the room, and its initiative row with it.
+    ///
+    /// Shared by `DeleteToken` and by the sweep that throws away a staged map,
+    /// which deletes the tokens that only existed on it. The order would
+    /// otherwise keep a row pointing at a token that no longer exists — which
+    /// the panel renders as a bare id, and which `next_turn` would hand the turn
+    /// to. A staged-only token cannot be in the order, so that half is dead code
+    /// on one of the two paths; sharing one function is still worth more than
+    /// two that could come to disagree about what deleting means.
+    fn delete_token(&mut self, id: &TokenId) -> Vec<Event> {
+        let Some(gone) = self.tokens.remove(id) else {
+            return Vec::new();
+        };
+
+        let mut events = vec![Event::TokenRemoved {
+            id: id.clone(),
+            was_unseen: gone.unseen(),
+        }];
+        if self.initiative.index_of(id).is_some() {
+            self.initiative.remove(id);
+            events.push(Event::InitiativeChanged);
+        }
+        events
+    }
+
+    /// Everything the staged map owned, thrown away with it: every plan is
+    /// cleared and every token that only existed on that map is deleted.
+    ///
+    /// Without this the next map inherits monsters placed on a map nobody will
+    /// ever see again — and, worse, staged-only tokens that no board shows,
+    /// since the live one does not draw them and the map they were built on is
+    /// gone. Reached from `ClearStaged` and from a *load* into the staged slot.
+    ///
+    /// Every event it produces reaches the DM alone: a deleted staged-only token
+    /// was never announced, and a cleared plan is a field no player holds.
+    fn clear_staged_tokens(&mut self) -> Vec<Event> {
+        let mut doomed: Vec<TokenId> = Vec::new();
+        let mut planned: Vec<TokenId> = Vec::new();
+        for token in self.tokens.values() {
+            if token.staged_only {
+                doomed.push(token.id.clone());
+            } else if token.staged_pos.is_some() {
+                planned.push(token.id.clone());
+            }
+        }
+        // `HashMap` order varies per process, and these ids decide the order of
+        // the frames the DM's other tabs receive. Sorted for the same reason
+        // `snapshot_for` sorts: two clients must not be handed one burst in two
+        // different orders.
+        doomed.sort();
+        planned.sort();
+
+        let mut events: Vec<Event> = Vec::new();
+        for id in doomed {
+            events.extend(self.delete_token(&id));
+        }
+        for id in planned {
+            if let Some(token) = self.tokens.get_mut(&id) {
+                token.staged_pos = None;
+            }
+            events.push(Event::TokenPlanChanged { id });
+        }
+        events
+    }
+
+    /// Every plan comes true: a planned token adopts its `staged_pos` as its
+    /// position, a staged-only token becomes an ordinary one, and both fields
+    /// are emptied because the map they belonged to has just stopped being the
+    /// next one.
+    ///
+    /// The one moment the whole table sees a batch of changes at once.
+    fn promote_staged_tokens(&mut self) -> Vec<Event> {
+        let mut ids: Vec<TokenId> = self
+            .tokens
+            .values()
+            .filter(|t| t.staged_only || t.staged_pos.is_some())
+            .map(|t| t.id.clone())
+            .collect();
+        ids.sort(); // stable frame order, as above
+
+        ids.into_iter()
+            .filter_map(|id| {
+                let token = self.tokens.get_mut(&id)?;
+                let was_unseen = token.unseen();
+                token.staged_only = false;
+
+                let moved = match token.staged_pos.take() {
+                    // Already snapped when the plan was set, and to the same
+                    // lattice: a position is a position whichever board it was
+                    // chosen on, which is the whole reason this is one field
+                    // rather than a second world.
+                    Some(at) => {
+                        let moved = (token.x, token.y) != (at.x, at.y);
+                        token.x = at.x;
+                        token.y = at.y;
+                        moved
+                    }
+                    None => false,
+                };
+
+                Some(Event::Promoted {
+                    id,
+                    was_unseen,
+                    moved,
+                })
+            })
+            .collect()
     }
 
     /// Step 4. Every event is offered to every identified client individually.
@@ -1183,27 +1432,43 @@ impl RoomState {
         event: &Event,
     ) -> Option<ServerMsg> {
         match event {
-            Event::TokenMoved { id, x, y, dragging } => {
+            Event::TokenMoved {
+                id,
+                x,
+                y,
+                dragging,
+                staged,
+            } => {
                 // The originator is already drawing this from its own local
                 // prediction; echoing mid-drag frames back rubber-bands it. The
                 // drop frame is echoed, because it carries the server's snap and
                 // is the only way the originator learns its settled position.
+                // True of a plan being dragged into place as much as a token.
                 if *dragging && recipient == origin {
                     return None;
                 }
-                // A creature the table cannot see does not move where they can
-                // watch it. Position is data, and thirty frames a second of it
-                // would trace an invisible monster's path across the board.
-                if !self.is_dm(recipient)
-                    && self.tokens.get(id).is_some_and(|token| token.hidden)
-                {
-                    return None;
+                if !self.is_dm(recipient) {
+                    // A plan is a cell on a map the table has not been shown, so
+                    // the frame carrying one exists for the DM alone — the same
+                    // arm `StagedChanged` is, reaching one token instead of the
+                    // whole board.
+                    if *staged {
+                        return None;
+                    }
+                    // A creature the table cannot see does not move where they
+                    // can watch it. Position is data, and thirty frames a second
+                    // of it would trace an invisible monster's path across the
+                    // board.
+                    if self.tokens.get(id).is_some_and(Token::unseen) {
+                        return None;
+                    }
                 }
                 Some(ServerMsg::TokenMoved {
                     id: id.clone(),
                     x: *x,
                     y: *y,
                     dragging: *dragging,
+                    staged: *staged,
                 })
             }
 
@@ -1214,26 +1479,77 @@ impl RoomState {
             // nothing at all if it was already hidden — that last case matters,
             // because a `TokenRemoved` naming an id they never held would tell
             // them a token exists, which is the whole thing being withheld.
-            Event::TokenChanged { id, was_hidden } => {
+            Event::TokenChanged { id, was_unseen } => {
                 let token = self.tokens.get(id)?;
                 let is_dm = self.is_dm(recipient);
 
-                if is_dm || !token.hidden {
+                if is_dm || !token.unseen() {
                     Some(ServerMsg::TokenChanged {
                         token: token.view_for(is_dm),
                     })
-                } else if *was_hidden {
+                } else if *was_unseen {
                     None
                 } else {
                     Some(ServerMsg::TokenRemoved { id: id.clone() })
                 }
             }
 
-            Event::TokenRemoved { id, was_hidden } => {
-                if *was_hidden && !self.is_dm(recipient) {
+            Event::TokenRemoved { id, was_unseen } => {
+                if *was_unseen && !self.is_dm(recipient) {
                     return None;
                 }
                 Some(ServerMsg::TokenRemoved { id: id.clone() })
+            }
+
+            // The `StagedChanged` shape at token scale: dropped for who the
+            // recipient is, not for anything they did. A player's copy of this
+            // token is identical either side of the change, so the only thing a
+            // frame could carry them is the news that the DM just discarded a
+            // plan — which is news.
+            Event::TokenPlanChanged { id } => {
+                let token = self.tokens.get(id)?;
+                self.is_dm(recipient).then(|| ServerMsg::TokenChanged {
+                    token: token.view_for(true),
+                })
+            }
+
+            // The three shapes, all at once. The DM needs a whole token: their
+            // client holds `staged_pos` and `staged_only`, which have just been
+            // emptied, and no `TokenMoved` could tell them so. A player meeting
+            // the token for the first time needs a whole one too, for the
+            // ordinary reason — they have never held it. A player who has been
+            // watching it all along needs only where it went, and one that has
+            // not moved needs nothing at all.
+            Event::Promoted {
+                id,
+                was_unseen,
+                moved,
+            } => {
+                let token = self.tokens.get(id)?;
+                if self.is_dm(recipient) {
+                    return Some(ServerMsg::TokenChanged {
+                        token: token.view_for(true),
+                    });
+                }
+                // Still hidden. A promote settles `staged_only`; it says nothing
+                // about a monster the DM also took off the board.
+                if token.unseen() {
+                    return None;
+                }
+                if *was_unseen {
+                    return Some(ServerMsg::TokenChanged {
+                        token: token.view_for(false),
+                    });
+                }
+                moved.then(|| ServerMsg::TokenMoved {
+                    id: id.clone(),
+                    x: token.x,
+                    y: token.y,
+                    // Not a drag frame: it is the settled position, and it is
+                    // the first the table hears of it.
+                    dragging: false,
+                    staged: false,
+                })
             }
 
             // Built per recipient rather than carried on the event, which is
@@ -1499,6 +1815,7 @@ mod tests {
                     x: 0.0,
                     y: 0.0,
                     dragging: false,
+                    staged: false,
                 },
             )
             .expect_err("should be refused");
@@ -1518,7 +1835,8 @@ mod tests {
                         id: TokenId::new("t1"),
                         x: 0.0,
                         y: 0.0,
-                        dragging: false
+                        dragging: false,
+                        staged: false,
                     }
                 )
                 .is_err()
@@ -1539,6 +1857,7 @@ mod tests {
                 x: 99.0,
                 y: 99.0,
                 dragging: false,
+                staged: false,
             },
         );
 
@@ -1575,6 +1894,7 @@ mod tests {
             x: 6.83,
             y: 5.21,
             dragging: true,
+            staged: false,
         });
         assert!(
             matches!(events.as_slice(), [Event::TokenMoved { x, y, .. }] if *x == 6.83 && *y == 5.21)
@@ -1585,6 +1905,7 @@ mod tests {
             x: 6.83,
             y: 5.21,
             dragging: false,
+            staged: false,
         });
         assert!(
             matches!(events.as_slice(), [Event::TokenMoved { x, y, .. }] if *x == 6.5 && *y == 5.5)
@@ -1655,6 +1976,7 @@ mod tests {
             x: 1.0,
             y: 1.0,
             dragging: true,
+            staged: false,
         };
         assert!(state.message_for(me, me, &drag).is_none());
         assert!(state.message_for(them, me, &drag).is_some());
@@ -1664,6 +1986,7 @@ mod tests {
             x: 1.5,
             y: 1.5,
             dragging: false,
+            staged: false,
         };
         assert!(state.message_for(me, me, &drop).is_some());
         assert!(state.message_for(them, me, &drop).is_some());
@@ -1678,6 +2001,7 @@ mod tests {
             x: 0.0,
             y: 0.0,
             dragging: false,
+            staged: false,
         };
         assert!(state.check(ClientId(1), &msg).is_err());
     }
@@ -1694,25 +2018,50 @@ mod tests {
             y: 5.1,
             hidden: false,
             hp: None,
+            staged: false,
         }
     }
 
     /// The same command with the token already out of sight of the table.
     fn create_hidden(name: &str) -> ClientMsg {
-        match create(name, 1.0, Owner::Dm) {
-            ClientMsg::CreateToken { name, img, size, owner, x, y, hp, .. } => {
-                ClientMsg::CreateToken {
-                    name,
-                    img,
-                    size,
-                    owner,
-                    x,
-                    y,
-                    hidden: true,
-                    hp,
-                }
-            }
-            other => other,
+        with(create(name, 1.0, Owner::Dm), |hidden, _| *hidden = true)
+    }
+
+    /// The same command again, building the token on the map the DM is
+    /// preparing rather than on the board.
+    fn create_staged(name: &str) -> ClientMsg {
+        with(create(name, 1.0, Owner::Dm), |_, staged| *staged = true)
+    }
+
+    /// Flips one or both of the two flags on a `CreateToken`, so the helpers
+    /// above stay one line each and a field added later does not have to be
+    /// restated in any of them.
+    fn with(msg: ClientMsg, set: impl FnOnce(&mut bool, &mut bool)) -> ClientMsg {
+        let ClientMsg::CreateToken {
+            mut hidden,
+            mut staged,
+            name,
+            img,
+            size,
+            owner,
+            x,
+            y,
+            hp,
+        } = msg
+        else {
+            return msg;
+        };
+        set(&mut hidden, &mut staged);
+        ClientMsg::CreateToken {
+            name,
+            img,
+            size,
+            owner,
+            x,
+            y,
+            hidden,
+            hp,
+            staged,
         }
     }
 
@@ -1734,17 +2083,23 @@ mod tests {
     /// That edit with `hidden` flipped to `want`.
     fn set_hidden(token: &Token, want: bool) -> ClientMsg {
         match edit(token) {
-            ClientMsg::UpdateToken { id, name, img, size, owner, hp, .. } => {
-                ClientMsg::UpdateToken {
-                    id,
-                    name,
-                    img,
-                    size,
-                    owner,
-                    hidden: want,
-                    hp,
-                }
-            }
+            ClientMsg::UpdateToken {
+                id,
+                name,
+                img,
+                size,
+                owner,
+                hp,
+                ..
+            } => ClientMsg::UpdateToken {
+                id,
+                name,
+                img,
+                size,
+                owner,
+                hidden: want,
+                hp,
+            },
             other => other,
         }
     }
@@ -1865,6 +2220,7 @@ mod tests {
                 x: 3.27,
                 y: 8.11,
                 dragging: true,
+                staged: false,
             },
         );
 
@@ -2142,6 +2498,7 @@ mod tests {
             y: 0.0,
             hidden: false,
             hp: None,
+            staged: false,
         };
 
         for good in ["", "/uploads/abc.png", "/assets/tokens/ogre.png"] {
@@ -2295,6 +2652,7 @@ mod tests {
                     x,
                     y,
                     hidden,
+                    staged,
                     ..
                 } => ClientMsg::CreateToken {
                     name,
@@ -2308,6 +2666,7 @@ mod tests {
                         current: 4242,
                         max: 4242,
                     }),
+                    staged,
                 },
                 other => other,
             },
@@ -2426,6 +2785,7 @@ mod tests {
                     x: 2.4,
                     y: 8.1,
                     dragging,
+                    staged: false,
                 },
             );
         }
@@ -2504,7 +2864,11 @@ mod tests {
                 max: 59
             })
         );
-        assert_eq!(hp_of(&drain(&mut vex)), None, "hit points are the DM's note");
+        assert_eq!(
+            hp_of(&drain(&mut vex)),
+            None,
+            "hit points are the DM's note"
+        );
 
         // And on the snapshot too, by the same route rather than a second one.
         let ogre_in = |view: &RoomView| {
@@ -2652,7 +3016,10 @@ mod tests {
         state.handle(ClientId(1), set_hidden(&token(&state, "t6"), true));
 
         match drain(&mut vex).as_slice() {
-            [ServerMsg::TokenRemoved { .. }, ServerMsg::InitiativeChanged { initiative }] => {
+            [
+                ServerMsg::TokenRemoved { .. },
+                ServerMsg::InitiativeChanged { initiative },
+            ] => {
                 assert!(initiative.entries.is_empty(), "the row should have gone");
             }
             other => panic!("expected the token and the row to go together: {other:?}"),
@@ -3608,6 +3975,564 @@ mod tests {
         );
     }
 
+    // --- preparing the next room ----------------------------------------------
+
+    /// A room with a map staged and the DM's echo of that already drained.
+    fn staged_room(dm: ClientId) -> (RoomState, mpsc::Receiver<ServerMsg>) {
+        let mut state = room();
+        let mut rx = join_as_dm(&mut state, dm);
+        stage(&mut state, dm, "/uploads/next.png");
+        drain(&mut rx);
+        (state, rx)
+    }
+
+    /// Drops a token onto a cell of one board or the other.
+    fn drop_at(id: &TokenId, x: f32, y: f32, staged: bool) -> ClientMsg {
+        ClientMsg::MoveToken {
+            id: id.clone(),
+            x,
+            y,
+            dragging: false,
+            staged,
+        }
+    }
+
+    #[test]
+    fn planning_a_move_leaves_the_token_where_it_stands() {
+        // The whole state model in one assertion: one token, two positions, and
+        // only the plan is what a preview drag writes.
+        let (mut state, _dm_rx) = staged_room(ClientId(1));
+        let before = token(&state, "t1");
+
+        state.handle(ClientId(1), drop_at(&before.id, 11.4, 7.6, true));
+
+        let after = token(&state, "t1");
+        assert_eq!((after.x, after.y), (before.x, before.y));
+        assert_eq!(after.staged_pos, Some(Pos { x: 11.5, y: 7.5 }));
+        assert!(!after.staged_only, "it is still on the board");
+    }
+
+    #[test]
+    fn a_plan_settles_on_the_lattice_its_size_belongs_to() {
+        // `snap_to_cell` is the server's alone and does not care which of a
+        // token's two positions it is settling — a 2×2 lands on a cell corner
+        // either way.
+        let (mut state, _dm_rx) = staged_room(ClientId(1));
+        state.handle(ClientId(1), create("Ogre Chief", 2.0, Owner::Dm));
+        let id = made(&state, "Ogre Chief").id;
+
+        state.handle(ClientId(1), drop_at(&id, 4.4, 9.6, true));
+        assert_eq!(
+            made(&state, "Ogre Chief").staged_pos,
+            Some(Pos { x: 4.0, y: 10.0 })
+        );
+    }
+
+    #[test]
+    fn a_dragged_plan_is_relayed_unsnapped_and_the_drop_settles_it() {
+        // The two message rates, on the plan. A second DM tab watches the drag
+        // exactly as it watches one on the board.
+        let (mut state, _dm_rx) = staged_room(ClientId(1));
+        let mut other_tab = join_as_dm(&mut state, ClientId(2));
+        let id = token(&state, "t1").id;
+
+        state.handle(
+            ClientId(1),
+            ClientMsg::MoveToken {
+                id: id.clone(),
+                x: 3.3,
+                y: 4.7,
+                dragging: true,
+                staged: true,
+            },
+        );
+        assert_eq!(
+            token(&state, "t1").staged_pos,
+            Some(Pos { x: 3.3, y: 4.7 }),
+            "a drag frame is left exactly where the pointer was"
+        );
+        assert!(matches!(
+            other_tab.try_recv(),
+            Ok(ServerMsg::TokenMoved {
+                staged: true,
+                dragging: true,
+                ..
+            })
+        ));
+
+        state.handle(ClientId(1), drop_at(&id, 3.3, 4.7, true));
+        assert_eq!(token(&state, "t1").staged_pos, Some(Pos { x: 3.5, y: 4.5 }));
+    }
+
+    #[test]
+    fn a_plan_is_a_frame_the_table_never_receives() {
+        // The `StagedChanged` arm, at token scale. A plan is a cell on a map the
+        // players have not been shown, so the frame carrying it does not exist
+        // for them — it is not sent and left undrawn.
+        let (mut state, _dm_rx) = staged_room(ClientId(1));
+        let mut vex = join_as_player(&mut state, ClientId(2), "vex");
+        let id = token(&state, "t2").id; // Vex's own token
+
+        state.handle(ClientId(1), drop_at(&id, 15.0, 15.0, true));
+
+        assert!(
+            drain(&mut vex).is_empty(),
+            "a plan for a player's own token is still not theirs to know"
+        );
+    }
+
+    #[test]
+    fn a_plan_needs_a_map_to_be_a_plan_about() {
+        // Refused the way promoting nothing is refused. Allowing it would mint
+        // staged state belonging to a staged map that does not exist.
+        let mut state = room();
+        let _dm = join_as_dm(&mut state, ClientId(1));
+        let id = token(&state, "t1").id;
+
+        assert!(
+            state
+                .check(ClientId(1), &drop_at(&id, 2.0, 2.0, true))
+                .is_err()
+        );
+        assert!(state.check(ClientId(1), &create_staged("Goblin")).is_err());
+        // And the same commands are fine the moment there is one.
+        stage(&mut state, ClientId(1), "/uploads/next.png");
+        assert!(
+            state
+                .check(ClientId(1), &drop_at(&id, 2.0, 2.0, true))
+                .is_ok()
+        );
+        assert!(state.check(ClientId(1), &create_staged("Goblin")).is_ok());
+    }
+
+    #[test]
+    fn only_the_dm_may_plan_a_move() {
+        // A player may move their own token; the plan for it is not theirs.
+        let (mut state, _dm_rx) = staged_room(ClientId(1));
+        let _vex = join_as_player(&mut state, ClientId(2), "vex");
+        let id = token(&state, "t2").id;
+
+        assert!(
+            state
+                .check(ClientId(2), &drop_at(&id, 2.0, 2.0, false))
+                .is_ok()
+        );
+        assert!(
+            state
+                .check(ClientId(2), &drop_at(&id, 2.0, 2.0, true))
+                .is_err()
+        );
+    }
+
+    #[test]
+    fn a_staged_only_token_is_nowhere_the_table_can_reach() {
+        // The `hidden` filter, arrived at by the other of its two routes. This
+        // creature was never on the board rather than taken off it, and every
+        // door out of the room has to be shut just the same.
+        let (mut state, _dm_rx) = staged_room(ClientId(1));
+        let mut vex = join_as_player(&mut state, ClientId(2), "vex");
+        state.handle(ClientId(1), create_staged("Ambusher"));
+        let id = made(&state, "Ambusher").id;
+
+        let view = state.snapshot_for(&as_player("vex"));
+        assert!(!names(&view).contains(&"Ambusher"));
+        let json = serde_json::to_string(&view).expect("serialises");
+        assert!(!json.contains("Ambusher"), "leaked into a snapshot: {json}");
+
+        // Nor as a delta: neither the creation nor a plan dragged around after.
+        state.handle(ClientId(1), drop_at(&id, 9.0, 9.0, true));
+        state.handle(ClientId(1), drop_at(&id, 9.0, 9.0, false));
+        assert!(
+            drain(&mut vex).is_empty(),
+            "the table heard about it anyway"
+        );
+    }
+
+    #[test]
+    fn the_dms_own_live_board_does_not_hold_a_staged_only_token_either() {
+        // Not a detail: switching back to `Map` mode has to show the board as
+        // the table sees it, and the DM's snapshot is where that starts. The
+        // token is present — it is theirs to drag — and flagged as not real yet.
+        let (mut state, _dm_rx) = staged_room(ClientId(1));
+        state.handle(ClientId(1), create_staged("Ambusher"));
+
+        let ambusher = made(&state, "Ambusher");
+        assert!(ambusher.staged_only);
+        assert_eq!(
+            ambusher.staged_pos,
+            Some(Pos {
+                x: ambusher.x,
+                y: ambusher.y
+            }),
+            "built somewhere, and that somewhere is its plan"
+        );
+
+        let view = state.snapshot_for(&Identity::Dm);
+        let sent = view
+            .tokens
+            .iter()
+            .find(|t| t.name == "Ambusher")
+            .expect("the DM holds it");
+        assert!(sent.staged_only, "and knows not to draw it on the board");
+    }
+
+    #[test]
+    fn a_staged_only_token_has_no_position_on_the_board_to_move() {
+        // The complement of "a plan needs a staged map". The client never offers
+        // this, because the token is absent from the live board; refusing says
+        // so rather than writing a field the next promote overwrites.
+        let (mut state, _dm_rx) = staged_room(ClientId(1));
+        state.handle(ClientId(1), create_staged("Ambusher"));
+        let id = made(&state, "Ambusher").id;
+
+        let err = state
+            .check(ClientId(1), &drop_at(&id, 1.0, 1.0, false))
+            .expect_err("should be refused");
+        assert!(err.contains("Ambusher"), "should name the token: {err}");
+        assert!(
+            state
+                .check(ClientId(1), &drop_at(&id, 1.0, 1.0, true))
+                .is_ok()
+        );
+    }
+
+    #[test]
+    fn a_staged_only_token_cannot_be_rolled_into_combat() {
+        // Combat is the fight happening now, and building next room's order in
+        // advance needs rolls nobody has made.
+        let (mut state, _dm_rx) = staged_room(ClientId(1));
+        state.handle(ClientId(1), create_staged("Ambusher"));
+        let id = made(&state, "Ambusher").id;
+
+        let err = state
+            .check(
+                ClientId(1),
+                &ClientMsg::SetInitiative {
+                    token: id,
+                    value: 17,
+                },
+            )
+            .expect_err("should be refused");
+        assert!(err.contains("Ambusher"), "should name the token: {err}");
+        assert!(state.initiative.entries.is_empty());
+    }
+
+    #[test]
+    fn an_edit_reaches_both_boards_at_once() {
+        // Only position and existence fork. A resize applies to the token, and
+        // therefore to its plan as well — missed, a token resized after being
+        // planned straddles half a cell the moment it is promoted.
+        let (mut state, _dm_rx) = staged_room(ClientId(1));
+        state.handle(ClientId(1), create("Dire Wolf", 1.0, Owner::Dm));
+        let wolf = made(&state, "Dire Wolf");
+        state.handle(ClientId(1), drop_at(&wolf.id, 6.5, 4.5, true));
+
+        let grown = match edit(&made(&state, "Dire Wolf")) {
+            ClientMsg::UpdateToken {
+                id,
+                name,
+                img,
+                owner,
+                hidden,
+                hp,
+                ..
+            } => ClientMsg::UpdateToken {
+                id,
+                name,
+                img,
+                size: 2.0,
+                owner,
+                hidden,
+                hp,
+            },
+            other => other,
+        };
+        state.handle(ClientId(1), grown);
+
+        let after = made(&state, "Dire Wolf");
+        assert_eq!(after.size, 2.0);
+        assert_eq!(
+            after.staged_pos,
+            Some(Pos { x: 7.0, y: 5.0 }),
+            "the plan moved onto the even lattice with the token"
+        );
+    }
+
+    #[test]
+    fn promoting_applies_every_plan_and_empties_the_fields() {
+        let (mut state, _dm_rx) = staged_room(ClientId(1));
+        let planned = token(&state, "t1").id;
+        state.handle(ClientId(1), drop_at(&planned, 20.5, 1.5, true));
+        state.handle(ClientId(1), create_staged("Ambusher"));
+        let unplanned_before = token(&state, "t6");
+
+        state.handle(ClientId(1), ClientMsg::PromoteStaged);
+
+        let grog = token(&state, "t1");
+        assert_eq!((grog.x, grog.y), (20.5, 1.5), "the plan came true");
+        assert_eq!(grog.staged_pos, None, "and stopped being a plan");
+
+        let ambusher = made(&state, "Ambusher");
+        assert!(!ambusher.staged_only, "it exists on the board now");
+        assert_eq!(ambusher.staged_pos, None);
+
+        let after = token(&state, "t6");
+        assert_eq!(
+            (after.x, after.y),
+            (unplanned_before.x, unplanned_before.y),
+            "a token with no plan is still the DM's to reposition"
+        );
+    }
+
+    #[test]
+    fn a_promote_says_three_different_things_to_three_recipients() {
+        let (mut state, mut dm_rx) = staged_room(ClientId(1));
+        let mut vex = join_as_player(&mut state, ClientId(2), "vex");
+
+        let moving = token(&state, "t1").id; // seen all along, and planned
+        state.handle(ClientId(1), drop_at(&moving, 20.5, 1.5, true));
+        state.handle(ClientId(1), create_staged("Ambusher")); // never seen
+        let ambusher = made(&state, "Ambusher").id;
+        drain(&mut dm_rx);
+        drain(&mut vex);
+
+        state.handle(ClientId(1), ClientMsg::PromoteStaged);
+
+        // The DM gets whole tokens, because their client holds the two fields
+        // that were just emptied and no `TokenMoved` could tell them so.
+        let to_dm = drain(&mut dm_rx);
+        for id in [&moving, &ambusher] {
+            assert!(
+                to_dm.iter().any(|msg| matches!(
+                    msg,
+                    ServerMsg::TokenChanged { token }
+                        if &token.id == id && token.staged_pos.is_none() && !token.staged_only
+                )),
+                "the DM was not told {id:?} had its plan applied: {to_dm:?}"
+            );
+        }
+
+        let to_vex = drain(&mut vex);
+        // A creation for the one they are meeting for the first time…
+        assert!(
+            to_vex.iter().any(|msg| matches!(
+                msg,
+                ServerMsg::TokenChanged { token } if token.id == ambusher
+            )),
+            "the ambusher should arrive as a creation: {to_vex:?}"
+        );
+        // …and a plain move for the one they have been watching all along.
+        assert!(
+            to_vex.iter().any(|msg| matches!(
+                msg,
+                ServerMsg::TokenMoved { id, x, y, .. } if id == &moving && (*x, *y) == (20.5, 1.5)
+            )),
+            "the planned token should arrive as a move: {to_vex:?}"
+        );
+        assert!(
+            !to_vex
+                .iter()
+                .any(|msg| matches!(msg, ServerMsg::TokenChanged { token } if token.id == moving)),
+            "and not also as an edit: {to_vex:?}"
+        );
+    }
+
+    #[test]
+    fn a_promote_leaves_a_still_hidden_creature_unannounced() {
+        // A promote settles `staged_only`. It says nothing about a monster the
+        // DM also took off the board, and the table must not meet it early.
+        let (mut state, _dm_rx) = staged_room(ClientId(1));
+        let mut vex = join_as_player(&mut state, ClientId(2), "vex");
+        state.handle(
+            ClientId(1),
+            with(create_staged("Ambusher"), |hidden, _| *hidden = true),
+        );
+        drain(&mut vex);
+
+        state.handle(ClientId(1), ClientMsg::PromoteStaged);
+
+        let to_vex = drain(&mut vex);
+        assert!(
+            to_vex
+                .iter()
+                .all(|msg| matches!(msg, ServerMsg::MapChanged { .. })),
+            "only the map should have reached the table: {to_vex:?}"
+        );
+        assert!(made(&state, "Ambusher").hidden, "and it is still hidden");
+    }
+
+    #[test]
+    fn discarding_the_staged_map_takes_the_plans_made_on_it_with_it() {
+        // Otherwise the next map inherits monsters placed on a map nobody will
+        // ever see again — and staged-only tokens no board draws at all.
+        let (mut state, _dm_rx) = staged_room(ClientId(1));
+        let planned = token(&state, "t1").id;
+        state.handle(ClientId(1), drop_at(&planned, 20.5, 1.5, true));
+        state.handle(ClientId(1), create_staged("Ambusher"));
+        let before = state.tokens.len();
+
+        state.handle(ClientId(1), ClientMsg::ClearStaged);
+
+        assert_eq!(token(&state, "t1").staged_pos, None);
+        assert_eq!(state.tokens.len(), before - 1, "the ambusher is gone");
+        assert!(state.tokens.values().all(|t| !t.staged_only));
+        assert_eq!(
+            (token(&state, "t1").x, token(&state, "t1").y),
+            (3.5, 3.5),
+            "and the board itself was never touched"
+        );
+    }
+
+    #[test]
+    fn discarding_a_plan_is_not_something_the_table_is_told_about() {
+        // A player's copy of a planned token is identical either side of this,
+        // so the only thing a frame could carry them is the news that the DM
+        // just threw a plan away — which is news, and invariant 4's concern.
+        let (mut state, _dm_rx) = staged_room(ClientId(1));
+        let mut vex = join_as_player(&mut state, ClientId(2), "vex");
+        let planned = token(&state, "t1").id;
+        state.handle(ClientId(1), drop_at(&planned, 20.5, 1.5, true));
+        state.handle(ClientId(1), create_staged("Ambusher"));
+        drain(&mut vex);
+
+        state.handle(ClientId(1), ClientMsg::ClearStaged);
+
+        assert!(
+            drain(&mut vex).is_empty(),
+            "nothing about this was the table's to hear"
+        );
+    }
+
+    #[test]
+    fn the_dm_is_told_when_a_plan_is_cleared_out_from_under_them() {
+        let (mut state, mut dm_rx) = staged_room(ClientId(1));
+        let planned = token(&state, "t1").id;
+        state.handle(ClientId(1), drop_at(&planned, 20.5, 1.5, true));
+        state.handle(ClientId(1), create_staged("Ambusher"));
+        let ambusher = made(&state, "Ambusher").id;
+        drain(&mut dm_rx);
+
+        state.handle(ClientId(1), ClientMsg::ClearStaged);
+
+        let msgs = drain(&mut dm_rx);
+        assert!(
+            msgs.iter().any(|msg| matches!(
+                msg,
+                ServerMsg::TokenChanged { token }
+                    if token.id == planned && token.staged_pos.is_none()
+            )),
+            "the cleared plan should reach the DM's other tabs: {msgs:?}"
+        );
+        assert!(
+            msgs.iter()
+                .any(|msg| matches!(msg, ServerMsg::TokenRemoved { id } if id == &ambusher)),
+            "and so should the deleted token: {msgs:?}"
+        );
+    }
+
+    #[test]
+    fn staging_a_different_map_clears_the_plans_but_recalibrating_does_not() {
+        // The arm that gets missed. `SetMap` already tells a load from a
+        // recalibration by URL; correcting the grid after placing an ambush is
+        // an ordinary thing to do and must not sweep the ambush away.
+        let (mut state, _dm_rx) = staged_room(ClientId(1));
+        let planned = token(&state, "t1").id;
+        state.handle(ClientId(1), drop_at(&planned, 20.5, 1.5, true));
+        state.handle(ClientId(1), create_staged("Ambusher"));
+
+        state.handle(
+            ClientId(1),
+            staged(calibrate("/uploads/next.png", 96.0, 4.0, "#aabbccdd")),
+        );
+        assert_eq!(
+            token(&state, "t1").staged_pos,
+            Some(Pos { x: 20.5, y: 1.5 }),
+            "a recalibration is not a new next room"
+        );
+        assert!(made(&state, "Ambusher").staged_only);
+
+        stage(&mut state, ClientId(1), "/uploads/somewhere-else.png");
+        assert_eq!(token(&state, "t1").staged_pos, None);
+        assert!(
+            state.tokens.values().all(|t| t.name != "Ambusher"),
+            "a monster placed for a room nobody will visit should not follow"
+        );
+    }
+
+    #[test]
+    fn loading_a_new_board_leaves_the_plans_for_the_next_one_alone() {
+        // A plan describes a cell on the staged map, which this has not touched.
+        let (mut state, _dm_rx) = staged_room(ClientId(1));
+        let planned = token(&state, "t1").id;
+        state.handle(ClientId(1), drop_at(&planned, 20.5, 1.5, true));
+
+        state.handle(
+            ClientId(1),
+            set_map("/uploads/somewhere.png", 64.0, 0.0, 0.0),
+        );
+
+        assert_eq!(
+            token(&state, "t1").staged_pos,
+            Some(Pos { x: 20.5, y: 1.5 })
+        );
+    }
+
+    #[test]
+    fn deleting_a_token_takes_its_plan_with_it() {
+        let (mut state, _dm_rx) = staged_room(ClientId(1));
+        state.handle(ClientId(1), create("Dire Wolf", 1.0, Owner::Dm));
+        let id = made(&state, "Dire Wolf").id;
+        state.handle(ClientId(1), drop_at(&id, 12.5, 12.5, true));
+
+        state.handle(ClientId(1), ClientMsg::DeleteToken { id: id.clone() });
+
+        assert!(!state.tokens.contains_key(&id));
+    }
+
+    #[test]
+    fn a_plan_is_worth_saving_and_survives_the_trip() {
+        // Slate is off between sessions, and the whole point of preparing the
+        // next room is that it is prepared on a different evening.
+        let (mut state, _dm_rx) = staged_room(ClientId(1));
+        let planned = token(&state, "t1").id;
+        assert!(
+            state.handle(ClientId(1), drop_at(&planned, 20.5, 1.5, true)),
+            "planning should mark the room dirty"
+        );
+        state.handle(ClientId(1), create_staged("Ambusher"));
+
+        let json = serde_json::to_vec(&state.to_saved()).expect("encodes");
+        let saved: Saved = serde_json::from_slice(&json).expect("decodes");
+        let restored = RoomState::restored(saved, SECRET.to_owned());
+
+        assert_eq!(
+            token(&restored, "t1").staged_pos,
+            Some(Pos { x: 20.5, y: 1.5 })
+        );
+        assert!(made(&restored, "Ambusher").staged_only);
+    }
+
+    #[test]
+    fn a_dragged_plan_is_not_worth_saving_but_the_drop_is() {
+        let (mut state, _dm_rx) = staged_room(ClientId(1));
+        let id = token(&state, "t1").id;
+
+        assert!(
+            !state.handle(
+                ClientId(1),
+                ClientMsg::MoveToken {
+                    id: id.clone(),
+                    x: 5.0,
+                    y: 5.0,
+                    dragging: true,
+                    staged: true,
+                }
+            ),
+            "a plan is dragged into place like a token, and costs the disk as little"
+        );
+        assert!(state.handle(ClientId(1), drop_at(&id, 5.0, 5.0, true)));
+    }
+
     #[test]
     fn an_unusable_grid_size_is_refused() {
         let mut state = room();
@@ -3800,6 +4725,7 @@ mod tests {
                 x: bad,
                 y: 0.0,
                 dragging: false,
+                staged: false,
             };
             assert!(
                 state.check(ClientId(1), &msg).is_err(),
@@ -3811,6 +4737,7 @@ mod tests {
                 x: 0.0,
                 y: bad,
                 dragging: true,
+                staged: false,
             };
             assert!(
                 state.check(ClientId(1), &msg).is_err(),
@@ -3841,7 +4768,8 @@ mod tests {
         // JSON and `1e400` is rejected as out of range, so both stop at the
         // parser — but `1e39` is an ordinary `f64` that becomes infinity on the
         // way into an `f32` field, and arrives looking like a normal number.
-        let raw = r#"{"type":"move_token","id":"t1","x":1e39,"y":0.0,"dragging":false}"#;
+        let raw =
+            r#"{"type":"move_token","id":"t1","x":1e39,"y":0.0,"dragging":false,"staged":false}"#;
         let msg: ClientMsg = serde_json::from_str(raw).expect("this parses; that is the point");
         assert!(
             matches!(msg, ClientMsg::MoveToken { x, .. } if !x.is_finite()),
@@ -3915,6 +4843,7 @@ mod tests {
                     x: 9.2,
                     y: 11.8,
                     dragging: false,
+                    staged: false,
                 },
             })
             .await
@@ -3948,6 +4877,7 @@ mod tests {
             x: 6.3,
             y: 5.1,
             dragging,
+            staged: false,
         };
 
         assert!(
@@ -3997,6 +4927,7 @@ mod tests {
             x: 1.5,
             y: 1.5,
             dragging: false,
+            staged: false,
         };
         assert!(
             !state.handle(ClientId(1), steal),
@@ -4032,6 +4963,7 @@ mod tests {
                 x: 9.2,
                 y: 11.8,
                 dragging: false,
+                staged: false,
             },
         );
         state.handle(

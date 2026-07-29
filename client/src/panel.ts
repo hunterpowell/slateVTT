@@ -105,14 +105,19 @@ export function createPanel(
       );
 
       if (isDm) {
+        // A token built on the next map is not in this fight — the server
+        // refuses it, and offering it would be offering an error. Combat is the
+        // fight happening now; next room's order needs rolls nobody has made.
+        const rollable = scene.tokens.filter((t) => !t.stagedOnly);
+
         // Only rebuild the dropdown when the token list itself changes, so a
         // half-made selection survives every turn advance. Names are part of
         // that: renaming a token has to reach the option that shows it.
-        const ids = scene.tokens.map((t) => `${t.id}:${t.name}`).join(',');
+        const ids = rollable.map((t) => `${t.id}:${t.name}`).join(',');
         if (ids !== knownTokenIds) {
           knownTokenIds = ids;
           ui.tokenSelect.replaceChildren(
-            ...[...scene.tokens]
+            ...[...rollable]
               .sort((a, b) => a.name.localeCompare(b.name))
               .map((token) => {
                 const option = document.createElement('option');

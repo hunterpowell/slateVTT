@@ -129,7 +129,7 @@ mod tests {
     use std::sync::atomic::{AtomicU32, Ordering};
 
     use super::*;
-    use crate::protocol::{Hp, InitiativeEntry, Owner, PlayerId, Rect, TokenId};
+    use crate::protocol::{Hp, InitiativeEntry, Owner, PlayerId, Pos, Rect, TokenId};
 
     static NEXT: AtomicU32 = AtomicU32::new(0);
 
@@ -195,6 +195,10 @@ mod tests {
                     current: 14,
                     max: 31,
                 }),
+                // Where the DM means this one to land when the map staged above
+                // becomes the board.
+                staged_pos: Some(Pos { x: 8.5, y: 2.5 }),
+                staged_only: false,
             }],
             initiative: Initiative {
                 entries: vec![InitiativeEntry {
@@ -259,6 +263,11 @@ mod tests {
                 max: 31
             })
         );
+        // And so is the plan for where it lands on that staged map. A plan that
+        // did not survive the file would be lost exactly when it is wanted: the
+        // next map is prepared on one evening to be promoted on another.
+        assert_eq!(token.staged_pos, Some(Pos { x: 8.5, y: 2.5 }));
+        assert!(!token.staged_only);
 
         assert_eq!(loaded.initiative.round, 4);
         assert_eq!(loaded.initiative.current, Some(TokenId::new("t1")));

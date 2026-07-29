@@ -105,9 +105,12 @@ struct Token {
     id: TokenId, name: String, x: f32, y: f32, owner: Owner, img: String, size: f32,
     /// DM-only, both of them — see *Hidden tokens and hit points*.
     hidden: bool, hp: Option<Hp>,
+    /// DM-only, both of them — see *Preparing the next room*.
+    staged_pos: Option<Pos>, staged_only: bool,
 }
 
 struct Hp { current: i32, max: i32 }
+struct Pos { x: f32, y: f32 }
 
 enum Owner { Dm, Player(PlayerId) }
 ```
@@ -142,7 +145,9 @@ fn can_move(c: &Client, t: &Token) -> bool {
 ```
 
 Token creation, deletion, map changes, and initiative edits are DM-only. So is reassigning a
-token's `owner`, which is how a player is handed a token the DM built for them.
+token's `owner`, which is how a player is handed a token the DM built for them. So is planning
+where a token lands — a player may move their own token and may not plan for it, because the
+plan is a cell on a map they have not been shown.
 
 The DM uploads all token art. The upload endpoint authenticates with the DM secret, and a
 player has no credential to offer it — giving them one would be the authentication this
@@ -197,6 +202,11 @@ The client predicts locally — it moves its own token immediately rather than w
 round trip, and corrects only if the server rejects. The server must not echo drag frames back
 to the originating client; doing so causes visible rubber-banding.
 
+`MoveToken` and `ServerMsg::TokenMoved` both carry `staged`, naming which of the token's two
+positions the frame is about. Everything either side of that one branch — the throttle, the snap,
+the debounce, the echo rule — is unaware there are two. A frame carrying a plan reaches the DM
+alone; see *Preparing the next room*.
+
 ## Tokens
 
 A token is a square `size` cells across, centred on the position stored for it. `size` is one of
@@ -209,13 +219,15 @@ that cell's centre; an even width has no middle cell and settles on the corner f
 Either way its edges land on grid lines, which is the point. Anything below one cell settles like a
 single-cell token rather than on a sub-cell lattice of its own — a tiny creature belongs in a
 square with the rest of the party, not tucked into a quarter of one. Resizing re-snaps, or a token
-grown from 1×1 to 2×2 straddles half a cell until somebody happens to drag it. This rule lives in
-`snap_to_cell` on the server and nowhere else; the client never snaps.
+grown from 1×1 to 2×2 straddles half a cell until somebody happens to drag it. A `staged_pos` is a
+position on the same lattice and re-snaps with it. This rule lives in `snap_to_cell` on the server
+and nowhere else; the client never snaps.
 
 Creating, deleting and editing a token are DM-only, and the id is the server's to invent. One
 `UpdateToken` carries every editable field, the way `SetMap` carries the whole grid — position is
 deliberately not among them, because `MoveToken` owns that and an edit made from a panel must not
-drag a token out from under whoever is moving it. `TokenChanged` covers creation and editing alike:
+drag a token out from under whoever is moving it. It carries no `staged` flag either, unlike the
+two commands beside it: every field on it is shared by both boards. `TokenChanged` covers creation and editing alike:
 an id the client has not seen is the creation. That is one message instead of two that would have
 to be kept in step, and it is what a hidden token becomes a `TokenRemoved` for players and a
 `TokenChanged` for the DM out of.
@@ -258,10 +270,16 @@ for a player it was already hidden from. That last arm is the one that gets miss
 `TokenRemoved` naming an id they never held tells them a token exists, which is the whole thing
 being withheld.
 
-Telling those last two apart needs the token's `hidden` from *before* `apply` ran, which
+Telling those last two apart needs the token's visibility from *before* `apply` ran, which
 `message_for` cannot read off `&self`. So `Event::TokenChanged` and `Event::TokenRemoved` each
-carry `was_hidden`. A token that has just been created counts as hidden, because nobody holds it
+carry `was_unseen`. A token that has just been created counts as unseen, because nobody holds it
 yet — which is exactly what makes a create-hidden announce nothing.
+
+**"Unseen" and not "hidden", because there are two reasons now.** `Token::unseen()` is
+`hidden || staged_only`, and it is the only question any filter asks — `snapshot_for`,
+`initiative_for`, and all three `message_for` arms go through it. A creature the DM took off the
+board and one that was never on it are different facts about different maps, and they compose;
+anything that filters on one and forgets the other is a leak. See *Preparing the next room*.
 
 ### Initiative
 
@@ -291,6 +309,83 @@ Three colour bands rather than a gradient — a DM glancing at six monsters want
 nothing here knows the word "bloodied". Taking damage is the token panel with a new number and
 Enter; there is no `SetHp`, because it would carry one field of the several `UpdateToken` already
 sends together.
+
+## Preparing the next room
+
+The staged map gives the DM the next *map*; these two fields give them the next *encounter*.
+Monsters placed on that map before the party arrives, and a plan for where the party lands when it
+does. Nothing here reaches the table until promote.
+
+**One token, not two worlds.** `staged_pos: Option<Pos>` is where a token lands on a promote, and
+`staged_only: bool` says it does not exist on the live board yet. A parallel `staged.tokens`
+collection is the obvious alternative and is a trap: two copies means a rename, a re-art or a
+resize has to be applied to both, and they drift. Only *position* and *existence* fork. Name, art,
+size, owner, `hidden` and `hp` stay single-valued and shared, which is also what a DM wants —
+nobody needs a goblin with different art on two maps. That is why `UpdateToken` alone carries no
+`staged` flag.
+
+`Pos` exists so "half a position" is unrepresentable, the way `Hp` does. This does **not** strain
+invariant 1: a staged position is in cells like every other, which is exactly what makes
+recalibrating the staged map after placing monsters safe.
+
+A token is therefore in one of three states:
+
+| State | Live board | Preview |
+|---|---|---|
+| Live, unplanned | at `x, y` | at `x, y` — staying put |
+| Live, planned | at `x, y` | at `staged_pos` — will move on promote |
+| Staged-only | **absent, including for the DM** | at `staged_pos` |
+
+**Staged-only tokens being absent from the DM's own live board is not a detail.** Switching back
+to `Map` mode must show the board as the table sees it, or the DM loses the one view they have of
+what everyone else is looking at. It is also why the live board marks a planned token in no way at
+all: plans live in preview, and a mirror with annotations is not a mirror.
+
+Both fields are DM-only and reach the DM's client because `Token::view_for` names them —
+deliberately, since the DM's board is what draws a plan. There is no command to un-plan a single
+token: dragging it back onto its live cell leaves a `staged_pos` that promote applies as a no-op,
+which is the same outcome for a fraction of the surface area.
+
+### Promote, discard, and what dies with the staged map
+
+Promote is a fan-out and the one moment the whole table sees a batch of changes at once. Every
+`staged_pos` is adopted as `x, y` and cleared, every `staged_only` is cleared, and
+`Event::Promoted` leaves in **three shapes**: a whole `TokenChanged` for the DM, whose client
+holds the two fields that were just emptied and cannot learn that from a `TokenMoved`; a
+`TokenChanged` for a player meeting the token for the first time; and a plain `TokenMoved` for one
+who has been watching it all along. A token that is still `hidden` gets none of them — a promote
+settles `staged_only` and says nothing about the other reason.
+
+The pitfalls are all one thing: **staged token state belongs to the staged map and has to die with
+it.**
+
+- `ClearStaged` clears every `staged_pos` and deletes every `staged_only` token.
+- **A load into the staged slot does the same, and a recalibration must not.** `SetMap` already
+  tells the two apart by URL; this is the same `loading`. Correcting the grid after placing an
+  ambush is an ordinary thing to do and must not sweep the ambush away. This is the arm that gets
+  missed.
+- A load into the *live* slot does not touch them. A plan describes a cell on the staged map,
+  which that command has not touched.
+- Deleting a token takes its `staged_pos` with it, like any other field on it.
+- `MoveToken`/`CreateToken` with `staged: true` are refused when nothing is staged, and a
+  `staged_only` token cannot be moved on the live board or added to initiative — all refused the
+  way a token that does not exist is refused. Combat is the fight happening now.
+
+**Clearing a plan is a DM-only message.** `Event::TokenPlanChanged` is the `StagedChanged` shape at
+token scale: a player's copy of that token is identical either side of it, so the only thing a
+frame could carry them is the news that the DM just threw a plan away — which is news, and
+invariant 4 is about what a client may know.
+
+### On screen
+
+Staged-only tokens draw with a teal ring; nothing fades for being previewed any more. Hidden still
+fades and still dashes, so a monster built on the next map *and* hidden reads as teal, faint and
+dashed — three marks for three independent facts, none cancelling another.
+
+`shownPos(scene, token)` is the token-shaped twin of `shownBoard`, returning `null` for a token
+absent from the board on screen, and every draw and hit-test goes through it. That indirection is
+the whole client-side feature: without it a planned position gets written into the live one by a
+single missing branch.
 
 ## Distance
 
@@ -399,12 +494,19 @@ or hit-tests reads `shownBoard(scene)` rather than reaching for the live one. Th
 the whole client-side feature; without it, a staged calibration preview writes into the grid the
 table is looking at.
 
-Tokens draw ghosted and nothing is grabbable while previewing: they keep their cells through a
-promote, so showing them says where the party lands, but what is on screen is not the board and a
-token that looks draggable and is not reads as broken. The token panel is hidden for the same
-reason. (This is the one part of staging that a queued milestone deliberately reverses — see
-*Preparing the next room* in `ROADMAP.md` before building on it.) Preview is client-only — no command, no event, nothing persisted, and nobody else can
-tell it is happening. Because it is that invisible, the DM's own screen has to say so loudly:
+**Everything on that board is a piece.** Tokens drag, the token panel works, and what a drag
+writes is the token's plan rather than its position — see *Preparing the next room*. Preview
+briefly ghosted tokens and refused to grab them, on the grounds that what was on screen was not
+the board; that rule is gone, because a board where some things can be moved and others cannot is
+worse than either extreme.
+
+Preview is client-only — no command, no event, nothing persisted, and nobody else can
+tell it is happening. **The server does not know the DM is previewing and must not learn.** That
+is why intent rides on the command (`SetMap`, `MoveToken` and `CreateToken` each carry `staged`)
+rather than on a mode, and it means the server cannot refuse an operation *because* the DM is
+previewing — anything that should not happen there is the client declining to offer it.
+
+Because preview is that invisible, the DM's own screen has to say so loudly:
 mistaking a staged map for the board is the one way this feature goes wrong.
 
 ## Working agreement

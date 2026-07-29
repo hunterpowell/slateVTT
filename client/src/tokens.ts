@@ -11,12 +11,20 @@
 // there is no round trip anyone can feel. The panel changes what is on screen
 // only when the server says so.
 //
+// The panel works in preview mode as well as on the board, and which slot it is
+// pointed at decides only one thing: whether a *new* token is built on the map
+// being prepared or on the one everyone is looking at. Every other field it
+// sends is shared by both boards, so an edit lands everywhere at once — only
+// position and existence fork. That is what the panel has to teach, because a
+// board where some things are shared and others are not is worse than either.
+//
 // Players never see this. It is only created for a DM connection, and the
 // server re-checks every command regardless.
 
 import type { Vec2 } from './coords.js';
 import type { ClientMsg, Hp, Owner, RosterEntry } from './protocol.js';
 import type { Scene, Token } from './scene.js';
+import { shownPos } from './scene.js';
 
 export interface TokenToolUi {
   root: HTMLElement;
@@ -65,6 +73,9 @@ export function createTokenTool(
   /** The art the form currently describes. Empty means a plain named disc. */
   let art = '';
 
+  /** The board on screen is the staged one, so a new token belongs to it. */
+  const previewing = (): boolean => scene !== null && scene.previewing && scene.staged !== null;
+
   ui.owner.replaceChildren(
     option(DM_OWNER, 'DM'),
     ...roster.map((entry) => option(entry.id, entry.name)),
@@ -94,13 +105,32 @@ export function createTokenTool(
     ui.hidden.checked = token?.hidden ?? false;
     art = token?.img ?? '';
 
-    ui.head.textContent = token === null ? 'New token' : token.name;
+    ui.head.textContent = token === null ? headingForNew() : token.name;
     ui.save.textContent = token === null ? 'create' : 'save';
     ui.remove.hidden = token === null;
     ui.fresh.hidden = token === null;
-    ui.hint.textContent =
-      token === null ? 'Click a token on the map to edit it.' : 'Drag it on the map to move it.';
+    ui.hint.textContent = hintFor(token);
     showArt();
+  };
+
+  /** Names the slot a token would be built into, since the two differ in what
+   *  they produce: one goes on the board, the other on the next map only. */
+  const headingForNew = (): string => (previewing() ? 'New token · next map' : 'New token');
+
+  /**
+   * What the DM can do with what is selected — and, in preview, what a drag
+   * there will actually mean, since the same gesture writes a different field.
+   */
+  const hintFor = (token: Token | null): string => {
+    if (token === null) {
+      return previewing()
+        ? 'Built on the next map only. The table meets it on promote.'
+        : 'Click a token on the map to edit it.';
+    }
+    if (!previewing()) return 'Drag it on the map to move it.';
+    return token.stagedOnly
+      ? 'Drag it to place it for the next map.'
+      : 'Drag it to plan where it lands on promote.';
   };
 
   function select(id: string | null): void {
@@ -176,6 +206,9 @@ export function createTokenTool(
       y: at.y,
       hidden: ui.hidden.checked,
       hp: hitPoints(),
+      // The slot on screen, exactly as `set_map` reads it. Building the
+      // ambush for next week's room is standing on next week's map.
+      staged: previewing(),
     });
     // Deliberately stays on "new token" with the fields as they are: six
     // goblins is six clicks, and `spaceFor` puts each one in its own cell.
@@ -208,7 +241,13 @@ export function createTokenTool(
     const token = selected();
     if (token === null) return;
     // A deleted token takes its initiative row with it and there is no undo.
-    if (!window.confirm(`Delete ${token.name}?`)) return;
+    // Deleting from preview is still deleting: existence forks, but this token
+    // exists on the board, and saying so beats a DM discovering it afterwards.
+    const warning =
+      previewing() && !token.stagedOnly
+        ? `Delete ${token.name}? It is on the board now, not only on the next map.`
+        : `Delete ${token.name}?`;
+    if (!window.confirm(warning)) return;
     send({ type: 'delete_token', id: token.id });
     select(null);
   });
@@ -301,8 +340,15 @@ function ownerValue(owner: Owner): string {
 function spaceFor(scene: Scene | null, centre: Vec2 | null): Vec2 | null {
   if (scene === null || centre === null) return null;
 
+  // Against where tokens are *on this board*: a cell is only occupied if
+  // something is standing in it here, and a token absent from this board is
+  // standing nowhere on it.
+  const here: Vec2[] = scene.tokens
+    .map((t) => shownPos(scene, t))
+    .filter((at): at is Vec2 => at !== null);
+
   const taken = (x: number, y: number): boolean =>
-    scene.tokens.some((t) => Math.abs(t.x - x) < 0.5 && Math.abs(t.y - y) < 0.5);
+    here.some((at) => Math.abs(at.x - x) < 0.5 && Math.abs(at.y - y) < 0.5);
 
   for (let ring = 0; ring <= MAX_SEARCH_RINGS; ring++) {
     for (let dx = -ring; dx <= ring; dx++) {

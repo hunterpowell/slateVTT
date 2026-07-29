@@ -5,7 +5,7 @@ import type { Identity } from './identity.js';
 import { canMove } from './identity.js';
 import type { ClientMsg } from './protocol.js';
 import type { Scene, Token } from './scene.js';
-import { shownBoard } from './scene.js';
+import { shownBoard, shownPos } from './scene.js';
 
 const MIN_ZOOM = 0.1;
 const MAX_ZOOM = 4;
@@ -17,7 +17,19 @@ const DRAG_SEND_INTERVAL_MS = 40;
 
 type Drag =
   | { kind: 'pan'; pointerId: number; lastX: number; lastY: number; moved: boolean }
-  | { kind: 'token'; pointerId: number; token: Token; grabDX: number; grabDY: number }
+  | {
+      kind: 'token';
+      pointerId: number;
+      token: Token;
+      grabDX: number;
+      grabDY: number;
+      /**
+       * This drag writes the token's plan for the staged map rather than its
+       * position. Fixed when the token is picked up rather than read per frame,
+       * so a drag cannot change which of the two it is halfway through.
+       */
+      staged: boolean;
+    }
   | { kind: 'calibrate'; pointerId: number; x0: number; y0: number };
 
 export interface InputState {
@@ -40,9 +52,10 @@ export interface InputState {
  * While the DM has calibrate mode on, left-drag draws a grid reference box
  * instead. Middle-drag still pans, so the map can be moved without leaving it.
  *
- * While the DM is previewing a staged map, no token is grabbable at all: what
- * is on screen is not the board, and dragging a token across it would mean
- * moving something on a map the table cannot see.
+ * While the DM is previewing a staged map, tokens drag exactly as they do on
+ * the board — everything you do in preview happens on promote. What changes is
+ * only which position the drag writes: the plan, not the token. Routing it is
+ * one flag on the command and one branch here.
  *
  * Tokens that are not yours are transparent to the pointer, so dragging across
  * one pans the map instead of feeling broken. The server re-checks regardless;
@@ -72,8 +85,35 @@ export function attachInput(
     return { x: e.clientX - rect.left, y: e.clientY - rect.top };
   };
 
-  const sendMove = (token: Token, dragging: boolean): void => {
-    send({ type: 'move_token', id: token.id, x: token.x, y: token.y, dragging });
+  /** Whether what is on screen is the staged map, and so what a drag writes. */
+  const previewing = (): boolean => scene.previewing && scene.staged !== null;
+
+  /** Moves a token, or its plan, to a cell — the local prediction half. */
+  const predict = (drag: Extract<Drag, { kind: 'token' }>, x: number, y: number): void => {
+    if (drag.staged) {
+      drag.token.stagedPos = { x, y };
+    } else {
+      drag.token.x = x;
+      drag.token.y = y;
+    }
+  };
+
+  const sendMove = (drag: Extract<Drag, { kind: 'token' }>, dragging: boolean): void => {
+    // Read back off the token rather than passed in, so the trailing frame
+    // below sends where the token is *now* rather than where it was queued.
+    const at = drag.staged ? drag.token.stagedPos : drag.token;
+    // Null is a token in preview that has not actually been dragged anywhere:
+    // clicking one to edit it in the panel must not plan a move it did not
+    // make. There is no command to un-plan, so an accidental plan would stay.
+    if (at === null) return;
+    send({
+      type: 'move_token',
+      id: drag.token.id,
+      x: at.x,
+      y: at.y,
+      dragging,
+      staged: drag.staged,
+    });
   };
 
   const cancelTrailingSend = (): void => {
@@ -88,14 +128,14 @@ export function attachInput(
    * frame that happened to fall on an interval boundary, which can be most of a
    * cell behind the cursor, until the drop corrects it.
    */
-  const sendDragFrame = (token: Token): void => {
+  const sendDragFrame = (drag: Extract<Drag, { kind: 'token' }>): void => {
     const now = performance.now();
     const sinceLast = now - lastDragSentAt;
 
     if (sinceLast >= DRAG_SEND_INTERVAL_MS) {
       cancelTrailingSend();
       lastDragSentAt = now;
-      sendMove(token, true);
+      sendMove(drag, true);
       return;
     }
 
@@ -103,7 +143,7 @@ export function attachInput(
     trailingSend = window.setTimeout(() => {
       trailingSend = null;
       lastDragSentAt = performance.now();
-      sendMove(token, true); // reads the token's position as of *now*
+      sendMove(drag, true); // reads the position as of *now*
     }, DRAG_SEND_INTERVAL_MS - sinceLast);
   };
 
@@ -137,9 +177,19 @@ export function attachInput(
     const hit = e.button === 0 ? tokenAt(scene, identity, w.x, w.y) : null;
 
     if (hit !== null) {
-      // Grab offset keeps the token from snapping its centre to the cursor.
+      // Grab offset keeps the token from snapping its centre to the cursor, and
+      // is measured from wherever the token is *on this board* — its plan while
+      // previewing, its own cell otherwise.
       const g = gridUnder(w);
-      drag = { kind: 'token', pointerId: e.pointerId, token: hit, grabDX: hit.x - g.x, grabDY: hit.y - g.y };
+      const from = shownPos(scene, hit) ?? { x: hit.x, y: hit.y };
+      drag = {
+        kind: 'token',
+        pointerId: e.pointerId,
+        token: hit,
+        grabDX: from.x - g.x,
+        grabDY: from.y - g.y,
+        staged: previewing(),
+      };
       state.draggingId = hit.id;
       onSelect?.(hit.id);
       cancelTrailingSend();
@@ -180,9 +230,8 @@ export function attachInput(
     }
 
     const g = gridUnder(w);
-    drag.token.x = g.x + drag.grabDX;
-    drag.token.y = g.y + drag.grabDY;
-    sendDragFrame(drag.token);
+    predict(drag, g.x + drag.grabDX, g.y + drag.grabDY);
+    sendDragFrame(drag);
   });
 
   const endDrag = (e: PointerEvent): void => {
@@ -197,7 +246,7 @@ export function attachInput(
       cancelTrailingSend();
       // Always sent, never throttled: this frame carries the final position and
       // is what the server snaps to the grid and echoes back.
-      sendMove(drag.token, false);
+      sendMove(drag, false);
     } else if (drag.kind === 'calibrate') {
       // Not a commit — the tool keeps the box so the cell count can be tuned
       // against it, and stays in calibrate mode until the DM applies.
@@ -246,19 +295,21 @@ export function attachInput(
  * rejected, so a token sitting on top of yours never blocks you from grabbing
  * your own.
  *
- * Nothing is grabbable while a staged map is being previewed: those tokens are
- * ghosts showing where the party would land, not pieces on a board.
+ * Hit-testing runs against `shownPos`, exactly as drawing does — the pointer has
+ * to agree with the picture, and a token absent from this board is not under the
+ * cursor whatever its other position happens to be.
  */
 function tokenAt(scene: Scene, identity: Identity, wx: number, wy: number): Token | null {
   const board = shownBoard(scene);
-  if (board !== scene.live) return null;
 
   for (let i = scene.tokens.length - 1; i >= 0; i--) {
     const token = scene.tokens[i];
     if (token === undefined) continue;
     if (!canMove(identity, token)) continue;
+    const at = shownPos(scene, token);
+    if (at === null) continue;
     const radius = (board.grid.px * token.size) / 2;
-    const centre = gridToWorld(board.grid, token.x, token.y);
+    const centre = gridToWorld(board.grid, at.x, at.y);
     if (Math.hypot(wx - centre.x, wy - centre.y) <= radius) return token;
   }
   return null;

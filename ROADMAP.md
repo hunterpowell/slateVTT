@@ -22,7 +22,7 @@ Do not work ahead. Each milestone should run and be usable before starting the n
 6. Map upload and grid calibration UI.
 7. Package for Windows session hosting and deploy behind a Cloudflare Tunnel.
 
-Milestones 1–11 are done. Everything from 8 on was planned after the original seven, and the
+Milestones 1–12 are done. Everything from 8 on was planned after the original seven, and the
 order of what remains is deliberate:
 
 8. **Done.** Map library — list `maps/`, pick one, remember its calibration. The smallest thing
@@ -53,153 +53,35 @@ order of what remains is deliberate:
     creature's initiative row had to be filtered too, which means a token edit can now have to
     rebuild the panel; a feature that hides something and leaves it named in a panel has not
     hidden it.
-12. Preparing the next room — the DM places monsters on the staged map and plans where the party
-    lands, none of which the table sees until promote. See *Preparing the next room* below. The
-    largest of the remaining non-fog milestones, and it revises milestone 10's preview rules
-    rather than only adding to them.
+12. **Done.** Preparing the next room — `staged_pos` and `staged_only` on tokens, and the reversal
+    of milestone 10's rule that nothing in preview is interactive. See *Preparing the next room*
+    in CLAUDE.md.
+
+    Milestone 11's guess was right: per-field redaction was already a type, so the two fields
+    reached nobody until `view_for` named them, and the interesting work was elsewhere. Three
+    things cost more than the state model did.
+
+    `was_hidden` had to become `was_unseen`. There are two independent reasons the table cannot
+    see a token now, they compose, and every filter has to ask about both — so the question moved
+    onto `Token::unseen()` and nothing reads either field for it directly. Anything that filters
+    on one and forgets the other is a leak, and a rename is cheaper than remembering.
+
+    Promote stopped fitting the existing events. The DM needs a whole token, because their client
+    holds two fields that have just been emptied and no `TokenMoved` can say so; the table needs a
+    creation or a move depending on whether they have met it. That is `Event::Promoted`, three
+    arms. And discarding a plan needed `Event::TokenPlanChanged`, which reaches the DM alone —
+    reusing `TokenChanged` would have sent players a frame identical to what they already held,
+    which carries no data and still announces the moment the DM changed their mind.
+
+    The client half was the milestone-10 shape again: `shownPos` is `shownBoard`'s twin, one
+    function answering "where is this token on the board that is on screen", and everything that
+    draws or hit-tests goes through it. Ghosting was deleted rather than adjusted, as predicted.
 13. Movement ruler.
 14. Drawing layer.
 15. Wall and door editor. Polyline authoring — click, click, double-click to end — snapped to
     grid corners, with a modifier for free placement. This is not polish: per-segment click-drag
     across a two-hundred-segment dungeon is what makes people quietly stop using fog of war.
 16. Fog of war.
-
-## Preparing the next room
-
-Milestone 10 gave the DM the next map. This gives them the next *encounter*: monsters placed on
-that map before the party arrives, and a plan for where the party lands when it does. Nothing
-here reaches the table until promote.
-
-Milestone 10 decided that token interaction is off during preview. **This milestone reverses
-that decision**, so it edits the *Staged maps* section of CLAUDE.md rather than only appending to
-it. That reversal is most of the cost: the panel, hit-testing, and the ghosting rule were all
-built on "nothing on this board is a piece", and all three change.
-
-### Two features, one bill
-
-Placing monsters and planning party positions look like separable features and are not. Placing
-monsters already requires the token panel usable in preview, tokens hit-testable and draggable
-against the staged grid, and a rendering language for "not on the board yet". Once a drag in
-preview works, routing that drag to a second position instead of the live one is an optional
-field and a filter arm. Build them together; splitting pays the whole bill and collects half the
-value.
-
-The mental model that falls out is worth stating on its own, because it is what the UI has to
-teach: **everything you do in preview happens on promote.** A board where some tokens can be
-moved and others cannot is worse than either extreme.
-
-### State
-
-One token, not two worlds:
-
-```rust
-struct Token {
-    id, name, x, y, owner, img, size,
-    hidden: bool, hp: Option<Hp>,   // milestone 11 — built
-    /// Where this token lands when the staged map is promoted.
-    staged_pos: Option<Pos>,
-    /// Does not exist on the live board yet. Cleared by promote.
-    staged_only: bool,
-}
-
-struct Pos { x: f32, y: f32 }
-```
-
-Both new fields are DM-only, and milestone 11 left the machinery for that in place: add them to
-`Token`, leave them out of `Token::view_for`, and they reach nobody. Adding them *to* `view_for`
-is then the deliberate act of deciding the DM's own client needs them — which it does, since the
-DM's board is what draws a planned position.
-
-A parallel `staged.tokens` collection is the obvious alternative and is a trap: two copies of a
-token means a rename, a re-art or a resize has to be applied to both, and the two drift. Only
-*position* and *existence* fork. Name, art, size and owner stay single-valued and shared, which
-is also what a DM wants — nobody needs a goblin with different art on two maps.
-
-`Pos` exists so that "half a position" is unrepresentable. Two bare `Option<f32>` fields can be
-set one at a time; this cannot, the same way `Identity` makes "a DM with a roster slot"
-unrepresentable rather than merely unexpected.
-
-This does **not** strain invariant 1. That invariant is about grid units versus pixels, not about
-how many positions a token has. A staged position is in cells like every other, which is exactly
-what makes recalibrating the staged map after placing monsters safe: they stay in their cells.
-
-A token is therefore in one of three states, and the DM has to be able to tell them apart on
-sight:
-
-| State | Live board | Preview |
-|---|---|---|
-| Live, unplanned | at `x, y` | at `x, y` — staying put |
-| Live, planned | at `x, y` | at `staged_pos` — will move on promote |
-| Staged-only | **absent, including for the DM** | at `staged_pos` |
-
-Staged-only tokens being absent from the DM's own live board is not a detail. Switching back to
-`Map` mode must show the board as the table sees it, or the DM loses the one view they have of
-what everyone else is looking at.
-
-### Wire
-
-`MoveToken` and `CreateToken` each gain `staged: bool`, the same flag `SetMap` already carries
-and for the same reason: it names which slot, and changes nothing else about the command.
-`ServerMsg::TokenMoved` needs the flag too, so the DM's client knows whether a frame writes to
-the token's position or its plan.
-
-**Preview is client-only state — the server does not know the DM is previewing**, and must not
-learn. That is why intent rides on the command rather than on a mode. It also means the server
-cannot refuse an operation "because the DM is previewing"; anything that should not happen in
-preview is the client declining to offer it.
-
-`UpdateToken` gets no flag. The fields it carries — name, art, size, owner, `hidden`, `hp` — are
-shared by both boards, so an edit applies immediately and everywhere, which is the honest
-behaviour rather than a special case.
-
-There is no command to un-plan a single token. Dragging it back onto its live cell leaves a
-`staged_pos` that promote applies as a no-op, which is the same outcome for a fraction of the
-surface area.
-
-### Promote, discard, and the pitfalls that come with them
-
-Promote stops being one line and becomes a fan-out, and it is the one moment the whole table sees
-a batch of changes at once:
-
-- `map = staged.take()`, as today
-- every `staged_pos` is adopted as `x, y`, then cleared
-- every `staged_only` flag is cleared
-- players receive `TokenChanged` for each token that just came into existence, and `TokenMoved`
-  for each one that moved — two messages for two genuinely different situations, consistent with
-  what each already means
-
-The pitfalls are all variations on one thing: **staged token state belongs to the staged map, and
-has to die with it.**
-
-- `ClearStaged` clears every `staged_pos` and deletes every `staged_only` token. Otherwise the
-  next map inherits monsters placed on a map nobody will ever see again.
-- **Staging a different map does the same.** This is the one that will get missed. `SetMap`
-  already distinguishes a load from a recalibration by URL; a load into the staged slot clears
-  staged token state, and a recalibration must not. Recalibrating after placing monsters is a
-  normal thing to do and must not sweep them away.
-- Deleting a live token takes its `staged_pos` with it, like any other field.
-- A staged-only token cannot be added to initiative — refuse it, the way a nonexistent token is
-  refused today. Combat is the fight happening now, and building next room's order in advance
-  needs rolls nobody has made.
-
-### Client
-
-`shownBoard` has a token-shaped twin: one function answering "where is this token, given which
-board is on screen", and every draw and hit-test goes through it. That indirection is the whole
-client-side feature, exactly as it was for boards in milestone 10 — and for the same reason,
-since without it a planned position gets written into the live one by a single missing branch.
-
-The ghosting rule needs replacing rather than adjusting. Ghosting currently means "not
-interactive", and nothing in preview is un-interactive any more. The distinction worth drawing is
-staged-only versus live, which belongs in the ring vocabulary the renderer already uses for
-ownership, turn and selection.
-
-### Not in this milestone
-
-- Still not a scene system. One staged slot; no walls or fog per map.
-- No pre-built initiative for the next fight.
-- No staged edits to name, art, size, owner, `hidden` or `hp` — only position and existence fork.
-- Nothing that lets a player learn a monster exists before the DM promotes it, by any route.
 
 ## Drawings
 

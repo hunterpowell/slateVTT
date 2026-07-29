@@ -269,11 +269,12 @@ function boot(): void {
           // size changes under it every time a new map is loaded.
           () => stage?.naturalSize() ?? null,
           (previewing) => {
-            // What is on screen is no longer the board, so nothing on it is a
-            // piece: the token panel goes away and any selection with it.
+            // Everything on this board is still a piece — that is the whole of
+            // preparing the next room — so the token panel stays. The selection
+            // does not: a staged-only token is absent from the live board, and a
+            // panel describing something not on screen is a panel lying.
             document.body.classList.toggle('previewing', previewing);
             tokenTool?.select(null);
-            ui.tokentool.root.hidden = previewing;
             // No prompt to size the grid — a staged map was offered one when it
             // was staged, and the live map when it arrived.
             stage?.reloadMap();
@@ -311,8 +312,16 @@ function boot(): void {
       // The server is authoritative, including over our own prediction.
       // Mid-drag frames for the token we are dragging are never sent back to
       // us, so this is either someone else's move or our own settled drop.
-      token.x = move.x;
-      token.y = move.y;
+      //
+      // The flag says which of the token's two positions this frame is about.
+      // Missing it is how a plan for the next map gets written into the board
+      // the table is looking at.
+      if (move.staged) {
+        token.stagedPos = { x: move.x, y: move.y };
+      } else {
+        token.x = move.x;
+        token.y = move.y;
+      }
     },
 
     onTokenChanged: (wire) => {
