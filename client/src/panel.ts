@@ -61,8 +61,9 @@ export function createPanel(
 
   return {
     update(initiative, scene) {
-      const nameOf = (id: string): string =>
-        scene.tokens.find((t: Token) => t.id === id)?.name ?? id;
+      const tokenFor = (id: string): Token | undefined =>
+        scene.tokens.find((t: Token) => t.id === id);
+      const nameOf = (id: string): string => tokenFor(id)?.name ?? id;
 
       ui.round.textContent = `Round ${initiative.round}`;
 
@@ -71,6 +72,11 @@ export function createPanel(
           const row = document.createElement('li');
           row.className = 'init-row';
           if (entry.token === initiative.current) row.classList.add('is-current');
+          // Only ever on the DM's panel — a hidden creature's row is filtered
+          // out of the table's copy server-side. It is marked because the two
+          // panels now differ, and the DM is the one who has to know that this
+          // row is a name only they can read.
+          if (tokenFor(entry.token)?.hidden === true) row.classList.add('is-unseen');
 
           const value = document.createElement('span');
           value.className = 'init-value';

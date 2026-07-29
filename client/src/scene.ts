@@ -2,7 +2,7 @@
 // from a Welcome frame and mutated by deltas or by local prediction.
 
 import type { GridSpec, Rect } from './coords.js';
-import type { Owner, WireMapInfo, WireRoomView, WireToken } from './protocol.js';
+import type { Hp, Owner, WireMapInfo, WireRoomView, WireToken } from './protocol.js';
 
 export interface Token {
   id: string;
@@ -15,6 +15,12 @@ export interface Token {
   img: string;
   /** Width and height in grid cells. */
   size: number;
+  /** The table cannot see this one. Only ever true on the DM's client — a
+   *  player is never sent a hidden token, so nothing here has to defend
+   *  against drawing one. The DM's board marks it instead. */
+  hidden: boolean;
+  /** The DM's running total, or null. Null on every token for a player. */
+  hp: Hp | null;
 }
 
 /** One map image and how the grid sits on it. Live and staged are the same shape. */
@@ -73,7 +79,17 @@ export function boardFromWire(map: WireMapInfo): Board {
 }
 
 function tokenFromWire(t: WireToken): Token {
-  return { id: t.id, name: t.name, x: t.x, y: t.y, owner: t.owner, img: t.img, size: t.size };
+  return {
+    id: t.id,
+    name: t.name,
+    x: t.x,
+    y: t.y,
+    owner: t.owner,
+    img: t.img,
+    size: t.size,
+    hidden: t.hidden,
+    hp: t.hp,
+  };
 }
 
 /**

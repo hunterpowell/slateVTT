@@ -15,8 +15,8 @@ use tracing::{debug, error, warn};
 use uuid::Uuid;
 
 use crate::protocol::{
-    Calibration, ClientId, ClientMsg, Initiative, InitiativeEntry, MapInfo, Owner, PlayerId,
-    RoomView, RosterEntry, RosterSlot, ServerMsg, Token, TokenId,
+    Calibration, ClientId, ClientMsg, Hp, Initiative, InitiativeEntry, MapInfo, Owner, PlayerId,
+    RoomView, RosterEntry, RosterSlot, ServerMsg, Token, TokenId, TokenView,
 };
 use crate::store::{Saved, Store};
 
@@ -55,6 +55,10 @@ const TOKEN_SIZES: [f32; 5] = [0.5, 1.0, 2.0, 3.0, 4.0];
 /// Bounds the save file, and is far past a battle anyone runs. A DM who hits
 /// this has a room that wants clearing out rather than one more goblin.
 const MAX_TOKENS: usize = 200;
+/// How far a hit point total may run in either direction. Negative is allowed
+/// because a DM tracking how far past nothing something went is bookkeeping, not
+/// a rule — this only stops the save file growing through a number field.
+const MAX_HP: i32 = 9999;
 
 /// Five players plus the DM, per the brief. The DM holds no slot.
 const ROSTER: [(&str, &str); 5] = [
@@ -119,17 +123,31 @@ enum Event {
     },
     /// A token was created or edited. Carries only the id, so `message_for`
     /// reads the token off `&self` per recipient — the seam where a hidden
-    /// token will become a `TokenRemoved` for the players and a `TokenChanged`
-    /// for the DM, from this one event.
+    /// token becomes a `TokenRemoved` for the players and a `TokenChanged` for
+    /// the DM, from this one event.
     TokenChanged {
         id: TokenId,
+        /// Whether the table could see this token *before* the change. It is
+        /// the one fact `message_for` cannot read off `&self`, because `apply`
+        /// has already overwritten it, and it is what separates "it just
+        /// vanished" from "you were never told it was there".
+        ///
+        /// A token that has just been created counts as hidden: nobody holds
+        /// it yet, so a create that lands hidden is nothing to announce.
+        was_hidden: bool,
     },
     TokenRemoved {
         id: TokenId,
+        /// Same reason, and the same fact: `apply` has already taken the token
+        /// out of the room, so whether the table knew it existed cannot be
+        /// looked up any more. A player who was never told it was there is not
+        /// told it is gone — that frame would name an id they should not hold.
+        was_hidden: bool,
     },
     /// Carries no payload on purpose: `message_for` has `&self` and builds the
-    /// panel per recipient. That is the seam where fog of war will one day hide
-    /// an unseen monster's row from the players.
+    /// panel per recipient. That seam is now load-bearing — a hidden creature's
+    /// row is dropped from the copy the table receives, and fog of war will hide
+    /// an unseen monster's the same way.
     InitiativeChanged,
     /// A new image, a recalibrated grid, or both. Payload-free for the same
     /// reason as above — terrain is exactly what fog of war filters first.
@@ -420,7 +438,10 @@ fn is_hex_rgba(s: &str) -> bool {
 /// permission check — it keeps the room self-contained. A token pointing at
 /// somebody else's server is art that vanishes the evening that server is down,
 /// and it would be the one thing in a save the uploads directory does not back.
-fn token_fields(name: &str, img: &str, size: f32) -> Result<(), String> {
+///
+/// `hidden` needs no check at all: a bool has no bad value, and either state is
+/// a legitimate thing for the DM to ask for.
+fn token_fields(name: &str, img: &str, size: f32, hp: Option<Hp>) -> Result<(), String> {
     let name = name.trim();
     if name.is_empty() || name.chars().count() > MAX_TOKEN_NAME_LEN {
         return Err(format!(
@@ -437,6 +458,14 @@ fn token_fields(name: &str, img: &str, size: f32) -> Result<(), String> {
     }
     if !TOKEN_SIZES.contains(&size) {
         return Err("that is not a size a token can be".to_owned());
+    }
+    // Bounded, not related: whether `current` may exceed `max` is a question
+    // about what a hit point means, and that is rules knowledge. The DM writes
+    // down two numbers and the room keeps them.
+    if let Some(hp) = hp
+        && (!(-MAX_HP..=MAX_HP).contains(&hp.current) || !(-MAX_HP..=MAX_HP).contains(&hp.max))
+    {
+        return Err(format!("hit points must be between {} and {MAX_HP}", -MAX_HP));
     }
     Ok(())
 }
@@ -677,15 +706,29 @@ impl RoomState {
         }
     }
 
-    /// Invariant 3. The staged map is the first thing this actually withholds
-    /// rather than merely being shaped to: a player's snapshot does not contain
-    /// the next dungeon, so there is nothing in devtools to find.
+    /// Invariant 3. The staged map is the first thing this actually withheld
+    /// rather than merely being shaped to; hidden tokens and hit points are the
+    /// first things it withholds *from inside* something the table does see.
+    ///
+    /// Every route out of the room narrows here in the same three ways a delta
+    /// does — a hidden token is dropped, what survives is redacted through
+    /// `view_for`, and the panel is rebuilt without the rows that went. Filtering
+    /// deltas correctly and then handing over the whole world on connect is the
+    /// most common way hidden state leaks, which is why there is no `snapshot()`.
     fn snapshot_for(&self, identity: &Identity) -> RoomView {
-        let mut tokens: Vec<Token> = self.tokens.values().cloned().collect();
+        let is_dm = matches!(identity, Identity::Dm);
+
+        let mut tokens: Vec<TokenView> = self
+            .tokens
+            .values()
+            .filter(|token| is_dm || !token.hidden)
+            .map(|token| token.view_for(is_dm))
+            .collect();
         // `HashMap` iteration order varies per process, and the client treats
         // list order as z-order. Without this, two tabs can disagree about
         // which of two overlapping tokens is on top.
         tokens.sort_by(|a, b| a.id.cmp(&b.id));
+
         RoomView {
             map: self.map.clone(),
             staged: match identity {
@@ -693,7 +736,40 @@ impl RoomState {
                 Identity::Player(_) => None,
             },
             tokens,
-            initiative: self.initiative.clone(),
+            initiative: self.initiative_for(is_dm),
+        }
+    }
+
+    /// The turn order as this recipient may see it: rows naming a token they
+    /// cannot see are gone, and `current` with them.
+    ///
+    /// Dropping the row is not cosmetic. The panel names its rows by looking the
+    /// token up in the scene, so a row the client has no token for draws as a
+    /// raw id — a monster the DM hid, advertised by the one panel that is always
+    /// on screen. `current` goes for the same reason: it is an id, and an id is
+    /// data. The table sees the round advance past somebody they cannot see,
+    /// which is exactly what is happening.
+    fn initiative_for(&self, is_dm: bool) -> Initiative {
+        if is_dm {
+            return self.initiative.clone();
+        }
+
+        let hidden = |token: &TokenId| {
+            // An entry naming no token cannot happen — deleting a token takes
+            // its row — but treating it as visible keeps this total either way.
+            self.tokens.get(token).is_some_and(|t| t.hidden)
+        };
+
+        Initiative {
+            entries: self
+                .initiative
+                .entries
+                .iter()
+                .filter(|entry| !hidden(&entry.token))
+                .cloned()
+                .collect(),
+            current: self.initiative.current.clone().filter(|t| !hidden(t)),
+            round: self.initiative.round,
         }
     }
 
@@ -735,13 +811,14 @@ impl RoomState {
                 size,
                 x,
                 y,
+                hp,
                 ..
             } => {
                 require_dm(client, "create tokens")?;
                 if self.tokens.len() >= MAX_TOKENS {
                     return Err(format!("this room already holds {MAX_TOKENS} tokens"));
                 }
-                token_fields(name, img, *size)?;
+                token_fields(name, img, *size, *hp)?;
                 finite(&[*x, *y])
             }
 
@@ -750,13 +827,14 @@ impl RoomState {
                 name,
                 img,
                 size,
+                hp,
                 ..
             } => {
                 require_dm(client, "change a token")?;
                 if !self.tokens.contains_key(id) {
                     return Err(format!("no such token: {}", id.0));
                 }
-                token_fields(name, img, *size)
+                token_fields(name, img, *size, *hp)
             }
 
             ClientMsg::DeleteToken { id } => {
@@ -870,6 +948,8 @@ impl RoomState {
                 owner,
                 x,
                 y,
+                hidden,
+                hp,
             } => {
                 // The id is invented here rather than accepted from the client,
                 // so nothing a DM sends can collide with a token that exists.
@@ -885,9 +965,17 @@ impl RoomState {
                         owner,
                         img,
                         size,
+                        hidden,
+                        hp,
                     },
                 );
-                vec![Event::TokenChanged { id }]
+                // Nobody held this token a moment ago, which is the same
+                // position the table is in for one created hidden: there is
+                // nothing to take away from them.
+                vec![Event::TokenChanged {
+                    id,
+                    was_hidden: true,
+                }]
             }
 
             ClientMsg::UpdateToken {
@@ -896,14 +984,19 @@ impl RoomState {
                 img,
                 size,
                 owner,
+                hidden,
+                hp,
             } => {
                 let Some(token) = self.tokens.get_mut(&id) else {
                     return Vec::new(); // proved to exist by `check`
                 };
 
+                let was_hidden = token.hidden;
                 token.name = name.trim().to_owned();
                 token.img = img;
                 token.owner = owner;
+                token.hidden = hidden;
+                token.hp = hp;
 
                 // Resizing moves which lattice the token belongs on — a 2×2
                 // settles on a cell corner where a 1×1 settles on a centre — so
@@ -916,15 +1009,31 @@ impl RoomState {
                     token.y = y;
                 }
 
-                vec![Event::TokenChanged { id }]
+                let mut events = vec![Event::TokenChanged {
+                    id: id.clone(),
+                    was_hidden,
+                }];
+                // Hiding something mid-fight takes its row off the table's panel
+                // and unhiding puts it back, so the panel has to be rebuilt for
+                // the same reason deleting a token rebuilds it. Without this the
+                // players keep a row naming a token their client has just been
+                // told to forget, which draws as a bare id — precisely the thing
+                // `hidden` was asked to conceal.
+                if was_hidden != hidden && self.initiative.index_of(&id).is_some() {
+                    events.push(Event::InitiativeChanged);
+                }
+                events
             }
 
             ClientMsg::DeleteToken { id } => {
-                if self.tokens.remove(&id).is_none() {
+                let Some(gone) = self.tokens.remove(&id) else {
                     return Vec::new();
-                }
+                };
 
-                let mut events = vec![Event::TokenRemoved { id: id.clone() }];
+                let mut events = vec![Event::TokenRemoved {
+                    id: id.clone(),
+                    was_hidden: gone.hidden,
+                }];
                 // The order would otherwise keep a row pointing at a token that
                 // no longer exists — which the panel renders as a bare id, and
                 // which `next_turn` would hand the turn to.
@@ -1082,6 +1191,14 @@ impl RoomState {
                 if *dragging && recipient == origin {
                     return None;
                 }
+                // A creature the table cannot see does not move where they can
+                // watch it. Position is data, and thirty frames a second of it
+                // would trace an invisible monster's path across the board.
+                if !self.is_dm(recipient)
+                    && self.tokens.get(id).is_some_and(|token| token.hidden)
+                {
+                    return None;
+                }
                 Some(ServerMsg::TokenMoved {
                     id: id.clone(),
                     x: *x,
@@ -1090,22 +1207,39 @@ impl RoomState {
                 })
             }
 
-            // Read off `&self` per recipient rather than carried on the event.
-            // Today every client gets the same token; when tokens can be
-            // hidden, this arm is where a player's copy of this event becomes a
-            // `TokenRemoved` — or nothing at all — instead.
-            Event::TokenChanged { id } => {
-                self.tokens.get(id).map(|token| ServerMsg::TokenChanged {
-                    token: token.clone(),
-                })
+            // Read off `&self` per recipient rather than carried on the event,
+            // which is what lets one event leave here as three different things.
+            // The DM gets the token; a player gets a redacted copy if they may
+            // see it, the news that it is gone if it has just been hidden, and
+            // nothing at all if it was already hidden — that last case matters,
+            // because a `TokenRemoved` naming an id they never held would tell
+            // them a token exists, which is the whole thing being withheld.
+            Event::TokenChanged { id, was_hidden } => {
+                let token = self.tokens.get(id)?;
+                let is_dm = self.is_dm(recipient);
+
+                if is_dm || !token.hidden {
+                    Some(ServerMsg::TokenChanged {
+                        token: token.view_for(is_dm),
+                    })
+                } else if *was_hidden {
+                    None
+                } else {
+                    Some(ServerMsg::TokenRemoved { id: id.clone() })
+                }
             }
 
-            Event::TokenRemoved { id } => Some(ServerMsg::TokenRemoved { id: id.clone() }),
+            Event::TokenRemoved { id, was_hidden } => {
+                if *was_hidden && !self.is_dm(recipient) {
+                    return None;
+                }
+                Some(ServerMsg::TokenRemoved { id: id.clone() })
+            }
 
-            // Built per recipient rather than carried on the event, so a future
-            // filter can drop rows this client is not allowed to see.
+            // Built per recipient rather than carried on the event, which is
+            // what lets the table's panel be a shorter list than the DM's.
             Event::InitiativeChanged => Some(ServerMsg::InitiativeChanged {
-                initiative: self.initiative.clone(),
+                initiative: self.initiative_for(self.is_dm(recipient)),
             }),
 
             // Echoed to the DM who sent it as well. Unlike a token drag there is
@@ -1558,7 +1692,69 @@ mod tests {
             owner,
             x: 6.3,
             y: 5.1,
+            hidden: false,
+            hp: None,
         }
+    }
+
+    /// The same command with the token already out of sight of the table.
+    fn create_hidden(name: &str) -> ClientMsg {
+        match create(name, 1.0, Owner::Dm) {
+            ClientMsg::CreateToken { name, img, size, owner, x, y, hp, .. } => {
+                ClientMsg::CreateToken {
+                    name,
+                    img,
+                    size,
+                    owner,
+                    x,
+                    y,
+                    hidden: true,
+                    hp,
+                }
+            }
+            other => other,
+        }
+    }
+
+    /// An edit that leaves a token exactly as it is. Tests change one field off
+    /// this rather than restating all seven, so a field added later does not
+    /// silently reset itself everywhere.
+    fn edit(token: &Token) -> ClientMsg {
+        ClientMsg::UpdateToken {
+            id: token.id.clone(),
+            name: token.name.clone(),
+            img: token.img.clone(),
+            size: token.size,
+            owner: token.owner.clone(),
+            hidden: token.hidden,
+            hp: token.hp,
+        }
+    }
+
+    /// That edit with `hidden` flipped to `want`.
+    fn set_hidden(token: &Token, want: bool) -> ClientMsg {
+        match edit(token) {
+            ClientMsg::UpdateToken { id, name, img, size, owner, hp, .. } => {
+                ClientMsg::UpdateToken {
+                    id,
+                    name,
+                    img,
+                    size,
+                    owner,
+                    hidden: want,
+                    hp,
+                }
+            }
+            other => other,
+        }
+    }
+
+    fn token(state: &RoomState, id: &str) -> Token {
+        state
+            .tokens
+            .get(&TokenId::new(id))
+            .unwrap_or_else(|| panic!("no token {id}"))
+            .clone()
     }
 
     /// The token the DM just made, found by name because the id is the server's.
@@ -1647,6 +1843,8 @@ mod tests {
                 img: ogre.img.clone(),
                 size: 2.0,
                 owner: Owner::Dm,
+                hidden: false,
+                hp: None,
             },
         );
 
@@ -1678,6 +1876,8 @@ mod tests {
                 img: "/uploads/ogre.png".to_owned(),
                 size: 1.0,
                 owner: Owner::Dm,
+                hidden: false,
+                hp: None,
             },
         );
 
@@ -1706,6 +1906,8 @@ mod tests {
             img: wolf.img.clone(),
             size: wolf.size,
             owner,
+            hidden: false,
+            hp: None,
         };
 
         state.handle(ClientId(1), hand_to(Owner::Player(PlayerId::new("vex"))));
@@ -1734,6 +1936,8 @@ mod tests {
                     img: String::new(),
                     size: 4.0,
                     owner: Owner::Player(PlayerId::new("vex")),
+                    hidden: false,
+                    hp: None,
                 },
                 ClientMsg::DeleteToken {
                     id: TokenId::new("t1"),
@@ -1768,6 +1972,8 @@ mod tests {
                 img: String::new(),
                 size: 4.0,
                 owner: Owner::Player(PlayerId::new("vex")),
+                hidden: false,
+                hp: None,
             },
         );
 
@@ -1860,6 +2066,8 @@ mod tests {
                         img: String::new(),
                         size: 1.0,
                         owner: Owner::Dm,
+                        hidden: false,
+                        hp: None,
                     }
                 )
                 .is_err()
@@ -1932,6 +2140,8 @@ mod tests {
             owner: Owner::Dm,
             x: 0.0,
             y: 0.0,
+            hidden: false,
+            hp: None,
         };
 
         for good in ["", "/uploads/abc.png", "/assets/tokens/ogre.png"] {
@@ -2025,6 +2235,464 @@ mod tests {
         let wolf = made(&restored, "Dire Wolf");
         assert_eq!(wolf.size, 2.0);
         assert_eq!((wolf.x, wolf.y), (6.0, 5.0));
+    }
+
+    // --- hidden tokens and hit points ---------------------------------------
+
+    fn as_player(slot: &str) -> Identity {
+        Identity::Player(PlayerId::new(slot))
+    }
+
+    /// Every frame waiting on a connection. `try_recv` one at a time makes a
+    /// test that says "and nothing else" hard to write and easy to get wrong.
+    fn drain(rx: &mut mpsc::Receiver<ServerMsg>) -> Vec<ServerMsg> {
+        let mut frames = Vec::new();
+        while let Ok(msg) = rx.try_recv() {
+            frames.push(msg);
+        }
+        frames
+    }
+
+    fn names(view: &RoomView) -> Vec<&str> {
+        view.tokens.iter().map(|t| t.name.as_str()).collect()
+    }
+
+    #[test]
+    fn a_hidden_token_is_absent_from_a_players_snapshot_and_present_in_the_dms() {
+        // Invariant 3: the join snapshot narrows the same way a delta does. The
+        // classic way this leaks is to filter deltas correctly and then hand
+        // over the whole world on connect.
+        let mut state = room();
+        let _dm = join_as_dm(&mut state, ClientId(1));
+        state.handle(ClientId(1), create_hidden("Ambusher"));
+
+        let theirs = state.snapshot_for(&as_player("vex"));
+        let ours = state.snapshot_for(&Identity::Dm);
+
+        assert!(!names(&theirs).contains(&"Ambusher"));
+        assert!(names(&ours).contains(&"Ambusher"));
+        assert_eq!(
+            theirs.tokens.len() + 1,
+            ours.tokens.len(),
+            "only the hidden one should have gone"
+        );
+    }
+
+    #[test]
+    fn a_hidden_monster_is_nowhere_in_the_json_a_player_is_sent() {
+        // Invariant 4 the way it actually has to be checked: not "the client
+        // does not draw it" but "the bytes are not there to be found".
+        let mut state = room();
+        let _dm = join_as_dm(&mut state, ClientId(1));
+        state.handle(
+            ClientId(1),
+            match create_hidden("Ambusher") {
+                ClientMsg::CreateToken {
+                    name,
+                    img,
+                    size,
+                    owner,
+                    x,
+                    y,
+                    hidden,
+                    ..
+                } => ClientMsg::CreateToken {
+                    name,
+                    img,
+                    size,
+                    owner,
+                    x,
+                    y,
+                    hidden,
+                    hp: Some(Hp {
+                        current: 4242,
+                        max: 4242,
+                    }),
+                },
+                other => other,
+            },
+        );
+
+        let json = serde_json::to_string(&state.snapshot_for(&as_player("vex"))).expect("encodes");
+        assert!(!json.contains("Ambusher"), "the name reached the table");
+        assert!(!json.contains("4242"), "the hit points reached the table");
+    }
+
+    #[test]
+    fn hiding_a_token_takes_it_off_the_table_and_leaves_it_on_the_dms_board() {
+        // The one event, two messages case the split between `Event` and
+        // `ServerMsg` exists for.
+        let mut state = room();
+        let mut dm = join_as_dm(&mut state, ClientId(1));
+        let mut vex = join_as_player(&mut state, ClientId(2), "vex");
+
+        state.handle(ClientId(1), set_hidden(&token(&state, "t6"), true));
+
+        match drain(&mut vex).as_slice() {
+            [ServerMsg::TokenRemoved { id }] => assert_eq!(id, &TokenId::new("t6")),
+            other => panic!("the table should have been told it is gone: {other:?}"),
+        }
+        match drain(&mut dm).as_slice() {
+            [ServerMsg::TokenChanged { token }] => {
+                assert!(token.hidden, "the DM keeps it, marked");
+            }
+            other => panic!("the DM should still have it: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn editing_an_already_hidden_token_tells_the_table_nothing() {
+        // A `TokenRemoved` naming an id the players never held would tell them a
+        // token exists — which is the entire thing being withheld.
+        let mut state = room();
+        let _dm = join_as_dm(&mut state, ClientId(1));
+        state.handle(ClientId(1), set_hidden(&token(&state, "t6"), true));
+
+        let mut vex = join_as_player(&mut state, ClientId(2), "vex");
+        let ogre = token(&state, "t6");
+        state.handle(
+            ClientId(1),
+            match edit(&ogre) {
+                ClientMsg::UpdateToken {
+                    id,
+                    img,
+                    size,
+                    owner,
+                    hidden,
+                    hp,
+                    ..
+                } => ClientMsg::UpdateToken {
+                    id,
+                    name: "Ogre (bloodied)".to_owned(),
+                    img,
+                    size,
+                    owner,
+                    hidden,
+                    hp,
+                },
+                other => other,
+            },
+        );
+
+        assert!(
+            drain(&mut vex).is_empty(),
+            "a token they were never told about has no news"
+        );
+    }
+
+    #[test]
+    fn a_token_created_hidden_is_never_announced() {
+        let mut state = room();
+        let _dm = join_as_dm(&mut state, ClientId(1));
+        let mut vex = join_as_player(&mut state, ClientId(2), "vex");
+
+        state.handle(ClientId(1), create_hidden("Ambusher"));
+
+        assert!(drain(&mut vex).is_empty());
+        assert!(made(&state, "Ambusher").hidden);
+    }
+
+    #[test]
+    fn unhiding_a_token_is_a_creation_as_far_as_the_table_is_concerned() {
+        // The ambush springs. `TokenChanged` for an id the client has not seen
+        // is the creation, which is why one message covers both.
+        let mut state = room();
+        let _dm = join_as_dm(&mut state, ClientId(1));
+        state.handle(ClientId(1), create_hidden("Ambusher"));
+        let mut vex = join_as_player(&mut state, ClientId(2), "vex");
+
+        state.handle(ClientId(1), set_hidden(&made(&state, "Ambusher"), false));
+
+        match drain(&mut vex).as_slice() {
+            [ServerMsg::TokenChanged { token }] => assert_eq!(token.name, "Ambusher"),
+            other => panic!("the table should meet it now: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn a_hidden_tokens_movement_is_not_relayed_to_the_table() {
+        // Thirty frames a second of position would trace an invisible monster's
+        // path across the board even with the token itself withheld.
+        let mut state = room();
+        let mut dm = join_as_dm(&mut state, ClientId(1));
+        state.handle(ClientId(1), set_hidden(&token(&state, "t6"), true));
+        let mut vex = join_as_player(&mut state, ClientId(2), "vex");
+
+        for dragging in [true, false] {
+            state.handle(
+                ClientId(1),
+                ClientMsg::MoveToken {
+                    id: TokenId::new("t6"),
+                    x: 2.4,
+                    y: 8.1,
+                    dragging,
+                },
+            );
+        }
+
+        assert!(drain(&mut vex).is_empty(), "the table watched it move");
+        assert!(
+            drain(&mut dm)
+                .iter()
+                .any(|m| matches!(m, ServerMsg::TokenMoved { .. })),
+            "the DM still needs the settled position"
+        );
+    }
+
+    #[test]
+    fn deleting_a_hidden_token_tells_the_table_nothing() {
+        let mut state = room();
+        let _dm = join_as_dm(&mut state, ClientId(1));
+        state.handle(ClientId(1), set_hidden(&token(&state, "t6"), true));
+        let mut vex = join_as_player(&mut state, ClientId(2), "vex");
+
+        state.handle(
+            ClientId(1),
+            ClientMsg::DeleteToken {
+                id: TokenId::new("t6"),
+            },
+        );
+
+        assert!(!state.tokens.contains_key(&TokenId::new("t6")));
+        assert!(drain(&mut vex).is_empty());
+    }
+
+    #[test]
+    fn hit_points_reach_the_dm_and_nobody_else() {
+        // The per-field redaction this milestone exists to invent: the token is
+        // one the table can see, and one field of it is not theirs.
+        let mut state = room();
+        let mut dm = join_as_dm(&mut state, ClientId(1));
+        let mut vex = join_as_player(&mut state, ClientId(2), "vex");
+
+        let ogre = token(&state, "t6");
+        state.handle(
+            ClientId(1),
+            match edit(&ogre) {
+                ClientMsg::UpdateToken {
+                    id,
+                    name,
+                    img,
+                    size,
+                    owner,
+                    hidden,
+                    ..
+                } => ClientMsg::UpdateToken {
+                    id,
+                    name,
+                    img,
+                    size,
+                    owner,
+                    hidden,
+                    hp: Some(Hp {
+                        current: 22,
+                        max: 59,
+                    }),
+                },
+                other => other,
+            },
+        );
+
+        let hp_of = |frames: &[ServerMsg]| match frames {
+            [ServerMsg::TokenChanged { token }] => token.hp,
+            other => panic!("expected one TokenChanged, got {other:?}"),
+        };
+        assert_eq!(
+            hp_of(&drain(&mut dm)),
+            Some(Hp {
+                current: 22,
+                max: 59
+            })
+        );
+        assert_eq!(hp_of(&drain(&mut vex)), None, "hit points are the DM's note");
+
+        // And on the snapshot too, by the same route rather than a second one.
+        let ogre_in = |view: &RoomView| {
+            view.tokens
+                .iter()
+                .find(|t| t.name == "Ogre")
+                .expect("the ogre")
+                .hp
+        };
+        assert!(ogre_in(&state.snapshot_for(&Identity::Dm)).is_some());
+        assert_eq!(ogre_in(&state.snapshot_for(&as_player("vex"))), None);
+    }
+
+    #[test]
+    fn hit_points_are_bounded() {
+        let mut state = room();
+        let _dm = join_as_dm(&mut state, ClientId(1));
+        let ogre = token(&state, "t6");
+
+        let with_hp = |hp: Option<Hp>| match edit(&ogre) {
+            ClientMsg::UpdateToken {
+                id,
+                name,
+                img,
+                size,
+                owner,
+                hidden,
+                ..
+            } => ClientMsg::UpdateToken {
+                id,
+                name,
+                img,
+                size,
+                owner,
+                hidden,
+                hp,
+            },
+            other => other,
+        };
+
+        for good in [
+            None,
+            Some(Hp { current: 0, max: 0 }),
+            // Below zero is bookkeeping, and above `max` is the DM's business:
+            // what a hit point *means* is the rules knowledge this does not have.
+            Some(Hp {
+                current: -7,
+                max: 40,
+            }),
+            Some(Hp {
+                current: 12,
+                max: 4,
+            }),
+            Some(Hp {
+                current: MAX_HP,
+                max: MAX_HP,
+            }),
+        ] {
+            assert!(
+                state.check(ClientId(1), &with_hp(good)).is_ok(),
+                "{good:?} should be fine"
+            );
+        }
+        for bad in [
+            Some(Hp {
+                current: MAX_HP + 1,
+                max: 10,
+            }),
+            Some(Hp {
+                current: 10,
+                max: -MAX_HP - 1,
+            }),
+        ] {
+            assert!(
+                state.check(ClientId(1), &with_hp(bad)).is_err(),
+                "{bad:?} should be refused"
+            );
+        }
+    }
+
+    #[test]
+    fn a_hidden_creatures_row_is_not_on_the_tables_initiative_panel() {
+        // Otherwise the panel that is always on screen names the one thing the
+        // DM just took off the board — and names it with a bare id, because the
+        // client has no token to look the name up on.
+        let mut state = room();
+        let _dm = join_as_dm(&mut state, ClientId(1));
+        for (id, value) in [("t1", 20), ("t6", 15), ("t7", 10)] {
+            state.handle(
+                ClientId(1),
+                ClientMsg::SetInitiative {
+                    token: TokenId::new(id),
+                    value,
+                },
+            );
+        }
+        state.handle(ClientId(1), set_hidden(&token(&state, "t6"), true));
+
+        assert_eq!(order(&state.initiative_for(true)), ["t1", "t6", "t7"]);
+        assert_eq!(order(&state.initiative_for(false)), ["t1", "t7"]);
+        assert_eq!(
+            state.initiative_for(false).round,
+            state.initiative.round,
+            "the round is not a secret"
+        );
+    }
+
+    #[test]
+    fn the_turn_is_withheld_while_it_belongs_to_something_hidden() {
+        let mut state = room();
+        let _dm = join_as_dm(&mut state, ClientId(1));
+        state.handle(
+            ClientId(1),
+            ClientMsg::SetInitiative {
+                token: TokenId::new("t6"),
+                value: 15,
+            },
+        );
+        state.handle(ClientId(1), set_hidden(&token(&state, "t6"), true));
+        state.handle(ClientId(1), ClientMsg::NextTurn);
+
+        assert_eq!(current(&state.initiative_for(true)), Some("t6"));
+        assert_eq!(
+            current(&state.initiative_for(false)),
+            None,
+            "a token id is data, even when it is only the turn marker"
+        );
+    }
+
+    #[test]
+    fn hiding_a_creature_that_is_in_the_order_rebuilds_the_tables_panel() {
+        // The panel is not otherwise rebuilt by a token edit, so without this
+        // the table keeps a row naming a token their client has just forgotten.
+        let mut state = room();
+        let _dm = join_as_dm(&mut state, ClientId(1));
+        state.handle(
+            ClientId(1),
+            ClientMsg::SetInitiative {
+                token: TokenId::new("t6"),
+                value: 15,
+            },
+        );
+        let mut vex = join_as_player(&mut state, ClientId(2), "vex");
+
+        state.handle(ClientId(1), set_hidden(&token(&state, "t6"), true));
+
+        match drain(&mut vex).as_slice() {
+            [ServerMsg::TokenRemoved { .. }, ServerMsg::InitiativeChanged { initiative }] => {
+                assert!(initiative.entries.is_empty(), "the row should have gone");
+            }
+            other => panic!("expected the token and the row to go together: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn an_edit_that_leaves_hidden_alone_does_not_rebuild_the_panel() {
+        let mut state = room();
+        let _dm = join_as_dm(&mut state, ClientId(1));
+        state.handle(
+            ClientId(1),
+            ClientMsg::SetInitiative {
+                token: TokenId::new("t6"),
+                value: 15,
+            },
+        );
+
+        let events = state.apply(edit(&token(&state, "t6")));
+
+        assert!(
+            matches!(events.as_slice(), [Event::TokenChanged { .. }]),
+            "an untouched initiative panel should not be rebuilt: {events:?}"
+        );
+    }
+
+    #[test]
+    fn a_hidden_token_and_its_hit_points_survive_the_save_file() {
+        let mut state = room();
+        let _dm = join_as_dm(&mut state, ClientId(1));
+        state.handle(ClientId(1), create_hidden("Ambusher"));
+
+        let json = serde_json::to_vec(&state.to_saved()).expect("encodes");
+        let saved: Saved = serde_json::from_slice(&json).expect("decodes");
+        let restored = RoomState::restored(saved, SECRET.to_owned());
+
+        assert!(
+            made(&restored, "Ambusher").hidden,
+            "an ambush set up last week is still set up tonight"
+        );
     }
 
     // --- initiative ---------------------------------------------------------

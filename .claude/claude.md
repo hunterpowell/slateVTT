@@ -101,7 +101,13 @@ struct MapInfo {
     grid_color: String, play_area: Option<Rect>,
 }
 
-struct Token { id: TokenId, name: String, x: f32, y: f32, owner: Owner, img: String, size: f32 }
+struct Token {
+    id: TokenId, name: String, x: f32, y: f32, owner: Owner, img: String, size: f32,
+    /// DM-only, both of them — see *Hidden tokens and hit points*.
+    hidden: bool, hp: Option<Hp>,
+}
+
+struct Hp { current: i32, max: i32 }
 
 enum Owner { Dm, Player(PlayerId) }
 ```
@@ -163,7 +169,15 @@ containing a full filtered snapshot. Everything after that is a delta. Reconnect
 another join — there is no diffing or resync protocol.
 
 `state` is a `RoomView`, which is the room as that one client may see it — for a player that
-means `staged` is stripped from it. See *Staged maps*.
+means `staged` is stripped from it, hidden tokens are absent, and what survives is redacted.
+See *Staged maps* and *Hidden tokens and hit points*.
+
+**`Token` never reaches the wire; `TokenView` does.** `Token::view_for(is_dm)` names every field
+that leaves the room, so `RoomView.tokens` and `ServerMsg::TokenChanged` both carry views. This
+is the third layer of the same idea as `Event` vs `ServerMsg` and `RoomState` vs `RoomView`, and
+it exists to make the failure fail the safe way round: a secret added to `Token` and forgotten
+here is *absent from the wire*, which shows up as the DM's own client missing a field, rather
+than shipped to everyone, which shows up as nothing at all until somebody opens devtools.
 
 `roster` is the cast list, not who is connected. The DM never sees the identity picker, so this
 is the only way their token panel learns the names a token can be handed to; a player is sent it
@@ -203,8 +217,8 @@ Creating, deleting and editing a token are DM-only, and the id is the server's t
 deliberately not among them, because `MoveToken` owns that and an edit made from a panel must not
 drag a token out from under whoever is moving it. `TokenChanged` covers creation and editing alike:
 an id the client has not seen is the creation. That is one message instead of two that would have
-to be kept in step, and it is what a hidden token will one day become a `TokenRemoved` for players
-and a `TokenChanged` for the DM out of.
+to be kept in step, and it is what a hidden token becomes a `TokenRemoved` for players and a
+`TokenChanged` for the DM out of.
 
 **Deleting a token takes its initiative row with it**, and will have to take its anchored drawings
 too. The order otherwise holds a row naming something that no longer exists, which the panel draws
@@ -216,6 +230,67 @@ that vanishes the evening that server is down, and the one thing in a save the u
 would not back. Uploading it shares the map upload's handler, since proving some bytes are an image
 and giving them a name of ours is the same operation either way; the two routes differ only in the
 size they cap at.
+
+## Hidden tokens and hit points
+
+Two DM-only fields on a token, and the place per-field redaction was invented. Staging withholds
+a whole message; these withhold a *field on a token the table otherwise sees*, which is why they
+came before fog — getting it wrong costs one monster's hit points rather than the entire map.
+
+**`hidden` means genuinely absent, not drawn faintly.** A hidden token is filtered out of a
+player's `snapshot_for`, its `TokenMoved` frames are dropped for them, and its initiative row is
+gone from their panel. It applies whoever owns the token; a uniform filter is worth more than a
+rule forbidding the DM from hiding a player's own token, which is merely a strange thing to do.
+
+**`hp: Option<Hp>` reaches the DM and nobody else, on every token including a player's own.**
+`None` is both "the DM keeps no total on this one" — the usual state — and "you are not the DM",
+indistinguishable from the client side, the way `staged` being `None` is. The pair travels
+together so "half a hit point total" is unrepresentable. Bounds are on magnitude only: whether
+`current` may exceed `max` is a question about what a hit point *means*, and that is the rules
+knowledge this does not have. Players track their own totals on their own sheets — character
+sheets are a non-goal.
+
+### The three shapes one event leaves in
+
+`Event::TokenChanged` becomes a `TokenChanged` for the DM, a redacted `TokenChanged` for a player
+who may see it, a `TokenRemoved` for a player it has just been hidden from, and **nothing at all**
+for a player it was already hidden from. That last arm is the one that gets missed: a
+`TokenRemoved` naming an id they never held tells them a token exists, which is the whole thing
+being withheld.
+
+Telling those last two apart needs the token's `hidden` from *before* `apply` ran, which
+`message_for` cannot read off `&self`. So `Event::TokenChanged` and `Event::TokenRemoved` each
+carry `was_hidden`. A token that has just been created counts as hidden, because nobody holds it
+yet — which is exactly what makes a create-hidden announce nothing.
+
+### Initiative
+
+`initiative_for(is_dm)` drops rows naming a token the recipient cannot see, and nulls `current`
+when it names one. Both halves matter: the panel names its rows by looking the token up in the
+scene, so a row with no token draws as a raw id — the monster the DM just hid, advertised by the
+one panel always on screen. `current` is an id, and an id is data. The round number is not a
+secret and is sent as it is; the table watches the turn pass to something they cannot see, which
+is what is happening.
+
+**Hiding a token that is in the order therefore emits `InitiativeChanged` as well**, the way
+deleting one does. Nothing else about a token edit rebuilds the panel, so without it the table
+keeps a row naming a token their client has just been told to forget.
+
+### On screen
+
+Hidden tokens are the DM's alone, so the client never has to defend against drawing one — the
+question is only how the DM tells them apart. They draw faded *and* with a dashed violet ring:
+faded alone is what a slow-loading portrait looks like, dashed alone is what a selection is, and
+violet collides with nothing the ring vocabulary already means. Fading multiplies with preview
+ghosting rather than replacing it. The same violet marks the row in the DM's initiative panel,
+because their panel and the table's now differ and the DM is the one who has to know which they
+are reading.
+
+Hit points draw as a bar above the token with the numbers over it, in screen space like a name.
+Three colour bands rather than a gradient — a DM glancing at six monsters wants to sort them, and
+nothing here knows the word "bloodied". Taking damage is the token panel with a new number and
+Enter; there is no `SetHp`, because it would carry one field of the several `UpdateToken` already
+sends together.
 
 ## Distance
 
@@ -287,12 +362,13 @@ current one. Promoting moves it into `map` and empties the slot. There is one sl
 full scene concept — several maps each owning its own walls, fog and token positions — is a much
 larger feature and is not being built.
 
-**This is the first thing the visibility filter genuinely withholds.** It is absent from a
+**This is the first thing the visibility filter genuinely withheld.** It is absent from a
 player's `snapshot_for`, and `Event::StagedChanged` becomes a message for a DM recipient and
-`None` for everyone else. Every other arm of `message_for` drops a message for something the
-recipient *did*; this one drops it for who they are, which is the shape `hidden` tokens, hit
-points and fog all need. A staged map that shipped to every client and was merely not drawn would
-be the next dungeon sitting in devtools — invariant 4.
+`None` for everyone else. The arms that predate it drop a message for something the recipient
+*did*; this one drops it for who they are, which is the shape `hidden` tokens and hit points then
+took and fog will — see *Hidden tokens and hit points*, where the same idea had to reach inside a
+message rather than only past it. A staged map that shipped to every client and was merely not
+drawn would be the next dungeon sitting in devtools — invariant 4.
 
 `None` is both "nothing is staged" and "you are not the DM", so the two are indistinguishable
 from the client side. Staging is persisted, for the same reason the calibration table is: Slate

@@ -129,7 +129,7 @@ mod tests {
     use std::sync::atomic::{AtomicU32, Ordering};
 
     use super::*;
-    use crate::protocol::{InitiativeEntry, Owner, PlayerId, Rect, TokenId};
+    use crate::protocol::{Hp, InitiativeEntry, Owner, PlayerId, Rect, TokenId};
 
     static NEXT: AtomicU32 = AtomicU32::new(0);
 
@@ -190,6 +190,11 @@ mod tests {
                 // Odd, so the position above is a cell centre the snapping rule
                 // would actually produce for a token this wide.
                 size: 3.0,
+                hidden: true,
+                hp: Some(Hp {
+                    current: 14,
+                    max: 31,
+                }),
             }],
             initiative: Initiative {
                 entries: vec![InitiativeEntry {
@@ -244,6 +249,16 @@ mod tests {
         assert_eq!((token.x, token.y), (3.5, 12.5));
         assert_eq!(token.owner, Owner::Player(PlayerId::new("grog")));
         assert_eq!(token.size, 3.0);
+        // An ambush set up at the end of one evening is still set up at the
+        // start of the next, and the DM's running total with it.
+        assert!(token.hidden);
+        assert_eq!(
+            token.hp,
+            Some(Hp {
+                current: 14,
+                max: 31
+            })
+        );
 
         assert_eq!(loaded.initiative.round, 4);
         assert_eq!(loaded.initiative.current, Some(TokenId::new("t1")));
@@ -345,6 +360,15 @@ mod tests {
             token.size, 1.0,
             "a token saved before sizes existed must be one cell, never zero — \
              a zero-radius token is invisible and cannot be grabbed back"
+        );
+        assert!(
+            !token.hidden,
+            "a token saved before hiding existed was one the table could see; \
+             defaulting the other way would empty the board on an upgrade"
+        );
+        assert_eq!(
+            token.hp, None,
+            "a save predating hit points means the DM keeps no total, not zero"
         );
 
         assert_eq!(

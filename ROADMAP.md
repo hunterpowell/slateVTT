@@ -22,7 +22,7 @@ Do not work ahead. Each milestone should run and be usable before starting the n
 6. Map upload and grid calibration UI.
 7. Package for Windows session hosting and deploy behind a Cloudflare Tunnel.
 
-Milestones 1–10 are done. Everything from 8 on was planned after the original seven, and the
+Milestones 1–11 are done. Everything from 8 on was planned after the original seven, and the
 order of what remains is deliberate:
 
 8. **Done.** Map library — list `maps/`, pick one, remember its calibration. The smallest thing
@@ -38,15 +38,21 @@ order of what remains is deliberate:
     *Staged maps* in CLAUDE.md. The pattern turned out to be three lines in each of those two
     functions; the rest of the milestone was the client, which had to learn that "the map" and
     "the map on screen" are different questions.
-11. `hidden` on tokens, then hit points. Both DM-only-visible, and both the same filtering
-    pattern staging established. Deliberately before fog: a mistake here costs one monster's
-    hit points rather than the entire map.
+11. **Done.** `hidden` on tokens, then hit points. Both DM-only-visible. See *Hidden tokens and
+    hit points* in CLAUDE.md.
 
-    **This is where per-field redaction gets invented**, and that is why milestone 12 waits for
-    it. Everything filtered so far has been whole messages — a staged map reaches the DM or
-    nobody. Hit points are a *field on a token that players otherwise see*, so a player's copy of
-    a token has to be a different shape from the DM's. Solve that once, here, on the feature where
-    getting it wrong costs one monster's hit points.
+    Per-field redaction turned out to be a type rather than a rule: `TokenView`, built by
+    `Token::view_for`, is what the wire carries, so a secret added to `Token` and forgotten is
+    absent from the wire instead of broadcast. That is the shape milestone 12's `staged_pos` and
+    `staged_only` should be filtered with — add them to `Token`, and they reach nobody until
+    `view_for` says so.
+
+    Two things cost more than expected and are worth knowing before building on this. Telling
+    "it just vanished" from "you were never told" needs the token's *previous* `hidden`, which
+    `message_for` cannot read off `&self` — hence `was_hidden` on the events. And a hidden
+    creature's initiative row had to be filtered too, which means a token edit can now have to
+    rebuild the panel; a feature that hides something and leaves it named in a panel has not
+    hidden it.
 12. Preparing the next room — the DM places monsters on the staged map and plans where the party
     lands, none of which the table sees until promote. See *Preparing the next room* below. The
     largest of the remaining non-fog milestones, and it revises milestone 10's preview rules
@@ -89,7 +95,7 @@ One token, not two worlds:
 ```rust
 struct Token {
     id, name, x, y, owner, img, size,
-    hidden: bool,               // milestone 11
+    hidden: bool, hp: Option<Hp>,   // milestone 11 — built
     /// Where this token lands when the staged map is promoted.
     staged_pos: Option<Pos>,
     /// Does not exist on the live board yet. Cleared by promote.
@@ -98,6 +104,11 @@ struct Token {
 
 struct Pos { x: f32, y: f32 }
 ```
+
+Both new fields are DM-only, and milestone 11 left the machinery for that in place: add them to
+`Token`, leave them out of `Token::view_for`, and they reach nobody. Adding them *to* `view_for`
+is then the deliberate act of deciding the DM's own client needs them — which it does, since the
+DM's board is what draws a planned position.
 
 A parallel `staged.tokens` collection is the obvious alternative and is a trap: two copies of a
 token means a rename, a re-art or a resize has to be applied to both, and the two drift. Only
@@ -137,8 +148,9 @@ learn. That is why intent rides on the command rather than on a mode. It also me
 cannot refuse an operation "because the DM is previewing"; anything that should not happen in
 preview is the client declining to offer it.
 
-`UpdateToken` gets no flag. The fields it carries are shared by both boards, so an edit applies
-immediately and everywhere, which is the honest behaviour rather than a special case.
+`UpdateToken` gets no flag. The fields it carries — name, art, size, owner, `hidden`, `hp` — are
+shared by both boards, so an edit applies immediately and everywhere, which is the honest
+behaviour rather than a special case.
 
 There is no command to un-plan a single token. Dragging it back onto its live cell leaves a
 `staged_pos` that promote applies as a no-op, which is the same outcome for a fraction of the
@@ -186,7 +198,7 @@ ownership, turn and selection.
 
 - Still not a scene system. One staged slot; no walls or fog per map.
 - No pre-built initiative for the next fight.
-- No staged edits to name, art, size or owner.
+- No staged edits to name, art, size, owner, `hidden` or `hp` — only position and existence fork.
 - Nothing that lets a player learn a monster exists before the DM promotes it, by any route.
 
 ## Drawings

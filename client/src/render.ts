@@ -3,7 +3,8 @@ import type { Camera, Rect } from './coords.js';
 import { firstLineAt, gridToWorld, playRect, worldToScreen } from './coords.js';
 import type { Identity } from './identity.js';
 import { ownsToken } from './identity.js';
-import type { Board, Scene } from './scene.js';
+import type { Hp } from './protocol.js';
+import type { Board, Scene, Token } from './scene.js';
 import { shownBoard } from './scene.js';
 
 const TAU = Math.PI * 2;
@@ -49,6 +50,32 @@ const CAL_DIVISION = 'rgba(120, 190, 255, 0.55)';
  * is the board yet, and a token that looks draggable and is not reads as broken.
  */
 const GHOST_ALPHA = 0.35;
+/**
+ * How solidly a token the table cannot see draws on the DM's board. Faded and
+ * dashed together, because faded alone is what a slow-loading portrait looks
+ * like and dashed alone is what the selection already is.
+ */
+const HIDDEN_ALPHA = 0.55;
+/** Hidden. Violet, so it collides with nothing the ring vocabulary already
+ *  means: gold is yours, blue is in progress, white is the turn. */
+const HIDDEN_RING = 'rgba(178, 156, 232, 0.95)';
+
+/** The hit point bar, in screen pixels — it does not scale with the camera, for
+ *  the same reason a name does not. */
+const HP_BAR_H = 5;
+const HP_BAR_MIN_W = 30;
+const HP_BAR_MAX_W = 92;
+/** Between the token's edge and the bar, and between the bar and the numbers. */
+const HP_BAR_GAP = 6;
+const HP_TEXT_GAP = 2;
+const HP_FONT = '600 11px ui-sans-serif, system-ui, sans-serif';
+const HP_TRACK = 'rgba(0, 0, 0, 0.55)';
+const HP_EDGE = 'rgba(0, 0, 0, 0.85)';
+/** Three bands rather than a gradient: a DM glancing at six monsters wants to
+ *  sort them, not read a percentage. Nothing here knows what "bloodied" means. */
+const HP_HEALTHY = 'rgba(122, 184, 116, 0.95)';
+const HP_HURT = 'rgba(214, 173, 84, 0.95)';
+const HP_LOW = 'rgba(200, 92, 92, 0.95)';
 
 /** Canvas size in CSS pixels, plus the backing-store scale factor. */
 export interface Viewport {
@@ -98,22 +125,25 @@ export function render(ctx: CanvasRenderingContext2D, view: Viewport, frame: Fra
   if (board.playArea !== null) drawOutsidePlayArea(ctx, area, map.width, map.height);
   drawGrid(ctx, frame, board, area);
 
-  ctx.save();
-  if (ghosting) ctx.globalAlpha = GHOST_ALPHA;
-  drawTokens(ctx, frame, board);
-  ctx.restore();
+  drawTokens(ctx, frame, board, ghosting);
 
   if (frame.calibration !== null) drawCalibration(ctx, cam, frame.calibration);
 
   ctx.setTransform(1, 0, 0, 1, 0, 0);
   ctx.scale(view.dpr, view.dpr);
-  // Paired, like the block above. `globalAlpha` is canvas state, not an
-  // argument: left set, it survives into the next frame and washes out the map
-  // itself — including the fill that is supposed to clear the previous one.
-  ctx.save();
-  if (ghosting) ctx.globalAlpha = GHOST_ALPHA;
-  drawLabels(ctx, frame, board);
-  ctx.restore();
+  drawTokenChrome(ctx, frame, board, ghosting);
+}
+
+/**
+ * How solidly a token draws. Two independent reasons to fade, so they multiply:
+ * a hidden token on a staged map is both, and either one alone must still read.
+ *
+ * `globalAlpha` is canvas state rather than an argument, so every caller pairs
+ * its set with a `restore`. Left set, it survives into the next frame and washes
+ * out the map itself — including the fill meant to clear the previous one.
+ */
+function alphaFor(token: Token, ghosting: boolean): number {
+  return (ghosting ? GHOST_ALPHA : 1) * (token.hidden ? HIDDEN_ALPHA : 1);
 }
 
 /**
@@ -210,7 +240,12 @@ function haloFor(color: string): string | null {
   return `rgba(${light ? '0, 0, 0' : '255, 255, 255'}, ${alpha * HALO_ALPHA_RATIO})`;
 }
 
-function drawTokens(ctx: CanvasRenderingContext2D, frame: Frame, board: Board): void {
+function drawTokens(
+  ctx: CanvasRenderingContext2D,
+  frame: Frame,
+  board: Board,
+  ghosting: boolean,
+): void {
   const { scene, tokenImages, draggingId, cam, identity, currentTurn, selectedId } = frame;
 
   for (const token of scene.tokens) {
@@ -219,6 +254,11 @@ function drawTokens(ctx: CanvasRenderingContext2D, frame: Frame, board: Board): 
     const radius = (board.grid.px * token.size) / 2;
     const centre = gridToWorld(board.grid, token.x, token.y);
     const img = tokenImages.get(token.img);
+
+    // Wraps the rings as well as the art: fading only the picture and leaving a
+    // full-strength outline round it is what a hidden token must not look like.
+    ctx.save();
+    ctx.globalAlpha = alphaFor(token, ghosting);
 
     ctx.save();
 
@@ -242,15 +282,25 @@ function drawTokens(ctx: CanvasRenderingContext2D, frame: Frame, board: Board): 
 
     ctx.restore();
 
-    // One ring, three meanings: being dragged, yours, or neither.
+    // One ring, four meanings now: being dragged, hidden, yours, or none of
+    // them. The dash is what says hidden — it survives a token being dragged,
+    // which is when the colour is wanted for something else.
     const dragging = token.id === draggingId;
     const mine = ownsToken(identity, token);
 
     ctx.beginPath();
     ctx.arc(centre.x, centre.y, radius, 0, TAU);
-    ctx.lineWidth = (dragging || mine ? 2.5 : 1.5) / cam.zoom;
-    ctx.strokeStyle = dragging ? DRAG_RING : mine ? OWNED_RING : TOKEN_RIM;
+    ctx.lineWidth = (dragging || mine || token.hidden ? 2.5 : 1.5) / cam.zoom;
+    ctx.strokeStyle = dragging
+      ? DRAG_RING
+      : token.hidden
+        ? HIDDEN_RING
+        : mine
+          ? OWNED_RING
+          : TOKEN_RIM;
+    if (token.hidden) ctx.setLineDash([6 / cam.zoom, 4 / cam.zoom]);
     ctx.stroke();
+    ctx.setLineDash([]);
 
     // Whose turn it is sits on its own ring outside the others, so a token can
     // be yours *and* acting without the two states fighting for one outline.
@@ -265,15 +315,16 @@ function drawTokens(ctx: CanvasRenderingContext2D, frame: Frame, board: Board): 
     // Further out again, and dashed. Only the DM ever has a selection, and it
     // has to survive being drawn on a token that is also owned and also acting.
     if (token.id === selectedId) {
-      ctx.save();
       ctx.beginPath();
       ctx.arc(centre.x, centre.y, radius + 10 / cam.zoom, 0, TAU);
       ctx.lineWidth = 1.5 / cam.zoom;
       ctx.strokeStyle = SELECTED_RING;
       ctx.setLineDash([5 / cam.zoom, 4 / cam.zoom]);
       ctx.stroke();
-      ctx.restore();
+      ctx.setLineDash([]);
     }
+
+    ctx.restore();
   }
 }
 
@@ -320,25 +371,93 @@ function drawCalibration(
 }
 
 /**
- * Labels are drawn in screen space so they keep a fixed size as the camera
- * zooms — the one thing on the map that should not scale with the world.
+ * The name under each token and the DM's hit point bar over it, both in screen
+ * space so they keep a fixed size as the camera zooms — the things on the map
+ * that should not scale with the world.
  */
-function drawLabels(ctx: CanvasRenderingContext2D, frame: Frame, board: Board): void {
+function drawTokenChrome(
+  ctx: CanvasRenderingContext2D,
+  frame: Frame,
+  board: Board,
+  ghosting: boolean,
+): void {
   const { scene, cam } = frame;
 
-  ctx.font = '600 12px ui-sans-serif, system-ui, sans-serif';
+  ctx.save();
   ctx.textAlign = 'center';
-  ctx.textBaseline = 'top';
-  ctx.lineWidth = 3;
   ctx.lineJoin = 'round';
-  ctx.strokeStyle = LABEL_HALO;
-  ctx.fillStyle = LABEL_TEXT;
 
   for (const token of scene.tokens) {
+    ctx.globalAlpha = alphaFor(token, ghosting);
+
     const centre = gridToWorld(board.grid, token.x, token.y);
+    const radius = (board.grid.px * token.size) / 2;
+
+    if (token.hp !== null) {
+      drawHitPoints(ctx, worldToScreen(cam, centre.x, centre.y - radius), radius * cam.zoom, token.hp);
+    }
+
     // Under the token's own edge, so a name does not land inside a big one.
-    const p = worldToScreen(cam, centre.x, centre.y + (board.grid.px * token.size) / 2);
+    const p = worldToScreen(cam, centre.x, centre.y + radius);
+    ctx.font = '600 12px ui-sans-serif, system-ui, sans-serif';
+    ctx.textBaseline = 'top';
+    ctx.lineWidth = 3;
+    ctx.strokeStyle = LABEL_HALO;
+    ctx.fillStyle = LABEL_TEXT;
     ctx.strokeText(token.name, p.x, p.y + 4);
     ctx.fillText(token.name, p.x, p.y + 4);
   }
+
+  ctx.restore();
+}
+
+/**
+ * The DM's running total: a bar to sort six monsters by at a glance, and the
+ * numbers to subtract the next hit from.
+ *
+ * This never runs on a player's screen, and not because of a check here — `hp`
+ * is redacted server-side, so their copy of the token carries null and there is
+ * nothing to decline to draw. That is invariant 4's whole shape.
+ *
+ * `top` is the middle of the token's upper edge in screen pixels, `radius` its
+ * radius in the same.
+ */
+function drawHitPoints(
+  ctx: CanvasRenderingContext2D,
+  top: { x: number; y: number },
+  radius: number,
+  hp: Hp,
+): void {
+  const width = clamp(radius * 2, HP_BAR_MIN_W, HP_BAR_MAX_W);
+  const left = top.x - width / 2;
+  const y = top.y - HP_BAR_GAP - HP_BAR_H;
+  // A maximum of zero has no ratio to draw. The numbers below still say what
+  // happened, which is why the bar is allowed to be the part that gives up.
+  const filled = hp.max > 0 ? clamp(hp.current / hp.max, 0, 1) : 0;
+
+  ctx.fillStyle = HP_TRACK;
+  ctx.fillRect(left, y, width, HP_BAR_H);
+  if (filled > 0) {
+    ctx.fillStyle = filled > 0.5 ? HP_HEALTHY : filled > 0.25 ? HP_HURT : HP_LOW;
+    ctx.fillRect(left, y, width * filled, HP_BAR_H);
+  }
+  // Half-pixel inset so a 1px stroke lands on pixels rather than straddling two.
+  ctx.lineWidth = 1;
+  ctx.strokeStyle = HP_EDGE;
+  ctx.strokeRect(left + 0.5, y + 0.5, width - 1, HP_BAR_H - 1);
+
+  // Haloed like the name below, and for the same reason: it has to read on
+  // parchment and on a cave floor without the DM thinking about it.
+  const text = `${hp.current}/${hp.max}`;
+  ctx.font = HP_FONT;
+  ctx.textBaseline = 'bottom';
+  ctx.lineWidth = 3;
+  ctx.strokeStyle = LABEL_HALO;
+  ctx.strokeText(text, top.x, y - HP_TEXT_GAP);
+  ctx.fillStyle = LABEL_TEXT;
+  ctx.fillText(text, top.x, y - HP_TEXT_GAP);
+}
+
+function clamp(v: number, lo: number, hi: number): number {
+  return v < lo ? lo : v > hi ? hi : v;
 }

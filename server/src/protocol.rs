@@ -153,6 +153,20 @@ impl Calibration {
     }
 }
 
+/// What the DM is counting down on a creature. Not a stat block: nothing here
+/// knows what a hit point *means*, only that the DM wrote two numbers down.
+///
+/// The pair travels together so that "half a hit point total" is
+/// unrepresentable — a bare `current` with no `max` is a number the board cannot
+/// draw a bar for, and two `Option<i32>` fields could be set one at a time.
+/// `Option<Hp>` on the token is how "the DM keeps no total on this one" is said.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct Hp {
+    pub current: i32,
+    pub max: i32,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Token {
@@ -172,6 +186,16 @@ pub struct Token {
     /// knowledge. It is a count of squares, and the only thing it changes
     /// besides the drawing is where the token settles: see `snap_to_cell`.
     pub size: f32,
+    /// The table cannot see this token at all. Not drawn-but-faint: it is absent
+    /// from a player's snapshot, its moves are not relayed to them, and its
+    /// initiative row is filtered out of their panel — invariant 4.
+    ///
+    /// Applies whoever owns it. Hiding a player's own token is a strange thing
+    /// to do and is not worth a rule to forbid; the filter is uniform instead.
+    pub hidden: bool,
+    /// The DM's note on a creature, and nobody else's business. `None` is the
+    /// usual state — most tokens are party members the DM keeps no total for.
+    pub hp: Option<Hp>,
 }
 
 impl Default for Token {
@@ -179,6 +203,10 @@ impl Default for Token {
     /// and the container-level `#[serde(default)]` above means every token saved
     /// before this field existed would load at zero — drawn with no radius, and
     /// so invisible and impossible to grab. Same trap `MapInfo::grid_px` avoids.
+    ///
+    /// `hidden` is the opposite case and the derived `false` is right: a token
+    /// saved before the field existed was one the table could see, and defaulting
+    /// it to `true` would make an upgrade empty the board.
     fn default() -> Self {
         Self {
             id: TokenId::default(),
@@ -188,6 +216,56 @@ impl Default for Token {
             owner: Owner::default(),
             img: String::new(),
             size: 1.0,
+            hidden: false,
+            hp: None,
+        }
+    }
+}
+
+/// A token as one particular client may see it — the token-shaped counterpart to
+/// `RoomView`, and the reason `Token` itself never reaches the wire.
+///
+/// This is the per-field redaction everything filtered so far did without. A
+/// staged map reaches the DM or nobody, whole; hit points are a field on a token
+/// the players *do* otherwise see, so their copy has to be a different shape.
+///
+/// Redaction is by construction rather than by blanking: `view_for` names every
+/// field that leaves the room, so a secret added to `Token` and forgotten here is
+/// absent from the wire rather than quietly sent to everyone. That direction is
+/// the point — the failure mode is a field the DM's own client is missing, which
+/// is visible, instead of one the table can read in devtools, which is not.
+#[derive(Debug, Clone, Serialize)]
+pub struct TokenView {
+    pub id: TokenId,
+    pub name: String,
+    pub x: f32,
+    pub y: f32,
+    pub owner: Owner,
+    pub img: String,
+    pub size: f32,
+    /// Only ever true on the DM's copy. A player is not sent a hidden token at
+    /// all, so this is false for them by construction rather than by rule.
+    pub hidden: bool,
+    /// `None` for a player, always. Also `None` for a DM who keeps no total on
+    /// this creature — the two are indistinguishable from the client side, the
+    /// way `staged` being `None` is both "nothing staged" and "not the DM".
+    pub hp: Option<Hp>,
+}
+
+impl Token {
+    /// The copy this recipient is allowed to hold. Callers decide whether a
+    /// hidden token is sent at all; this decides what is in it once it is.
+    pub fn view_for(&self, is_dm: bool) -> TokenView {
+        TokenView {
+            id: self.id.clone(),
+            name: self.name.clone(),
+            x: self.x,
+            y: self.y,
+            owner: self.owner.clone(),
+            img: self.img.clone(),
+            size: self.size,
+            hidden: self.hidden,
+            hp: if is_dm { self.hp } else { None },
         }
     }
 }
@@ -251,7 +329,12 @@ pub struct RoomView {
     /// client side. That is the point: invariant 4 wants the next dungeon
     /// genuinely absent from a player's snapshot, not merely undrawn.
     pub staged: Option<MapInfo>,
-    pub tokens: Vec<Token>,
+    /// Already filtered *and* redacted: hidden tokens are absent rather than
+    /// flagged, and what survives carries only the fields this client may hold.
+    pub tokens: Vec<TokenView>,
+    /// Rows naming a token this client cannot see are gone from here, and
+    /// `current` with them. A row the players can read but not explain is the
+    /// bare id of the thing `hidden` was supposed to conceal.
     pub initiative: Initiative,
 }
 
@@ -285,16 +368,26 @@ pub enum ClientMsg {
         /// Where it lands, in grid units. Snapped like any other drop.
         x: f32,
         y: f32,
+        /// Built out of sight of the table. The ambush that is already in place
+        /// when the party walks in is one command, not a create and a hide.
+        hidden: bool,
+        hp: Option<Hp>,
     },
     /// Every editable field at once, the way `SetMap` carries the whole grid.
     /// Position is deliberately absent — `MoveToken` owns that, and an edit made
     /// from a panel must not drag a token out from under whoever is moving it.
+    ///
+    /// `hidden` and `hp` are editable fields like the rest. Taking damage is
+    /// this command with a new `hp`, which is why there is no `SetHp`: it would
+    /// carry one field of the five the panel already sends together.
     UpdateToken {
         id: TokenId,
         name: String,
         img: String,
         size: f32,
         owner: Owner,
+        hidden: bool,
+        hp: Option<Hp>,
     },
     DeleteToken {
         id: TokenId,
@@ -384,12 +477,16 @@ pub enum ServerMsg {
     /// client's answer to each is the same: take this token as the truth for
     /// this id. A `TokenChanged` for an id the client has never seen is the
     /// creation, and no separate `TokenAdded` has to be kept in step with it.
+    ///
+    /// A `TokenView`, not a `Token`: this is also the frame a player's copy of a
+    /// token is redacted out of.
     TokenChanged {
-        token: Token,
+        token: TokenView,
     },
-    /// Deleted. Also what a token *becoming invisible to this client* will send
-    /// once tokens can be hidden — which is the whole reason the room's `Event`
-    /// carries an id and this carries a token.
+    /// Deleted — or hidden, which is the same news to a client that is not
+    /// allowed to know the difference. That is the whole reason the room's
+    /// `Event` carries an id and this carries a token: one `TokenChanged` event
+    /// becomes this message for the table and a `TokenChanged` for the DM.
     TokenRemoved {
         id: TokenId,
     },
@@ -411,6 +508,9 @@ pub enum ServerMsg {
     },
     /// The whole panel, not a per-entry delta. It is a handful of rows and only
     /// changes on a deliberate DM action, so a diff would cost more than it saves.
+    ///
+    /// Built per recipient: a hidden creature's row is not in the copy the table
+    /// receives, so the DM's panel and the players' genuinely differ.
     InitiativeChanged {
         initiative: Initiative,
     },

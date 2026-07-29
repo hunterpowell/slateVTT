@@ -79,6 +79,9 @@ interface Ui {
     name: HTMLInputElement;
     size: HTMLSelectElement;
     owner: HTMLSelectElement;
+    hidden: HTMLInputElement;
+    hp: HTMLInputElement;
+    hpMax: HTMLInputElement;
     art: HTMLInputElement;
     artText: HTMLElement;
     artPreview: HTMLElement;
@@ -157,6 +160,9 @@ function findUi(): Ui {
       name: need<HTMLInputElement>('#token-name'),
       size: need<HTMLSelectElement>('#token-size'),
       owner: need<HTMLSelectElement>('#token-owner'),
+      hidden: need<HTMLInputElement>('#token-hidden'),
+      hp: need<HTMLInputElement>('#token-hp'),
+      hpMax: need<HTMLInputElement>('#token-hp-max'),
       art: need<HTMLInputElement>('#token-art'),
       artText: need('#token-art-text'),
       artPreview: need('#token-art-preview'),

@@ -15,7 +15,7 @@
 // server re-checks every command regardless.
 
 import type { Vec2 } from './coords.js';
-import type { ClientMsg, Owner, RosterEntry } from './protocol.js';
+import type { ClientMsg, Hp, Owner, RosterEntry } from './protocol.js';
 import type { Scene, Token } from './scene.js';
 
 export interface TokenToolUi {
@@ -24,6 +24,9 @@ export interface TokenToolUi {
   name: HTMLInputElement;
   size: HTMLSelectElement;
   owner: HTMLSelectElement;
+  hidden: HTMLInputElement;
+  hp: HTMLInputElement;
+  hpMax: HTMLInputElement;
   art: HTMLInputElement;
   artText: HTMLElement;
   artPreview: HTMLElement;
@@ -84,6 +87,11 @@ export function createTokenTool(
     ui.name.value = token?.name ?? '';
     ui.size.value = String(token?.size ?? 1);
     ui.owner.value = token === null ? DM_OWNER : ownerValue(token.owner);
+    // Both blank is how "the DM keeps no total on this one" is said, which is
+    // most tokens most of the time — see `hitPoints`.
+    ui.hp.value = token?.hp === undefined || token.hp === null ? '' : String(token.hp.current);
+    ui.hpMax.value = token?.hp === undefined || token.hp === null ? '' : String(token.hp.max);
+    ui.hidden.checked = token?.hidden ?? false;
     art = token?.img ?? '';
 
     ui.head.textContent = token === null ? 'New token' : token.name;
@@ -112,6 +120,24 @@ export function createTokenTool(
   const owner = (): Owner =>
     ui.owner.value === DM_OWNER ? { kind: 'dm' } : { kind: 'player', id: ui.owner.value };
 
+  /**
+   * The two boxes read as one total, or as none at all.
+   *
+   * Filling one in and leaving the other alone is the common case — a DM types
+   * a monster's total once and then only ever edits the left-hand number — so
+   * an empty box copies the one that was filled rather than refusing to save.
+   * Both empty is `null`, which is what a party member the DM keeps no total
+   * for looks like.
+   */
+  const hitPoints = (): Hp | null => {
+    const current = Number.parseInt(ui.hp.value, 10);
+    const max = Number.parseInt(ui.hpMax.value, 10);
+    if (Number.isNaN(current) && Number.isNaN(max)) return null;
+    if (Number.isNaN(current)) return { current: max, max };
+    if (Number.isNaN(max)) return { current, max: current };
+    return { current, max };
+  };
+
   const save = (): void => {
     const name = ui.name.value.trim();
     if (name === '') {
@@ -122,7 +148,16 @@ export function createTokenTool(
 
     const token = selected();
     if (token !== null) {
-      send({ type: 'update_token', id: token.id, name, img: art, size: size(), owner: owner() });
+      send({
+        type: 'update_token',
+        id: token.id,
+        name,
+        img: art,
+        size: size(),
+        owner: owner(),
+        hidden: ui.hidden.checked,
+        hp: hitPoints(),
+      });
       return;
     }
 
@@ -131,7 +166,17 @@ export function createTokenTool(
       report('the board is still loading');
       return;
     }
-    send({ type: 'create_token', name, img: art, size: size(), owner: owner(), x: at.x, y: at.y });
+    send({
+      type: 'create_token',
+      name,
+      img: art,
+      size: size(),
+      owner: owner(),
+      x: at.x,
+      y: at.y,
+      hidden: ui.hidden.checked,
+      hp: hitPoints(),
+    });
     // Deliberately stays on "new token" with the fields as they are: six
     // goblins is six clicks, and `spaceFor` puts each one in its own cell.
     ui.name.select();
@@ -147,6 +192,17 @@ export function createTokenTool(
   ui.name.addEventListener('keydown', saveOnEnter);
   ui.size.addEventListener('keydown', saveOnEnter);
   ui.owner.addEventListener('keydown', saveOnEnter);
+  // The two that get typed into mid-combat. Subtracting a hit is: click the
+  // token, type the new total, Enter.
+  ui.hp.addEventListener('keydown', saveOnEnter);
+  ui.hpMax.addEventListener('keydown', saveOnEnter);
+
+  // Committed on the spot rather than waiting for save, the way an uploaded
+  // portrait is. The party has just walked in; a hide that needs a second click
+  // to take effect is a hide that happens a beat too late.
+  ui.hidden.addEventListener('change', () => {
+    if (selected() !== null) save();
+  });
 
   ui.remove.addEventListener('click', () => {
     const token = selected();

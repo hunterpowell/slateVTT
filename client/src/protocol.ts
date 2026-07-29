@@ -25,6 +25,15 @@ export interface WireRect {
   h: number;
 }
 
+/** What the DM is counting down on a creature. Never a stat block. */
+export interface Hp {
+  current: number;
+  max: number;
+}
+
+/** A token as *this* client may see it — `TokenView` on the Rust side, not
+ *  `Token`. A hidden token never arrives at all, and `hp` is redacted out on the
+ *  way to anyone but the DM, so the two shapes genuinely differ. */
 export interface WireToken {
   id: string;
   name: string;
@@ -36,6 +45,12 @@ export interface WireToken {
   img: string;
   /** Width and height in grid cells. One of 0.5, 1, 2, 3, 4 — see TOKEN_SIZES. */
   size: number;
+  /** The table cannot see this token. Only ever true on a DM connection: a
+   *  player is not sent one, so their copy is false by construction. */
+  hidden: boolean;
+  /** Null for a player, always — and also null for a DM keeping no total on
+   *  this creature. The two are indistinguishable from here, deliberately. */
+  hp: Hp | null;
 }
 
 export interface InitiativeEntry {
@@ -126,9 +141,29 @@ export type ClientMsg =
   /** DM-only. Throw the staged map away. */
   | { type: 'clear_staged' }
   /** DM-only. No id: the server invents it. */
-  | { type: 'create_token'; name: string; img: string; size: number; owner: Owner; x: number; y: number }
-  /** DM-only. Every editable field at once; position is `move_token`'s alone. */
-  | { type: 'update_token'; id: string; name: string; img: string; size: number; owner: Owner }
+  | {
+      type: 'create_token';
+      name: string;
+      img: string;
+      size: number;
+      owner: Owner;
+      x: number;
+      y: number;
+      hidden: boolean;
+      hp: Hp | null;
+    }
+  /** DM-only. Every editable field at once; position is `move_token`'s alone.
+   *  Taking damage is this command with a new `hp` — there is no `set_hp`. */
+  | {
+      type: 'update_token';
+      id: string;
+      name: string;
+      img: string;
+      size: number;
+      owner: Owner;
+      hidden: boolean;
+      hp: Hp | null;
+    }
   | { type: 'delete_token'; id: string }
   | { type: 'set_initiative'; token: string; value: number }
   | { type: 'remove_from_initiative'; token: string }
