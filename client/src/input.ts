@@ -10,6 +10,8 @@ import type { Scene, Token } from './scene.js';
 import { shownBoard, shownPos, showingStaged } from './scene.js';
 import type { Sketches } from './shapes.js';
 import { anchorable, clampExtent, erasableAt, originCell } from './shapes.js';
+import type { WallTool } from './walltool.js';
+import { snapToCorner, wallAt } from './walls.js';
 
 const MIN_ZOOM = 0.1;
 const MAX_ZOOM = 4;
@@ -21,6 +23,9 @@ const DRAG_SEND_INTERVAL_MS = 40;
 /** How far the pointer may wander during a click on a shape before it counts as
  *  a sweep instead. A hand on a mouse is never perfectly still. */
 const DRAW_CLICK_SLOP_PX = 4;
+/** How near a wall a click has to land to be about it, in *screen* pixels — so
+ *  a segment stays as easy to hit zoomed out as zoomed in. */
+const WALL_HIT_PX = 8;
 
 type Drag =
   | { kind: 'pan'; pointerId: number; lastX: number; lastY: number; moved: boolean }
@@ -117,6 +122,17 @@ export interface InputState {
  * calibrate takes it: left-drag sweeps a shape and left-click erases one, so
  * nothing can be grabbed or panned by accident. Middle-drag still pans, which is
  * what makes drawing across a map larger than the window bearable.
+ *
+ * The wall editor is the fourth thing that can hold the left button, and the
+ * only one that wants no drag at all: a click places a corner and a double-click
+ * ends the run. Nothing is captured, so nothing has to be released — which is
+ * also why a browser that closes mid-trace leaves nothing behind on anyone
+ * else's screen, unlike a sketch or a drag.
+ *
+ * Only one of the four can be armed at a time. Calibrate wins over the wall
+ * editor and the wall editor over a shape tool, in the order they are tested
+ * below; the panels also put each other away, so that ordering should never
+ * decide anything in practice.
  */
 export function attachInput(
   canvas: HTMLCanvasElement,
@@ -141,6 +157,9 @@ export function attachInput(
    *  renderer can draw it without waiting for a round trip. */
   drawTool: DrawTool,
   sketches: Sketches,
+  /** The DM's wall editor. Null for players, who have no such panel and are
+   *  never sent a wall to click on in the first place. */
+  wallTool: WallTool | null,
 ): InputState {
   let drag: Drag | null = null;
   let lastDragSentAt = 0;
@@ -168,6 +187,61 @@ export function attachInput(
    * behaves exactly as it did before this milestone.
    */
   const sweeping = (): boolean => drawTool.kind !== null && !previewing();
+
+  /**
+   * Whether the left button belongs to the wall editor right now.
+   *
+   * Never over a staged map, for the reason a sweep is not: walls belong to the
+   * board, the map being prepared has none, and tracing one that landed on a
+   * board nobody is looking at is worse than the pointer simply staying a
+   * pointer. It is the same rule, and this is the second feature to want it.
+   */
+  const tracing = (): boolean => wallTool !== null && wallTool.mode !== null && !previewing();
+
+  /** How near a wall counts as on it, in world units at this zoom. */
+  const wallSlack = (): number => WALL_HIT_PX / cam.zoom;
+
+  /** The wall under a world point, or null. Walls are in image pixels, which is
+   *  world space, so there is no conversion here at all. */
+  const wallUnder = (w: Vec2) => wallAt(scene.walls, w, wallSlack());
+
+  /**
+   * A door the DM could swing right now, with no tool in hand at all.
+   *
+   * Opening a door is not editing the map — it is a thing that happens in the
+   * middle of a fight, several times an evening, while the DM is dragging
+   * monsters around. Making them arm the wall editor first would put a modal
+   * tool between them and the board every time the party opens a door, which is
+   * how a feature ends up unused.
+   *
+   * So this asks nothing about the wall editor's mode: it is available whenever
+   * nothing *else* has claimed the left button. The three that can claim it —
+   * calibrating, a shape tool, the wall editor — each mean something specific by
+   * a click, and none of them should quietly also mean "and swing that door".
+   *
+   * Only the DM, and only doors: masonry is not interactive, and `scene.walls`
+   * is empty on a player's client anyway, so this is an affordance rather than
+   * the permission boundary. The server refuses it from anyone else regardless.
+   */
+  const swingableDoorUnder = (w: Vec2) => {
+    if (!identity.isDm || previewing()) return null;
+    if (tracing() || sweeping()) return null;
+    if (calibration !== null && calibration.active) return null;
+    const wall = wallUnder(w);
+    return wall !== null && wall.door !== null ? wall : null;
+  };
+
+  /**
+   * Where a corner would land: the nearest grid corner, or exactly where the
+   * pointer is when Alt is down.
+   *
+   * The free-placement modifier is the roadmap's, and it is what makes a
+   * diagonal cave wall traceable on a square lattice. Alt means the same thing
+   * it means to the draw tool — ignore what this would otherwise attach itself
+   * to — which is why it is that key and not another.
+   */
+  const cornerAt = (w: Vec2, free: boolean): Vec2 =>
+    free ? w : snapToCorner(shownBoard(scene).grid, w);
 
   /** Moves a token, or its plan, to a cell — the local prediction half. */
   const predict = (drag: Extract<Drag, { kind: 'token' }>, x: number, y: number): void => {
@@ -270,8 +344,12 @@ export function attachInput(
   /** What the cursor should be when nothing is being dragged. */
   const restingCursor = (w: Vec2): string => {
     if (calibration !== null && calibration.active) return 'crosshair';
+    if (tracing()) return wallTool?.hovered !== null ? 'pointer' : 'crosshair';
     if (sweeping()) return state.hoveredShapeId !== null ? 'pointer' : 'crosshair';
-    return tokenAt(scene, identity, w.x, w.y) !== null ? 'pointer' : 'grab';
+    if (tokenAt(scene, identity, w.x, w.y) !== null) return 'pointer';
+    // Asked after the token, because a token standing in a doorway is the thing
+    // being grabbed — the door is behind it and the swing is still a mode away.
+    return swingableDoorUnder(w) !== null ? 'pointer' : 'grab';
   };
 
   /** Grid units under a screen point, on whichever board is being shown. */
@@ -291,6 +369,30 @@ export function attachInput(
       drag = { kind: 'calibrate', pointerId: e.pointerId, x0: w.x, y0: w.y };
       calibration.drag({ x0: w.x, y0: w.y, x1: w.x, y1: w.y });
       canvas.setPointerCapture(e.pointerId);
+      canvas.style.cursor = 'crosshair';
+      return;
+    }
+
+    // The wall editor takes it too, and unlike the two around it there is no
+    // drag here at all: a click is the whole gesture, which is what the run
+    // being a polyline buys. Nothing is captured, so nothing has to be released.
+    if (wallTool !== null && tracing() && e.button === 0) {
+      const mode = wallTool.mode;
+      const hit = mode === 'wall' ? null : wallUnder(w);
+
+      // A click on a door you have already hung swings it, rather than starting
+      // a trace on top of it. Only with no run open: mid-trace every click is a
+      // corner, so a run can be carried straight over a doorway.
+      const swinging =
+        mode === 'door' && wallTool.run.length === 0 && hit !== null && hit.door !== null;
+
+      if (mode === 'erase') {
+        if (hit !== null) send({ type: 'remove_wall', id: hit.id });
+      } else if (swinging && hit !== null) {
+        send({ type: 'toggle_door', id: hit.id });
+      } else {
+        wallTool.place(cornerAt(w, e.altKey));
+      }
       canvas.style.cursor = 'crosshair';
       return;
     }
@@ -367,6 +469,22 @@ export function attachInput(
     const w = screenToWorld(cam, p.x, p.y);
     state.cursorGrid = gridUnder(w);
 
+    if (drag === null && tracing() && wallTool !== null) {
+      // The rubber band from the last corner, and what a click would erase or
+      // swing. Both are asked on every move because both are drawn: the DM has
+      // to see where the next corner lands *before* committing to it, which is
+      // the whole reason the snap is on this side of the wire.
+      wallTool.point(cornerAt(w, e.altKey));
+      const hit = wallTool.mode === 'wall' ? null : wallUnder(w);
+      wallTool.hover(
+        // In door mode only a door is clickable — masonry under the pointer is
+        // something a corner can be placed on top of, not something to light up.
+        hit === null || (wallTool.mode === 'door' && hit.door === null) ? null : hit.id,
+      );
+      canvas.style.cursor = restingCursor(w);
+      return;
+    }
+
     if (drag === null) {
       // What a click would erase, which the renderer draws brighter and the
       // cursor turns into a pointer over. Only asked while a tool is in hand:
@@ -376,6 +494,11 @@ export function attachInput(
       state.hoveredShapeId = !sweeping()
         ? null
         : (erasableAt(scene, identity.isDm, identity.playerId, gridUnder(w))?.id ?? null);
+      // A door the DM could swing lights up with no tool in hand, by the same
+      // argument: a click that means something has to say so first. It goes
+      // through the wall editor's own `hovered`, which is where the renderer
+      // reads it — the tool being put away does not stop it holding a highlight.
+      wallTool?.hover(swingableDoorUnder(w)?.id ?? null);
       canvas.style.cursor = restingCursor(w);
       return;
     }
@@ -474,7 +597,18 @@ export function attachInput(
     } else if (!drag.moved) {
       // A click on empty map, as opposed to a pan. Panning is constant, so
       // losing the selection every time the board moves would be maddening.
-      onSelect?.(null);
+      //
+      // A door under that click swings instead. It reads off the *pan* drag
+      // rather than starting a drag of its own, which is what keeps both
+      // gestures: click a door to open it, drag from a door to move the map. A
+      // token on top of one wins, because it was grabbed at pointerdown and
+      // this branch is never reached.
+      const door = swingableDoorUnder(w);
+      if (door !== null) {
+        send({ type: 'toggle_door', id: door.id });
+      } else {
+        onSelect?.(null);
+      }
     }
 
     drag = null;
@@ -486,10 +620,23 @@ export function attachInput(
   canvas.addEventListener('pointerup', endDrag);
   canvas.addEventListener('pointercancel', endDrag);
 
+  // How a run ends without reaching for the keyboard. The second click of the
+  // pair has already landed on the corner the first one placed, and the tool
+  // drops it — two clicks in one corner are one corner, whoever meant what.
+  canvas.addEventListener('dblclick', (e) => {
+    if (!tracing()) return;
+    e.preventDefault();
+    wallTool?.finish();
+  });
+
   canvas.addEventListener('pointerleave', () => {
     if (drag === null) {
       state.cursorGrid = null;
       state.hoveredShapeId = null;
+      // The rubber band would otherwise hang off the last place the pointer was
+      // seen, pointing at nothing.
+      wallTool?.point(null);
+      wallTool?.hover(null);
     }
   });
 

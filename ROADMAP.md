@@ -119,10 +119,38 @@ order of what remains is deliberate:
     `Event::ShapesChanged` also had to be gated: emitting it on every token hide would tell the
     table *something happened* even when nothing was drawn on that token. Same gate the initiative
     panel already used, and the second time that trap has come up.
-15. Wall and door editor. Polyline authoring — click, click, double-click to end — snapped to
-    grid corners, with a modifier for free placement. This is not polish: per-segment click-drag
-    across a two-hundred-segment dungeon is what makes people quietly stop using fog of war.
-16. Fog of war.
+15. **Done.** Wall and door editor. See `docs/walls.md`.
+
+    The state model was the easy half again, and its shape came from two questions that look like
+    one and are not: what the DM *draws* is a run, and what the room *stores* is a segment. Keeping
+    the run would have given the list two shapes and made every consumer flatten it — including the
+    shadowcast that has not been written yet.
+
+    Three things cost more than expected.
+
+    **Walls needed their own point type.** `Pos` is grid units and a wall is image pixels, and two
+    structs holding two floats are perfectly happy to be swapped for one another. `Px` is not
+    ceremony: it is the only thing standing between "a wall a hundred cells long" and "a wall a
+    hundred pixels long", both of which serialise fine and one of which is a line across the middle
+    of the dungeon.
+
+    **A click was already spoken for.** The draw tool erases on click *because* a sweep is a drag,
+    which leaves the click free; here a click places a corner, so erase had to become a third mode.
+    The one exception is a door, which swings on a click with no tool in hand at all — opening one
+    is a play-time action rather than an edit, and putting it behind arming a tool is how a feature
+    goes unused. It is the single place in this project where what a click means depends on what is
+    under it, and it coexists with panning by reading off the pan drag's own `moved` flag.
+
+    **The rail ran out of room.** A fourth DM panel squeezed the token panel down to a scrollbar and
+    a heading, which nothing in the state model or the protocol would ever have caught. Layout is a
+    constraint on what this UI can grow, and the next panel will have to displace something rather
+    than be added beside it.
+
+    Also worth knowing before adding anything to `RoomView`: growing it by one field pushed
+    `ServerMsg::Welcome` past clippy's large-variant threshold, because every message in every
+    client's mailbox is sized at the largest variant. `state` is boxed now, invisibly — serde sees
+    straight through it and the frame on the wire is unchanged.
+16. Fog of war. The walls are traced and nothing reads them yet; this is what reads them.
 
 ## Drawings
 
@@ -137,7 +165,7 @@ already exists and already withholds a shape whose *anchor* the recipient cannot
 that could not wait for fog, since `hidden` predates it. An anchored shape's visibility follows its
 anchor token's rather than its own footprint, which is what that arm already does.
 
-## Fog of war and walls
+## Fog of war
 
 Do not implement this ahead of its milestone. The following constraints exist so it can be
 added without a rewrite — they are already reflected in the rules in CLAUDE.md:
@@ -148,6 +176,9 @@ added without a rewrite — they are already reflected in the rules in CLAUDE.md
 - Grid-unit token positions, which make the token-to-cell lookup free
 - `coveredCells`, which already answers "which cells does this shape occupy" for the drawing
   layer — the same question a shape's fog visibility asks, on the client side of it
+- **The walls themselves, which are built** — see `docs/walls.md`. `RoomState.walls` is a
+  `Vec<Wall>` of segments in image pixels, doors carry their open state, and none of it reaches a
+  player. What is missing is anything that reads them.
 
 Cell-based visibility over the grid, using symmetric shadowcasting.
 
@@ -157,17 +188,37 @@ Five people narrating to each other on Discord get nothing out of per-player fog
 and five times the state. Terrain gates on `revealed`; tokens gate on `visible`. Vision comes
 from tokens a player *owns*, so handing a token over grants vision with no extra rule.
 
-**Walls are `Vec<Segment>` in image pixels.** A wall traces a feature painted on the map, so it
-is anchored to the art and not to a cell; stored in grid units, every wall would slide off the
-wall it was tracing the moment the DM recalibrated. See invariant 1 — this is not an exception
-to it. Calibrate the grid before tracing walls.
+Everything the walls themselves needed is built and is described in `docs/walls.md` — image
+pixels, doors carrying their open state, absent from a player's snapshot rather than sent and not
+drawn, and swept by a map load. What is still design here is what reads them:
 
-**Walls and doors never enter a player's snapshot.** Not sent-and-not-rendered — genuinely
-absent, per invariant 4. Players infer the geometry from the edges of the fog.
+Tokens do not block line of sight; only walls do. **The play-area boundary is an implicit wall**,
+so vision does not spill into the void off the edge of the map — nothing in the wall editor
+produces that boundary and nothing should, since it is already on `MapInfo`.
 
-Doors are walls carrying an open/closed state, toggled by the DM only. Tokens do not block line
-of sight; only walls do. The play-area boundary is an implicit wall, so vision does not spill
-into the void off the edge of the map.
+Players infer the geometry from the edges of the fog, which is the reason walls stay out of their
+snapshot even though fog will be the only thing they can see the effect of.
+
+**Walls block sight and never movement. Decided, not deferred — do not add collision.** A token may
+be dragged through a shut door or off the play area, exactly as it can today, and the DM says "there
+is a wall there" the way they would at a table. Four reasons, the first of which is the one that
+makes this a rule rather than a preference:
+
+- **A refused move is information.** Walls are withheld from players entirely, so a server that
+  rejects a `MoveToken` for hitting one hands back a floor plan to anybody who drags their token
+  around the board and watches which moves stick. It is the trap `docs/drawings.md` names for shape
+  ids — sweeping the id space to map out the DM's monsters — with the whole dungeon as the prize.
+- Squeezing, climbing, flying, misty step, and a wall traced two pixels wrong each turn into "the
+  VTT will not let me move" in the middle of a fight. The DM adjudicating costs one sentence and is
+  never wrong.
+- A half-traced map would block inconsistently, which is worse than not blocking.
+- Fog already does the practical work: a player who cannot see into a room does not drag a token
+  into it.
+
+If the DM finds themselves saying "there is a wall there" often, the answer is a *hint on their own
+screen* — a movement ruler drawn in a warning colour when a drag crosses a wall or a shut door. No
+command, no event, no refusal, and it cannot leak, because a player holds no walls for their client
+to test against. That is the whole of the idea; it is not built and needs no groundwork.
 
 Vision range is one DM-set radius per map, stored in feet on `MapInfo` and converted to cells
 where it is used. It needs a generous value in `MapInfo`'s `Default` impl: the container-level
@@ -187,7 +238,8 @@ but shipping a bitset thirty times a second is not. A bitset does not fit the fr
 JSON array of per-cell values either — pack it into a single string field. That is still one
 readable frame in devtools, which is what the wire protocol rule actually protects.
 
-Recalibrating the grid invalidates the bitsets, which are inherently grid-space. Loading a new
-map clears them outright — and promoting a staged map is loading a new map, so it clears them
-too. Walls go the same way for the same reason. Staging pre-traced walls alongside the map they
-belong to is the scene concept CLAUDE.md rules out, not this.
+Recalibrating the grid invalidates the bitsets, which are inherently grid-space — and this is
+where fog differs from the walls beside it, which a recalibration deliberately leaves alone
+because they are in image pixels. Loading a new map clears them outright, and promoting a staged
+map is loading a new map, so it clears them too; that is `sweep_board`, which the walls and the
+drawings already go through.

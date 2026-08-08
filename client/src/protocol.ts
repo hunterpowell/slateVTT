@@ -96,6 +96,32 @@ export interface WireShape {
   color: string;
 }
 
+/** A point in image pixels — the other coordinate space, and its own type for
+ *  the reason the Rust side has one: a wall traces the art, so one stored in
+ *  cells would slide off it the moment the grid was corrected. */
+export interface WirePx {
+  x: number;
+  y: number;
+}
+
+/** Masonry, or a way through it and whether it stands open.
+ *
+ *  Adjacently tagged like `Owner`, and an enum rather than two booleans for the
+ *  reason `WireOrigin` is one: "a solid wall that is open" cannot be said. */
+export type WireWallKind = { kind: 'solid' } | { kind: 'door'; open: boolean };
+
+/** One traced segment, in image pixels. Flat segments rather than the runs they
+ *  are drawn as — the run is how the DM authors, not what the map holds.
+ *
+ *  A player is never sent one of these. There is no redacted form: the list
+ *  arrives whole or not at all. */
+export interface WireWall {
+  id: string;
+  from: WirePx;
+  to: WirePx;
+  kind: WireWallKind;
+}
+
 export interface InitiativeEntry {
   token: string;
   value: number;
@@ -120,6 +146,10 @@ export interface WireRoomView {
   /** Draw order, already filtered: a shape anchored to a token we cannot see
    *  never arrives, because an aura on a hidden monster is its position. */
   shapes: WireShape[];
+  /** The traced walls and doors — empty for a player, always. Empty is also
+   *  what a map nobody has traced looks like, so the two are indistinguishable
+   *  from here, exactly as `staged` being null is. */
+  walls: WireWall[];
 }
 
 export interface RosterSlot {
@@ -175,6 +205,10 @@ export type ServerMsg =
   | { type: 'sketch_ended'; by: number }
   /** Every shape we may see. The whole list, like the initiative panel. */
   | { type: 'shapes_changed'; shapes: WireShape[] }
+  /** Every wall the DM has traced. DM connections only — a player is not sent
+   *  this frame at all, not even an empty one, because a frame they cannot use
+   *  still tells them the DM just did something. */
+  | { type: 'walls_changed'; walls: WireWall[] }
   | { type: 'error'; message: string };
 
 export type ClientMsg =
@@ -257,6 +291,23 @@ export type ClientMsg =
   | { type: 'remove_shape'; id: string }
   /** DM-only: it reaches into five other people's drawings. */
   | { type: 'clear_shapes' }
+  /** DM-only. One traced run: its corners in order, in image pixels, and the
+   *  segments between them become that many walls. No ids — the server invents
+   *  one per segment, like a shape's.
+   *
+   *  The run is sent whole rather than a segment per click because that is the
+   *  milestone: a two-hundred-segment dungeon is otherwise two hundred round
+   *  trips. `door` applies to every segment of it. */
+  | { type: 'add_walls'; points: WirePx[]; door: boolean }
+  /** DM-only. One segment — there is no "erase this run", which is what lets a
+   *  single bad segment be fixed without redrawing the trace. */
+  | { type: 'remove_wall'; id: string }
+  /** DM-only, and refused on masonry. It changes nothing anyone can see until
+   *  fog exists; it is the command that will open a room to the party. */
+  | { type: 'toggle_door'; id: string }
+  /** DM-only. Every wall on the map — and unlike `clear_shapes` it reaches into
+   *  nobody else's work, since the walls are all the DM's. */
+  | { type: 'clear_walls' }
   | { type: 'set_initiative'; token: string; value: number }
   | { type: 'remove_from_initiative'; token: string }
   | { type: 'clear_initiative' }

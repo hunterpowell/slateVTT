@@ -693,7 +693,13 @@
          off the bottom of the rail when the library is open. */
       #tokentool {
         flex: 1 1 auto;
-        min-height: 0;
+        /* The only panel on the rail that gives up height when the others need
+           it, and with four of them now it has to be told where to stop: on a
+           short window it was squeezed to a scrollbar and a heading. Below this
+           it stops shrinking and the rail runs past the bottom of the viewport,
+           which is the lesser of the two failures — the panel nobody can use is
+           worse than the panel nobody can see. */
+        min-height: 140px;
         box-sizing: border-box;
         width: 100%;
         padding: 10px;
@@ -915,6 +921,73 @@
         opacity: 0.45;
         pointer-events: none;
       }
+
+      /* --- wall tool (DM only) --------------------------------------------- */
+
+      /* Borrows `.draw-tool` for its mode buttons: they are the same control
+         saying the same thing, and a second copy of those rules under another
+         name would only be a second place to change a colour. The grid is its
+         own, because three modes fit on one row and the rail is short. */
+      #walltool {
+        flex: 0 0 auto;
+        box-sizing: border-box;
+        width: 100%;
+        /* No margin: the rail already puts a 10px gap between its children, and
+           a margin here would be that gap twice. The rail is tight enough with
+           four panels on it that eight pixels is a real eight pixels. */
+        padding: 10px;
+        border-radius: 6px;
+        background: rgba(12, 14, 18, 0.88);
+        color: #d8d2c4;
+        font-size: 13px;
+        user-select: none;
+      }
+
+      .wall-tools {
+        display: grid;
+        grid-template-columns: repeat(3, 1fr);
+        gap: 4px;
+      }
+
+      /* What is traced and the way to undo all of it, on one line: the rail is
+         short and neither of them is worth a row of its own. */
+      .wall-foot {
+        display: flex;
+        align-items: baseline;
+        justify-content: space-between;
+        gap: 8px;
+        margin-top: 8px;
+      }
+
+      #wall-readout {
+        color: #8d939c;
+        font-size: 11px;
+        font-variant-numeric: tabular-nums;
+      }
+
+      #wall-clear {
+        color: #c98080;
+      }
+
+      #wall-clear:hover {
+        border-color: #7a2f2f;
+        color: #f4c4c4;
+      }
+
+      /* The wall editor takes the left button the way calibrating and drawing
+         do, and the hint says so from the middle of the map. */
+      body.tracing #hint::after {
+        content: ' · tracing: click each corner, double-click to finish, Alt to place freely';
+        color: #cfe6ff;
+      }
+
+      /* There are no staged walls — a map prepared out of sight has no geometry
+         traced over it yet — so the panel goes inert over a preview, exactly as
+         the draw tool does. */
+      body.previewing #walltool {
+        opacity: 0.45;
+        pointer-events: none;
+      }
     </style>
   </head>
   <body>
@@ -1064,6 +1137,19 @@
         <div id="draw-swatches" class="draw-swatches"></div>
         <button id="draw-clear" class="map-subtle" type="button" hidden>erase everything</button>
         <p class="map-hint" id="draw-hint"></p>
+      </aside>
+      <!-- DM only, and the walls it traces reach nobody else at all — a player
+           is not sent one, so there is nothing on their board for this panel to
+           be missing from. It sits below the draw tool because it is scenery
+           work: done once when a map goes down, not during a fight. -->
+      <aside id="walltool" hidden>
+        <div class="map-head">Walls</div>
+        <div id="wall-tools" class="wall-tools"></div>
+        <div class="wall-foot">
+          <span id="wall-readout"></span>
+          <button id="wall-clear" class="map-subtle" type="button">erase all</button>
+        </div>
+        <p class="map-hint" id="wall-hint"></p>
       </aside>
     </div>
     <div id="hud"></div>

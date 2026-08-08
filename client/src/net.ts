@@ -8,6 +8,7 @@ import type {
   WireMapInfo,
   WireShape,
   WireToken,
+  WireWall,
 } from './protocol.js';
 
 export interface Handlers {
@@ -31,6 +32,9 @@ export interface Handlers {
   onSketchEnded(by: number): void;
   /** Every shape we may see, replacing whatever we held. */
   onShapesChanged(shapes: WireShape[]): void;
+  /** Every wall the DM has traced. Only ever called on a DM connection — a
+   *  player is sent no such frame, empty or otherwise. */
+  onWallsChanged(walls: WireWall[]): void;
   onError(message: string): void;
   onClose(): void;
 }
@@ -94,6 +98,9 @@ export function connect(on: Handlers): Net {
         break;
       case 'shapes_changed':
         on.onShapesChanged(msg.shapes);
+        break;
+      case 'walls_changed':
+        on.onWallsChanged(msg.walls);
         break;
       case 'error':
         on.onError(msg.message);

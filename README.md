@@ -6,6 +6,8 @@ replaces Foundry for one group that only needs a shared map, tokens, and turn or
 - Pan/zoom map with DM-controlled upload and grid calibration
 - Tokens the DM can move freely and players can move only their own
 - An initiative tracker with round counter and next/previous turn
+- Measuring and spell-area drawing that anyone at the table can use
+- Walls and doors the DM traces over the map, ready for line of sight
 - State is saved to a JSON file on disk and restored on restart
 
 See [CLAUDE.md](.claude/CLAUDE.md) for the architecture, invariants, and non-goals, and [docs/](docs/)
@@ -70,7 +72,8 @@ group.
 ```
 client/   TypeScript source, canvas rendering, esbuild config
 server/   axum server: room actor, wire protocol, JSON persistence
-tools/    gen-assets.mjs — generates placeholder map/token art for local dev
+tools/    gen-assets.mjs — placeholder map/token art for local dev
+          cdp.mjs, drive-*.mjs — drive the real client in a headless browser
 maps/     the map library — the DM picks from these in-app during play
 ```
 
@@ -80,6 +83,28 @@ maps/     the map library — the DM picks from these in-app during play
 cd server && cargo test
 cd client && npm run check   # typecheck + build
 ```
+
+### Driving the real client
+
+`tools/drive-ui.mjs` and `tools/drive-player.mjs` open the actual client in headless Chrome and
+click through it, asserting on the DOM and — where only pixels can tell the difference — on the
+canvas itself. They speak the DevTools protocol directly, so there is nothing to install beyond
+the browser already on the machine.
+
+They need a server running with a **known** DM secret, and they change the room they connect to:
+
+```sh
+cd server
+SLATE_DM_SECRET=test-secret SLATE_STATE=scratch.json cargo run
+
+# elsewhere
+node tools/drive-ui.mjs      http://127.0.0.1:3000 test-secret
+node tools/drive-player.mjs  http://127.0.0.1:3000
+```
+
+Point them at a scratch `SLATE_STATE`, never at the room you are about to play in — the first
+thing `drive-ui.mjs` does is erase every wall on the board. Set `SLATE_BROWSER` if Chrome or Edge
+is somewhere unusual.
 
 ## Hosting a remote session from Windows
 

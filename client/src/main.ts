@@ -29,6 +29,9 @@ import type { Sketches } from './shapes.js';
 import { createSketches, shapeFromWire } from './shapes.js';
 import type { TokenTool } from './tokens.js';
 import { createTokenTool } from './tokens.js';
+import { wallFromWire } from './walls.js';
+import type { WallTool } from './walltool.js';
+import { createWallTool } from './walltool.js';
 
 interface Ui {
   canvas: HTMLCanvasElement;
@@ -85,6 +88,13 @@ interface Ui {
     swatches: HTMLElement;
     clear: HTMLButtonElement;
     hint: HTMLElement;
+  };
+  walltool: {
+    root: HTMLElement;
+    tools: HTMLElement;
+    clear: HTMLButtonElement;
+    hint: HTMLElement;
+    readout: HTMLElement;
   };
   tokentool: {
     root: HTMLElement;
@@ -174,6 +184,13 @@ function findUi(): Ui {
       clear: need<HTMLButtonElement>('#draw-clear'),
       hint: need('#draw-hint'),
     },
+    walltool: {
+      root: need('#walltool'),
+      tools: need('#wall-tools'),
+      clear: need<HTMLButtonElement>('#wall-clear'),
+      hint: need('#wall-hint'),
+      readout: need('#wall-readout'),
+    },
     tokentool: {
       root: need('#tokentool'),
       head: need('#token-head'),
@@ -213,6 +230,7 @@ function boot(): void {
   let tokenTool: TokenTool | null = null;
   let stage: Stage | null = null;
   let drawTool: DrawTool | null = null;
+  let wallTool: WallTool | null = null;
   let identity: Identity = ANONYMOUS;
   // Outlives any one drag and is fed from both directions — our own pointer in
   // input.ts, and everyone else's drag frames below.
@@ -287,7 +305,9 @@ function boot(): void {
       // Built for everyone, unlike the two panels below it. Anyone may draw —
       // this is the first thing a player can add to the room, and the only
       // thing that differs by identity here is the clear-all button.
-      drawTool = createDrawTool(ui.drawtool, identity.isDm, (msg) => net.send(msg));
+      drawTool = createDrawTool(ui.drawtool, identity.isDm, (msg) => net.send(msg), () =>
+        wallTool?.stop(),
+      );
 
       // `isDm` is only ever true because we sent a secret that the server
       // accepted, so it is in hand — but uploads need it, so prove it here.
@@ -309,8 +329,10 @@ function boot(): void {
             tokenTool?.select(null);
             // The staged map has no shapes, so a tool left armed over it would
             // sit there looking like it could do something. Put it away for the
-            // same reason the token selection goes.
+            // same reason the token selection goes — and the wall editor with
+            // it, which has even less to work on: there are no staged walls.
             drawTool?.stop();
+            wallTool?.stop();
             // No prompt to size the grid — a staged map was offered one when it
             // was staged, and the live map when it arrived.
             stage?.reloadMap();
@@ -331,6 +353,11 @@ function boot(): void {
         );
         tokenTool.update(room.scene);
         ui.tokentool.root.hidden = false;
+
+        // DM-only like the two above it: a player is sent no walls, so there is
+        // nothing here for them to edit and nothing on their board to show.
+        wallTool = createWallTool(ui.walltool, (msg) => net.send(msg), () => drawTool?.stop());
+        wallTool.update(room.scene);
       }
 
       void start(
@@ -343,6 +370,7 @@ function boot(): void {
         rulers,
         drawTool,
         sketches,
+        wallTool,
       ).then(
         (started) => {
           stage = started;
@@ -462,6 +490,16 @@ function boot(): void {
       room.scene.shapes = shapes.map(shapeFromWire);
     },
 
+    // Never reaches a player: the server sends this frame to the DM alone. The
+    // whole list, replacing whatever we held — nothing here is predicted
+    // locally, because a segment's id is the server's to invent and a run is
+    // finished with a click rather than dragged.
+    onWallsChanged: (walls) => {
+      if (room === null) return;
+      room.scene.walls = walls.map(wallFromWire);
+      wallTool?.update(room.scene);
+    },
+
     onError: (message) => {
       console.warn('server rejected a command:', message);
       flash(ui.banner, message);
@@ -516,6 +554,7 @@ async function start(
   rulers: Rulers,
   drawTool: DrawTool,
   sketches: Sketches,
+  wallTool: WallTool | null,
 ): Promise<Stage> {
   const { scene } = room;
   const firstUrl = shownBoard(scene).mapUrl;
@@ -578,6 +617,7 @@ async function start(
     rulers,
     drawTool,
     sketches,
+    wallTool,
   );
 
   const stage: Stage = {
@@ -637,6 +677,15 @@ async function start(
         mapTool !== null && mapTool.box !== null
           ? { box: mapTool.box, cells: mapTool.cells }
           : null,
+      walls:
+        wallTool === null
+          ? null
+          : {
+              armed: wallTool.mode !== null,
+              run: wallTool.run,
+              aim: wallTool.aim,
+              hovered: wallTool.hovered,
+            },
     });
 
     const cursor = input.cursorGrid;

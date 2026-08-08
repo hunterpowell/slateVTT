@@ -9,9 +9,9 @@ deliberately, and neither is loaded for you:
 
 - **`ROADMAP.md`** — design for what is not built yet, and the milestone order. Read it when
   starting a milestone.
-- **`docs/maps.md`, `docs/tokens.md`, `docs/drawings.md`** — why each built feature is the shape
-  it is. Every section below that summarises a feature ends with a pointer to its file and the
-  code that file covers.
+- **`docs/maps.md`, `docs/tokens.md`, `docs/drawings.md`, `docs/walls.md`** — why each built feature
+  is the shape it is. Every section below that summarises a feature ends with a pointer to its file
+  and the code that file covers.
 
 (All referenced in backticks on purpose: a bare `@` path here would be an import, and importing
 them would load them into every session, which is what moving them out avoided.)
@@ -23,6 +23,7 @@ them would load them into every session, which is what moving them out avoided.)
 - Tracks initiative order and the current turn
 - Lets the DM prepare the next map out of sight of the table, then promote it
 - Lets anyone measure a distance or draw a spell area on the board
+- Lets the DM trace the walls and doors of a map, ready for line of sight to use them
 
 ## Non-goals
 
@@ -103,6 +104,8 @@ struct RoomState {
     initiative: Initiative,
     /// Drawn on the board, in draw order — see `docs/drawings.md`.
     shapes: Vec<Shape>,
+    /// Traced over the map image. DM-only, whole — see `docs/walls.md`.
+    walls: Vec<Wall>,
     clients: HashMap<ClientId, Client>,
 }
 
@@ -112,6 +115,10 @@ struct Shape {
 
 enum ShapeKind { Line, Circle, Cone, Rect }
 enum Origin { Point(Pos), Token(TokenId) }
+
+/// In image pixels, not cells — invariant 1's exception.
+struct Wall { id: WallId, from: Px, to: Px, kind: WallKind }
+enum WallKind { Solid, Door(bool) }
 
 struct MapInfo {
     url: String, grid_px: f32, offset_x: f32, offset_y: f32,
@@ -127,6 +134,8 @@ struct Token {
 }
 
 struct Hp { current: i32, max: i32 }
+/// Grid units. `Px` is the same pair in image pixels, and a separate type so the
+/// two spaces cannot be swapped by accident.
 struct Pos { x: f32, y: f32 }
 
 enum Owner { Dm, Player(PlayerId) }
@@ -138,9 +147,9 @@ These are load-bearing. Violating them creates work that is expensive to undo la
 
 1. **Token positions are stored in grid units, never pixels.** Recalibrating a map's grid
    size must not move any token. Pixel conversion happens only at render time on the client.
-   This is about tokens. Geometry that traces the map image — `play_area`, and walls when they
-   arrive — is stored in image pixels instead, because it is anchored to the art rather than to
-   a cell.
+   This is about tokens. Geometry that traces the map image — `play_area` and `Wall` — is stored
+   in image pixels instead, because it is anchored to the art rather than to a cell. That is the
+   `Pos` / `Px` split, and the types are separate so the two cannot be swapped silently.
 
 2. **Every persisted struct field carries `#[serde(default)]`.** Saved rooms from an older
    schema must deserialize against a newer one without a migration step.
@@ -163,6 +172,10 @@ fn can_move(c: &Client, t: &Token) -> bool {
 
 **Drawing is the exception, and the only one.** Anyone may add a shape; erasing one
 is `can_erase` — the DM, or whoever drew it. Everything else below is DM-only.
+
+Walls are the opposite extreme: every wall command is DM-only *and* there is no per-item rule
+underneath, because they are all the DM's. A player is not merely stopped from editing them — they
+are never sent one, and never told one changed.
 
 Token creation, deletion, map changes, and initiative edits are DM-only. So is reassigning a
 token's `owner`, which is how a player is handed a token the DM built for them. So is planning
@@ -268,6 +281,31 @@ decided to send.
 
 → **`docs/drawings.md`** before touching `shapes.ts`, `drawtool.ts`, `ruler.ts`, or
 `Shape`/`ShapeKind`/`Sketch` on the server.
+
+## Walls and doors
+
+The DM traces a polyline — click, click, double-click — and the room stores **one `Wall` per gap
+between corners**. The run is authoring and is never stored, which is what makes one bad segment of
+a long trace erasable without redrawing it. Corners snap to grid corners, Alt places freely, and
+that snap is the client's like `originCell` is.
+
+**In image pixels, not cells** — invariant 1's exception, because a wall traces the art. A door is
+`WallKind::Door(bool)` rather than a flag beside a wall, so "a solid wall that is open" cannot be
+said; doors are traced shut and only the DM swings them.
+
+**A door swings on a click with no tool in hand**, because opening one is a play-time action and not
+an edit. It is the one place where what a click means depends on what is under it: a token on top
+wins, a click that moved was a pan, and any armed tool takes the button first.
+
+**Walls reach the DM or nobody.** There is no `WallView` and no filtered form: a player's
+`snapshot_for` carries an empty list, indistinguishable from an untraced map, and
+`Event::WallsChanged` produces *no message at all* for them — a frame they cannot use still says the
+DM did something. A load into the live slot sweeps the walls and a recalibration must not; that is
+`sweep_board`, shared with the shapes. There are no staged walls, so the next dungeon is traced
+after it is promoted.
+
+→ **`docs/walls.md`** before touching `walls.ts`, `walltool.ts`, `sweep_board`, or
+`Wall`/`WallKind`/`Px` on the server.
 
 ## Frontend
 

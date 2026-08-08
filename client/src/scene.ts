@@ -5,6 +5,8 @@ import type { GridSpec, Rect, Vec2 } from './coords.js';
 import type { Hp, Owner, WireMapInfo, WireRoomView, WireToken } from './protocol.js';
 import type { Shape } from './shapes.js';
 import { shapeFromWire } from './shapes.js';
+import type { Wall } from './walls.js';
+import { wallFromWire } from './walls.js';
 
 export interface Token {
   id: string;
@@ -61,6 +63,13 @@ export interface Scene {
    *  unlike tokens these do not fork. Replaced wholesale by every
    *  `shapes_changed`, which is why nothing here is predicted locally. */
   shapes: Shape[];
+  /** The traced walls and doors, in image pixels rather than grid units — they
+   *  are anchored to the art, not to a cell. Always empty for a player: the
+   *  server sends them none, and empty is also what an untraced map looks like.
+   *
+   *  Belongs to the live board like the shapes do. There are no staged walls;
+   *  walls prepared alongside a map is the scene concept Slate does not build. */
+  walls: Wall[];
 }
 
 /**
@@ -113,6 +122,7 @@ export function sceneFromView(view: WireRoomView): Scene {
     previewing: false,
     tokens: view.tokens.map(tokenFromWire),
     shapes: view.shapes.map(shapeFromWire),
+    walls: view.walls.map(wallFromWire),
   };
 }
 

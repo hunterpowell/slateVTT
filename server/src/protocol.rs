@@ -22,6 +22,9 @@ pub struct TokenId(pub String);
 #[derive(Debug, Clone, Default, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 pub struct ShapeId(pub String);
 
+#[derive(Debug, Clone, Default, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+pub struct WallId(pub String);
+
 impl TokenId {
     pub fn new(s: &str) -> Self {
         Self(s.to_owned())
@@ -179,6 +182,21 @@ pub struct Hp {
 #[derive(Debug, Clone, Copy, Default, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Pos {
+    pub x: f32,
+    pub y: f32,
+}
+
+/// A point in image pixels — the other coordinate space, and the one invariant 1
+/// names as its exception.
+///
+/// A separate type from `Pos` rather than the same two floats reused, because
+/// the two spaces are not interchangeable and mixing them up is silent: a wall
+/// traces a feature painted on the map, so it is anchored to the art, and one
+/// stored in grid units would slide off the wall it was tracing the moment the
+/// DM recalibrated. `Rect` is in this space too, for the same reason.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct Px {
     pub x: f32,
     pub y: f32,
 }
@@ -419,6 +437,68 @@ impl Shape {
     }
 }
 
+/// Whether a segment is masonry or a way through it.
+///
+/// An enum rather than `door: bool` beside `open: bool`, for the reason `Origin`
+/// is one: a solid wall carrying an open flag nothing reads is a field that can
+/// go stale, and the pair could disagree about what the segment even is. Here
+/// "a solid wall that is open" is unrepresentable.
+///
+/// Adjacently tagged like `Owner`, so the two variants are `{"kind":"solid"}`
+/// and `{"kind":"door","open":true}` rather than two different JSON shapes.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "kind", content = "open", rename_all = "snake_case")]
+pub enum WallKind {
+    /// Masonry. Blocks line of sight once there is line of sight to block.
+    Solid,
+    /// A way through, and whether it is standing open. Toggled by the DM alone.
+    Door(bool),
+}
+
+impl Default for WallKind {
+    /// A save from a schema that predates doors describes masonry, and masonry
+    /// is also the safe way round: a segment that defaults to an open door would
+    /// quietly stop blocking anything the moment fog arrives.
+    fn default() -> Self {
+        Self::Solid
+    }
+}
+
+/// One traced segment of wall, in image pixels.
+///
+/// **Not in grid units — this is invariant 1's stated exception.** A wall traces
+/// a feature painted on the map, so it belongs to the art rather than to a cell;
+/// stored in cells, every wall would slide off the thing it was tracing the
+/// moment the DM corrected the grid. Calibrate first, then trace.
+///
+/// Flat segments rather than the polylines they are drawn as: the run is an
+/// authoring convenience, and everything downstream — erasing one bad segment,
+/// toggling one door, and the shadowcast that will read these — asks about
+/// segments one at a time.
+///
+/// There is no `WallView`. Walls do not reach a player at all, whole or
+/// redacted, so the seam is `message_for` dropping the message and
+/// `snapshot_for` sending an empty list — the same seam `staged` leaves by.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(default)]
+pub struct Wall {
+    pub id: WallId,
+    pub from: Px,
+    pub to: Px,
+    pub kind: WallKind,
+}
+
+impl Wall {
+    /// Whether this segment is a door, and whether it is open. `None` is
+    /// masonry — the one question anything outside the editor asks.
+    pub fn door(&self) -> Option<bool> {
+        match self.kind {
+            WallKind::Door(open) => Some(open),
+            WallKind::Solid => None,
+        }
+    }
+}
+
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(default)]
 pub struct RosterEntry {
@@ -494,6 +574,14 @@ pub struct RoomView {
     /// mouse down, so a client that joins mid-sweep missing it is not a state
     /// to reconcile — it is a line that was about to vanish anyway.
     pub shapes: Vec<Shape>,
+    /// The traced walls and doors — and **empty for a player, always**. Not
+    /// sent-and-not-rendered: a player who could read these in devtools would
+    /// have the dungeon's floor plan, which is precisely what fog will be
+    /// hiding. Invariant 4, and the same door `staged` leaves by.
+    ///
+    /// Empty is therefore both "nothing traced" and "you are not the DM",
+    /// indistinguishable from the client side.
+    pub walls: Vec<Wall>,
 }
 
 /// Inbound. Not `#[serde(default)]`: a malformed frame from a client should be
@@ -641,6 +729,42 @@ pub enum ClientMsg {
     /// Sweep the board. DM-only: it reaches into five other people's drawings.
     ClearShapes,
 
+    // Walls and doors. All DM-only, and unlike the drawings above, invisible to
+    // everyone else — a player is not told these commands happened at all.
+    /// One traced run, in image pixels: `points` are its corners in order, and
+    /// the segments between them become that many walls.
+    ///
+    /// The run is how the DM authors and not how the room stores. Sending the
+    /// whole polyline in one command rather than a segment per click is the
+    /// point of the milestone — a two-hundred-segment dungeon is two hundred
+    /// round trips otherwise — and it is where the ids get invented, like a
+    /// token's or a shape's.
+    ///
+    /// `door` applies to every segment of the run. A door is normally a single
+    /// segment across an opening; nothing here enforces that, because "how wide
+    /// is a door" is the DM's business.
+    AddWalls {
+        points: Vec<Px>,
+        door: bool,
+    },
+    /// One segment. There is no "erase this run" — the run stopped existing the
+    /// moment it was stored, which is what makes fixing one bad segment of a
+    /// long trace possible without redrawing it.
+    RemoveWall {
+        id: WallId,
+    },
+    /// Open or shut a door. Refused on masonry, the way a command naming a token
+    /// that does not exist is refused.
+    ///
+    /// It changes nothing anyone can see yet. Once fog exists this is the
+    /// command that opens a room up to the party, and it stays DM-only.
+    ToggleDoor {
+        id: WallId,
+    },
+    /// Every wall on the map. DM-only like the rest, and unlike `ClearShapes`
+    /// it reaches into nobody else's work — it is all the DM's.
+    ClearWalls,
+
     // Initiative. All DM-only.
     /// Adds the token at that value, or re-values it if already listed. One
     /// command covers "add" and "reorder", since ordering *is* the value.
@@ -673,7 +797,14 @@ pub enum ServerMsg {
         is_dm: bool,
         /// `None` for the DM, who occupies no roster slot.
         player_id: Option<PlayerId>,
-        state: RoomView,
+        /// Boxed, and invisibly so — serde sees straight through it, and the
+        /// frame on the wire is unchanged.
+        ///
+        /// Every `ServerMsg` in every client's mailbox is sized at the largest
+        /// variant, and there are 256 slots per client. This one is sent exactly
+        /// once per connection, so keeping the whole world out of the size of a
+        /// token move costs one allocation on join.
+        state: Box<RoomView>,
         /// Who the DM can hand a token to.
         ///
         /// Not on `RoomView`, and deliberately not `RosterSlot`: this is the
@@ -765,6 +896,17 @@ pub enum ServerMsg {
     /// it on the DM's, from this one message.
     ShapesChanged {
         shapes: Vec<Shape>,
+    },
+    /// Every wall the DM has traced. The whole list rather than a delta, for the
+    /// reason `ShapesChanged` carries the whole list — except that this one only
+    /// ever has one recipient.
+    ///
+    /// **It reaches the DM or nobody.** Not an empty list for the players: a
+    /// frame they cannot use still tells them the DM just did something, and
+    /// invariant 4 is about what a client may know. That is `TokenPlanChanged`'s
+    /// rule, arriving for the second time.
+    WallsChanged {
+        walls: Vec<Wall>,
     },
     Error {
         message: String,

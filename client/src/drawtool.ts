@@ -78,6 +78,16 @@ export function createDrawTool(
   ui: DrawToolUi,
   isDm: boolean,
   send: (msg: ClientMsg) => void,
+  /**
+   * Called when a tool is picked up here, so whatever else had taken the left
+   * button can let go of it.
+   *
+   * Two tools armed at once is not a state anything downstream could resolve:
+   * input.ts would have to pick one, and the panel that lost would sit there
+   * looking armed. Told rather than asked, because a tool knows when it is
+   * picked up and cannot know what else exists.
+   */
+  onArm: () => void = () => {},
 ): DrawTool {
   let kind: ShapeKind | null = null;
   let color = PALETTE[0]?.value ?? '#ff8c42e6';
@@ -109,6 +119,7 @@ export function createDrawTool(
       // Clicking the tool you are holding puts it down, which is the fastest
       // way back to panning and dragging tokens.
       kind = kind === tool.kind ? null : tool.kind;
+      if (kind !== null) onArm();
       showTool();
     });
     buttons.set(tool.kind, button);

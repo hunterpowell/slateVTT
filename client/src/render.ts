@@ -1,5 +1,5 @@
 import type { Box } from './calibrate.js';
-import type { Camera, Rect } from './coords.js';
+import type { Camera, Rect, Vec2 } from './coords.js';
 import { firstLineAt, gridToWorld, playRect, worldToScreen } from './coords.js';
 import type { Identity } from './identity.js';
 import { ownsToken } from './identity.js';
@@ -121,6 +121,41 @@ const SHAPE_FONT = '600 12px ui-sans-serif, system-ui, sans-serif';
 /** Between a shape's far point and its reading. */
 const SHAPE_TEXT_GAP = 8;
 
+/**
+ * Traced walls, and the doors hung in them.
+ *
+ * Rose and amber, neither of which the board says anything else with — the ring
+ * vocabulary is gold, blue, white, violet and teal, and the drawing palette
+ * avoids all five. A door is told from a wall by hue and by whether it is open
+ * by dash: solid blocks, dashed does not, which is the same thing the line is
+ * about to mean once there is sight to block.
+ */
+const WALL_LINE = 'rgba(255, 110, 160, 0.95)';
+const DOOR_LINE = 'rgba(255, 200, 90, 0.95)';
+const WALL_HALO = 'rgba(0, 0, 0, 0.65)';
+const WALL_WIDTH = 3;
+const WALL_HALO_WIDTH = 6;
+/**
+ * How solidly *masonry* draws when the editor is put away.
+ *
+ * Walls are always on the DM's screen and never on anybody else's, so the
+ * question is only how loudly. Faint is enough to answer "have I traced this
+ * room" at a glance during a fight; the editor brings them up to full when the
+ * DM is actually working on them.
+ *
+ * Doors are exempt and stay at full strength always, because the DM can swing
+ * one at any time with no tool in hand. What can be clicked is drawn like it.
+ */
+const WALL_IDLE_ALPHA = 0.35;
+/** The segment a click would erase or swing, so it is never a surprise. */
+const WALL_HOVER = 'rgba(255, 255, 255, 0.95)';
+/** The run being traced, in the same blue as every other in-progress thing. */
+const WALL_RUN = 'rgba(120, 190, 255, 0.95)';
+const WALL_CORNER_R = 3.5;
+/** Dash lengths in screen pixels, for an open door and for the rubber band. */
+const DOOR_OPEN_DASH = 5;
+const WALL_AIM_DASH = 6;
+
 /** Canvas size in CSS pixels, plus the backing-store scale factor. */
 export interface Viewport {
   width: number;
@@ -150,6 +185,18 @@ export interface Frame {
   currentTurn: string | null;
   /** The DM's in-progress grid reference box. Null for everyone else. */
   calibration: { box: Box; cells: number } | null;
+  /** The wall editor's state: whether it is armed, the run being traced, where
+   *  the next corner would land, and which segment the pointer is over.
+   *
+   *  Null for a player — but the walls themselves are gated by being absent
+   *  from their scene rather than by this, which is the difference between a
+   *  secret and a widget. */
+  walls: {
+    armed: boolean;
+    run: readonly Vec2[];
+    aim: Vec2 | null;
+    hovered: string | null;
+  } | null;
 }
 
 export function render(ctx: CanvasRenderingContext2D, view: Viewport, frame: Frame): void {
@@ -190,6 +237,13 @@ export function render(ctx: CanvasRenderingContext2D, view: Viewport, frame: Fra
   // map has none, and painting the board's onto the map being prepared would
   // put a fireball on a dungeon it was never cast in.
   if (!showingStaged(frame.scene)) drawShapes(ctx, frame, board);
+
+  // Over everything on the board, and for a different reason than the shapes
+  // are: a wall is not about what is standing on it, it is the room the tokens
+  // are standing *in*, and it has to be traceable across a crowded board. The
+  // staged map is not this map, so nothing here belongs on it — the same rule
+  // the drawings follow one line up.
+  if (!showingStaged(frame.scene)) drawWalls(ctx, frame);
 
   if (frame.calibration !== null) drawCalibration(ctx, cam, frame.calibration);
 
@@ -556,6 +610,114 @@ function drawTokens(ctx: CanvasRenderingContext2D, frame: Frame, board: Board): 
     }
 
     ctx.restore();
+  }
+}
+
+/**
+ * The traced walls, and the run being traced over them.
+ *
+ * In world units, because a wall *is* a mark on the map image — unlike a name or
+ * a ruler, which are annotations and keep their weight at every zoom. The
+ * strokes are the exception: their widths are divided by zoom so a wall stays
+ * three pixels of line whether the DM is tracing a doorway up close or checking
+ * a whole floor at once.
+ *
+ * Nothing here is gated on identity. `scene.walls` is empty for a player because
+ * the server sent them none, which is where that decision belongs — invariant 4
+ * is about what a client holds, not about what it draws.
+ */
+function drawWalls(ctx: CanvasRenderingContext2D, frame: Frame): void {
+  const { scene, cam, walls: editor } = frame;
+  if (scene.walls.length === 0 && (editor === null || editor.run.length === 0)) return;
+
+  const scale = 1 / cam.zoom;
+  const armed = editor?.armed === true;
+  ctx.save();
+  ctx.lineCap = 'round';
+
+  for (const wall of scene.walls) {
+    const open = wall.door === true;
+
+    // Full strength while the editor is in hand, faint the rest of the time —
+    // except for doors, which stay legible always, because the DM can swing one
+    // with no tool in hand at any point in the evening. Anything clickable is
+    // drawn like it is; masonry, which is not, recedes into the map.
+    ctx.globalAlpha = armed || wall.door !== null ? 1 : WALL_IDLE_ALPHA;
+
+    // Haloed like the grid and the rulers, and for the same reason: a rose line
+    // on a rose-lit map is not a line. The halo is skipped for an open door,
+    // which is meant to read as absence rather than as structure.
+    if (!open) {
+      ctx.beginPath();
+      ctx.moveTo(wall.from.x, wall.from.y);
+      ctx.lineTo(wall.to.x, wall.to.y);
+      ctx.setLineDash([]);
+      ctx.strokeStyle = WALL_HALO;
+      ctx.lineWidth = WALL_HALO_WIDTH * scale;
+      ctx.stroke();
+    }
+
+    ctx.beginPath();
+    ctx.moveTo(wall.from.x, wall.from.y);
+    ctx.lineTo(wall.to.x, wall.to.y);
+    ctx.setLineDash(open ? [DOOR_OPEN_DASH * scale, DOOR_OPEN_DASH * scale] : []);
+    ctx.strokeStyle =
+      wall.id === editor?.hovered ? WALL_HOVER : wall.door === null ? WALL_LINE : DOOR_LINE;
+    ctx.lineWidth = WALL_WIDTH * scale;
+    ctx.stroke();
+  }
+
+  ctx.setLineDash([]);
+  if (editor !== null && editor.run.length > 0) drawWallRun(ctx, scale, editor);
+  ctx.restore();
+}
+
+/**
+ * The corners placed so far and the rubber band to where the next one would go.
+ *
+ * Blue, like every other in-progress thing on this board — a calibration box, a
+ * token being dragged, a movement ruler. It is drawn at full strength whatever
+ * the walls under it are doing, because it is the thing being worked on.
+ *
+ * The band is dashed for the reason it is blue: it is a proposal. Nothing about
+ * it exists anywhere but this client until the run is finished, which is also
+ * why a browser that closes mid-trace leaves nothing behind to clean up.
+ */
+function drawWallRun(
+  ctx: CanvasRenderingContext2D,
+  scale: number,
+  editor: NonNullable<Frame['walls']>,
+): void {
+  const { run, aim } = editor;
+  ctx.globalAlpha = 1;
+  ctx.strokeStyle = WALL_RUN;
+  ctx.fillStyle = WALL_RUN;
+  ctx.lineWidth = WALL_WIDTH * scale;
+
+  const first = run[0];
+  if (first === undefined) return;
+
+  ctx.beginPath();
+  ctx.moveTo(first.x, first.y);
+  for (const corner of run.slice(1)) ctx.lineTo(corner.x, corner.y);
+  ctx.stroke();
+
+  const last = run[run.length - 1];
+  if (aim !== null && last !== undefined) {
+    ctx.beginPath();
+    ctx.setLineDash([WALL_AIM_DASH * scale, WALL_AIM_DASH * scale]);
+    ctx.moveTo(last.x, last.y);
+    ctx.lineTo(aim.x, aim.y);
+    ctx.stroke();
+    ctx.setLineDash([]);
+  }
+
+  // A dot on every corner placed, so a run doubling back on itself is still
+  // countable — and so the DM can see that the click landed at all.
+  for (const corner of run) {
+    ctx.beginPath();
+    ctx.arc(corner.x, corner.y, WALL_CORNER_R * scale, 0, TAU);
+    ctx.fill();
   }
 }
 

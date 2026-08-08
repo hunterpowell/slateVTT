@@ -17,7 +17,7 @@ use uuid::Uuid;
 use crate::protocol::{
     Calibration, ClientId, ClientMsg, Hp, Initiative, InitiativeEntry, MapInfo, Origin, Owner,
     PlayerId, Pos, RoomView, RosterEntry, RosterSlot, ServerMsg, Shape, ShapeId, ShapeKind, Token,
-    TokenId, TokenView,
+    TokenId, TokenView, Wall, WallId, WallKind,
 };
 use crate::store::{Saved, Store};
 
@@ -72,6 +72,15 @@ const MAX_SHAPES: usize = 64;
 /// box. A circle a million cells across is a frozen browser on five other
 /// machines, and a sketch reaches them before anybody has decided to keep it.
 const MAX_SHAPE_CELLS: f32 = 30.0;
+
+/// How many segments a map may hold. A traced dungeon is a couple of hundred, so
+/// this is generous rather than tight — it is here to bound the save file and
+/// the shadowcast fog will run against these, not to tell a DM when to stop.
+const MAX_WALLS: usize = 2000;
+/// Corners in one traced run. A DM who reaches this has been clicking for a
+/// while without finishing; the run is an authoring convenience and splitting a
+/// long one in two costs nothing.
+const MAX_WALL_POINTS: usize = 256;
 
 /// Five players plus the DM, per the brief. The DM holds no slot.
 const ROSTER: [(&str, &str); 5] = [
@@ -227,6 +236,15 @@ enum Event {
     /// reach in from outside — a token being deleted, a token being hidden or
     /// revealed, and a new map arriving on the board.
     ShapesChanged,
+    /// The traced walls changed: a run added, a segment erased, a door swung, or
+    /// the board swept by a new map.
+    ///
+    /// Payload-free like the two above, but for a simpler reason than either:
+    /// there is only one recipient it can ever have. Filtered by *who* rather
+    /// than by what anyone did, like `StagedChanged` and `TokenPlanChanged`, and
+    /// it is the strongest case of that shape yet — a player is not told a wall
+    /// exists, was erased, or was ever traced.
+    WallsChanged,
 }
 
 impl Initiative {
@@ -351,6 +369,14 @@ pub struct RoomState {
     /// on every send. Shapes belong to the live board alone; the staged map has
     /// none, so there is nothing here that forks.
     shapes: Vec<Shape>,
+    /// The walls and doors traced over the map image, in image pixels.
+    ///
+    /// A `Vec` for the reason the shapes are one, except that order here is not
+    /// z-order and means nothing at all — it is simply the order they were
+    /// traced in. They belong to the live board like the shapes do: the staged
+    /// map has none, because walls staged alongside a map are the scene concept
+    /// CLAUDE.md rules out.
+    walls: Vec<Wall>,
     /// How each map URL was last calibrated. Server-side only — it never enters
     /// a snapshot or a message, because the finished `MapInfo` already says
     /// everything a client needs.
@@ -484,7 +510,11 @@ fn persists(event: &Event) -> bool {
         | Event::InitiativeChanged
         | Event::MapChanged
         | Event::StagedChanged
-        | Event::ShapesChanged => true,
+        | Event::ShapesChanged
+        // Half an hour of tracing. The one thing in the room where losing the
+        // last two seconds of work would mean losing the segment the DM was
+        // most likely to be in the middle of.
+        | Event::WallsChanged => true,
         // A sketch is not in the room to be saved. It is the one thing here
         // that exists only between two pointer events, which is exactly why a
         // measuring line costs the disk nothing at all.
@@ -652,6 +682,7 @@ impl RoomState {
                 .collect(),
             initiative: saved.initiative,
             shapes: saved.shapes,
+            walls: saved.walls,
             calibrations: saved.calibrations,
             clients: HashMap::new(),
             pending: HashMap::new(),
@@ -670,6 +701,7 @@ impl RoomState {
             tokens,
             initiative: self.initiative.clone(),
             shapes: self.shapes.clone(),
+            walls: self.walls.clone(),
             calibrations: self.calibrations.clone(),
         }
     }
@@ -721,6 +753,7 @@ impl RoomState {
                 })
                 .collect(),
             shapes: Vec::new(),
+            walls: Vec::new(),
             calibrations: HashMap::new(),
             clients: HashMap::new(),
             pending: HashMap::new(),
@@ -805,7 +838,7 @@ impl RoomState {
                 Identity::Dm => None,
                 Identity::Player(id) => Some(id.clone()),
             },
-            state: self.snapshot_for(&identity),
+            state: Box::new(self.snapshot_for(&identity)),
             roster: self.roster.clone(),
         };
 
@@ -886,6 +919,15 @@ impl RoomState {
             tokens,
             initiative: self.initiative_for(is_dm),
             shapes: self.shapes_for(is_dm),
+            // All of them or none, with no middle case to get wrong: a wall is
+            // the dungeon's floor plan, and a player is meant to infer it from
+            // the edges of the fog rather than read it out of their snapshot.
+            // Empty is also what a map nobody has traced looks like.
+            walls: if is_dm {
+                self.walls.clone()
+            } else {
+                Vec::new()
+            },
         }
     }
 
@@ -1132,9 +1174,7 @@ impl RoomState {
             // No `require_dm` anywhere in this group but the last: anyone may
             // draw. The permission that does exist is on erasing, and it is
             // per-shape rather than per-role.
-            ClientMsg::Sketch {
-                at, to, color, ..
-            } => {
+            ClientMsg::Sketch { at, to, color, .. } => {
                 finite(&[at.x, at.y])?;
                 shape_fields(*to, color)
             }
@@ -1188,6 +1228,70 @@ impl RoomState {
             // The one DM-only command here, because it reaches into five other
             // people's drawings rather than only their own.
             ClientMsg::ClearShapes => require_dm(client, "clear the board"),
+
+            // Every wall command is DM-only, and unlike the drawings there is no
+            // per-item permission underneath: the walls are all the DM's, so
+            // "may this client touch a wall" and "is this client the DM" are the
+            // same question.
+            ClientMsg::AddWalls { points, .. } => {
+                require_dm(client, "trace walls")?;
+                // Two points make one segment. One is a click that started a run
+                // and never finished it, which the client does not send — so
+                // reaching here is a frame that would store nothing.
+                if points.len() < 2 {
+                    return Err("a wall needs at least two corners".to_owned());
+                }
+                if points.len() > MAX_WALL_POINTS {
+                    return Err(format!(
+                        "a single run may not exceed {MAX_WALL_POINTS} corners"
+                    ));
+                }
+                // The run becomes one segment per gap between corners, so this
+                // is what the room is actually being asked to grow by.
+                if self.walls.len() + points.len() - 1 > MAX_WALLS {
+                    return Err(format!("this map already holds {MAX_WALLS} wall segments"));
+                }
+                for point in points {
+                    finite(&[point.x, point.y])?;
+                    // Image pixels, so the same bound the play area is held to
+                    // and for the same reason — this is geometry over the art.
+                    // Negative is allowed: the map is drawn from the world
+                    // origin, but a DM tracing right up to the edge should not
+                    // have a corner refused for landing a pixel outside it.
+                    if point.x.abs() > MAX_MAP_PX || point.y.abs() > MAX_MAP_PX {
+                        return Err("that wall is not on the map".to_owned());
+                    }
+                }
+                Ok(())
+            }
+
+            // "Already gone" rather than "no such wall", the way erasing a shape
+            // reads. There is nothing to leak here — a player cannot get this
+            // far — but the DM's client can race itself with two tabs open, and
+            // a refusal that describes the outcome is more use than one that
+            // describes the lookup.
+            ClientMsg::RemoveWall { id } => {
+                require_dm(client, "erase walls")?;
+                if self.walls.iter().any(|w| &w.id == id) {
+                    Ok(())
+                } else {
+                    Err("that wall is already gone".to_owned())
+                }
+            }
+
+            ClientMsg::ToggleDoor { id } => {
+                require_dm(client, "open and close doors")?;
+                match self.walls.iter().find(|w| &w.id == id) {
+                    Some(wall) if wall.door().is_some() => Ok(()),
+                    // Refused rather than ignored: a toggle that lands on
+                    // masonry means the client and the room disagree about what
+                    // that segment is, and quietly doing nothing hides it.
+                    Some(_) => Err("that is a wall, not a door".to_owned()),
+                    None => Err("that wall is already gone".to_owned()),
+                }
+            }
+
+            ClientMsg::ClearWalls => require_dm(client, "clear the walls"),
 
             ClientMsg::SetInitiative { token, .. } => {
                 require_dm(client, "change initiative")?;
@@ -1458,15 +1562,13 @@ impl RoomState {
                     // plans are still about the map they were made on.
                     self.map = finished;
                     let mut events = vec![Event::MapChanged];
-                    // The drawings are the opposite case, and turn on the same
-                    // `loading`: they describe cells on *this* board, and a new
-                    // image is a new dungeon where those cells mean nothing. A
+                    // The drawings and the walls are the opposite case, and turn
+                    // on the same `loading`: they describe this image, and a new
+                    // one is a new dungeon where none of it means anything. A
                     // recalibration must leave them alone, exactly as it leaves
-                    // the plans alone — this is the arm that gets missed, and it
-                    // is the one fog and walls will be added to.
-                    if loading && !self.shapes.is_empty() {
-                        self.shapes.clear();
-                        events.push(Event::ShapesChanged);
+                    // the plans alone — this is the arm that gets missed.
+                    if loading {
+                        events.append(&mut self.sweep_board());
                     }
                     events
                 }
@@ -1488,13 +1590,10 @@ impl RoomState {
                 // token already holds the position it landed on.
                 let mut events = self.promote_staged_tokens();
                 // A promote is a new map arriving on the board, so the drawings
-                // go the way they go for any other load. Nothing carries over:
-                // there are no staged shapes to adopt, because the staged map
-                // has none to draw on.
-                if !self.shapes.is_empty() {
-                    self.shapes.clear();
-                    events.push(Event::ShapesChanged);
-                }
+                // and the walls go the way they go for any other load. Nothing
+                // carries over: there are no staged shapes or staged walls to
+                // adopt, because the staged map has neither.
+                events.append(&mut self.sweep_board());
                 // Then the two that were always here, because two things
                 // happened: the board changed for everyone, and the slot emptied
                 // for the DM.
@@ -1570,6 +1669,55 @@ impl RoomState {
                 vec![Event::ShapesChanged]
             }
 
+            // One run in, one segment per gap between its corners out. The run
+            // itself is not stored — it was how the DM drew, not what the map
+            // holds — which is what lets one bad segment of a long trace be
+            // erased without redrawing the rest of it.
+            ClientMsg::AddWalls { points, door } => {
+                let kind = if door {
+                    // Traced shut. A door the DM has to close after drawing it is
+                    // a door they will forget to close, and a dungeon's doors are
+                    // shut until somebody opens them.
+                    WallKind::Door(false)
+                } else {
+                    WallKind::Solid
+                };
+                for pair in points.windows(2) {
+                    let [from, to] = pair else { continue };
+                    self.walls.push(Wall {
+                        // The server's to invent, like a shape's or a token's.
+                        id: WallId(Uuid::new_v4().simple().to_string()),
+                        from: *from,
+                        to: *to,
+                        kind,
+                    });
+                }
+                vec![Event::WallsChanged]
+            }
+
+            ClientMsg::RemoveWall { id } => {
+                self.walls.retain(|w| w.id != id);
+                vec![Event::WallsChanged]
+            }
+
+            ClientMsg::ToggleDoor { id } => {
+                for wall in &mut self.walls {
+                    if wall.id == id {
+                        // Proved to be a door by `check`; masonry is left alone
+                        // rather than turned into one.
+                        if let WallKind::Door(open) = wall.kind {
+                            wall.kind = WallKind::Door(!open);
+                        }
+                    }
+                }
+                vec![Event::WallsChanged]
+            }
+
+            ClientMsg::ClearWalls => {
+                self.walls.clear();
+                vec![Event::WallsChanged]
+            }
+
             ClientMsg::SetInitiative { token, value } => {
                 self.initiative.set(token, value);
                 vec![Event::InitiativeChanged]
@@ -1591,6 +1739,36 @@ impl RoomState {
                 vec![Event::InitiativeChanged]
             }
         }
+    }
+
+    /// Everything drawn or traced over the map image, thrown away because that
+    /// image is being replaced.
+    ///
+    /// Shared by a load into the live slot and by a promote, which is a load. It
+    /// is deliberately *not* reached by a recalibration: the drawings are cells
+    /// on this board and the walls trace this art, and correcting the grid
+    /// changes neither of those facts.
+    ///
+    /// Both halves are gated on being non-empty, and that is not tidiness. An
+    /// unconditional `ShapesChanged` on every map load tells the table something
+    /// happened to a board that had nothing on it — the same gate the initiative
+    /// panel uses, for the third time. `WallsChanged` reaches the DM alone, who
+    /// is the one doing this, so the gate there is merely honest.
+    fn sweep_board(&mut self) -> Vec<Event> {
+        let mut events = Vec::new();
+        if !self.shapes.is_empty() {
+            self.shapes.clear();
+            events.push(Event::ShapesChanged);
+        }
+        // Half an hour of tracing, gone with one map load and no undo. That is
+        // the same bargain the drawings make and the roadmap asks for — walls
+        // are grid- and art-specific, and a wall traced on the last dungeon is
+        // a line across the middle of this one.
+        if !self.walls.is_empty() {
+            self.walls.clear();
+            events.push(Event::WallsChanged);
+        }
+        events
     }
 
     /// Takes a token out of the room, and its initiative row with it.
@@ -1918,6 +2096,15 @@ impl RoomState {
             Event::ShapesChanged => Some(ServerMsg::ShapesChanged {
                 shapes: self.shapes_for(self.is_dm(recipient)),
             }),
+
+            // `StagedChanged`'s arm again, and the least ambiguous case of it:
+            // there is no filtered version of a wall for a player to receive.
+            // Not an empty list either — a frame carrying nothing still says the
+            // DM just did something, and by the time fog exists it would say
+            // *when* a door opened, on the one board they cannot see through.
+            Event::WallsChanged => self.is_dm(recipient).then(|| ServerMsg::WallsChanged {
+                walls: self.walls.clone(),
+            }),
         }
     }
 
@@ -1960,9 +2147,9 @@ fn snap_to_cell(x: f32, y: f32, size: f32) -> (f32, f32) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    // Only the tests name this type; `check` and `apply` reach it through the
-    // `Option` on the message.
-    use crate::protocol::Rect;
+    // Only the tests name these; `check` and `apply` reach a `Rect` through the
+    // `Option` on the message, and a `Px` through the `Vec` on a traced run.
+    use crate::protocol::{Px, Rect};
 
     const SECRET: &str = "test-secret";
 
@@ -5209,7 +5396,11 @@ mod tests {
 
         state.handle(
             ClientId(1),
-            add_shape(ShapeKind::Circle, Origin::Token(monster.id.clone()), (2.0, 0.0)),
+            add_shape(
+                ShapeKind::Circle,
+                Origin::Token(monster.id.clone()),
+                (2.0, 0.0),
+            ),
         );
         drain(&mut vex);
 
@@ -5322,7 +5513,11 @@ mod tests {
 
         state.handle(
             ClientId(1),
-            add_shape(ShapeKind::Circle, Origin::Token(ogre.id.clone()), (2.0, 0.0)),
+            add_shape(
+                ShapeKind::Circle,
+                Origin::Token(ogre.id.clone()),
+                (2.0, 0.0),
+            ),
         );
         // One that follows nothing, to prove the sweep is not indiscriminate.
         state.handle(ClientId(1), circle_at(20.0, 20.0));
@@ -5512,6 +5707,326 @@ mod tests {
         let saved: Saved = serde_json::from_str("{}").expect("an empty room decodes");
         let restored = RoomState::restored(saved, SECRET.to_owned());
         assert!(restored.shapes.is_empty());
+    }
+
+    // --- walls and doors ------------------------------------------------------
+
+    /// One traced run, in image pixels. The corners are on a 64 px lattice
+    /// because that is what the client's corner snap produces on the default
+    /// grid, not because anything on the server cares.
+    fn trace(points: &[(f32, f32)], door: bool) -> ClientMsg {
+        ClientMsg::AddWalls {
+            points: points.iter().map(|&(x, y)| Px { x, y }).collect(),
+            door,
+        }
+    }
+
+    /// A three-corner run: two segments meeting at a right angle.
+    fn a_corner() -> ClientMsg {
+        trace(&[(0.0, 0.0), (128.0, 0.0), (128.0, 128.0)], false)
+    }
+
+    fn wall_ids(state: &RoomState) -> Vec<WallId> {
+        state.walls.iter().map(|w| w.id.clone()).collect()
+    }
+
+    #[test]
+    fn a_traced_run_becomes_one_segment_per_gap_between_its_corners() {
+        // The whole point of the milestone: a two-hundred-segment dungeon is one
+        // command per run rather than one per segment.
+        let mut state = room();
+        let _dm = join_as_dm(&mut state, ClientId(1));
+
+        state.handle(ClientId(1), a_corner());
+
+        assert_eq!(state.walls.len(), 2);
+        let first = state.walls.first().expect("the first segment");
+        let second = state.walls.get(1).expect("the second segment");
+        assert_eq!(first.from, Px { x: 0.0, y: 0.0 });
+        assert_eq!(first.to, Px { x: 128.0, y: 0.0 });
+        // Consecutive segments share a corner: the run is a polyline, and the
+        // gap between two of them would be a gap fog leaks through.
+        assert_eq!(second.from, first.to);
+        assert_eq!(second.to, Px { x: 128.0, y: 128.0 });
+        // The ids are the server's to invent, and distinct — erasing one bad
+        // segment of a long trace is the reason they exist at all.
+        assert_ne!(first.id, second.id);
+        assert!(!first.id.0.is_empty());
+    }
+
+    #[test]
+    fn a_run_of_doors_is_traced_shut() {
+        // A door the DM has to close after drawing it is a door they forget to
+        // close, and a dungeon's doors are shut until somebody opens them.
+        let mut state = room();
+        let _dm = join_as_dm(&mut state, ClientId(1));
+
+        state.handle(ClientId(1), trace(&[(0.0, 0.0), (64.0, 0.0)], true));
+
+        assert_eq!(state.walls.first().expect("the door").door(), Some(false));
+    }
+
+    #[test]
+    fn only_the_dm_may_trace_erase_or_open_anything() {
+        // Every wall command at once: unlike the drawings, there is no
+        // per-item permission underneath — the walls are all the DM's.
+        let mut state = room();
+        let _dm = join_as_dm(&mut state, ClientId(1));
+        let _vex = join_as_player(&mut state, ClientId(2), "vex");
+        state.handle(ClientId(1), trace(&[(0.0, 0.0), (64.0, 0.0)], true));
+        let door = state.walls.first().expect("the door").id.clone();
+
+        for msg in [
+            a_corner(),
+            ClientMsg::RemoveWall { id: door.clone() },
+            ClientMsg::ToggleDoor { id: door },
+            ClientMsg::ClearWalls,
+        ] {
+            assert!(
+                state.check(ClientId(2), &msg).is_err(),
+                "a player got as far as {msg:?}"
+            );
+        }
+        assert_eq!(state.walls.len(), 1, "and none of it happened");
+    }
+
+    #[test]
+    fn a_player_is_never_sent_a_wall_or_told_one_exists() {
+        // Invariant 4 at its plainest. Players infer the geometry from the edges
+        // of the fog; the floor plan itself is not theirs to hold, and a frame
+        // they cannot use still tells them the DM just did something.
+        let mut state = room();
+        let dm_client = ClientId(1);
+        let _dm = join_as_dm(&mut state, dm_client);
+        let mut vex = join_as_player(&mut state, ClientId(2), "vex");
+        drain(&mut vex);
+
+        state.handle(dm_client, a_corner());
+
+        let dm_view = state.snapshot_for(&Identity::Dm);
+        let player_view = state.snapshot_for(&Identity::Player(PlayerId::new("vex")));
+        assert_eq!(dm_view.walls.len(), 2);
+        assert!(
+            player_view.walls.is_empty(),
+            "empty is both 'nothing traced' and 'not the DM'"
+        );
+        assert!(
+            vex.try_recv().is_err(),
+            "not even an empty walls_changed: the frame itself is news"
+        );
+        assert!(
+            state
+                .message_for(ClientId(1), dm_client, &Event::WallsChanged)
+                .is_some(),
+            "the DM is the one recipient it has"
+        );
+    }
+
+    #[test]
+    fn a_door_swings_both_ways_and_masonry_does_not() {
+        let mut state = room();
+        let _dm = join_as_dm(&mut state, ClientId(1));
+        state.handle(ClientId(1), trace(&[(0.0, 0.0), (64.0, 0.0)], true));
+        state.handle(ClientId(1), a_corner());
+        let door = state.walls.first().expect("the door").id.clone();
+        let solid = state.walls.get(1).expect("the masonry").id.clone();
+
+        state.handle(ClientId(1), ClientMsg::ToggleDoor { id: door.clone() });
+        assert_eq!(state.walls.first().expect("the door").door(), Some(true));
+        state.handle(ClientId(1), ClientMsg::ToggleDoor { id: door });
+        assert_eq!(state.walls.first().expect("the door").door(), Some(false));
+
+        // Refused rather than ignored: it means the client and the room disagree
+        // about what that segment is, and doing nothing quietly hides that.
+        let err = state
+            .check(ClientId(1), &ClientMsg::ToggleDoor { id: solid })
+            .expect_err("masonry does not open");
+        assert!(err.contains("not a door"), "{err}");
+    }
+
+    #[test]
+    fn one_bad_segment_can_be_erased_without_redrawing_the_run() {
+        let mut state = room();
+        let _dm = join_as_dm(&mut state, ClientId(1));
+        state.handle(ClientId(1), a_corner());
+        let [first, second] = wall_ids(&state).try_into().expect("two segments");
+
+        state.handle(ClientId(1), ClientMsg::RemoveWall { id: first });
+
+        assert_eq!(wall_ids(&state), vec![second]);
+    }
+
+    #[test]
+    fn erasing_a_wall_that_is_already_gone_is_refused_not_ignored() {
+        let mut state = room();
+        let _dm = join_as_dm(&mut state, ClientId(1));
+
+        let err = state
+            .check(
+                ClientId(1),
+                &ClientMsg::RemoveWall {
+                    id: WallId("nothing".to_owned()),
+                },
+            )
+            .expect_err("refused");
+        assert!(err.contains("already gone"), "{err}");
+    }
+
+    #[test]
+    fn a_new_map_clears_the_walls_and_a_recalibration_does_not() {
+        // The arm that gets missed, for the third feature in a row. A wall
+        // traces the art of *this* image, so a new one throws it away — and
+        // correcting the grid does not touch the art at all, which is exactly
+        // the order the DM does these two things in.
+        let mut state = room();
+        let _dm = join_as_dm(&mut state, ClientId(1));
+        state.handle(ClientId(1), a_corner());
+
+        state.handle(ClientId(1), set_map("/assets/map.png", 80.0, 3.0, 4.0));
+        assert_eq!(state.walls.len(), 2, "recalibrating leaves the tracing");
+
+        state.handle(ClientId(1), set_map("/uploads/cave.webp", 70.0, 0.0, 0.0));
+        assert!(state.walls.is_empty(), "a different dungeon");
+    }
+
+    #[test]
+    fn staging_leaves_the_walls_and_promoting_sweeps_them() {
+        // There are no staged walls — that is the scene concept CLAUDE.md rules
+        // out — so staging a map cannot touch the ones on the board, and a
+        // promote is a load like any other.
+        let mut state = room();
+        let _dm = join_as_dm(&mut state, ClientId(1));
+        state.handle(ClientId(1), a_corner());
+
+        stage(&mut state, ClientId(1), "/uploads/next.webp");
+        assert_eq!(state.walls.len(), 2);
+
+        state.handle(ClientId(1), ClientMsg::PromoteStaged);
+        assert!(state.walls.is_empty());
+    }
+
+    #[test]
+    fn a_map_load_with_nothing_traced_announces_nothing() {
+        // The gate on `sweep_board`, which is the same gate the initiative panel
+        // uses. An unconditional frame on every map load is a message about a
+        // board that had nothing on it.
+        let mut state = room();
+        let _dm = join_as_dm(&mut state, ClientId(1));
+
+        let events = state.apply(ClientId(1), set_map("/uploads/cave.webp", 70.0, 0.0, 0.0));
+
+        assert!(
+            !events
+                .iter()
+                .any(|e| matches!(e, Event::WallsChanged | Event::ShapesChanged)),
+            "swept a board that was already empty: {events:?}"
+        );
+    }
+
+    #[test]
+    fn a_run_needs_two_corners_and_cannot_run_forever() {
+        let mut state = room();
+        let _dm = join_as_dm(&mut state, ClientId(1));
+
+        // One click is a run that was never finished; the client does not send
+        // it, and it would store nothing if it did.
+        assert!(
+            state
+                .check(ClientId(1), &trace(&[(0.0, 0.0)], false))
+                .is_err()
+        );
+
+        let too_many: Vec<(f32, f32)> = (0..=MAX_WALL_POINTS as i32)
+            .map(|i| (i as f32 * 64.0, 0.0))
+            .collect();
+        assert!(state.check(ClientId(1), &trace(&too_many, false)).is_err());
+    }
+
+    #[test]
+    fn a_map_cannot_be_filled_with_walls_without_limit() {
+        // `apply` rather than `handle`, like the drawings cap and for the same
+        // reason: the rule is in `check`, and pushing this many through the
+        // whole pipeline only fills the test's mailbox.
+        let mut state = room();
+        let _dm = join_as_dm(&mut state, ClientId(1));
+
+        // Each run is one segment, so this reaches the cap exactly.
+        for i in 0..MAX_WALLS {
+            state.apply(
+                ClientId(1),
+                trace(&[(i as f32, 0.0), (i as f32, 64.0)], false),
+            );
+        }
+        assert_eq!(state.walls.len(), MAX_WALLS);
+
+        // And the check counts segments the run *would* add, not commands.
+        assert!(
+            state
+                .check(ClientId(1), &trace(&[(0.0, 0.0), (64.0, 0.0)], false))
+                .is_err()
+        );
+    }
+
+    #[test]
+    fn a_corner_off_the_map_is_refused() {
+        let mut state = room();
+        let _dm = join_as_dm(&mut state, ClientId(1));
+
+        for bad in [f32::NAN, f32::INFINITY, MAX_MAP_PX * 2.0] {
+            assert!(
+                state
+                    .check(ClientId(1), &trace(&[(0.0, 0.0), (bad, 0.0)], false))
+                    .is_err(),
+                "{bad} should be refused"
+            );
+        }
+        // A corner a shade outside the image is not: a DM tracing right up to
+        // the edge should not have a click refused for landing a pixel over it.
+        assert!(
+            state
+                .check(ClientId(1), &trace(&[(-4.0, -4.0), (64.0, 0.0)], false))
+                .is_ok()
+        );
+    }
+
+    #[test]
+    fn a_traced_dungeon_survives_the_save_file() {
+        // The one thing on `Saved` that would make this feature unusable if it
+        // were not persisted: the map is still on the board next week.
+        let mut state = room();
+        let _dm = join_as_dm(&mut state, ClientId(1));
+        state.handle(ClientId(1), a_corner());
+        state.handle(ClientId(1), trace(&[(0.0, 0.0), (0.0, 64.0)], true));
+        let door = state.walls.last().expect("the door").id.clone();
+        state.handle(ClientId(1), ClientMsg::ToggleDoor { id: door.clone() });
+
+        let json = serde_json::to_vec(&state.to_saved()).expect("encodes");
+        let saved: Saved = serde_json::from_slice(&json).expect("decodes");
+        let restored = RoomState::restored(saved, SECRET.to_owned());
+
+        assert_eq!(restored.walls.len(), 3);
+        let reopened = restored.walls.last().expect("the door");
+        assert_eq!(reopened.id, door);
+        assert_eq!(reopened.door(), Some(true), "an open door stays open");
+        assert_eq!(reopened.from, Px { x: 0.0, y: 0.0 });
+    }
+
+    #[test]
+    fn a_room_saved_before_walls_existed_still_loads() {
+        // Invariant 2 again, on this milestone's field. And the default matters
+        // beyond loading: a segment that defaulted to an open door would quietly
+        // stop blocking anything the moment fog arrives.
+        let saved: Saved = serde_json::from_str("{}").expect("an empty room decodes");
+        let restored = RoomState::restored(saved, SECRET.to_owned());
+        assert!(restored.walls.is_empty());
+        assert_eq!(WallKind::default(), WallKind::Solid);
+    }
+
+    #[test]
+    fn a_wall_is_worth_saving() {
+        let mut state = room();
+        let _dm = join_as_dm(&mut state, ClientId(1));
+        assert!(state.handle(ClientId(1), a_corner()));
     }
 
     // --- non-finite numbers -------------------------------------------------

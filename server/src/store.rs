@@ -11,7 +11,7 @@ use std::path::{Path, PathBuf};
 use serde::{Deserialize, Serialize};
 use tokio::fs;
 
-use crate::protocol::{Calibration, Initiative, MapInfo, Shape, Token};
+use crate::protocol::{Calibration, Initiative, MapInfo, Shape, Token, Wall};
 
 /// What actually goes to disk.
 ///
@@ -43,6 +43,14 @@ pub struct Saved {
     /// before the party arrived. Sketches are not here and never will be — one
     /// lasts as long as a mouse is held down.
     pub shapes: Vec<Shape>,
+    /// Traced walls and doors, in image pixels. The third thing here the whole
+    /// room holds and no player's copy of it does, after `calibrations` and
+    /// `staged`.
+    ///
+    /// Tracing a dungeon is half an hour of work and it belongs to a map that
+    /// will still be on the board next week, so this is the one thing on `Saved`
+    /// that would make the feature unusable if it were not persisted.
+    pub walls: Vec<Wall>,
     /// Remembered grid calibrations, keyed by map URL.
     ///
     /// The first thing here that is not part of any client's view of the room.
@@ -138,7 +146,8 @@ mod tests {
 
     use super::*;
     use crate::protocol::{
-        Hp, InitiativeEntry, Origin, Owner, PlayerId, Pos, Rect, ShapeId, ShapeKind, TokenId,
+        Hp, InitiativeEntry, Origin, Owner, PlayerId, Pos, Px, Rect, ShapeId, ShapeKind, TokenId,
+        WallId, WallKind,
     };
 
     static NEXT: AtomicU32 = AtomicU32::new(0);
@@ -228,6 +237,22 @@ mod tests {
                 by: Owner::Player(PlayerId::new("grog")),
                 color: "#ff8c42e6".to_owned(),
             }],
+            // One of each kind, since the door is the one that carries state
+            // inside its tag and so the one a round trip could flatten.
+            walls: vec![
+                Wall {
+                    id: WallId("w1".to_owned()),
+                    from: Px { x: 64.0, y: 64.0 },
+                    to: Px { x: 64.0, y: 320.0 },
+                    kind: WallKind::Solid,
+                },
+                Wall {
+                    id: WallId("w2".to_owned()),
+                    from: Px { x: 64.0, y: 320.0 },
+                    to: Px { x: 64.0, y: 384.0 },
+                    kind: WallKind::Door(true),
+                },
+            ],
             calibrations: HashMap::from([(
                 "/uploads/digital-goblin-camp-1a2b3c4d.jpg".to_owned(),
                 Calibration {
@@ -292,6 +317,20 @@ mod tests {
         assert_eq!(loaded.initiative.round, 4);
         assert_eq!(loaded.initiative.current, Some(TokenId::new("t1")));
         assert_eq!(loaded.initiative.entries.len(), 1);
+
+        // Half an hour of tracing, and the map it belongs to will still be on
+        // the board next week. Losing this to a restart would make the wall
+        // editor something nobody used twice.
+        assert_eq!(loaded.walls.len(), 2);
+        let door = loaded.walls.get(1).expect("the door");
+        assert_eq!(door.from, Px { x: 64.0, y: 320.0 });
+        // Image pixels, not cells — invariant 1's exception. A wall stored in
+        // grid units slides off the art the moment the grid is corrected.
+        assert_eq!(door.to, Px { x: 64.0, y: 384.0 });
+        // The open flag lives inside the tag, so a round trip that flattened
+        // `WallKind` would come back as masonry rather than as a shut door.
+        assert_eq!(door.kind, WallKind::Door(true));
+        assert_eq!(door.door(), Some(true));
 
         // Slate is off between sessions, so a calibration that did not survive
         // the file would never be found again.
