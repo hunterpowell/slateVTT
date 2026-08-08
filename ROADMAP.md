@@ -2,9 +2,12 @@
 
 What is not built yet, and the order it gets built in.
 
-`.claude/CLAUDE.md` describes Slate as it is today and is loaded into every session. This file is
-not, deliberately — it is design for features that do not exist, and it would otherwise cost
-context in every session that has nothing to do with it.
+`.claude/CLAUDE.md` holds the rules that hold across every feature and is loaded into every
+session. This file is not, deliberately — it is design for features that do not exist, and it
+would otherwise cost context in every session that has nothing to do with it. `docs/maps.md`,
+`docs/tokens.md` and `docs/drawings.md` are out of context for the same reason from the other
+direction: they are why each built feature is the shape it is, and only the session touching that
+subsystem needs them.
 
 **Read this before starting a new milestone.** The invariants in CLAUDE.md are what make
 everything below addable without a rewrite; if a decision here turns out to conflict with one of
@@ -30,16 +33,16 @@ order of what remains is deliberate:
 9. **Done.** Token lifecycle — the DM creates and deletes tokens, with a custom image, a size in
    grid units, and a reassignable `owner`. That last part is the whole wild shape story: build a
    large token, hand it to the player, take it back or delete it when the spell ends. See
-   *Tokens* in CLAUDE.md for what the size rule turned out to be. Deleting reaches into
+   *Tokens* in `docs/tokens.md` for what the size rule turned out to be. Deleting reaches into
    initiative today and will have to reach into anchored drawings when they exist.
 10. **Done.** Staged map, and the DM preview mode that makes it calibratable. This is where
     `snapshot_for` started genuinely filtering rather than merely having the shape for it, and
     where `message_for` grew its first arm that drops a message for *who a recipient is*. See
-    *Staged maps* in CLAUDE.md. The pattern turned out to be three lines in each of those two
+    *Staged maps* in `docs/maps.md`. The pattern turned out to be three lines in each of those two
     functions; the rest of the milestone was the client, which had to learn that "the map" and
     "the map on screen" are different questions.
 11. **Done.** `hidden` on tokens, then hit points. Both DM-only-visible. See *Hidden tokens and
-    hit points* in CLAUDE.md.
+    hit points* in `docs/tokens.md`.
 
     Per-field redaction turned out to be a type rather than a rule: `TokenView`, built by
     `Token::view_for`, is what the wire carries, so a secret added to `Token` and forgotten is
@@ -55,7 +58,7 @@ order of what remains is deliberate:
     hidden it.
 12. **Done.** Preparing the next room — `staged_pos` and `staged_only` on tokens, and the reversal
     of milestone 10's rule that nothing in preview is interactive. See *Preparing the next room*
-    in CLAUDE.md.
+    in `docs/tokens.md`.
 
     Milestone 11's guess was right: per-field redaction was already a type, so the two fields
     reached nobody until `view_for` named them, and the interesting work was elsewhere. Three
@@ -76,7 +79,7 @@ order of what remains is deliberate:
     The client half was the milestone-10 shape again: `shownPos` is `shownBoard`'s twin, one
     function answering "where is this token on the board that is on screen", and everything that
     draws or hit-tests goes through it. Ghosting was deleted rather than adjusted, as predicted.
-13. **Done.** Movement ruler. See *Distance* in CLAUDE.md, which was reworded rather than the code
+13. **Done.** Movement ruler. See *Distance* in `docs/drawings.md`, which was reworded rather than the code
     bent to fit it: counting a diagonal step as one cell makes every reading a multiple of five,
     which is what the table counts in, and "straight-line" no longer described what ships.
 
@@ -92,7 +95,7 @@ order of what remains is deliberate:
     `pointermove`, so a drag that pauses sends nothing at all; a ruler that expires after a second
     of silence vanishes off the table's screens while the DM is still holding the token. Caught by
     driving two clients at once, which is the only way that arm shows up.
-14. **Done.** Drawing layer. See *Drawings* in CLAUDE.md.
+14. **Done.** Drawing layer. See *Drawings* in `docs/drawings.md`.
 
     Two decisions made this bigger than the state model, and both were the more expensive branch.
 
@@ -104,9 +107,9 @@ order of what remains is deliberate:
 
     And a circle tints the cells it covers as well as drawing an outline, which meant a point-in-
     shape test — and that turned out to pay for itself twice, because it is also what makes
-    click-to-erase free. The tint is where this feature openly disagrees with *Distance*: a
-    diagonal step costs one cell there, so "within 20 ft" is a square, while a circle here is a
-    circle. Different questions, left different on purpose.
+    click-to-erase free. The tint is where this feature openly disagrees with *Distance*, further
+    down the same file: a diagonal step costs one cell there, so "within 20 ft" is a square, while
+    a circle here is a circle. Different questions, left different on purpose.
 
     The thing worth knowing before fog: **anchor visibility could not wait for it.** This file
     filed "an aura on a monster in the dark advertises where it is standing" under fog of war, but
@@ -123,7 +126,7 @@ order of what remains is deliberate:
 
 ## Drawings
 
-Built — see *Drawings* in CLAUDE.md for what shipped. What remains here is the part that is still
+Built — see *Drawings* in `docs/drawings.md` for what shipped. What remains here is the part that is still
 design, because it depends on a milestone that does not exist yet:
 
 Once fog exists, shapes are filtered server-side like everything else, all-or-nothing on
