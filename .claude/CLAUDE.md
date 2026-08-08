@@ -317,6 +317,19 @@ world coordinates. Hit-testing happens in world coordinates too.
 Getting this layer right is the hardest part of the client. Build and verify it standalone,
 against a hardcoded map with no networking, before any WebSocket code exists.
 
+**The left rail shows one of the DM's editing panels at a time, behind a tab strip.** A new panel
+is an entry in `RailTab` and an entry in the array `main.ts` passes to `createRail` — it is never
+another `<aside>` stacked on the others, which is how the rail ran out of room at four. Two rules
+come with it. Closing a tab must put down whatever that panel armed, via the panel's `stop`: the
+calibration box and the wall editor both take the left mouse button, and a tool still holding it
+under a hidden panel is a click doing something with nothing on screen saying why. And a panel that
+goes inert in some state must make its **tab** inert too — a way in to a panel that can do nothing
+is the same lie as the panel sitting there looking armed.
+
+The draw tool is deliberately *not* on the strip. It is the one panel everybody has and it is used
+in the middle of a fight, so it stays pinned to the bottom of the rail — the same reason a door
+swings with no tool in hand. `rail.ts` is short and holds the rest of the reasoning.
+
 ## Maps
 
 Two slots: `map`, and `staged: Option<MapInfo>` — the map the DM is preparing while the table is

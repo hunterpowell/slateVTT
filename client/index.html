@@ -360,13 +360,14 @@
         font-size: 12px;
       }
 
-      /* --- map tool (DM only) ---------------------------------------------- */
+      /* --- the rail --------------------------------------------------------- */
 
-      /* The DM's two panels, stacked. They are in normal flow inside this rather
-         than each being pinned at its own offset: the map panel's height depends
-         on what is open in it — the library list, the calibration row, the staged
-         row — so any fixed offset for the one below it is a number that a later
-         feature makes wrong. `bottom` keeps the pair clear of the HUD. */
+      /* A tab strip, one open editing panel, and the draw tool pinned under
+         them. Everything is in normal flow rather than each panel being pinned
+         at its own offset: the map panel's height depends on what is open in it
+         — the library list, the calibration row, the staged row — so any fixed
+         offset for the one below it is a number that a later feature makes
+         wrong. `bottom` keeps the rail clear of the HUD. */
       #left-rail {
         position: fixed;
         top: 50px;
@@ -385,8 +386,74 @@
         pointer-events: auto;
       }
 
-      #maptool {
+      /* One row, equal columns, however many tabs there are. Four short labels
+         fit across 190px at this size, which is what settled the strip being
+         horizontal: it costs the rail one row of height once, rather than
+         costing every panel a slice of its width forever. */
+      #rail-tabs {
+        display: grid;
+        grid-auto-flow: column;
+        grid-auto-columns: 1fr;
         flex: 0 0 auto;
+        gap: 4px;
+        /* Cancels the rail's own 10px so the open tab sits on its panel rather
+           than floating above it — the join is the whole of what says which
+           panel a tab belongs to. Invisible when nothing is open: the draw
+           tool's `margin-top: auto` eats the slack either way. */
+        margin-bottom: -10px;
+      }
+
+      /* Not `.draw-tool`, which `#walltool` borrows for its modes, and the
+         difference is the reason: that class says "this control has taken the
+         left mouse button" in blue, and an open tab has taken nothing. Spending
+         the blue here would make the one colour that means "the canvas behaves
+         differently now" mean "a panel is open" as well. An open tab reads as
+         attached to the panel below it instead. */
+      .rail-tab {
+        padding: 5px 0;
+        border: 1px solid #2b3038;
+        border-bottom-color: #2b3038;
+        border-radius: 4px 4px 0 0;
+        background: #171a1f;
+        color: #8d939c;
+        font: inherit;
+        font-size: 11px;
+        cursor: pointer;
+      }
+
+      .rail-tab:hover {
+        color: #d8d2c4;
+      }
+
+      .rail-tab.is-open {
+        /* The panel's own background, and no bottom edge, so the open tab and
+           the panel under it read as one surface across the rail's 10px gap. */
+        border-color: #3a4048;
+        border-bottom-color: transparent;
+        background: rgba(12, 14, 18, 0.88);
+        color: #e8e6e1;
+      }
+
+      /* --- the DM's editing panels ------------------------------------------ */
+
+      /* Only ever one of them in the flow, so none of them is the panel that
+         gives up height for the others — that job does not exist any more, and
+         `#tokentool`'s `min-height` floor went with it. What is left is the case
+         where one panel alone is taller than the rail: it shrinks and scrolls
+         inside itself rather than pushing the draw tool off the bottom, which
+         needs `min-height: 0`, since a flex item will not shrink below its
+         content without it. */
+      #maptool,
+      #tokentool,
+      #walltool {
+        flex: 0 1 auto;
+        min-height: 0;
+        overflow-y: auto;
+      }
+
+      /* --- map tool (DM only) ---------------------------------------------- */
+
+      #maptool {
         box-sizing: border-box;
         width: 100%;
         padding: 10px;
@@ -687,23 +754,14 @@
 
       /* --- token tool (DM only) -------------------------------------------- */
 
-      /* Takes whatever height the map panel above it leaves, and scrolls inside
-         that rather than growing past it. `min-height` because a flex item will
-         not shrink below its content without it, which is what would push this
-         off the bottom of the rail when the library is open. */
+      /* The longest of the three, and before the tab strip it was the one that
+         gave up height to the others — squeezed to a scrollbar and a heading on
+         a short window, which is what the strip was built to fix. It now opens
+         against the whole rail. */
       #tokentool {
-        flex: 1 1 auto;
-        /* The only panel on the rail that gives up height when the others need
-           it, and with four of them now it has to be told where to stop: on a
-           short window it was squeezed to a scrollbar and a heading. Below this
-           it stops shrinking and the rail runs past the bottom of the viewport,
-           which is the lesser of the two failures — the panel nobody can use is
-           worse than the panel nobody can see. */
-        min-height: 140px;
         box-sizing: border-box;
         width: 100%;
         padding: 10px;
-        overflow-y: auto;
         border-radius: 6px;
         background: rgba(12, 14, 18, 0.88);
         color: #d8d2c4;
@@ -831,9 +889,11 @@
       /* --- draw tool (everyone) --------------------------------------------- */
 
       /* Pinned to the bottom of the rail rather than left to flow: it is the one
-         panel a player has, and on a player's screen the two above it are hidden,
-         so in normal flow it would float alone at the top. `margin-top: auto`
-         puts it where a toolbar belongs on both screens. */
+         panel a player has, and on a player's screen the strip and the three
+         panels above it are hidden, so in normal flow it would float alone at
+         the top. `margin-top: auto` puts it where a toolbar belongs on both
+         screens — and it is why the draw tool is not behind a tab: a toolbar
+         everyone uses mid-fight should not cost a click. */
       #drawtool {
         flex: 0 0 auto;
         margin-top: auto;
@@ -927,14 +987,12 @@
       /* Borrows `.draw-tool` for its mode buttons: they are the same control
          saying the same thing, and a second copy of those rules under another
          name would only be a second place to change a colour. The grid is its
-         own, because three modes fit on one row and the rail is short. */
+         own, because three modes fit on one row. */
       #walltool {
-        flex: 0 0 auto;
         box-sizing: border-box;
         width: 100%;
         /* No margin: the rail already puts a 10px gap between its children, and
-           a margin here would be that gap twice. The rail is tight enough with
-           four panels on it that eight pixels is a real eight pixels. */
+           a margin here would be that gap twice. */
         padding: 10px;
         border-radius: 6px;
         background: rgba(12, 14, 18, 0.88);
@@ -983,8 +1041,10 @@
 
       /* There are no staged walls — a map prepared out of sight has no geometry
          traced over it yet — so the panel goes inert over a preview, exactly as
-         the draw tool does. */
-      body.previewing #walltool {
+         the draw tool does. The tab goes with it: a way in to a panel that can
+         do nothing is the same lie as the panel looking armed. */
+      body.previewing #walltool,
+      body.previewing .rail-tab[data-tab='walls'] {
         opacity: 0.45;
         pointer-events: none;
       }
@@ -1021,6 +1081,11 @@
       <button id="init-clear" type="button" hidden>clear order</button>
     </aside>
     <div id="left-rail">
+      <!-- DM only. The three panels below it are editing panels and only one is
+           open at a time; see `rail.ts` for why they are the ones behind a tab
+           and the draw tool is not. Empty here — the tabs are built in that
+           module, the way the draw and wall tools build their buttons. -->
+      <nav id="rail-tabs" hidden></nav>
       <aside id="maptool" hidden>
         <div class="map-head" id="map-head">Map</div>
         <!-- Which slot everything below is about. Turning on "next map" while
@@ -1128,20 +1193,10 @@
         <button id="token-new" class="map-subtle" type="button" hidden>+ new token</button>
         <p class="map-hint" id="token-hint">Click a token on the map to edit it.</p>
       </aside>
-      <!-- The one panel everybody gets. Anyone may draw, so unlike the two above
-           it is built on a player connection too; the only thing that differs by
-           identity is the clear-all button. -->
-      <aside id="drawtool" hidden>
-        <div class="map-head">Draw</div>
-        <div id="draw-tools" class="draw-tools"></div>
-        <div id="draw-swatches" class="draw-swatches"></div>
-        <button id="draw-clear" class="map-subtle" type="button" hidden>erase everything</button>
-        <p class="map-hint" id="draw-hint"></p>
-      </aside>
       <!-- DM only, and the walls it traces reach nobody else at all — a player
            is not sent one, so there is nothing on their board for this panel to
-           be missing from. It sits below the draw tool because it is scenery
-           work: done once when a map goes down, not during a fight. -->
+           be missing from. Third of the three behind the strip: scenery work,
+           done once when a map goes down rather than during a fight. -->
       <aside id="walltool" hidden>
         <div class="map-head">Walls</div>
         <div id="wall-tools" class="wall-tools"></div>
@@ -1150,6 +1205,17 @@
           <button id="wall-clear" class="map-subtle" type="button">erase all</button>
         </div>
         <p class="map-hint" id="wall-hint"></p>
+      </aside>
+      <!-- The one panel everybody gets, and the one that is not behind a tab.
+           Anyone may draw, so unlike the three above it is built on a player
+           connection too; the only thing that differs by identity is the
+           clear-all button. -->
+      <aside id="drawtool" hidden>
+        <div class="map-head">Draw</div>
+        <div id="draw-tools" class="draw-tools"></div>
+        <div id="draw-swatches" class="draw-swatches"></div>
+        <button id="draw-clear" class="map-subtle" type="button" hidden>erase everything</button>
+        <p class="map-hint" id="draw-hint"></p>
       </aside>
     </div>
     <div id="hud"></div>

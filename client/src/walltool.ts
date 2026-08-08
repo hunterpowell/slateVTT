@@ -267,6 +267,8 @@ export function createWallTool(
 
   showMode();
   showReadout();
-  ui.root.hidden = false;
+  // Whether this panel is on screen is the rail's to say, not this module's:
+  // it is one of the three behind the tab strip. The draw tool still unhides
+  // itself, being the one panel that is always there.
   return tool;
 }

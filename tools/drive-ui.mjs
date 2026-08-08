@@ -65,6 +65,17 @@ async function hunt(axis, from, to, fixed) {
 
 // --- the panel exists at all ------------------------------------------------
 
+/** Opens one of the rail's tabs. See `rail.ts` — only one is up at a time. */
+const tab = (label) =>
+  evaluate(`[...document.querySelectorAll('#rail-tabs .rail-tab')]
+    .find(b => b.textContent === "${label}").click(); "ok"`);
+
+// The wall panel is behind a tab now, and nothing below opens it again: the
+// only thing that switches tabs on its own is clicking a token, and this script
+// never clicks one. `.click()` would fire on a hidden button just the same,
+// which is exactly why this is here — driving the panel the way the DM reaches
+// it is the difference between testing the editor and testing its handlers.
+await tab('walls');
 check('the wall panel is on screen for the DM', await evaluate('!document.querySelector("#walltool").hidden'), true);
 check('three modes offered', await evaluate('document.querySelectorAll("#wall-tools button").length'), 3);
 
@@ -176,20 +187,20 @@ await key('Escape', 'Escape', 27);
 check('escape again puts the tool away', await evaluate('document.body.classList.contains("tracing")'), false);
 check('and an abandoned run stored nothing', await readout(), '1 wall · 1 door');
 
-// --- the rail has four panels on it now -------------------------------------
-// The token panel is the one that gives up height when the others need it, and
-// it must not give up all of it. Nothing in the protocol would ever catch this.
+// --- the panel is still the one on screen -----------------------------------
+// This script used to end by measuring the rail, back when all four panels were
+// stacked and `#tokentool` was squeezed between them. One tab is open at a time
+// now, so that whole class of failure belongs to the strip rather than to any
+// one panel — it is `drive-rail.mjs`, which measures it there. What is left
+// here is the assumption everything above rests on.
 
-const rail = JSON.parse(
-  await evaluate(`JSON.stringify({
-    token: Math.round(document.querySelector('#tokentool').getBoundingClientRect().height),
-    walls: Math.round(document.querySelector('#walltool').getBoundingClientRect().height),
-    below: Math.round(document.querySelector('#walltool').getBoundingClientRect().bottom - window.innerHeight),
-  })`),
+check('the walls tab was open throughout', await evaluate('!document.querySelector("#walltool").hidden'), true);
+check(
+  'and it is the only panel of the three',
+  await evaluate(`['maptool','tokentool','walltool']
+    .filter(id => !document.getElementById(id).hidden)`),
+  ['walltool'],
 );
-note('panel heights:', JSON.stringify(rail));
-check('the token panel keeps a usable height', rail.token >= 140, true);
-check('the wall panel is fully on screen', rail.below <= 0, true);
 
 session.close();
 process.exit(verdict(session));

@@ -13,6 +13,8 @@ import {
 import { attachInput } from './input.js';
 import type { MapTool } from './maptool.js';
 import { createMapTool } from './maptool.js';
+import type { Rail } from './rail.js';
+import { createRail } from './rail.js';
 import type { Net } from './net.js';
 import { connect } from './net.js';
 import type { Panel } from './panel.js';
@@ -53,6 +55,9 @@ interface Ui {
     clear: HTMLButtonElement;
     next: HTMLButtonElement;
     previous: HTMLButtonElement;
+  };
+  rail: {
+    tabs: HTMLElement;
   };
   maptool: {
     root: HTMLElement;
@@ -149,6 +154,9 @@ function findUi(): Ui {
       next: need<HTMLButtonElement>('#init-next'),
       previous: need<HTMLButtonElement>('#init-previous'),
     },
+    rail: {
+      tabs: need('#rail-tabs'),
+    },
     maptool: {
       root: need('#maptool'),
       head: need('#map-head'),
@@ -231,6 +239,9 @@ function boot(): void {
   let stage: Stage | null = null;
   let drawTool: DrawTool | null = null;
   let wallTool: WallTool | null = null;
+  // DM-only, like the three panels it shows. Null on a player connection, which
+  // is why every use of it is optional-chained rather than guarded.
+  let rail: Rail | null = null;
   let identity: Identity = ANONYMOUS;
   // Outlives any one drag and is fed from both directions — our own pointer in
   // input.ts, and everyone else's drag frames below.
@@ -339,7 +350,6 @@ function boot(): void {
           },
         );
         mapTool.update(room.scene);
-        ui.maptool.root.hidden = false;
 
         tokenTool = createTokenTool(
           ui.tokentool,
@@ -352,12 +362,22 @@ function boot(): void {
           () => stage?.viewCentre() ?? null,
         );
         tokenTool.update(room.scene);
-        ui.tokentool.root.hidden = false;
 
         // DM-only like the two above it: a player is sent no walls, so there is
         // nothing here for them to edit and nothing on their board to show.
         wallTool = createWallTool(ui.walltool, (msg) => net.send(msg), () => drawTool?.stop());
         wallTool.update(room.scene);
+
+        // Last, because it owns whether the three above are on screen and has
+        // to be able to put each of them down as it closes it. The order here
+        // is the order of the tabs, and the fourth entry is fog's.
+        rail = createRail(ui.rail, [
+          { tab: 'map', label: 'map', root: ui.maptool.root, stop: () => mapTool?.stop() },
+          // Nothing to put down: a selection is a ring on the board, which is
+          // still on screen with the panel closed.
+          { tab: 'token', label: 'token', root: ui.tokentool.root },
+          { tab: 'walls', label: 'walls', root: ui.walltool.root, stop: () => wallTool?.stop() },
+        ]);
       }
 
       void start(
@@ -371,6 +391,7 @@ function boot(): void {
         drawTool,
         sketches,
         wallTool,
+        rail,
       ).then(
         (started) => {
           stage = started;
@@ -555,6 +576,7 @@ async function start(
   drawTool: DrawTool,
   sketches: Sketches,
   wallTool: WallTool | null,
+  rail: Rail | null,
 ): Promise<Stage> {
   const { scene } = room;
   const firstUrl = shownBoard(scene).mapUrl;
@@ -613,7 +635,17 @@ async function start(
     identity,
     send,
     mapTool,
-    tokenTool === null ? null : (id) => tokenTool.select(id),
+    tokenTool === null
+      ? null
+      : (id) => {
+          tokenTool.select(id);
+          // The mirror of the rule below, that a panel describing something not
+          // on screen is a panel lying: picking a token up off the board is the
+          // request to edit it, so the tab that edits it opens. Deselecting is
+          // not the request to close anything — the DM clicks empty map for all
+          // sorts of reasons — so only a real selection opens it.
+          if (id !== null) rail?.show('token');
+        },
     rulers,
     drawTool,
     sketches,

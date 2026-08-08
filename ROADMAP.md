@@ -146,6 +146,16 @@ order of what remains is deliberate:
     constraint on what this UI can grow, and the next panel will have to displace something rather
     than be added beside it.
 
+    *Since resolved, before milestone 16 rather than during it — see `rail.ts`.* The DM's editing
+    panels are behind a tab strip and only one is open at a time, so fog's panel costs a tab rather
+    than a share of the rail's height, and stacking is no longer the constraint on what gets built.
+    Two rules came with it and apply to anything added to the strip: closing a tab must put down
+    whatever that panel armed, because a tool holding the left mouse button under a hidden panel is
+    a click with nothing on screen explaining it; and a panel that is inert in some state must make
+    its **tab** inert too. The draw tool is deliberately not on the strip — it is the one panel
+    everybody has and it is used mid-fight, which is the same reason a door swings with no tool in
+    hand.
+
     Also worth knowing before adding anything to `RoomView`: growing it by one field pushed
     `ServerMsg::Welcome` past clippy's large-variant threshold, because every message in every
     client's mailbox is sized at the largest variant. `state` is boxed now, invisibly — serde sees

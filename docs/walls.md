@@ -9,6 +9,9 @@ dungeon is not the reason nobody turns it on.
 coordinate space here is the one exception to invariant 1, and the reason a run stops existing the
 moment it is stored is the thing that looks like a mistake and is not.
 
+Where this panel sits on the left rail is `rail.ts`'s to decide rather than this file's; *The rail*
+below says what that leaves the wall editor itself responsible for.
+
 ## Image pixels, not cells
 
 **A wall is stored in image pixels.** This is invariant 1's stated exception and not a violation of
@@ -182,9 +185,14 @@ the things that recede into the map are exactly the things a click would do noth
 
 ### The rail
 
-The wall panel is the fourth on the left rail, and it was one panel more than the layout had room
-for: `#tokentool` is the flex item that gives up height, and at a 860-pixel window it was squeezed to
-a scrollbar and a heading. It now has a `min-height` floor and the wall panel is compact — three
-modes on one row, the count and the clear-all sharing a line. Below that floor the rail runs past the
-bottom of the viewport, which is the lesser failure: the panel nobody can use is worse than the panel
-nobody can see.
+The wall panel was the fourth on the left rail and one panel more than the layout had room for:
+`#tokentool` was the flex item that gave up height, and at an 860-pixel window it was squeezed to a
+scrollbar and a heading. That is fixed, and not here — the rail now opens **one editing panel at a
+time** behind a tab strip, so the walls panel is a tab rather than a share of the rail's height, and
+nothing about it has to be compact to fit. The reasoning is in `rail.ts`.
+
+Two things about this panel survive the move and are still worth knowing. Closing the tab calls
+`WallTool.stop()`, which is not tidiness: `erase` and `wall` both take the left mouse button, and a
+mode left armed under a hidden panel is a click doing something with nothing on screen saying why.
+And a preview makes the **tab** inert as well as the panel — there are no staged walls, so a way in
+to a panel that can do nothing is the same lie as the panel sitting there looking armed.

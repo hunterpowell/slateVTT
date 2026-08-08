@@ -62,6 +62,19 @@ export interface MapTool extends Calibration {
   update(scene: Scene): void;
   /** Offers the whole image as the reference box. See below. */
   proposeWholeMap(): void;
+  /**
+   * Puts the panel down, called by the rail as it closes this tab.
+   *
+   * Calibrating takes the left mouse button, so leaving it armed under a hidden
+   * panel would leave a drag on the canvas drawing a reference box with nothing
+   * on screen saying why. The library list closes with it so the tab reopens on
+   * the panel rather than mid-browse.
+   *
+   * Preview mode deliberately survives: staging a map and then dragging tokens
+   * into position on it is one job done in two places, and `#preview-tag` says
+   * which board is on screen without this panel being open.
+   */
+  stop(): void;
 }
 
 const DEFAULT_ALPHA_PCT = 32;
@@ -564,6 +577,11 @@ export function createMapTool(
     },
 
     proposeWholeMap,
+
+    stop() {
+      setActive(false);
+      closeLibrary();
+    },
 
     update(next) {
       scene = next;
