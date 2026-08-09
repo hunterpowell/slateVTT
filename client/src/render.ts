@@ -1,6 +1,7 @@
 import type { Box } from './calibrate.js';
 import type { Camera, Rect, Vec2 } from './coords.js';
 import { firstLineAt, gridToWorld, playRect, worldToScreen } from './coords.js';
+import { darkFill, fogRect } from './fog.js';
 import type { Identity } from './identity.js';
 import { ownsToken } from './identity.js';
 import type { Hp } from './protocol.js';
@@ -224,6 +225,18 @@ export function render(ctx: CanvasRenderingContext2D, view: Viewport, frame: Fra
   if (board.playArea !== null) drawOutsidePlayArea(ctx, area, map.width, map.height);
   drawGrid(ctx, frame, board, area);
 
+  // Over the terrain and under everything standing on it.
+  //
+  // Under the tokens, and that is the DM's half of the feature: their monsters
+  // stay at full strength over a faint wash, so the board they are playing on is
+  // still legible while it also says what the table can see. A player has no
+  // token in the dark to be washed out — every one they hold is a vision source,
+  // or is standing where one is looking — so the order costs them nothing.
+  //
+  // Nothing while previewing. The staged map has no fog: the bitsets belong to
+  // the board, exactly as the walls and the shapes do.
+  if (!showingStaged(frame.scene)) drawFog(ctx, frame, board, area);
+
   drawTokens(ctx, frame, board);
 
   // Over the tokens, not under them. A spell area is being asked about *now* —
@@ -317,6 +330,69 @@ function drawGrid(
   ctx.strokeStyle = board.gridColor;
   ctx.lineWidth = GRID_CORE_WIDTH / frame.cam.zoom;
   ctx.stroke();
+}
+
+/**
+ * The fog: dark where the party has never been, dim where they have been and
+ * are not, and clear where they are looking.
+ *
+ * **One `drawImage`, whatever the dungeon looks like.** The fog arrives as a
+ * rectangle of cells and `fog.ts` has already turned it into a canvas one pixel
+ * per cell, so this stretches that over the board instead of filling a few
+ * thousand rectangles every frame. Smoothing is off, which is what keeps the
+ * edge on the cell boundary the server actually decided rather than half a cell
+ * either side of it.
+ *
+ * Everything outside that rectangle is dark by definition — the rectangle is
+ * only as big as what has been explored — so the four bands around it are filled
+ * flat, clipped to the board. Same trick as the play-area dim below, and here it
+ * is what lets the packed frame shrink to the interesting part of a large map.
+ *
+ * Nothing here is a visibility decision. A creature the table cannot see is
+ * absent from the scene rather than painted over: drawing it and covering it
+ * would put the position on the client, which is what invariant 4 forbids.
+ */
+function drawFog(
+  ctx: CanvasRenderingContext2D,
+  frame: Frame,
+  board: Board,
+  area: Rect,
+): void {
+  const { fog } = frame.scene;
+  if (fog === null || area.w <= 0 || area.h <= 0) return;
+
+  const right = area.x + area.w;
+  const bottom = area.y + area.h;
+
+  ctx.save();
+  // Clipped so the bands below can be drawn generously without darkening the
+  // margin outside the board, which has its own dim and its own reason for it.
+  ctx.beginPath();
+  ctx.rect(area.x, area.y, area.w, area.h);
+  ctx.clip();
+  ctx.fillStyle = darkFill(frame.identity.isDm);
+
+  // Nothing explored at all: the whole board is dark, and there is no rectangle
+  // to cut out of it.
+  if (fog.shade === null) {
+    ctx.fillRect(area.x, area.y, area.w, area.h);
+    ctx.restore();
+    return;
+  }
+
+  const seen = fogRect(fog, board.grid);
+  const seenRight = seen.x + seen.w;
+  const seenBottom = seen.y + seen.h;
+  ctx.fillRect(area.x, area.y, area.w, seen.y - area.y);
+  ctx.fillRect(area.x, seenBottom, area.w, bottom - seenBottom);
+  ctx.fillRect(area.x, seen.y, seen.x - area.x, seen.h);
+  ctx.fillRect(seenRight, seen.y, right - seenRight, seen.h);
+
+  const smoothing = ctx.imageSmoothingEnabled;
+  ctx.imageSmoothingEnabled = false;
+  ctx.drawImage(fog.shade, seen.x, seen.y, seen.w, seen.h);
+  ctx.imageSmoothingEnabled = smoothing;
+  ctx.restore();
 }
 
 /**

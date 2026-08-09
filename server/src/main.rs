@@ -1,3 +1,4 @@
+mod fog;
 mod library;
 mod protocol;
 mod room;

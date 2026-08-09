@@ -160,25 +160,58 @@ order of what remains is deliberate:
     `ServerMsg::Welcome` past clippy's large-variant threshold, because every message in every
     client's mailbox is sized at the largest variant. `state` is boxed now, invisibly — serde sees
     straight through it and the frame on the wire is unchanged.
-16. Fog of war. The walls are traced and nothing reads them yet; this is what reads them.
+16. Fog of war, in two halves. **16a is done** — automatic line of sight, which is what finally
+    reads the walls. See `docs/fog.md`.
+
+    The state model was three lines again. Four things cost more.
+
+    **Symmetric shadowcasting had to go**, and the reason is the one thing here worth reading before
+    building on it: shadowcasting wants opacity to be a property of a *cell*, and a wall in this
+    project is an arbitrary segment in image pixels that the DM may have traced diagonally.
+    Rasterising a segment into blocking cells is not a lossy version of the truth, it is a different
+    dungeon — a wall traced along a cell boundary, which is where `snapToCorner` puts most of them,
+    would blind the cells on both sides and shrink every room it encloses. What ships is a ray from
+    the viewer's centre to each cell centre, culled to the walls within reach. One sentence, a page
+    of code, and explicable to a player who asks why they cannot see something.
+
+    **`Token::unseen` stopped being the only question any filter asks.** Two of the three reasons a
+    token is unseen are facts about the token; the third is a fact about the room, so it cannot be
+    answered from `&Token` and the funnel moved up to `RoomState::unseen_by_table`. That is the
+    third time a filtering question has had to grow, and the first time it changed type.
+
+    **`was_unseen` had to change meaning at four sites**, exactly as milestone 11's note warned it
+    would. Missing one is a live leak rather than a cosmetic bug: renaming a monster standing in the
+    dark would send the table a `TokenRemoved` naming an id they have never held, which announces
+    that the id exists. `Event::Promoted` grew a third outcome for the same reason.
+
+    And **fog needed an off switch**, which this file did not plan for. Without one every map is
+    fogged including the outdoor ones, and every existing save goes dark the day it ships. `fog: bool`
+    beside the radius on `MapInfo` also carries the warning below about a radius defaulting to zero,
+    which frees the radius to default to a playable number instead of a defensive one.
+
+    16b is the DM's manual override and the flood-fill reveal tool, designed under *Fog of war*
+    below. Also still open there: narrowing an *unanchored* shape to the cells it covers, which
+    milestone 14's `shapes_for` left for whenever fog existed.
 
 ## Drawings
 
-Built — see *Drawings* in `docs/drawings.md` for what shipped. What remains here is the part that is still
-design, because it depends on a milestone that does not exist yet:
+Built — see *Drawings* in `docs/drawings.md` for what shipped. What remains here is one arm that
+16a did not take, and its design has moved to *16b* below, where the rest of the unfinished fog
+work is: narrowing an **unanchored** shape to the cells it covers.
 
-Once fog exists, shapes are filtered server-side like everything else, all-or-nothing on
-overlap: if any cell a shape covers is visible, the whole shape is sent. Drawing shapes
-underneath the fog overlay and calling them hidden would put the data on the client and paint
-over it, which is precisely what invariant 4 forbids. That filtering goes in `shapes_for`, which
-already exists and already withholds a shape whose *anchor* the recipient cannot see — the arm
-that could not wait for fog, since `hidden` predates it. An anchored shape's visibility follows its
-anchor token's rather than its own footprint, which is what that arm already does.
+The anchored half is done and has been since milestone 14 — `shapes_for` withholds a shape whose
+anchor the recipient cannot see, and as of 16a that question includes line of sight without another
+line. An anchored shape's visibility follows its anchor token's rather than its own footprint, which
+is what that arm already does.
 
 ## Fog of war
 
-Do not implement this ahead of its milestone. The following constraints exist so it can be
-added without a rewrite — they are already reflected in the rules in CLAUDE.md:
+**16a is built — see `docs/fog.md` for what shipped and why.** What remains here is 16b: the DM's
+manual override and the reveal tool, plus the notes below that turned out to be right and are worth
+keeping for whoever builds it.
+
+The constraints this section was written to protect all held. They are listed here as they were,
+because the point of the list is that none of them had to change:
 
 - Per-client `mpsc` instead of `broadcast`
 - `Event` separate from `ServerMsg`
@@ -190,7 +223,9 @@ added without a rewrite — they are already reflected in the rules in CLAUDE.md
   `Vec<Wall>` of segments in image pixels, doors carry their open state, and none of it reaches a
   player. What is missing is anything that reads them.
 
-Cell-based visibility over the grid, using symmetric shadowcasting.
+Cell-based visibility over the grid. This said *symmetric shadowcasting* and that is the one line
+here that did not survive contact — see milestone 16a above, and *Raycasting, not shadowcasting* in
+`docs/fog.md`. Everything the algorithm was chosen to deliver held; the algorithm did not.
 
 **Fog is party-shared, not per-player.** One `revealed` bitset (explored terrain, persistent)
 and one `visible` bitset (current line of sight), each the union over every player-owned token.
@@ -198,16 +233,15 @@ Five people narrating to each other on Discord get nothing out of per-player fog
 and five times the state. Terrain gates on `revealed`; tokens gate on `visible`. Vision comes
 from tokens a player *owns*, so handing a token over grants vision with no extra rule.
 
-Everything the walls themselves needed is built and is described in `docs/walls.md` — image
-pixels, doors carrying their open state, absent from a player's snapshot rather than sent and not
-drawn, and swept by a map load. What is still design here is what reads them:
-
 Tokens do not block line of sight; only walls do. **The play-area boundary is an implicit wall**,
 so vision does not spill into the void off the edge of the map — nothing in the wall editor
-produces that boundary and nothing should, since it is already on `MapInfo`.
+produces that boundary and nothing should, since it is already on `MapInfo`. (Built, and it needed
+a second half this file did not foresee: a map with *no* play area still has to bound what the party
+can explore, or a token dragged to cell one million puts a cell there and the rectangle packing it
+alongside the dungeon is the whole map's worth of characters on every send.)
 
 Players infer the geometry from the edges of the fog, which is the reason walls stay out of their
-snapshot even though fog will be the only thing they can see the effect of.
+snapshot even though fog is the only thing they can see the effect of.
 
 **Walls block sight and never movement. Decided, not deferred — do not add collision.** A token may
 be dragged through a shut door or off the play area, exactly as it can today, and the DM says "there
@@ -231,19 +265,15 @@ command, no event, no refusal, and it cannot leak, because a player holds no wal
 to test against. That is the whole of the idea; it is not built and needs no groundwork.
 
 Vision range is one DM-set radius per map, stored in feet on `MapInfo` and converted to cells
-where it is used. It needs a generous value in `MapInfo`'s `Default` impl: the container-level
-`#[serde(default)]` means a save written before the field existed would otherwise load it as
-zero, and every restored room would go pitch black.
-
-The DM also gets a manual override, independent of line of sight. It is a tri-state per cell —
-`Auto`, `ForceRevealed`, `ForceHidden` — and *not* a write into `revealed`, because a manual
-hide that merely clears `revealed` evaporates the next time a token has line of sight on that
-cell. The reveal tool is a flood fill bounded by walls, and it previews before it commits: one
-gap in a traced room otherwise reveals the whole dungeon in a single click, and there is no undo.
+where it is used. This asked for a generous `Default`, because the container-level `#[serde(default)]`
+means a save written before the field existed would load it as zero and every restored room would go
+pitch black. **`fog: bool` beside it carries that instead**, and better: a switch defaulting to off
+cannot darken an old save whatever the radius loads as, which frees the radius to default to a
+playable 60 feet rather than a defensive number. Both are remembered per URL in `Calibration`.
 
 Visibility is recomputed in `apply`, never in the visibility filter — the filter runs against
 `&self` while the client map is borrowed, so it cannot mutate bitsets, and it is better kept
-pure regardless. Recompute on drop, not on drag frames: the shadowcast is cheap enough at 30 Hz,
+pure regardless. Recompute on drop, not on drag frames: the raycast is cheap enough at 30 Hz,
 but shipping a bitset thirty times a second is not. A bitset does not fit the frame cap as a
 JSON array of per-cell values either — pack it into a single string field. That is still one
 readable frame in devtools, which is what the wire protocol rule actually protects.
@@ -253,3 +283,38 @@ where fog differs from the walls beside it, which a recalibration deliberately l
 because they are in image pixels. Loading a new map clears them outright, and promoting a staged
 map is loading a new map, so it clears them too; that is `sweep_board`, which the walls and the
 drawings already go through.
+
+### 16b — the DM's manual override
+
+Not built. Independent of line of sight, and a tri-state per cell — `Auto`, `ForceRevealed`,
+`ForceHidden` — rather than a write into `revealed`, because a manual hide that merely clears
+`revealed` evaporates the next time a token has line of sight on that cell.
+
+The reveal tool is a flood fill bounded by walls, and it previews before it commits: one gap in a
+traced room otherwise reveals the whole dungeon in a single click, and there is no undo.
+
+**Two questions to settle before building it**, because they change what the override *is* rather
+than how it is stored, and both are about creatures rather than terrain:
+
+- **Does `ForceRevealed` reveal the creatures standing in those cells, or only the ground?** The two
+  readings are "show them the room" and "show them the room but not the ambush in it". Terrain-only
+  is the more conservative answer and leaves `hidden` as the DM's tool for the second, at the cost of
+  the DM having to use both to say one thing.
+- **Does `ForceHidden` hide a creature the party otherwise has line of sight on?** If it does not, a
+  DM blacking out a room still leaves the monster in it on the table's board, which is the same
+  failure `hidden` was built to prevent. If it does, it is a second way to hide a token and the two
+  can disagree.
+
+Whatever is decided, it should land as a different answer from `in_sight` rather than as a fourth
+question — `unseen_by_table` is the funnel every filter goes through and it should stay one line.
+
+Two things 16a leaves for it:
+
+- **Unanchored shapes are still not filtered by fog.** All-or-nothing on overlap: if any cell a
+  shape covers is visible, the whole shape is sent. Drawing shapes underneath the fog overlay and
+  calling them hidden would put the data on the client and paint over it, which is what invariant 4
+  forbids. That goes in `shapes_for`, which already withholds a shape whose *anchor* the recipient
+  cannot see — the arm that could not wait, since `hidden` predates fog. `coveredCells` on the client
+  already answers the same question for the drawing layer.
+- The override is a third input to `unseen_by_table`, which is now the funnel every filter goes
+  through. It should not need a fourth question, only a different answer from `in_sight`.

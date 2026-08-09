@@ -26,7 +26,7 @@
  * That is the whole point of the strip: the next panel costs a tab rather than
  * a share of the rail's height.
  */
-export type RailTab = 'map' | 'token' | 'walls';
+export type RailTab = 'map' | 'token' | 'walls' | 'fog';
 
 export interface RailUi {
   /**

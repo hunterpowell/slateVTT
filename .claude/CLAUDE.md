@@ -9,9 +9,9 @@ deliberately, and neither is loaded for you:
 
 - **`ROADMAP.md`** — design for what is not built yet, and the milestone order. Read it when
   starting a milestone.
-- **`docs/maps.md`, `docs/tokens.md`, `docs/drawings.md`, `docs/walls.md`** — why each built feature
-  is the shape it is. Every section below that summarises a feature ends with a pointer to its file
-  and the code that file covers.
+- **`docs/maps.md`, `docs/tokens.md`, `docs/drawings.md`, `docs/walls.md`, `docs/fog.md`** — why each
+  built feature is the shape it is. Every section below that summarises a feature ends with a pointer
+  to its file and the code that file covers.
 
 (All referenced in backticks on purpose: a bare `@` path here would be an import, and importing
 them would load them into every session, which is what moving them out avoided.)
@@ -23,7 +23,8 @@ them would load them into every session, which is what moving them out avoided.)
 - Tracks initiative order and the current turn
 - Lets the DM prepare the next map out of sight of the table, then promote it
 - Lets anyone measure a distance or draw a spell area on the board
-- Lets the DM trace the walls and doors of a map, ready for line of sight to use them
+- Lets the DM trace the walls and doors of a map, and limits what the table can see to what their
+  own tokens have line of sight on
 
 ## Non-goals
 
@@ -106,8 +107,17 @@ struct RoomState {
     shapes: Vec<Shape>,
     /// Traced over the map image. DM-only, whole — see `docs/walls.md`.
     walls: Vec<Wall>,
+    /// Everywhere the party has had line of sight, and where they have it now.
+    /// Grid cells, party-shared rather than per-player, and `visible` is derived
+    /// and not persisted — see `docs/fog.md`.
+    revealed: HashSet<Cell>, visible: HashSet<Cell>,
     clients: HashMap<ClientId, Client>,
 }
+
+/// A cell of the grid. A tuple, not a struct: it indexes a lattice rather than
+/// naming a position, and it never reaches the wire as itself — `FogView` packs
+/// a whole rectangle of them into one string.
+type Cell = (i32, i32);
 
 struct Shape {
     id: ShapeId, kind: ShapeKind, from: Origin, to: Pos, by: Owner, color: String,
@@ -123,6 +133,9 @@ enum WallKind { Solid, Door(bool) }
 struct MapInfo {
     url: String, grid_px: f32, offset_x: f32, offset_y: f32,
     grid_color: String, play_area: Option<Rect>,
+    /// Whether this map is fogged and how far a token sees on it. Per map and
+    /// remembered per URL with the rest — see `docs/fog.md`. `fog` defaults off.
+    fog: bool, vision_ft: f32,
 }
 
 struct Token {
@@ -207,8 +220,14 @@ containing a full filtered snapshot. Everything after that is a delta. Reconnect
 another join — there is no diffing or resync protocol.
 
 `state` is a `RoomView`, which is the room as that one client may see it — for a player that
-means `staged` is stripped from it, hidden tokens are absent, and what survives is redacted.
-See `docs/maps.md` and `docs/tokens.md`.
+means `staged` is stripped from it, the walls are empty, tokens they cannot see are absent, and what
+survives is redacted. See `docs/maps.md` and `docs/tokens.md`. `state` is boxed, because growing
+`RoomView` by one field pushed `Welcome` past clippy's large-variant threshold — every message in
+every client's 256-slot mailbox is sized at the largest variant. Serde sees straight through the box
+and the frame on the wire is unchanged.
+
+`fog` is the exception to all of that: it is the same value for every recipient. There is nothing
+per-client in a party-shared answer to build.
 
 **`Token` never reaches the wire; `TokenView` does.** `Token::view_for(is_dm)` names every field
 that leaves the room, so `RoomView.tokens` and `ServerMsg::TokenChanged` both carry views. This
@@ -253,10 +272,19 @@ alike — an id the client has not seen is the creation. **Deleting a token take
 and its anchored drawings with it.**
 
 Four fields are DM-only: `hidden` and `hp` withhold a monster from the table; `staged_pos` and
-`staged_only` plan the next encounter without a second token collection. `Token::unseen()` is
-`hidden || staged_only` and is **the only question any filter asks** — `snapshot_for`,
-`initiative_for`, and all three `message_for` arms go through it. The two reasons compose, and
-anything that filters on one and forgets the other is a leak.
+`staged_only` plan the next encounter without a second token collection.
+
+**`RoomState::unseen_by_table(&Token)` is the only question any filter asks.** Three reasons compose
+in it: `Token::unseen()` is `hidden || staged_only`, both facts about the token, and the third is
+line of sight, which is a fact about the *room* — so the funnel lives on `RoomState` rather than on
+`Token`, which cannot see the walls or where the party is standing. `snapshot_for`, `initiative_for`,
+`shape_seen`, both oracle guards in `check`, and every token arm of `message_for` go through it.
+Anything that asks `Token::unseen` directly is filtering on two reasons out of three, which is a leak.
+
+**Every `was_unseen` on an event asks the same question**, read before the change it describes — and
+for a promote, before the sweep. It is what separates "it just vanished" from "you were never told",
+and getting it from `Token::unseen` instead sends the table a `TokenRemoved` naming an id they have
+never held, which announces that the id exists.
 
 → **`docs/tokens.md`** before touching `tokens.ts`, `panel.ts`, `snap_to_cell`, `Token`/`TokenView`,
 or any `message_for` arm.
@@ -272,7 +300,8 @@ circle 20 ft across.
 destroy; `can_erase` is the DM or whoever drew it. A shape being swept out is on the wire and is
 not in the room (`ClientMsg::Sketch` carries `drawing`, the way `MoveToken` carries `dragging`).
 There are no staged shapes. `shapes_for` withholds a shape whose anchor the recipient cannot see,
-through `Token::unseen`.
+through `unseen_by_table` — so an aura on a monster in the dark goes with it, and no new line was
+needed for that. An *unanchored* shape is not yet narrowed to the cells it covers; that is 16b's.
 
 A grid cell is five feet, and distance is counted in cells crossed — a diagonal step costs what an
 orthogonal one costs, so every reading is a multiple of five. The movement ruler is client-only:
@@ -306,6 +335,38 @@ after it is promoted.
 
 → **`docs/walls.md`** before touching `walls.ts`, `walltool.ts`, `sweep_board`, or
 `Wall`/`WallKind`/`Px` on the server.
+
+## Fog of war
+
+Two sets of grid cells, **party-shared rather than per-player**: `revealed` is everywhere the party
+has had line of sight, `visible` is where they have it now. **Terrain gates on `revealed`, creatures
+gate on `visible`** — the room they walked through stays on their screen, dimmed, and whatever has
+wandered into it since does not. Vision comes from tokens a player *owns*, so handing one over grants
+sight with no extra rule.
+
+**Raycasting to cell centres, not shadowcasting.** A cell is visible when the straight line from the
+viewer's centre to it crosses no solid wall and no shut door. Shadowcasting wants opacity to be a
+property of a cell and a wall here is an arbitrary segment in image pixels; rasterising one into
+blocking cells would blind both sides of every wall traced along a cell boundary, which is most of
+them. The radius is Euclidean — a circle, agreeing with a drawn circle and not with the ruler.
+
+`FogView` packs a rectangle of cells one character each — `#` dark, `o` explored, `.` in sight —
+because a readable frame in devtools is the point of the wire format and a few thousand numbers is
+not one. **It is the one message that is identical for every recipient**, the DM included, and that
+is the exact opposite of `WallsChanged` beside it: the geometry is the secret and the shadow it casts
+is what the table plays with. `None` means the map is not fogged, indistinguishable from having none.
+
+`fog: bool` and `vision_ft` live on `MapInfo`, remembered per URL like the grid, and go out on
+`SetMap` — there is no `SetFog`. **`fog` defaults off**, which is what keeps an older save from
+going dark. Nothing here knows the word "darkvision": one radius per map.
+
+**Recompute on the drop, never on a drag frame** — `moves_sight` is `persists`'s twin and is
+enumerated the same way. `refresh_fog` reads before `apply`, recomputes after, and reports the
+difference as events. `revealed` is persisted and `visible` is derived on boot. A map load, a
+promote, a recalibration and a redrawn play area all clear both; changing the radius does not.
+
+→ **`docs/fog.md`** before touching `fog.rs`, `fog.ts`, `fogtool.ts`, `unseen_by_table`,
+`refresh_fog`, or `moves_sight`.
 
 ## Frontend
 

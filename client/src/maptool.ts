@@ -75,9 +75,23 @@ export interface MapTool extends Calibration {
    * which board is on screen without this panel being open.
    */
   stop(): void;
+  /**
+   * The fog panel's two fields, sent as part of a whole `set_map`.
+   *
+   * It goes through here rather than the fog panel building its own frame,
+   * because this is where the *confirmed* calibration lives — the same reason
+   * the grid colour is sent from `sendColor` rather than read off the board. A
+   * fiddle with the fog must not commit an unapplied grid preview.
+   *
+   * The live slot only. There is no fog on a staged map, so the panel that calls
+   * this is inert while previewing.
+   */
+  setFog(on: boolean, visionFt: number): void;
 }
 
 const DEFAULT_ALPHA_PCT = 32;
+/** Only reached before any board has loaded; the server has the same number. */
+const DEFAULT_VISION_FT = 60;
 const DRAG_HINT = 'Drag a box across that many whole squares.';
 /** Where the count starts for a box drawn by hand, as opposed to the image. */
 const HAND_DRAWN_CELLS = 4;
@@ -177,8 +191,17 @@ export function createMapTool(
    * `staged` says which slot, and is simply which mode the panel is in. An empty
    * staged slot has no URL of its own, so only an explicit one can fill it.
    */
-  const sendMap = (grid: GridSpec, color: string, area: Rect | null, url?: string): void => {
-    const to = url ?? target()?.mapUrl;
+  const sendMap = (
+    grid: GridSpec,
+    color: string,
+    area: Rect | null,
+    url?: string,
+    /** The fog panel's two fields. Carried through unchanged otherwise, so
+     *  calibrating a map never quietly turns its lights on or off. */
+    fog?: { on: boolean; visionFt: number },
+  ): void => {
+    const board = target();
+    const to = url ?? board?.mapUrl;
     if (to === undefined) return;
     send({
       type: 'set_map',
@@ -188,6 +211,8 @@ export function createMapTool(
       offset_y: grid.offsetY,
       grid_color: color,
       play_area: area,
+      fog: fog?.on ?? board?.fog ?? false,
+      vision_ft: fog?.visionFt ?? board?.visionFt ?? DEFAULT_VISION_FT,
       staged: mode === 'staged',
     });
   };
@@ -581,6 +606,15 @@ export function createMapTool(
     stop() {
       setActive(false);
       closeLibrary();
+    },
+
+    setFog(on, visionFt) {
+      // `confirmed` rather than what is on screen, and `scene.live` rather than
+      // `target()`: the fog panel is only usable over the board, so this must
+      // not follow the map panel into the staged slot if it happens to be there.
+      const board = scene?.live;
+      if (board === undefined || mode !== 'live' || confirmed === null) return;
+      sendMap(confirmed.grid, board.gridColor, confirmed.area, undefined, { on, visionFt });
     },
 
     update(next) {

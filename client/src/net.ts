@@ -5,6 +5,7 @@ import type {
   ServerMsg,
   TokenMoved,
   Welcome,
+  WireFog,
   WireMapInfo,
   WireShape,
   WireToken,
@@ -35,6 +36,10 @@ export interface Handlers {
   /** Every wall the DM has traced. Only ever called on a DM connection — a
    *  player is sent no such frame, empty or otherwise. */
   onWallsChanged(walls: WireWall[]): void;
+  /** What the party can see, or null on an unfogged map. Called on every
+   *  connection, unlike the walls above — fog is party-shared, so the DM and the
+   *  table are sent the same frame. */
+  onFogChanged(fog: WireFog | null): void;
   onError(message: string): void;
   onClose(): void;
 }
@@ -101,6 +106,9 @@ export function connect(on: Handlers): Net {
         break;
       case 'walls_changed':
         on.onWallsChanged(msg.walls);
+        break;
+      case 'fog_changed':
+        on.onFogChanged(msg.fog);
         break;
       case 'error':
         on.onError(msg.message);

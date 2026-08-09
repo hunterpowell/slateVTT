@@ -2,6 +2,8 @@
 // from a Welcome frame and mutated by deltas or by local prediction.
 
 import type { GridSpec, Rect, Vec2 } from './coords.js';
+import type { Fog } from './fog.js';
+import { fogFromWire } from './fog.js';
 import type { Hp, Owner, WireMapInfo, WireRoomView, WireToken } from './protocol.js';
 import type { Shape } from './shapes.js';
 import { shapeFromWire } from './shapes.js';
@@ -45,6 +47,11 @@ export interface Board {
   gridColor: string;
   /** The playable region, or null for the whole image. */
   playArea: Rect | null;
+  /** Whether the party's sight is limited on this map. Per map, and remembered
+   *  per URL with the rest of the calibration. */
+  fog: boolean;
+  /** How far a player-owned token sees, in feet. Only read when `fog` is on. */
+  visionFt: number;
 }
 
 export interface Scene {
@@ -70,6 +77,15 @@ export interface Scene {
    *  Belongs to the live board like the shapes do. There are no staged walls;
    *  walls prepared alongside a map is the scene concept Slate does not build. */
   walls: Wall[];
+  /** What the party can see, or null on a map with fog turned off.
+   *
+   *  Unlike the walls above it, everyone holds this and everyone holds the same
+   *  one — fog is party-shared, so there is a single answer, and the DM's copy
+   *  differs only in how faintly it draws.
+   *
+   *  It is not a filter. A creature the table cannot see is absent from `tokens`
+   *  entirely; this is the *terrain*, and nothing here decides who is drawn. */
+  fog: Fog | null;
 }
 
 /**
@@ -115,7 +131,7 @@ export function shownPos(scene: Scene, token: Token): Vec2 | null {
  * The server sends tokens in a stable order, and that order is z-order, so it
  * is preserved verbatim here.
  */
-export function sceneFromView(view: WireRoomView): Scene {
+export function sceneFromView(view: WireRoomView, isDm: boolean): Scene {
   return {
     live: boardFromWire(view.map),
     staged: view.staged === null ? null : boardFromWire(view.staged),
@@ -123,6 +139,7 @@ export function sceneFromView(view: WireRoomView): Scene {
     tokens: view.tokens.map(tokenFromWire),
     shapes: view.shapes.map(shapeFromWire),
     walls: view.walls.map(wallFromWire),
+    fog: fogFromWire(view.fog, isDm),
   };
 }
 
@@ -132,6 +149,8 @@ export function boardFromWire(map: WireMapInfo): Board {
     grid: { px: map.grid_px, offsetX: map.offset_x, offsetY: map.offset_y },
     gridColor: map.grid_color,
     playArea: map.play_area,
+    fog: map.fog,
+    visionFt: map.vision_ft,
   };
 }
 

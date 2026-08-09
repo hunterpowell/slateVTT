@@ -6,7 +6,8 @@
 //! `broadcast` hands every subscriber the same value and fog of war will need
 //! different clients to receive different messages for one event.
 
-use std::collections::HashMap;
+use std::cmp::Ordering;
+use std::collections::{HashMap, HashSet};
 use std::time::Duration;
 
 use tokio::sync::{mpsc, oneshot};
@@ -14,10 +15,11 @@ use tokio::time::{Instant, sleep_until};
 use tracing::{debug, error, warn};
 use uuid::Uuid;
 
+use crate::fog::{self, Cell, FogView};
 use crate::protocol::{
     Calibration, ClientId, ClientMsg, Hp, Initiative, InitiativeEntry, MapInfo, Origin, Owner,
-    PlayerId, Pos, RoomView, RosterEntry, RosterSlot, ServerMsg, Shape, ShapeId, ShapeKind, Token,
-    TokenId, TokenView, Wall, WallId, WallKind,
+    PlayerId, Pos, Px, RoomView, RosterEntry, RosterSlot, ServerMsg, Shape, ShapeId, ShapeKind,
+    Token, TokenId, TokenView, Wall, WallId, WallKind,
 };
 use crate::store::{Saved, Store};
 
@@ -41,7 +43,14 @@ const MAX_GRID_PX: f32 = 4096.0;
 const MAX_URL_LEN: usize = 512;
 /// Larger than any real map image, and small enough that the client cannot be
 /// asked to rule an unbounded number of grid lines.
-const MAX_MAP_PX: f32 = 32768.0;
+///
+/// `pub(crate)` for `fog.rs`, which clips what the party may explore to the same
+/// box on a map with no play area. Two constants would be two answers to "how far
+/// does the board go", and the fog's copy is the one that has to agree with the
+/// walls' — otherwise a token dragged to cell one million reveals cells there,
+/// and the packed rectangle spanning it is the whole map's worth of characters
+/// per send.
+pub(crate) const MAX_MAP_PX: f32 = 32768.0;
 
 /// Long enough for "Goblin Archer (bloodied)", short enough that the label
 /// drawn under the token stays a label.
@@ -245,6 +254,19 @@ enum Event {
     /// it is the strongest case of that shape yet — a player is not told a wall
     /// exists, was erased, or was ever traced.
     WallsChanged,
+    /// What the party can see changed — somebody moved, a door swung, a wall was
+    /// traced, or the DM changed how far a torch reaches.
+    ///
+    /// Payload-free like the three above it, and the one of the four that is
+    /// rebuilt per recipient into *the same answer*: fog is party-shared, so
+    /// there is one of it. Everyone is sent it, the DM included, which is the
+    /// opposite of `WallsChanged` sitting three lines up — the geometry is the
+    /// secret, and the shadow it casts is the thing the table plays with.
+    ///
+    /// Never emitted from a drag frame. `moves_sight` is where that is decided,
+    /// and it is the reason a party walking a corridor does not ship a bitset
+    /// thirty times a second.
+    FogChanged,
 }
 
 impl Initiative {
@@ -351,6 +373,22 @@ struct Client {
     identity: Identity,
 }
 
+/// What the fog looked like a moment ago, so `refresh_fog` can say what changed.
+///
+/// Both halves have to be read before `apply` runs, which is why they travel
+/// together rather than being fetched where they are used: by the time the
+/// recompute has happened, neither question can be asked of `&self` any more.
+/// That is `was_unseen` on the token events, one layer out and for the same
+/// reason — the difference between a monster that just walked out of the light
+/// and one the party was never told about.
+struct Sight {
+    /// The frame the clients are currently holding, or `None` on an unfogged map.
+    fog: Option<FogView>,
+    /// Every token the table could see. Ids rather than a count: which ones is
+    /// the whole question, and two tokens can trade places in the same step.
+    seen: HashSet<TokenId>,
+}
+
 pub struct RoomState {
     dm_secret: String,
     roster: Vec<RosterEntry>,
@@ -377,6 +415,23 @@ pub struct RoomState {
     /// map has none, because walls staged alongside a map are the scene concept
     /// CLAUDE.md rules out.
     walls: Vec<Wall>,
+    /// Everywhere the party has ever had line of sight, in grid cells.
+    ///
+    /// Persisted, and the only half of the fog that is: it is what the party
+    /// remembers about the dungeon, and an evening of exploring belongs to the
+    /// map it was done on. Cleared by `sweep_board` — grid-space, so a new map is
+    /// a new lattice and a recalibration invalidates it, which is exactly where
+    /// this differs from the walls beside it.
+    ///
+    /// Grows and never shrinks within one map. `fog.rs` clips what may go in it
+    /// to the board, which is what stops a token dragged into the void from
+    /// putting a cell a million squares away in here.
+    revealed: HashSet<Cell>,
+    /// Where the party can see *now*. Derived, never persisted, and recomputed by
+    /// `refresh_fog` rather than in the visibility filter — the filter runs
+    /// against `&self` while the client map is borrowed, so it could not mutate
+    /// this even if it wanted to, and it is better kept pure regardless.
+    visible: HashSet<Cell>,
     /// How each map URL was last calibrated. Server-side only — it never enters
     /// a snapshot or a message, because the finished `MapInfo` already says
     /// everything a client needs.
@@ -388,10 +443,15 @@ pub struct RoomState {
 }
 
 pub fn spawn(dm_secret: String, saved: Option<Saved>, store: Store) -> RoomHandle {
-    let state = match saved {
+    let mut state = match saved {
         Some(saved) => RoomState::restored(saved, dm_secret),
         None => RoomState::hardcoded(dm_secret),
     };
+    // `visible` is derived and is not on disk, so a room that has just booted
+    // holds none of it and the first client to join would be told the party can
+    // see nothing. Done here rather than in the two constructors so there is one
+    // place it can be forgotten instead of two.
+    state.recompute_sight();
 
     let (tx, rx) = mpsc::channel(ROOM_MAILBOX);
     tokio::spawn(run(state, rx, store));
@@ -514,11 +574,65 @@ fn persists(event: &Event) -> bool {
         // Half an hour of tracing. The one thing in the room where losing the
         // last two seconds of work would mean losing the segment the DM was
         // most likely to be in the middle of.
-        | Event::WallsChanged => true,
+        | Event::WallsChanged
+        // Only `revealed` is on disk, and only it can have grown here. Riding
+        // along with the drop that caused it costs nothing — that frame already
+        // marked the room dirty — and a session's exploration surviving a
+        // restart is the difference between a map and a map with a memory.
+        | Event::FogChanged => true,
         // A sketch is not in the room to be saved. It is the one thing here
         // that exists only between two pointer events, which is exactly why a
         // measuring line costs the disk nothing at all.
         Event::Sketching { .. } | Event::SketchEnded { .. } => false,
+    }
+}
+
+/// Which commands could have changed what the party can see.
+///
+/// `persists`'s twin, and enumerated the same way rather than with a catch-all:
+/// a command added later and forgotten here would leave the fog quietly stale,
+/// which looks like a bug in the shadowcast rather than a missing arm. The two
+/// lists ask different questions and mostly agree — the interesting disagreement
+/// is `ShapesChanged`, which is worth a disk write and cannot occlude anything.
+///
+/// A drag frame is deliberately not one. The roadmap's rule is to recompute on
+/// the drop: the raycast is cheap enough at 30 Hz and shipping a packed bitset to
+/// six people that often is not, so the fog opens as a token settles rather than
+/// as it travels. What still happens mid-drag is the *filter* — a monster dragged
+/// into a cell the party cannot currently see stops being relayed to them at once,
+/// because that decision reads `visible` rather than rebuilding it.
+fn moves_sight(msg: &ClientMsg) -> bool {
+    match msg {
+        // A plan is a cell on a map the table has not been shown, and nothing on
+        // the staged board casts a shadow on this one.
+        ClientMsg::MoveToken {
+            dragging, staged, ..
+        } => !dragging && !staged,
+        // Any of these can add, remove or re-own a vision source — handing a
+        // token to a player is how somebody gains one — or move the lattice the
+        // cells are counted on, or change what blocks a ray.
+        ClientMsg::CreateToken { .. }
+        | ClientMsg::UpdateToken { .. }
+        | ClientMsg::DeleteToken { .. }
+        | ClientMsg::SetMap { .. }
+        | ClientMsg::PromoteStaged
+        | ClientMsg::ClearStaged
+        | ClientMsg::AddWalls { .. }
+        | ClientMsg::RemoveWall { .. }
+        | ClientMsg::ToggleDoor { .. }
+        | ClientMsg::ClearWalls => true,
+        // Nothing drawn on the board occludes anything, a sketch is not in the
+        // room at all, and the turn order is a panel.
+        ClientMsg::Hello { .. }
+        | ClientMsg::Sketch { .. }
+        | ClientMsg::AddShape { .. }
+        | ClientMsg::RemoveShape { .. }
+        | ClientMsg::ClearShapes
+        | ClientMsg::SetInitiative { .. }
+        | ClientMsg::RemoveFromInitiative { .. }
+        | ClientMsg::ClearInitiative
+        | ClientMsg::NextTurn
+        | ClientMsg::PreviousTurn => false,
     }
 }
 
@@ -683,6 +797,12 @@ impl RoomState {
             initiative: saved.initiative,
             shapes: saved.shapes,
             walls: saved.walls,
+            revealed: fog::unpack(&saved.revealed),
+            // Derived from where the tokens are standing, which this same file
+            // holds — so it is recomputed on boot rather than restored. That is
+            // what stops a save written before a door was shut from describing
+            // sight through it.
+            visible: HashSet::new(),
             calibrations: saved.calibrations,
             clients: HashMap::new(),
             pending: HashMap::new(),
@@ -702,6 +822,11 @@ impl RoomState {
             initiative: self.initiative.clone(),
             shapes: self.shapes.clone(),
             walls: self.walls.clone(),
+            // Packed with an empty `visible`, so the file records explored
+            // terrain and nothing about where anyone was standing when it was
+            // written. Both lit states unpack as explored, so the two encodings
+            // agree without either side having to know which one it is reading.
+            revealed: fog::pack(&self.revealed, &HashSet::new()),
             calibrations: self.calibrations.clone(),
         }
     }
@@ -754,6 +879,8 @@ impl RoomState {
                 .collect(),
             shapes: Vec::new(),
             walls: Vec::new(),
+            revealed: HashSet::new(),
+            visible: HashSet::new(),
             calibrations: HashMap::new(),
             clients: HashMap::new(),
             pending: HashMap::new(),
@@ -779,7 +906,23 @@ impl RoomState {
             return false;
         }
 
-        let events = self.apply(origin, msg);
+        // Read *before* `apply`, and only for the commands that could move it.
+        //
+        // Before, because the fog is what decides whether the table can see a
+        // token, and `apply` plus the recompute that follows will have overwritten
+        // both halves of that by the time anything asks. It is `was_unseen`'s
+        // problem from milestone 11 one layer out: the question now spans the
+        // whole command rather than one field on one token.
+        //
+        // Only for some commands, because this costs a set and a packed string,
+        // and a drag frame arrives thirty times a second from each of six people.
+        let before = moves_sight(&msg).then(|| self.sight_now());
+
+        let mut events = self.apply(origin, msg);
+        if let Some(before) = before {
+            let more = self.refresh_fog(before, &events);
+            events.extend(more);
+        }
         self.dispatch(origin, &events);
         events.iter().any(persists)
     }
@@ -902,7 +1045,7 @@ impl RoomState {
         let mut tokens: Vec<TokenView> = self
             .tokens
             .values()
-            .filter(|token| is_dm || !token.unseen())
+            .filter(|token| is_dm || !self.unseen_by_table(token))
             .map(|token| token.view_for(is_dm))
             .collect();
         // `HashMap` iteration order varies per process, and the client treats
@@ -928,6 +1071,12 @@ impl RoomState {
             } else {
                 Vec::new()
             },
+            // The same value for everyone, unlike everything above it. Fog is
+            // party-shared, so there is one answer; the DM is sent it so their
+            // board can draw, faintly, what the table is looking at. It is the
+            // walls one line up that stay theirs alone — a player reads the
+            // geometry off the edges of this instead.
+            fog: self.fog_for(),
         }
     }
 
@@ -944,8 +1093,10 @@ impl RoomState {
     /// the room at all cannot happen — deleting a token takes its shapes — and
     /// is withheld anyway, because this fails closed on purpose.
     ///
-    /// Unanchored shapes are visible to everyone. Fog will narrow that to the
-    /// cells they cover; there is nothing to narrow it by yet.
+    /// Unanchored shapes are visible to everyone. Narrowing that to the cells a
+    /// shape covers is milestone 16b's — the anchor arm below already withholds
+    /// the case that leaks a *position*, and a fireball drawn on ground the party
+    /// cannot see is the DM's own annotation rather than a monster's whereabouts.
     fn shapes_for(&self, is_dm: bool) -> Vec<Shape> {
         self.shapes
             .iter()
@@ -958,7 +1109,10 @@ impl RoomState {
     fn shape_seen(&self, shape: &Shape) -> bool {
         match shape.anchor() {
             None => true,
-            Some(id) => self.tokens.get(id).is_some_and(|t| !t.unseen()),
+            Some(id) => self
+                .tokens
+                .get(id)
+                .is_some_and(|t| !self.unseen_by_table(t)),
         }
     }
 
@@ -991,7 +1145,9 @@ impl RoomState {
             // its row — but treating it as visible keeps this total either way.
             // Nor can one name a staged-only token, which `check` refuses; the
             // predicate covers it anyway rather than depending on that.
-            self.tokens.get(token).is_some_and(Token::unseen)
+            self.tokens
+                .get(token)
+                .is_some_and(|t| self.unseen_by_table(t))
         };
 
         Initiative {
@@ -1005,6 +1161,98 @@ impl RoomState {
             current: self.initiative.current.clone().filter(|t| !unseen(t)),
             round: self.initiative.round,
         }
+    }
+
+    /// **Whether the table cannot see this token — the one question every filter
+    /// in this file asks.**
+    ///
+    /// `Token::unseen` used to be that question and is now half of it. Two of the
+    /// three reasons are facts about the token and live there: `hidden` is a
+    /// creature the DM took off the board, `staged_only` is one that was never on
+    /// it. The third is a fact about the *room* — where the walls are, where the
+    /// party is standing, how far their torches reach — so it cannot be answered
+    /// from `&Token` alone, and that is the whole reason the funnel moved up here
+    /// rather than growing a third field down there.
+    ///
+    /// All three compose and every filter has to ask about all three. Anything
+    /// that asks `Token::unseen` directly is filtering on two of them, which is
+    /// the leak this shape exists to make hard.
+    fn unseen_by_table(&self, token: &Token) -> bool {
+        token.unseen() || !self.in_sight(token)
+    }
+
+    /// Whether the party has line of sight on this token.
+    ///
+    /// A player's own token is always in sight, and by construction rather than
+    /// by rule: it is a vision source, so the cell it stands in is lit by it.
+    /// Saying so directly costs one branch and saves the DM handing a token over
+    /// mid-fight from depending on the recompute having already run.
+    ///
+    /// A monster is in sight if *any* cell it covers is. A four-cell ogre leaning
+    /// into a lit corridor is an ogre the party can see.
+    fn in_sight(&self, token: &Token) -> bool {
+        if !self.map.fog || matches!(token.owner, Owner::Player(_)) {
+            return true;
+        }
+        fog::covered_cells(token.x, token.y, token.size)
+            .iter()
+            .any(|cell| self.visible.contains(cell))
+    }
+
+    /// Where the party is looking from, in image pixels.
+    ///
+    /// Vision comes from tokens a player *owns*, so handing one over grants sight
+    /// with no extra rule and taking it back removes it. A player's token the DM
+    /// has hidden grants none: it is off the board as far as the table is
+    /// concerned, and a creature nobody can see lighting the room for everybody
+    /// would be a strange thing to explain.
+    ///
+    /// Asked of `Token::unseen` and deliberately not of `unseen_by_table`, which
+    /// would be circular — what the party can see cannot be an input to computing
+    /// what the party can see.
+    fn vision_sources(&self) -> Vec<Px> {
+        let mut sources: Vec<Px> = self
+            .tokens
+            .values()
+            .filter(|t| matches!(t.owner, Owner::Player(_)) && !t.unseen())
+            .map(|t| fog::grid_to_px(&self.map, t.x, t.y))
+            .collect();
+        // `HashMap` order varies per process and the sweep short-circuits on
+        // cells another source already lit. The answer is the same either way,
+        // but two runs of the same room should do the same work.
+        sources.sort_by(|a, b| {
+            (a.x, a.y)
+                .partial_cmp(&(b.x, b.y))
+                .unwrap_or(Ordering::Equal)
+        });
+        sources
+    }
+
+    /// Recomputes line of sight and folds it into what has been explored.
+    ///
+    /// The union is in this order, and it is what makes `visible` a subset of
+    /// `revealed` — which is in turn what lets `FogView` pack both facts into one
+    /// character per cell.
+    ///
+    /// An unfogged map has neither set: turning fog off is not the same as
+    /// turning the lights on and leaving a stale bitset behind, and a map that
+    /// gets fog turned back on should start from where the party is now.
+    fn recompute_sight(&mut self) {
+        if !self.map.fog {
+            self.visible.clear();
+            return;
+        }
+        self.visible = fog::visible_cells(&self.map, &self.walls, &self.vision_sources());
+        self.revealed.extend(self.visible.iter().copied());
+    }
+
+    /// The fog as it goes on the wire. `None` on a map with fog turned off, which
+    /// is the only thing the server could mean by it — and, like `staged` being
+    /// `None`, indistinguishable from the client side from a map that has none.
+    fn fog_for(&self) -> Option<FogView> {
+        self.map
+            .fog
+            .then(|| fog::pack(&self.revealed, &self.visible))
     }
 
     /// Whether a connected client is the DM. `message_for` holds `&self` and a
@@ -1126,6 +1374,8 @@ impl RoomState {
                 offset_y,
                 grid_color,
                 play_area,
+                fog: _,
+                vision_ft,
                 staged: _,
             } => {
                 require_dm(client, "change the map")?;
@@ -1140,6 +1390,21 @@ impl RoomState {
                 }
                 if !is_hex_rgba(grid_color) {
                     return Err("a grid colour must look like #rrggbbaa".to_owned());
+                }
+                // `fog` needs no check — a bool has no bad value, and either
+                // state is a legitimate thing for the DM to ask for, which is
+                // exactly what is said of `hidden` on a token.
+                //
+                // The radius does. The sweep in `fog.rs` is quadratic in it, and
+                // on a map with no play area to clip against this bound is the
+                // only thing that stops the loop being unbounded.
+                finite(&[*vision_ft])?;
+                if !(fog::MIN_VISION_FT..=fog::MAX_VISION_FT).contains(vision_ft) {
+                    return Err(format!(
+                        "vision must be between {:.0} and {:.0} feet",
+                        fog::MIN_VISION_FT,
+                        fog::MAX_VISION_FT
+                    ));
                 }
                 if let Some(area) = play_area {
                     finite(&[area.x, area.y, area.w, area.h])?;
@@ -1193,10 +1458,9 @@ impl RoomState {
                         // for one that does exist but is hidden would make this
                         // an oracle: sweep the id space and the refusals map
                         // out the DM's monsters.
-                        let seen = self
-                            .tokens
-                            .get(id)
-                            .is_some_and(|t| client.identity == Identity::Dm || !t.unseen());
+                        let seen = self.tokens.get(id).is_some_and(|t| {
+                            client.identity == Identity::Dm || !self.unseen_by_table(t)
+                        });
                         if !seen {
                             return Err(format!("no such token: {}", id.0));
                         }
@@ -1418,11 +1682,21 @@ impl RoomState {
                 hidden,
                 hp,
             } => {
+                // Read through `unseen_by_table`, which needs `&self`, so it has
+                // to happen before the mutable borrow below rather than beside
+                // the fields it describes. Asking `Token::unseen` here instead —
+                // which is what this line said before fog existed — makes
+                // renaming a monster that is standing in the dark send the table
+                // a `TokenRemoved` for an id they have never held.
+                let was_unseen = self
+                    .tokens
+                    .get(&id)
+                    .is_some_and(|t| self.unseen_by_table(t));
+
                 let Some(token) = self.tokens.get_mut(&id) else {
                     return Vec::new(); // proved to exist by `check`
                 };
 
-                let was_unseen = token.unseen();
                 token.name = name.trim().to_owned();
                 token.img = img;
                 token.owner = owner;
@@ -1496,6 +1770,8 @@ impl RoomState {
                 offset_y,
                 grid_color,
                 play_area,
+                fog,
+                vision_ft,
                 staged,
             } => {
                 let given = Calibration {
@@ -1504,6 +1780,8 @@ impl RoomState {
                     offset_y,
                     grid_color,
                     play_area,
+                    fog,
+                    vision_ft,
                 };
 
                 // The URL alone says which of the two things this is. A URL the
@@ -1557,11 +1835,41 @@ impl RoomState {
                     events.push(Event::StagedChanged);
                     events
                 } else {
+                    // The fourth thing that turns on `loading`, and the only one
+                    // that also turns on a recalibration. The explored cells are
+                    // grid-space, so the lattice moving under them is enough on
+                    // its own — a DM who nudges the offset by half a cell has not
+                    // changed which rooms the party has been in, but they have
+                    // changed which squares those rooms are made of, and there is
+                    // no honest way to carry the old answer across. Redrawing the
+                    // play area is the same act at board scale: what was explored
+                    // outside the new edge is not somewhere the party can be.
+                    //
+                    // Asked of the board's shape alone, and that is the point:
+                    // turning the vision radius up is not a reason for the party
+                    // to forget the dungeon, and neither is the grid's colour or
+                    // turning fog off and on again.
+                    let reshaped = (
+                        self.map.grid_px,
+                        self.map.offset_x,
+                        self.map.offset_y,
+                        self.map.play_area,
+                    ) != (
+                        finished.grid_px,
+                        finished.offset_x,
+                        finished.offset_y,
+                        finished.play_area,
+                    );
+
                     // Deliberately not cleared here. A plan describes a cell on
                     // the staged map, which this command has not touched — the
                     // plans are still about the map they were made on.
                     self.map = finished;
                     let mut events = vec![Event::MapChanged];
+                    if reshaped {
+                        self.revealed.clear();
+                        self.visible.clear();
+                    }
                     // The drawings and the walls are the opposite case, and turn
                     // on the same `loading`: they describe this image, and a new
                     // one is a new dungeon where none of it means anything. A
@@ -1741,6 +2049,103 @@ impl RoomState {
         }
     }
 
+    /// Everything about the fog that a command might change, read before it runs.
+    fn sight_now(&self) -> Sight {
+        Sight {
+            fog: self.fog_for(),
+            seen: self
+                .tokens
+                .values()
+                .filter(|t| !self.unseen_by_table(t))
+                .map(|t| t.id.clone())
+                .collect(),
+        }
+    }
+
+    /// Recomputes sight and says what changed, as events.
+    ///
+    /// This is the milestone in one function. Three things can fall out of a
+    /// party taking one step, and only the first is the fog itself:
+    ///
+    /// - the fog frame, if what is lit or explored is not what it was;
+    /// - a token appearing or vanishing for the table, because the cells it
+    ///   stands on just changed state. The player who walked into the room has
+    ///   never held the ogre in it, so `was_unseen` is true and `message_for`
+    ///   turns the same event into a whole token for them and a `TokenRemoved`
+    ///   for the reverse. That machinery is milestone 11's and is reused whole;
+    /// - the panels that name those tokens. A creature the table cannot see must
+    ///   not be a row in their initiative list or an aura on their board, which
+    ///   is the same pair of gates hiding a monster already goes through.
+    ///
+    /// Both of the last two are gated on something actually having changed, and
+    /// that is load-bearing rather than tidy for the third time in this file: an
+    /// unconditional `ShapesChanged` on every step would tell the table that
+    /// *something happened* every time anybody moved.
+    fn refresh_fog(&mut self, before: Sight, already: &[Event]) -> Vec<Event> {
+        self.recompute_sight();
+
+        let mut events = Vec::new();
+        if self.fog_for() != before.fog {
+            events.push(Event::FogChanged);
+        }
+
+        // A token the command has already spoken about is not spoken about
+        // again. Each of those events carries its own `was_unseen`, read through
+        // the same question this one asks, so the transition has been announced
+        // correctly once already and a second frame would only repeat it.
+        //
+        // `TokenMoved` is deliberately not in that list, and it is the
+        // interesting exclusion: walking out of the light is *how* a creature
+        // stops being visible, and the move frame for it has just been dropped
+        // for exactly the recipients who now need to be told it is gone.
+        let spoken: HashSet<&TokenId> = already
+            .iter()
+            .filter_map(|event| match event {
+                Event::TokenChanged { id, .. }
+                | Event::TokenRemoved { id, .. }
+                | Event::TokenPlanChanged { id }
+                | Event::Promoted { id, .. } => Some(id),
+                Event::TokenMoved { .. }
+                | Event::InitiativeChanged
+                | Event::MapChanged
+                | Event::StagedChanged
+                | Event::Sketching { .. }
+                | Event::SketchEnded { .. }
+                | Event::ShapesChanged
+                | Event::WallsChanged
+                | Event::FogChanged => None,
+            })
+            .collect();
+
+        // Sorted, for the reason every other batch in this file is: `HashMap`
+        // order varies per process and decides the order of the frames six
+        // clients receive.
+        let mut flipped: Vec<TokenId> = self
+            .tokens
+            .values()
+            .filter(|t| !spoken.contains(&t.id))
+            .filter(|t| before.seen.contains(&t.id) == self.unseen_by_table(t))
+            .map(|t| t.id.clone())
+            .collect();
+        flipped.sort();
+
+        let mut initiative = false;
+        let mut shapes = false;
+        for id in flipped {
+            initiative |= self.initiative.index_of(&id).is_some();
+            shapes |= self.anchors_a_shape(&id);
+            let was_unseen = !before.seen.contains(&id);
+            events.push(Event::TokenChanged { id, was_unseen });
+        }
+        if initiative {
+            events.push(Event::InitiativeChanged);
+        }
+        if shapes {
+            events.push(Event::ShapesChanged);
+        }
+        events
+    }
+
     /// Everything drawn or traced over the map image, thrown away because that
     /// image is being replaced.
     ///
@@ -1768,6 +2173,18 @@ impl RoomState {
             self.walls.clear();
             events.push(Event::WallsChanged);
         }
+        // And the explored terrain, which is where the fog differs from the walls
+        // it was just cleared beside. A wall survives a recalibration because it
+        // is in image pixels and still traces the same painted line; these are
+        // cells, so the lattice moving underneath them is enough to invalidate
+        // them and a new image certainly is.
+        //
+        // No event of its own: `refresh_fog` runs after this on the way out of
+        // `handle`, and it compares against a reading taken before any of it, so
+        // the clear is already in the difference it reports. Emitting one here
+        // would be the same news twice.
+        self.revealed.clear();
+        self.visible.clear();
         events
     }
 
@@ -1781,13 +2198,20 @@ impl RoomState {
     /// on one of the two paths; sharing one function is still worth more than
     /// two that could come to disagree about what deleting means.
     fn delete_token(&mut self, id: &TokenId) -> Vec<Event> {
-        let Some(gone) = self.tokens.remove(id) else {
+        // Before the removal, and through `unseen_by_table` rather than
+        // `Token::unseen`: whether the table is owed the news depends on whether
+        // they could see it, and a monster standing in the dark is one they were
+        // never told about. Once it is out of the room neither question can be
+        // asked at all.
+        let was_unseen = self.tokens.get(id).is_some_and(|t| self.unseen_by_table(t));
+
+        if self.tokens.remove(id).is_none() {
             return Vec::new();
-        };
+        }
 
         let mut events = vec![Event::TokenRemoved {
             id: id.clone(),
-            was_unseen: gone.unseen(),
+            was_unseen,
         }];
         if self.initiative.index_of(id).is_some() {
             self.initiative.remove(id);
@@ -1859,10 +2283,20 @@ impl RoomState {
             .collect();
         ids.sort(); // stable frame order, as above
 
+        // Read for every token before any of them is touched, and through
+        // `unseen_by_table`: a promote sweeps the board's fog, so by the time the
+        // loop below runs the question would be being asked of a lattice that has
+        // already been thrown away.
+        let was_unseen: HashMap<TokenId, bool> = ids
+            .iter()
+            .filter_map(|id| self.tokens.get(id))
+            .map(|t| (t.id.clone(), self.unseen_by_table(t)))
+            .collect();
+
         ids.into_iter()
             .filter_map(|id| {
+                let was_unseen = was_unseen.get(&id).copied().unwrap_or(true);
                 let token = self.tokens.get_mut(&id)?;
-                let was_unseen = token.unseen();
                 token.staged_only = false;
 
                 let moved = match token.staged_pos.take() {
@@ -1949,7 +2383,7 @@ impl RoomState {
                     // can watch it. Position is data, and thirty frames a second
                     // of it would trace an invisible monster's path across the
                     // board.
-                    if self.tokens.get(id).is_some_and(Token::unseen) {
+                    if self.tokens.get(id).is_some_and(|t| self.unseen_by_table(t)) {
                         return None;
                     }
                 }
@@ -1973,7 +2407,7 @@ impl RoomState {
                 let token = self.tokens.get(id)?;
                 let is_dm = self.is_dm(recipient);
 
-                if is_dm || !token.unseen() {
+                if is_dm || !self.unseen_by_table(token) {
                     Some(ServerMsg::TokenChanged {
                         token: token.view_for(is_dm),
                     })
@@ -2021,10 +2455,14 @@ impl RoomState {
                         token: token.view_for(true),
                     });
                 }
-                // Still hidden. A promote settles `staged_only`; it says nothing
-                // about a monster the DM also took off the board.
-                if token.unseen() {
-                    return None;
+                // Still out of the table's reach — the DM also took this one off
+                // the board, or its plan landed it somewhere they have no line of
+                // sight on. The second of those is new with fog and is why this
+                // is not simply `None`: a token they were watching a moment ago
+                // has to be taken off their board rather than left standing at
+                // the cell it used to be in, on a map that is no longer there.
+                if self.unseen_by_table(token) {
+                    return (!*was_unseen).then(|| ServerMsg::TokenRemoved { id: id.clone() });
                 }
                 if *was_unseen {
                     return Some(ServerMsg::TokenChanged {
@@ -2104,6 +2542,13 @@ impl RoomState {
             // *when* a door opened, on the one board they cannot see through.
             Event::WallsChanged => self.is_dm(recipient).then(|| ServerMsg::WallsChanged {
                 walls: self.walls.clone(),
+            }),
+
+            // The one arm here that builds the same thing for everybody. Fog is
+            // party-shared, so there is one answer and no filtering left to do —
+            // this is the frame the walls above are withheld *in favour of*.
+            Event::FogChanged => Some(ServerMsg::FogChanged {
+                fog: self.fog_for(),
             }),
         }
     }
@@ -3916,6 +4361,11 @@ mod tests {
 
     // --- the map ------------------------------------------------------------
 
+    /// Fog off and a default radius, on every map helper below. A test that wants
+    /// the lights out says so with `fogged`, so nothing here has to think about
+    /// sight — which is also what the DM's experience of an unfogged map is.
+    const UNFOGGED: (bool, f32) = (false, 60.0);
+
     fn set_map(url: &str, grid_px: f32, offset_x: f32, offset_y: f32) -> ClientMsg {
         ClientMsg::SetMap {
             url: url.to_owned(),
@@ -3924,6 +4374,8 @@ mod tests {
             offset_y,
             grid_color: "#ffffff52".to_owned(),
             play_area: None,
+            fog: UNFOGGED.0,
+            vision_ft: UNFOGGED.1,
             staged: false,
         }
     }
@@ -3936,6 +4388,8 @@ mod tests {
             offset_y: 0.0,
             grid_color: color.to_owned(),
             play_area: None,
+            fog: UNFOGGED.0,
+            vision_ft: UNFOGGED.1,
             staged: false,
         }
     }
@@ -3948,7 +4402,29 @@ mod tests {
             offset_y: 0.0,
             grid_color: "#ffffff52".to_owned(),
             play_area: area,
+            fog: UNFOGGED.0,
+            vision_ft: UNFOGGED.1,
             staged: false,
+        }
+    }
+
+    /// The same command with the lights out. Every map helper here builds an
+    /// unfogged `set_map`; this is how a fog test asks for the other kind,
+    /// exactly as `staged` is how one asks for the other slot.
+    fn fogged(msg: ClientMsg, vision_ft: f32) -> ClientMsg {
+        match msg {
+            ClientMsg::SetMap { url, grid_px, .. } => ClientMsg::SetMap {
+                url,
+                grid_px,
+                offset_x: 0.0,
+                offset_y: 0.0,
+                grid_color: "#ffffff52".to_owned(),
+                play_area: None,
+                fog: true,
+                vision_ft,
+                staged: false,
+            },
+            other => other,
         }
     }
 
@@ -3964,6 +4440,8 @@ mod tests {
                 offset_y,
                 grid_color,
                 play_area,
+                fog,
+                vision_ft,
                 staged: _,
             } => ClientMsg::SetMap {
                 url,
@@ -3972,6 +4450,8 @@ mod tests {
                 offset_y,
                 grid_color,
                 play_area,
+                fog,
+                vision_ft,
                 staged: true,
             },
             other => other,
@@ -4048,6 +4528,8 @@ mod tests {
             offset_y: -offset,
             grid_color: color.to_owned(),
             play_area: rect(offset, offset, grid_px * 10.0, grid_px * 8.0),
+            fog: UNFOGGED.0,
+            vision_ft: UNFOGGED.1,
             staged: false,
         }
     }
@@ -6376,5 +6858,533 @@ mod tests {
         let mut sorted = ids.clone();
         sorted.sort();
         assert_eq!(ids, sorted);
+    }
+
+    // --- fog of war ---------------------------------------------------------
+
+    /// A room with the lights out: one player token at cell (1,1), one monster
+    /// at cell (5,1), and nothing else on the board.
+    ///
+    /// The hardcoded room is five party members and two monsters spread across
+    /// it, which is a fine board and a poor experiment — every one of those five
+    /// is a torch, so almost everything is lit from almost everywhere. These
+    /// tests want one viewer and one thing to look at.
+    ///
+    /// The grid is the default 64 pixels at no offset, so cell `(c, r)` has its
+    /// centre at `(64c + 32, 64r + 32)` and a wall drawn at x = 256 stands
+    /// between columns 3 and 4.
+    fn fog_room(vision_ft: f32) -> RoomState {
+        let mut state = room();
+        state.tokens.clear();
+        state.initiative = Initiative::default();
+
+        for (id, name, x, owner) in [
+            ("p", "Vex", 1.5, Owner::Player(PlayerId::new("vex"))),
+            ("m", "Ogre", 5.5, Owner::Dm),
+        ] {
+            state.tokens.insert(
+                TokenId::new(id),
+                Token {
+                    id: TokenId::new(id),
+                    name: name.to_owned(),
+                    x,
+                    y: 1.5,
+                    owner,
+                    ..Token::default()
+                },
+            );
+        }
+
+        state.map.fog = true;
+        state.map.vision_ft = vision_ft;
+        state.recompute_sight();
+        state
+    }
+
+    /// A single traced segment, as the DM's editor would send it.
+    fn wall(x1: f32, y1: f32, x2: f32, y2: f32, door: bool) -> ClientMsg {
+        ClientMsg::AddWalls {
+            points: vec![Px { x: x1, y: y1 }, Px { x: x2, y: y2 }],
+            door,
+        }
+    }
+
+    /// A wall standing between the viewer and the monster in `fog_room`.
+    fn between(door: bool) -> ClientMsg {
+        wall(256.0, 0.0, 256.0, 256.0, door)
+    }
+
+    fn sees_the_ogre(state: &RoomState) -> bool {
+        names(&state.snapshot_for(&as_player("vex"))).contains(&"Ogre")
+    }
+
+    /// Walks the viewer along row 1 and settles it there, as a drop would.
+    /// Sent by `ClientId(1)`, so every caller has to have joined as the DM.
+    fn walk(state: &mut RoomState, x: f32) {
+        state.handle(
+            ClientId(1),
+            ClientMsg::MoveToken {
+                id: TokenId::new("p"),
+                x,
+                y: 1.5,
+                dragging: false,
+                staged: false,
+            },
+        );
+    }
+
+    #[test]
+    fn an_unfogged_map_sends_no_fog_at_all_and_hides_nobody() {
+        // `None` is both "this map is not fogged" and "there is nothing to
+        // show", indistinguishable from the client side — the trick `staged`
+        // plays, and the reason turning fog off needs no second field.
+        let state = room();
+        assert_eq!(state.snapshot_for(&as_player("vex")).fog, None);
+        assert_eq!(state.snapshot_for(&Identity::Dm).fog, None);
+        assert!(
+            names(&state.snapshot_for(&as_player("vex"))).contains(&"Ogre"),
+            "with the lights on the table sees everything"
+        );
+    }
+
+    #[test]
+    fn a_monster_beyond_the_torchlight_is_absent_from_the_table() {
+        // Four cells away, with two cells of vision.
+        let state = fog_room(10.0);
+        assert!(!sees_the_ogre(&state));
+        assert!(
+            names(&state.snapshot_for(&Identity::Dm)).contains(&"Ogre"),
+            "the DM sees their own monsters whatever the party can see"
+        );
+    }
+
+    #[test]
+    fn a_wall_between_them_blocks_sight_and_a_door_in_it_opens_again() {
+        let mut state = fog_room(60.0);
+        let _dm = join_as_dm(&mut state, ClientId(1));
+
+        assert!(sees_the_ogre(&state), "nothing in the way yet");
+
+        state.handle(ClientId(1), between(false));
+        assert!(!sees_the_ogre(&state), "masonry stops the ray");
+
+        let door = state.walls.first().expect("the wall").id.clone();
+        state.walls.clear();
+        state.handle(ClientId(1), between(true));
+        let door = state.walls.first().map_or(door, |w| w.id.clone());
+        assert!(!sees_the_ogre(&state), "a door is traced shut");
+
+        state.handle(ClientId(1), ClientMsg::ToggleDoor { id: door });
+        assert!(sees_the_ogre(&state), "and an open one is a way through");
+    }
+
+    #[test]
+    fn walking_through_the_doorway_introduces_the_monster_to_the_table() {
+        // The milestone in one test. The player moves; the *monster* is what the
+        // frame that follows is about, and it is a whole token because they have
+        // never held it.
+        let mut state = fog_room(60.0);
+        let _dm = join_as_dm(&mut state, ClientId(1));
+        state.handle(ClientId(1), between(false));
+        let mut rx = join_as_player(&mut state, ClientId(2), "vex");
+
+        assert!(!sees_the_ogre(&state));
+        drain(&mut rx);
+
+        // Past the wall. Walls block sight and never movement — decided, not
+        // deferred — so this is an ordinary drop that happens to cross one.
+        state.handle(
+            ClientId(2),
+            ClientMsg::MoveToken {
+                id: TokenId::new("p"),
+                x: 4.5,
+                y: 1.5,
+                dragging: false,
+                staged: false,
+            },
+        );
+
+        let frames = drain(&mut rx);
+        let met = frames
+            .iter()
+            .any(|msg| matches!(msg, ServerMsg::TokenChanged { token } if token.name == "Ogre"));
+        assert!(met, "expected to meet the ogre, got {frames:?}");
+        assert!(
+            frames
+                .iter()
+                .any(|msg| matches!(msg, ServerMsg::FogChanged { fog: Some(_) })),
+            "and the fog that lifted, got {frames:?}"
+        );
+    }
+
+    #[test]
+    fn walking_back_out_takes_the_monster_off_their_board() {
+        let mut state = fog_room(60.0);
+        let _dm = join_as_dm(&mut state, ClientId(1));
+        state.handle(ClientId(1), between(false));
+        state.handle(
+            ClientId(1),
+            ClientMsg::MoveToken {
+                id: TokenId::new("p"),
+                x: 4.5,
+                y: 1.5,
+                dragging: false,
+                staged: false,
+            },
+        );
+        let mut rx = join_as_player(&mut state, ClientId(2), "vex");
+        assert!(sees_the_ogre(&state));
+        drain(&mut rx);
+
+        state.handle(
+            ClientId(2),
+            ClientMsg::MoveToken {
+                id: TokenId::new("p"),
+                x: 1.5,
+                y: 1.5,
+                dragging: false,
+                staged: false,
+            },
+        );
+
+        let frames = drain(&mut rx);
+        assert!(
+            frames
+                .iter()
+                .any(|msg| matches!(msg, ServerMsg::TokenRemoved { id } if id.0 == "m")),
+            "the ogre has to leave their board, got {frames:?}"
+        );
+    }
+
+    #[test]
+    fn a_drag_frame_does_not_move_the_fog() {
+        // The roadmap's rule: recompute on the drop. The raycast is cheap enough
+        // at 30 Hz and shipping a packed bitset to six people that often is not.
+        let mut state = fog_room(60.0);
+        let mut rx = join_as_dm(&mut state, ClientId(1));
+        drain(&mut rx);
+
+        state.handle(
+            ClientId(1),
+            ClientMsg::MoveToken {
+                id: TokenId::new("p"),
+                x: 9.5,
+                y: 9.5,
+                dragging: true,
+                staged: false,
+            },
+        );
+
+        let frames = drain(&mut rx);
+        assert!(
+            !frames
+                .iter()
+                .any(|msg| matches!(msg, ServerMsg::FogChanged { .. })),
+            "a drag frame must not ship a bitset, got {frames:?}"
+        );
+    }
+
+    #[test]
+    fn the_fog_frame_reaches_the_table_and_the_dm_alike() {
+        // The opposite of the walls, deliberately. The geometry is the secret;
+        // the shadow it casts is the thing everybody is playing with, and the DM
+        // needs it to see what the table can see.
+        let mut state = fog_room(60.0);
+        let mut dm = join_as_dm(&mut state, ClientId(1));
+        let mut player = join_as_player(&mut state, ClientId(2), "vex");
+        drain(&mut dm);
+        drain(&mut player);
+
+        state.handle(ClientId(1), between(false));
+
+        for (who, frames) in [
+            ("the DM", drain(&mut dm)),
+            ("the table", drain(&mut player)),
+        ] {
+            assert!(
+                frames
+                    .iter()
+                    .any(|msg| matches!(msg, ServerMsg::FogChanged { .. })),
+                "{who} should have been told the fog moved, got {frames:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn explored_terrain_is_remembered_and_the_creatures_on_it_are_not() {
+        // Terrain gates on `revealed`, tokens gate on `visible`. The party walks
+        // away and keeps the map; the ogre standing on it goes.
+        let mut state = fog_room(60.0);
+        let _dm = join_as_dm(&mut state, ClientId(1));
+        assert!(sees_the_ogre(&state));
+        let lit = state.revealed.len();
+
+        state.handle(
+            ClientId(1),
+            fogged(set_map("/assets/map.png", 64.0, 0.0, 0.0), 10.0),
+        );
+
+        assert!(!sees_the_ogre(&state), "out of the new, shorter reach");
+        assert!(
+            state.revealed.len() >= lit,
+            "explored terrain only ever grows within one map"
+        );
+    }
+
+    #[test]
+    fn a_new_map_forgets_where_the_party_has_been() {
+        let mut state = fog_room(30.0);
+        let _dm = join_as_dm(&mut state, ClientId(1));
+        // Out and back, so there is terrain the party remembers and is not
+        // standing on — which is the only kind a sweep can be seen to remove.
+        walk(&mut state, 20.5);
+        walk(&mut state, 1.5);
+        assert!(state.revealed.contains(&(20, 1)), "explored on the way");
+
+        state.handle(
+            ClientId(1),
+            fogged(set_map("/uploads/cave.webp", 64.0, 0.0, 0.0), 30.0),
+        );
+
+        // Swept, then immediately re-lit from where the tokens are standing.
+        assert!(
+            !state.revealed.contains(&(20, 1)),
+            "a fresh map starts dark"
+        );
+        assert!(
+            state.revealed.contains(&(1, 1)),
+            "except where somebody is standing"
+        );
+    }
+
+    #[test]
+    fn moving_the_lattice_forgets_it_and_changing_the_radius_does_not() {
+        // Where fog differs from the walls it is swept beside. A wall is image
+        // pixels and still traces the same painted line after a recalibration;
+        // these are cells, and the squares themselves have just moved.
+        let mut state = fog_room(30.0);
+        let _dm = join_as_dm(&mut state, ClientId(1));
+        walk(&mut state, 20.5);
+        walk(&mut state, 1.5);
+        assert!(state.revealed.contains(&(20, 1)));
+
+        state.handle(
+            ClientId(1),
+            fogged(set_map("/assets/map.png", 64.0, 0.0, 0.0), 90.0),
+        );
+        assert!(
+            state.revealed.contains(&(20, 1)),
+            "a longer torch is not a reason to forget the dungeon"
+        );
+
+        state.handle(
+            ClientId(1),
+            fogged(set_map("/assets/map.png", 96.0, 0.0, 0.0), 90.0),
+        );
+        assert!(
+            !state.revealed.contains(&(20, 1)),
+            "a moved lattice throws the old answer away and starts again"
+        );
+    }
+
+    #[test]
+    fn the_two_reasons_a_token_is_unseen_compose_with_the_third() {
+        // `hidden`, `staged_only` and now line of sight. Anything that filters on
+        // some of them and forgets the rest is a leak.
+        let mut state = fog_room(60.0);
+        let _dm = join_as_dm(&mut state, ClientId(1));
+        assert!(sees_the_ogre(&state), "lit and not hidden");
+
+        let ogre = token(&state, "m");
+        state.handle(ClientId(1), set_hidden(&ogre, true));
+        assert!(!sees_the_ogre(&state), "lit, and hidden anyway");
+    }
+
+    #[test]
+    fn a_creature_that_walks_out_of_sight_loses_its_row_on_the_tables_panel() {
+        // A feature that hides something and leaves it named in a panel has not
+        // hidden it. Milestone 11 learned that of `hidden`; it is just as true
+        // of a monster the party can no longer see.
+        let mut state = fog_room(60.0);
+        let _dm = join_as_dm(&mut state, ClientId(1));
+        state.handle(
+            ClientId(1),
+            ClientMsg::SetInitiative {
+                token: TokenId::new("m"),
+                value: 14,
+            },
+        );
+        assert_eq!(state.initiative_for(false).entries.len(), 1);
+
+        state.handle(ClientId(1), between(false));
+        assert_eq!(
+            state.initiative_for(false).entries.len(),
+            0,
+            "the row goes with the creature"
+        );
+        assert_eq!(
+            state.initiative_for(true).entries.len(),
+            1,
+            "and stays on the DM's panel"
+        );
+    }
+
+    #[test]
+    fn an_aura_on_a_creature_in_the_dark_is_not_sent() {
+        // The arm `shapes_for` grew in milestone 14 because `hidden` already
+        // existed. It reaches its third reason here without another line.
+        let mut state = fog_room(60.0);
+        let _dm = join_as_dm(&mut state, ClientId(1));
+        state.handle(
+            ClientId(1),
+            ClientMsg::AddShape {
+                kind: ShapeKind::Circle,
+                from: Origin::Token(TokenId::new("m")),
+                to: Pos { x: 4.0, y: 0.0 },
+                color: "#ff8c42e6".to_owned(),
+            },
+        );
+        assert_eq!(state.shapes_for(false).len(), 1);
+
+        state.handle(ClientId(1), between(false));
+        assert_eq!(
+            state.shapes_for(false).len(),
+            0,
+            "an aura on a monster in the dark is that monster's position in colour"
+        );
+        assert_eq!(state.shapes_for(true).len(), 1);
+    }
+
+    #[test]
+    fn renaming_a_creature_in_the_dark_tells_the_table_nothing() {
+        // The trap this milestone had to fix everywhere `was_unseen` is read: it
+        // used to mean `Token::unseen`, so an edit to a monster the party cannot
+        // see would have sent them a `TokenRemoved` naming an id they had never
+        // held — which announces that the id exists.
+        let mut state = fog_room(10.0);
+        let _dm = join_as_dm(&mut state, ClientId(1));
+        let mut rx = join_as_player(&mut state, ClientId(2), "vex");
+        assert!(!sees_the_ogre(&state));
+        drain(&mut rx);
+
+        let mut renamed = token(&state, "m");
+        renamed.name = "Ogre Chieftain".to_owned();
+        state.handle(ClientId(1), edit(&renamed));
+
+        let frames = drain(&mut rx);
+        assert!(
+            frames.is_empty(),
+            "a creature they cannot see is not news whatever the DM does to it, got {frames:?}"
+        );
+    }
+
+    #[test]
+    fn a_player_token_is_always_visible_to_the_table_and_always_a_torch() {
+        // By construction rather than by rule: a player's token is a vision
+        // source, so the cell it stands in is lit by it. That is also how handing
+        // a token to a player grants sight with no extra rule.
+        let mut state = fog_room(10.0);
+        let _dm = join_as_dm(&mut state, ClientId(1));
+
+        let mut handed = token(&state, "m");
+        handed.owner = Owner::Player(PlayerId::new("grog"));
+        state.handle(ClientId(1), edit(&handed));
+
+        assert!(
+            sees_the_ogre(&state),
+            "a token somebody owns is on their board wherever it stands"
+        );
+        assert!(
+            state.visible.contains(&(5, 1)),
+            "and lights the square it is in"
+        );
+    }
+
+    #[test]
+    fn a_hidden_player_token_lights_nothing() {
+        // It is off the board as far as the table is concerned, and a creature
+        // nobody can see lighting the room for everybody would want explaining.
+        let mut state = fog_room(60.0);
+        let _dm = join_as_dm(&mut state, ClientId(1));
+        let player = token(&state, "p");
+        state.handle(ClientId(1), set_hidden(&player, true));
+
+        assert!(state.visible.is_empty(), "no torches left");
+        assert!(!sees_the_ogre(&state));
+    }
+
+    #[test]
+    fn the_play_area_bounds_what_the_party_can_explore() {
+        // The roadmap's implicit wall: vision does not spill into the void off
+        // the edge of the map, and nothing in the wall editor produces that
+        // boundary because it is already on `MapInfo`.
+        let mut state = fog_room(200.0);
+        let _dm = join_as_dm(&mut state, ClientId(1));
+        assert!(state.revealed.contains(&(20, 1)), "unbounded to begin with");
+
+        state.handle(
+            ClientId(1),
+            ClientMsg::SetMap {
+                url: "/assets/map.png".to_owned(),
+                grid_px: 64.0,
+                offset_x: 0.0,
+                offset_y: 0.0,
+                grid_color: "#ffffff52".to_owned(),
+                play_area: rect(0.0, 0.0, 640.0, 640.0),
+                fog: true,
+                vision_ft: 200.0,
+                staged: false,
+            },
+        );
+
+        assert!(state.revealed.contains(&(5, 1)), "inside the board");
+        assert!(
+            !state.revealed.contains(&(20, 1)),
+            "and nothing beyond its edge"
+        );
+    }
+
+    #[test]
+    fn an_unusable_vision_radius_is_refused() {
+        let mut state = fog_room(60.0);
+        let _dm = join_as_dm(&mut state, ClientId(1));
+
+        // The last is the one `finite` exists for: `1e39` is a perfectly good
+        // `f64` and narrowing it to `f32` gives infinity, which serializes to
+        // `null` and then refuses to load back.
+        for bad in [0.0, -30.0, fog::MAX_VISION_FT + 1.0, 1e39_f64 as f32] {
+            assert!(
+                state
+                    .check(
+                        ClientId(1),
+                        &fogged(set_map("/assets/map.png", 64.0, 0.0, 0.0), bad)
+                    )
+                    .is_err(),
+                "{bad} feet should have been refused"
+            );
+        }
+        assert!(
+            state
+                .check(
+                    ClientId(1),
+                    &fogged(set_map("/assets/map.png", 64.0, 0.0, 0.0), 30.0)
+                )
+                .is_ok()
+        );
+    }
+
+    #[test]
+    fn the_fog_survives_the_save_file() {
+        let mut state = fog_room(60.0);
+        let _dm = join_as_dm(&mut state, ClientId(1));
+        let explored = state.revealed.clone();
+
+        let restored = RoomState::restored(state.to_saved(), SECRET.to_owned());
+
+        assert_eq!(restored.revealed, explored, "explored terrain is on disk");
+        assert!(
+            restored.visible.is_empty(),
+            "and sight is not — it is derived on boot, from the tokens the same file holds"
+        );
     }
 }

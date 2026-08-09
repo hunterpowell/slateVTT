@@ -1048,6 +1048,51 @@
         opacity: 0.45;
         pointer-events: none;
       }
+
+      /* --- fog ------------------------------------------------------------ */
+
+      #fog-on {
+        margin: 0;
+        accent-color: #78beff;
+        cursor: pointer;
+      }
+
+      .fog-vision {
+        margin-top: 10px;
+      }
+
+      #fog-vision {
+        width: 46px;
+        padding: 2px 4px;
+        border: 1px solid #2b3038;
+        border-radius: 3px;
+        background: #171a1f;
+        color: #d8d2c4;
+        font: inherit;
+        font-size: 12px;
+        text-align: center;
+      }
+
+      .fog-unit {
+        color: #767d88;
+        font-size: 11px;
+      }
+
+      /* Greyed rather than hidden while fog is off: the radius is still the
+         map's, and hiding it would make turning fog on look like it had also
+         invented a number. */
+      .fog-vision:has(input:disabled) {
+        opacity: 0.5;
+      }
+
+      /* The bitsets belong to the live board and the staged map has none, so
+         this goes inert over a preview exactly as the wall editor does — panel
+         and tab together, for the same reason. */
+      body.previewing #fogtool,
+      body.previewing .rail-tab[data-tab='fog'] {
+        opacity: 0.45;
+        pointer-events: none;
+      }
     </style>
   </head>
   <body>
@@ -1205,6 +1250,35 @@
           <button id="wall-clear" class="map-subtle" type="button">erase all</button>
         </div>
         <p class="map-hint" id="wall-hint"></p>
+      </aside>
+      <!-- Two controls and no third. Both are fields of the map, so both go out
+           as a set_map through the map tool — there is no set_fog, because two
+           writers for one record is how they come to disagree. Nothing here is a
+           tool: the party's tokens are what move the fog. -->
+      <aside id="fogtool" hidden>
+        <div class="map-head">Fog</div>
+        <label class="token-check">
+          <input id="fog-on" type="checkbox" />
+          <span>limit what the table can see</span>
+        </label>
+        <div class="map-cells-label fog-vision">
+          <span>vision</span>
+          <span class="map-stepper">
+            <button id="fog-vision-down" type="button" title="Shorter">&minus;</button>
+            <input
+              id="fog-vision"
+              type="number"
+              min="5"
+              max="500"
+              step="5"
+              value="60"
+              aria-label="Vision radius in feet"
+            />
+            <button id="fog-vision-up" type="button" title="Further">+</button>
+            <span class="fog-unit">ft</span>
+          </span>
+        </div>
+        <p class="map-hint" id="fog-hint"></p>
       </aside>
       <!-- The one panel everybody gets, and the one that is not behind a tab.
            Anyone may draw, so unlike the three above it is built on a player

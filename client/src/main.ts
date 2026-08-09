@@ -2,6 +2,9 @@ import type { Camera, Vec2 } from './coords.js';
 import { screenToWorld, worldToGrid } from './coords.js';
 import type { DrawTool } from './drawtool.js';
 import { createDrawTool } from './drawtool.js';
+import { fogFromWire } from './fog.js';
+import type { FogTool } from './fogtool.js';
+import { createFogTool } from './fogtool.js';
 import type { Identity } from './identity.js';
 import {
   ANONYMOUS,
@@ -101,6 +104,14 @@ interface Ui {
     hint: HTMLElement;
     readout: HTMLElement;
   };
+  fogtool: {
+    root: HTMLElement;
+    on: HTMLInputElement;
+    vision: HTMLInputElement;
+    visionDown: HTMLButtonElement;
+    visionUp: HTMLButtonElement;
+    hint: HTMLElement;
+  };
   tokentool: {
     root: HTMLElement;
     head: HTMLElement;
@@ -199,6 +210,14 @@ function findUi(): Ui {
       hint: need('#wall-hint'),
       readout: need('#wall-readout'),
     },
+    fogtool: {
+      root: need('#fogtool'),
+      on: need<HTMLInputElement>('#fog-on'),
+      vision: need<HTMLInputElement>('#fog-vision'),
+      visionDown: need<HTMLButtonElement>('#fog-vision-down'),
+      visionUp: need<HTMLButtonElement>('#fog-vision-up'),
+      hint: need('#fog-hint'),
+    },
     tokentool: {
       root: need('#tokentool'),
       head: need('#token-head'),
@@ -239,6 +258,7 @@ function boot(): void {
   let stage: Stage | null = null;
   let drawTool: DrawTool | null = null;
   let wallTool: WallTool | null = null;
+  let fogTool: FogTool | null = null;
   // DM-only, like the three panels it shows. Null on a player connection, which
   // is why every use of it is optional-chained rather than guarded.
   let rail: Rail | null = null;
@@ -309,7 +329,10 @@ function boot(): void {
       // Exactly one Welcome per connection — identity cannot change once set —
       // so this runs once. Assigned synchronously so a delta arriving straight
       // after Welcome cannot land in a gap where the room does not exist yet.
-      room = { scene: sceneFromView(welcome.state), initiative: welcome.state.initiative };
+      room = {
+        scene: sceneFromView(welcome.state, identity.isDm),
+        initiative: welcome.state.initiative,
+      };
       panel = createPanel(ui.panel, identity, (msg) => net.send(msg));
       panel.update(room.initiative, room.scene);
 
@@ -344,6 +367,10 @@ function boot(): void {
             // it, which has even less to work on: there are no staged walls.
             drawTool?.stop();
             wallTool?.stop();
+            // Nothing to put down — the fog panel arms no tool — but its tab
+            // goes inert over a preview and its hint has to say why, so it is
+            // told the same as the two above.
+            if (room !== null) fogTool?.update(room.scene);
             // No prompt to size the grid — a staged map was offered one when it
             // was staged, and the live map when it arrived.
             stage?.reloadMap();
@@ -368,15 +395,23 @@ function boot(): void {
         wallTool = createWallTool(ui.walltool, (msg) => net.send(msg), () => drawTool?.stop());
         wallTool.update(room.scene);
 
-        // Last, because it owns whether the three above are on screen and has
-        // to be able to put each of them down as it closes it. The order here
-        // is the order of the tabs, and the fourth entry is fog's.
+        // Both fields are the map's, so they go out as a `set_map` through the
+        // panel that owns the confirmed calibration rather than as a frame of
+        // their own — two writers for one record is how they come to disagree.
+        fogTool = createFogTool(ui.fogtool, (on, visionFt) => mapTool?.setFog(on, visionFt));
+        fogTool.update(room.scene);
+
+        // Last, because it owns whether the four above are on screen and has to
+        // be able to put each of them down as it closes it. The order here is
+        // the order of the tabs. Fog is the fourth, and the one with nothing to
+        // put down: it arms no tool, because the party's tokens are what move it.
         rail = createRail(ui.rail, [
           { tab: 'map', label: 'map', root: ui.maptool.root, stop: () => mapTool?.stop() },
           // Nothing to put down: a selection is a ring on the board, which is
           // still on screen with the panel closed.
           { tab: 'token', label: 'token', root: ui.tokentool.root },
           { tab: 'walls', label: 'walls', root: ui.walltool.root, stop: () => wallTool?.stop() },
+          { tab: 'fog', label: 'fog', root: ui.fogtool.root },
         ]);
       }
 
@@ -464,6 +499,9 @@ function boot(): void {
       // in — invariant 1.
       scene.live = boardFromWire(map);
       mapTool?.update(scene);
+      // The two fog fields ride on the map, so this is also how the panel learns
+      // the switch was flipped — including by the DM's other tab.
+      fogTool?.update(scene);
       afterBoardChanged(wasShowing, newImage);
     },
 
@@ -519,6 +557,20 @@ function boot(): void {
       if (room === null) return;
       room.scene.walls = walls.map(wallFromWire);
       wallTool?.update(room.scene);
+    },
+
+    // Reaches everyone, unlike the walls above — fog is party-shared, so the DM
+    // and the table are sent the same frame and it is only how faintly it draws
+    // that differs. Rebuilt into a canvas here rather than per frame: a fogged
+    // board is a few thousand cells, and the renderer stretches one image over
+    // them instead of filling that many rectangles sixty times a second.
+    //
+    // Nothing here decides who is drawn. A creature the table cannot see is
+    // absent from the token list entirely, which is invariant 4 — this is the
+    // terrain, and it arrives beside that rather than instead of it.
+    onFogChanged: (fog) => {
+      if (room === null) return;
+      room.scene.fog = fogFromWire(fog, identity.isDm);
     },
 
     onError: (message) => {

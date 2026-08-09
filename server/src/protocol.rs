@@ -5,6 +5,8 @@
 
 use serde::{Deserialize, Serialize};
 
+use crate::fog::FogView;
+
 /// Server-assigned, unique per connection. Not an identity — it dies with the
 /// socket. `PlayerId` is the thing that survives a refresh.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -89,6 +91,22 @@ pub struct MapInfo {
     /// it never learns the image's dimensions. Only the client, which has the
     /// decoded image, can turn "all of it" into numbers.
     pub play_area: Option<Rect>,
+    /// Whether the party's sight is limited on this map.
+    ///
+    /// Per map rather than per room, and remembered per URL like the rest of the
+    /// calibration: a dungeon wants fog and the meadow outside it does not, and
+    /// the DM should not have to remember which is which when they swap between
+    /// them. Off by default, which is the whole of the roadmap's warning about
+    /// this: a room restored from a save that predates fog is a room nobody asked
+    /// to darken, and a switch that defaults to off cannot make that mistake
+    /// whatever `vision_ft` happens to load as.
+    pub fog: bool,
+    /// How far a player-owned token sees, in feet. One radius for the map rather
+    /// than one per token — nothing here knows the word "darkvision".
+    ///
+    /// Read only when `fog` is on, so its default is a playable number rather
+    /// than a defensive one.
+    pub vision_ft: f32,
 }
 
 impl Default for MapInfo {
@@ -104,6 +122,14 @@ impl Default for MapInfo {
             // carries it on a light map.
             grid_color: "#ffffff52".to_owned(),
             play_area: None,
+            // The safe direction, and the only one: a map nobody has turned fog
+            // on for is a map the table can see all of, which is exactly what
+            // every room saved before this field existed was.
+            fog: false,
+            // Only read once `fog` is on, so this is a sensible torch rather than
+            // a guard against the zero that `#[serde(default)]` would otherwise
+            // supply — the flag above is what guards that.
+            vision_ft: 60.0,
         }
     }
 }
@@ -123,6 +149,11 @@ pub struct Calibration {
     pub offset_y: f32,
     pub grid_color: String,
     pub play_area: Option<Rect>,
+    /// Remembered with the grid rather than kept beside it. Whether a map is
+    /// fogged and how far its torches reach is a fact about that dungeon, and
+    /// re-picking it out of the library should bring both back with the rest.
+    pub fog: bool,
+    pub vision_ft: f32,
 }
 
 impl Default for Calibration {
@@ -141,6 +172,8 @@ impl From<MapInfo> for Calibration {
             offset_y: map.offset_y,
             grid_color: map.grid_color,
             play_area: map.play_area,
+            fog: map.fog,
+            vision_ft: map.vision_ft,
         }
     }
 }
@@ -155,6 +188,8 @@ impl Calibration {
             offset_y: self.offset_y,
             grid_color: self.grid_color,
             play_area: self.play_area,
+            fog: self.fog,
+            vision_ft: self.vision_ft,
         }
     }
 }
@@ -490,12 +525,20 @@ pub struct Wall {
 
 impl Wall {
     /// Whether this segment is a door, and whether it is open. `None` is
-    /// masonry — the one question anything outside the editor asks.
+    /// masonry — the one question the editor's neighbours ask.
     pub fn door(&self) -> Option<bool> {
         match self.kind {
             WallKind::Door(open) => Some(open),
             WallKind::Solid => None,
         }
+    }
+
+    /// Whether sight stops here. The one question `fog.rs` asks, and the reason
+    /// `WallKind::default` is `Solid`: a segment restored from a schema that
+    /// predates doors has to keep blocking, and one that defaulted to an open
+    /// door would quietly stop.
+    pub fn blocks(&self) -> bool {
+        !matches!(self.kind, WallKind::Door(true))
     }
 }
 
@@ -582,6 +625,19 @@ pub struct RoomView {
     /// Empty is therefore both "nothing traced" and "you are not the DM",
     /// indistinguishable from the client side.
     pub walls: Vec<Wall>,
+    /// What the party can see and what they have explored, or `None` on a map
+    /// with fog turned off.
+    ///
+    /// **The same value for everyone, and that is not an oversight.** Fog is
+    /// party-shared, so there is one answer rather than one per client; the DM is
+    /// sent it so their own board can show, faintly, what the table is looking
+    /// at. It is the walls that stay DM-only — a player infers the geometry from
+    /// the edges of this instead, which is the whole shape of the feature.
+    ///
+    /// Lives in `fog.rs` beside the two functions that pack and unpack it, unlike
+    /// every other type here, because the encoding is the interesting part of it
+    /// and splitting the two would leave a string nothing explains.
+    pub fog: Option<FogView>,
 }
 
 /// Inbound. Not `#[serde(default)]`: a malformed frame from a client should be
@@ -670,6 +726,14 @@ pub enum ClientMsg {
         offset_y: f32,
         grid_color: String,
         play_area: Option<Rect>,
+        /// Whether this map is fogged, and how far a token sees on it.
+        ///
+        /// Here rather than on a command of their own for the reason the grid
+        /// colour is here: they are fields of `MapInfo`, they are remembered per
+        /// URL with the rest of the calibration, and a `SetFog` would be a second
+        /// way to write one map that could arrive out of order with this one.
+        fog: bool,
+        vision_ft: f32,
         /// Which slot this is about: the board the table is looking at, or the
         /// one the DM is preparing.
         ///
@@ -907,6 +971,19 @@ pub enum ServerMsg {
     /// rule, arriving for the second time.
     WallsChanged {
         walls: Vec<Wall>,
+    },
+    /// What the party can see now, and everywhere they have been. `None` once the
+    /// map is not fogged, which is also what a map that never was looks like.
+    ///
+    /// The one filtered-looking frame that is identical for every recipient: fog
+    /// is party-shared, so there is nothing per-client in it to build. The DM
+    /// gets it to draw faintly over their own board.
+    ///
+    /// Sent on a drop and never on a drag frame. The shadow of a party walking a
+    /// corridor is worth a few kilobytes when they arrive somewhere and is not
+    /// worth thirty a second on the way.
+    FogChanged {
+        fog: Option<FogView>,
     },
     Error {
         message: String,

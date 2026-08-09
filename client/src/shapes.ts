@@ -82,9 +82,6 @@ const CONE_COS = Math.cos(CONE_HALF_ANGLE);
  * the squares beside it fall outside a wedge that is plainly pointing at them.
  * The other end is about 0.71, half a diagonal, at which a shape grazing any
  * corner of a square claims the whole thing.
- *
- * This sits nearer the strict end. It is the one number in this file worth
- * playing with at the table, which is why it has a name.
  */
 const COVERAGE_SLACK = .15;
 

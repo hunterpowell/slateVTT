@@ -11,6 +11,7 @@ use std::path::{Path, PathBuf};
 use serde::{Deserialize, Serialize};
 use tokio::fs;
 
+use crate::fog::FogView;
 use crate::protocol::{Calibration, Initiative, MapInfo, Shape, Token, Wall};
 
 /// What actually goes to disk.
@@ -51,6 +52,21 @@ pub struct Saved {
     /// will still be on the board next week, so this is the one thing on `Saved`
     /// that would make the feature unusable if it were not persisted.
     pub walls: Vec<Wall>,
+    /// Everywhere the party has explored, packed the way the wire packs it.
+    ///
+    /// Only half the fog is here, and the half that is not is the interesting
+    /// one: `visible` is derived from where the tokens are standing and what
+    /// blocks sight between them, both of which this file already holds, so it is
+    /// recomputed on boot rather than restored. A stored one could only disagree
+    /// with the room it was stored beside — a door shut after the last save would
+    /// describe sight straight through it.
+    ///
+    /// Reusing `FogView` rather than a list of cell pairs is the same bargain the
+    /// wire makes: a few thousand characters laid out as a map instead of a few
+    /// thousand numbers. The file happens to record every explored cell as `o`,
+    /// since it is packed against an empty `visible`, and `fog::unpack` reads both
+    /// lit states the same way so neither side has to know that.
+    pub revealed: FogView,
     /// Remembered grid calibrations, keyed by map URL.
     ///
     /// The first thing here that is not part of any client's view of the room.
@@ -193,6 +209,8 @@ mod tests {
                     w: 700.0,
                     h: 490.0,
                 }),
+                fog: true,
+                vision_ft: 45.0,
             },
             staged: Some(MapInfo {
                 url: "/uploads/next-week.jpg".to_owned(),
@@ -253,6 +271,12 @@ mod tests {
                     kind: WallKind::Door(true),
                 },
             ],
+            // A ragged shape rather than a filled rectangle, since the packing is
+            // row-major and a solid block would survive a transposed one.
+            revealed: crate::fog::pack(
+                &std::collections::HashSet::from([(2, 1), (3, 1), (4, 1), (4, 2), (-1, -1)]),
+                &std::collections::HashSet::new(),
+            ),
             calibrations: HashMap::from([(
                 "/uploads/digital-goblin-camp-1a2b3c4d.jpg".to_owned(),
                 Calibration {
@@ -261,6 +285,8 @@ mod tests {
                     offset_y: -6.0,
                     grid_color: "#00ff00ff".to_owned(),
                     play_area: None,
+                    fog: true,
+                    vision_ft: 30.0,
                 },
             )]),
         }

@@ -60,7 +60,7 @@ const heightOf = (id) =>
 
 // --- the strip itself -------------------------------------------------------
 
-check('the strip carries the three editing tabs', await tabs(), ['map', 'token', 'walls']);
+check('the strip carries the four editing tabs', await tabs(), ['map', 'token', 'walls', 'fog']);
 check('nothing is open on connect', await openTab(), null);
 check('the draw tool is the only panel up', await shown(), ['drawtool']);
 

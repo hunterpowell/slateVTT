@@ -16,6 +16,35 @@ export interface WireMapInfo {
   grid_color: string;
   /** The playable region in image pixels, or null for the whole image. */
   play_area: WireRect | null;
+  /** Whether the party's sight is limited on this map. Per map and remembered
+   *  per URL with the rest of the calibration: a dungeon wants fog and the
+   *  meadow outside it does not. */
+  fog: boolean;
+  /** How far a player-owned token sees, in feet. One radius for the map —
+   *  nothing here knows the word "darkvision". Only read when `fog` is on. */
+  vision_ft: number;
+}
+
+/**
+ * What the party can see and what they have explored, packed one character per
+ * cell.
+ *
+ * A rectangle of characters rather than an array of per-cell values, because the
+ * frames in devtools are meant to be readable and a few thousand numbers is not
+ * one. The rectangle is the bounding box of everything explored, so **every cell
+ * outside it is dark** and an unexplored map arrives as nothing at all.
+ *
+ * `null` in place of one of these is a map with fog turned off — and, like
+ * `staged` being null, it is indistinguishable from a map that has none.
+ */
+export interface WireFog {
+  /** Cell coordinates of the rectangle's top-left corner. */
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+  /** `w * h` characters, row-major: `#` never seen, `o` explored, `.` in sight. */
+  cells: string;
 }
 
 export interface WireRect {
@@ -150,6 +179,14 @@ export interface WireRoomView {
    *  what a map nobody has traced looks like, so the two are indistinguishable
    *  from here, exactly as `staged` being null is. */
   walls: WireWall[];
+  /** What the party can see, or null on an unfogged map.
+   *
+   *  The same value for everyone, unlike everything above it — fog is
+   *  party-shared, so there is one answer. The DM is sent it so their own board
+   *  can show, faintly, what the table is looking at. It is the walls one line
+   *  up that stay theirs alone; a player reads the geometry off the edges of
+   *  this instead, which is the whole shape of the feature. */
+  fog: WireFog | null;
 }
 
 export interface RosterSlot {
@@ -209,6 +246,10 @@ export type ServerMsg =
    *  this frame at all, not even an empty one, because a frame they cannot use
    *  still tells them the DM just did something. */
   | { type: 'walls_changed'; walls: WireWall[] }
+  /** What the party can see now, and everywhere they have been. Null once the
+   *  map is not fogged. Reaches everyone, unlike the walls above it — and only
+   *  on a drop, never on a drag frame. */
+  | { type: 'fog_changed'; fog: WireFog | null }
   | { type: 'error'; message: string };
 
 export type ClientMsg =
@@ -234,6 +275,11 @@ export type ClientMsg =
       offset_y: number;
       grid_color: string;
       play_area: WireRect | null;
+      /** Whether this map is fogged and how far a token sees on it. Here rather
+       *  than on a command of their own for the reason the grid colour is: they
+       *  are fields of the map, remembered per URL with the rest of it. */
+      fog: boolean;
+      vision_ft: number;
       staged: boolean;
     }
   /** DM-only. The staged map becomes the board; tokens keep their cells. */

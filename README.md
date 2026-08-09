@@ -7,7 +7,8 @@ replaces Foundry for one group that only needs a shared map, tokens, and turn or
 - Tokens the DM can move freely and players can move only their own
 - An initiative tracker with round counter and next/previous turn
 - Measuring and spell-area drawing that anyone at the table can use
-- Walls and doors the DM traces over the map, ready for line of sight
+- Walls and doors the DM traces over the map, which block line of sight and never movement
+- Fog of war: the table sees what their own tokens can see, and remembers where they have been
 - State is saved to a JSON file on disk and restored on restart
 
 See [CLAUDE.md](.claude/CLAUDE.md) for the architecture, invariants, and non-goals, and [docs/](docs/)
