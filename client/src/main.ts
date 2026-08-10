@@ -20,6 +20,7 @@ import type { Rail } from './rail.js';
 import { createRail } from './rail.js';
 import type { Net } from './net.js';
 import { connect } from './net.js';
+import { overridesFromWire } from './overrides.js';
 import type { Panel } from './panel.js';
 import { createPanel } from './panel.js';
 import { createPicker } from './picker.js';
@@ -111,6 +112,9 @@ interface Ui {
     visionDown: HTMLButtonElement;
     visionUp: HTMLButtonElement;
     hint: HTMLElement;
+    brushes: HTMLElement;
+    gesture: HTMLButtonElement;
+    clear: HTMLButtonElement;
   };
   tokentool: {
     root: HTMLElement;
@@ -217,6 +221,9 @@ function findUi(): Ui {
       visionDown: need<HTMLButtonElement>('#fog-vision-down'),
       visionUp: need<HTMLButtonElement>('#fog-vision-up'),
       hint: need('#fog-hint'),
+      brushes: need('#fog-brushes'),
+      gesture: need<HTMLButtonElement>('#fog-gesture'),
+      clear: need<HTMLButtonElement>('#fog-clear'),
     },
     tokentool: {
       root: need('#tokentool'),
@@ -367,9 +374,9 @@ function boot(): void {
             // it, which has even less to work on: there are no staged walls.
             drawTool?.stop();
             wallTool?.stop();
-            // Nothing to put down — the fog panel arms no tool — but its tab
-            // goes inert over a preview and its hint has to say why, so it is
-            // told the same as the two above.
+            // And the fog brush, which since 16b is a tool like the two above
+            // it. `update` is what puts it down — a brush over a preview can do
+            // nothing, and the panel says so rather than sitting there armed.
             if (room !== null) fogTool?.update(room.scene);
             // No prompt to size the grid — a staged map was offered one when it
             // was staged, and the live map when it arrived.
@@ -395,23 +402,40 @@ function boot(): void {
         wallTool = createWallTool(ui.walltool, (msg) => net.send(msg), () => drawTool?.stop());
         wallTool.update(room.scene);
 
-        // Both fields are the map's, so they go out as a `set_map` through the
-        // panel that owns the confirmed calibration rather than as a frame of
-        // their own — two writers for one record is how they come to disagree.
-        fogTool = createFogTool(ui.fogtool, (on, visionFt) => mapTool?.setFog(on, visionFt));
+        // The switch and the radius are the map's, so they go out as a `set_map`
+        // through the panel that owns the confirmed calibration rather than as a
+        // frame of their own — two writers for one record is how they come to
+        // disagree. The brush is not the map's and sends its own command.
+        fogTool = createFogTool(
+          ui.fogtool,
+          (on, visionFt) => mapTool?.setFog(on, visionFt),
+          (msg) => net.send(msg),
+          // Lazily, like the map tool's: a fill is clipped to the play area, and
+          // "the whole image" is a size only the decoded image knows.
+          () => {
+            const size = stage?.naturalSize();
+            return size === undefined ? null : { w: size.width, h: size.height };
+          },
+          () => {
+            drawTool?.stop();
+            wallTool?.stop();
+          },
+        );
         fogTool.update(room.scene);
 
         // Last, because it owns whether the four above are on screen and has to
         // be able to put each of them down as it closes it. The order here is
-        // the order of the tabs. Fog is the fourth, and the one with nothing to
-        // put down: it arms no tool, because the party's tokens are what move it.
+        // the order of the tabs. Fog gained a `stop` in 16b: it used to arm
+        // nothing, and the brush is a tool holding the left button like any
+        // other — one left under a hidden panel is a click doing something with
+        // nothing on screen saying why.
         rail = createRail(ui.rail, [
           { tab: 'map', label: 'map', root: ui.maptool.root, stop: () => mapTool?.stop() },
           // Nothing to put down: a selection is a ring on the board, which is
           // still on screen with the panel closed.
           { tab: 'token', label: 'token', root: ui.tokentool.root },
           { tab: 'walls', label: 'walls', root: ui.walltool.root, stop: () => wallTool?.stop() },
-          { tab: 'fog', label: 'fog', root: ui.fogtool.root },
+          { tab: 'fog', label: 'fog', root: ui.fogtool.root, stop: () => fogTool?.stop() },
         ]);
       }
 
@@ -426,6 +450,7 @@ function boot(): void {
         drawTool,
         sketches,
         wallTool,
+        fogTool,
         rail,
       ).then(
         (started) => {
@@ -557,6 +582,9 @@ function boot(): void {
       if (room === null) return;
       room.scene.walls = walls.map(wallFromWire);
       wallTool?.update(room.scene);
+      // The fill floods against these, so a segment traced or erased changes
+      // what the next preview would take.
+      fogTool?.update(room.scene);
     },
 
     // Reaches everyone, unlike the walls above — fog is party-shared, so the DM
@@ -571,6 +599,15 @@ function boot(): void {
     onFogChanged: (fog) => {
       if (room === null) return;
       room.scene.fog = fogFromWire(fog, identity.isDm);
+    },
+
+    // Never reaches a player: the walls' rule rather than the fog's, because
+    // this is what the DM *decided* and the frame above is what the table gets
+    // to see of it. Rebuilt into its own little canvas here for the reason the
+    // fog is — a filled dungeon room is a few thousand cells.
+    onOverridesChanged: (overrides) => {
+      if (room === null) return;
+      room.scene.overrides = overridesFromWire(overrides);
     },
 
     onError: (message) => {
@@ -628,6 +665,7 @@ async function start(
   drawTool: DrawTool,
   sketches: Sketches,
   wallTool: WallTool | null,
+  fogTool: FogTool | null,
   rail: Rail | null,
 ): Promise<Stage> {
   const { scene } = room;
@@ -702,6 +740,7 @@ async function start(
     drawTool,
     sketches,
     wallTool,
+    fogTool,
   );
 
   const stage: Stage = {
@@ -769,6 +808,14 @@ async function start(
               run: wallTool.run,
               aim: wallTool.aim,
               hovered: wallTool.hovered,
+            },
+      fog:
+        fogTool === null
+          ? null
+          : {
+              armed: fogTool.brush !== null,
+              paint: fogTool.brush === null || fogTool.brush === 'clear' ? null : fogTool.brush,
+              preview: fogTool.preview,
             },
     });
 

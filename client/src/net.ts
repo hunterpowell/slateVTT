@@ -7,6 +7,7 @@ import type {
   Welcome,
   WireFog,
   WireMapInfo,
+  WireOverrides,
   WireShape,
   WireToken,
   WireWall,
@@ -40,6 +41,10 @@ export interface Handlers {
    *  connection, unlike the walls above — fog is party-shared, so the DM and the
    *  table are sent the same frame. */
   onFogChanged(fog: WireFog | null): void;
+  /** The cells the DM has overridden by hand. Only ever called on a DM
+   *  connection — the walls' rule, not the fog's, because this is what the DM
+   *  decided rather than what the table gets to see of it. */
+  onOverridesChanged(overrides: WireOverrides): void;
   onError(message: string): void;
   onClose(): void;
 }
@@ -109,6 +114,9 @@ export function connect(on: Handlers): Net {
         break;
       case 'fog_changed':
         on.onFogChanged(msg.fog);
+        break;
+      case 'overrides_changed':
+        on.onOverridesChanged(msg.overrides);
         break;
       case 'error':
         on.onError(msg.message);

@@ -24,7 +24,8 @@ them would load them into every session, which is what moving them out avoided.)
 - Lets the DM prepare the next map out of sight of the table, then promote it
 - Lets anyone measure a distance or draw a spell area on the board
 - Lets the DM trace the walls and doors of a map, and limits what the table can see to what their
-  own tokens have line of sight on
+  own tokens have line of sight on — and lets the DM overrule that by hand, square by square or a
+  room at a time
 
 ## Non-goals
 
@@ -107,12 +108,20 @@ struct RoomState {
     shapes: Vec<Shape>,
     /// Traced over the map image. DM-only, whole — see `docs/walls.md`.
     walls: Vec<Wall>,
-    /// Everywhere the party has had line of sight, and where they have it now.
-    /// Grid cells, party-shared rather than per-player, and `visible` is derived
-    /// and not persisted — see `docs/fog.md`.
-    revealed: HashSet<Cell>, visible: HashSet<Cell>,
+    /// Everywhere the party's rays have reached, that as the DM's mask leaves it,
+    /// and where they can see now. Grid cells, party-shared rather than
+    /// per-player. Only `revealed` is persisted and only `recompute_sight` reads
+    /// it — everything else reads `known` — see `docs/fog.md`.
+    revealed: HashSet<Cell>, known: HashSet<Cell>, visible: HashSet<Cell>,
+    /// What the DM said about particular cells anyway. A mask applied after the
+    /// raycast, never a write into the two above. DM-only, whole, like the walls.
+    overrides: HashMap<Cell, Override>,
     clients: HashMap<ClientId, Client>,
 }
+
+/// `Auto` is the absence of an entry rather than a fourth variant. `Explored`
+/// and `Lit` are floors, `Dark` is a ceiling — see `docs/fog.md`.
+enum Override { Explored, Lit, Dark }
 
 /// A cell of the grid. A tuple, not a struct: it indexes a lattice rather than
 /// naming a position, and it never reaches the wire as itself — `FogView` packs
@@ -188,7 +197,8 @@ is `can_erase` — the DM, or whoever drew it. Everything else below is DM-only.
 
 Walls are the opposite extreme: every wall command is DM-only *and* there is no per-item rule
 underneath, because they are all the DM's. A player is not merely stopped from editing them — they
-are never sent one, and never told one changed.
+are never sent one, and never told one changed. **The fog override is the second thing with exactly
+that rule**, and for the same reason: it is what the DM authored, and the fog is the shadow it casts.
 
 Token creation, deletion, map changes, and initiative edits are DM-only. So is reassigning a
 token's `owner`, which is how a player is handed a token the DM built for them. So is planning
@@ -220,8 +230,8 @@ containing a full filtered snapshot. Everything after that is a delta. Reconnect
 another join — there is no diffing or resync protocol.
 
 `state` is a `RoomView`, which is the room as that one client may see it — for a player that
-means `staged` is stripped from it, the walls are empty, tokens they cannot see are absent, and what
-survives is redacted. See `docs/maps.md` and `docs/tokens.md`. `state` is boxed, because growing
+means `staged` is stripped from it, the walls and the fog overrides are empty, tokens they cannot see
+are absent, and what survives is redacted. See `docs/maps.md` and `docs/tokens.md`. `state` is boxed, because growing
 `RoomView` by one field pushed `Welcome` past clippy's large-variant threshold — every message in
 every client's 256-slot mailbox is sized at the largest variant. Serde sees straight through the box
 and the frame on the wire is unchanged.
@@ -301,7 +311,7 @@ destroy; `can_erase` is the DM or whoever drew it. A shape being swept out is on
 not in the room (`ClientMsg::Sketch` carries `drawing`, the way `MoveToken` carries `dragging`).
 There are no staged shapes. `shapes_for` withholds a shape whose anchor the recipient cannot see,
 through `unseen_by_table` — so an aura on a monster in the dark goes with it, and no new line was
-needed for that. An *unanchored* shape is not yet narrowed to the cells it covers; that is 16b's.
+needed for that. An *unanchored* shape is withheld unless a cell it covers has been explored.
 
 A grid cell is five feet, and distance is counted in cells crossed — a diagonal step costs what an
 orthogonal one costs, so every reading is a multiple of five. The movement ruler is client-only:
@@ -362,11 +372,29 @@ going dark. Nothing here knows the word "darkvision": one radius per map.
 
 **Recompute on the drop, never on a drag frame** — `moves_sight` is `persists`'s twin and is
 enumerated the same way. `refresh_fog` reads before `apply`, recomputes after, and reports the
-difference as events. `revealed` is persisted and `visible` is derived on boot. A map load, a
-promote, a recalibration and a redrawn play area all clear both; changing the radius does not.
+difference as events. `revealed` is persisted; `known` and `visible` are derived on boot. A map load,
+a promote, a recalibration and a redrawn play area clear all three through `forget_fog`; changing the
+radius does not. So does `ResetFog`, which is that plus the overrides and is the DM's way to say **the
+whole map back to dark** — one command, because forgetting the exploring and clearing the paint are
+one gesture.
 
-→ **`docs/fog.md`** before touching `fog.rs`, `fog.ts`, `fogtool.ts`, `unseen_by_table`,
-`refresh_fog`, or `moves_sight`.
+**The DM's override is a mask applied after the raycast, and nothing but a ray ever writes into
+`revealed`** — a hide that merely cleared it would evaporate the next torch past, and a reveal that
+merely wrote into it could never be lifted. `Lit`/`Explored`/`Dark` shape `known` and `visible`, which
+is where every reader downstream looks. It gives `in_sight` a different answer, so `unseen_by_table`
+stays one line and nothing downstream knows the word. It reaches the DM or nobody, exactly as the
+walls do, and the table is owed the `FogChanged` beside it. `SetFogOverride` carries **the cells**,
+because the DM's client computes the fill to preview it and the preview and the result have to be the
+same array. That fill is bounded by **every traced segment, doors included and whatever they are
+swung to** — the one place a door's state is not read, because it asks what is connected and not what
+is visible. Swept with the three sets, and persisted whole.
+
+**An unanchored shape gates on `known`**, not on `visible`: a drawing is painted on the floor
+rather than standing on it, so it belongs with the terrain. `shape_covers` on the server is a second
+copy of `coveredCells`, and the two only have to agree loosely.
+
+→ **`docs/fog.md`** before touching `fog.rs`, `fog.ts`, `overrides.ts`, `fogtool.ts`,
+`unseen_by_table`, `shape_seen`, `refresh_fog`, or `moves_sight`.
 
 ## Frontend
 

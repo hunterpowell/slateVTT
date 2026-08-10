@@ -11,7 +11,7 @@ use std::path::{Path, PathBuf};
 use serde::{Deserialize, Serialize};
 use tokio::fs;
 
-use crate::fog::FogView;
+use crate::fog::{FogView, OverrideView};
 use crate::protocol::{Calibration, Initiative, MapInfo, Shape, Token, Wall};
 
 /// What actually goes to disk.
@@ -67,6 +67,15 @@ pub struct Saved {
     /// since it is packed against an empty `visible`, and `fog::unpack` reads both
     /// lit states the same way so neither side has to know that.
     pub revealed: FogView,
+    /// The DM's manual overrides, packed in their own alphabet — `#` forced dark,
+    /// `o` forced explored, `*` forced in sight.
+    ///
+    /// The mirror image of the field above it. That one is half a derived thing
+    /// and records only the half that cannot be recomputed; this one is not
+    /// derived at all — it is what somebody decided, and no amount of walls and
+    /// tokens would give it back. It is the walls' neighbour on this file rather
+    /// than the fog's.
+    pub overrides: OverrideView,
     /// Remembered grid calibrations, keyed by map URL.
     ///
     /// The first thing here that is not part of any client's view of the room.
@@ -161,6 +170,7 @@ mod tests {
     use std::sync::atomic::{AtomicU32, Ordering};
 
     use super::*;
+    use crate::fog::Override;
     use crate::protocol::{
         Hp, InitiativeEntry, Origin, Owner, PlayerId, Pos, Px, Rect, ShapeId, ShapeKind, TokenId,
         WallId, WallKind,
@@ -277,6 +287,14 @@ mod tests {
                 &std::collections::HashSet::from([(2, 1), (3, 1), (4, 1), (4, 2), (-1, -1)]),
                 &std::collections::HashSet::new(),
             ),
+            // All three states, and one of them outside the explored box above:
+            // the two rectangles are bounded independently, and packing them
+            // against each other's bounds is the mistake this catches.
+            overrides: crate::fog::pack_overrides(&HashMap::from([
+                ((3, 1), Override::Dark),
+                ((9, 9), Override::Lit),
+                ((9, 10), Override::Explored),
+            ])),
             calibrations: HashMap::from([(
                 "/uploads/digital-goblin-camp-1a2b3c4d.jpg".to_owned(),
                 Calibration {

@@ -189,20 +189,64 @@ order of what remains is deliberate:
     beside the radius on `MapInfo` also carries the warning below about a radius defaulting to zero,
     which frees the radius to default to a playable number instead of a defensive one.
 
-    16b is the DM's manual override and the flood-fill reveal tool, designed under *Fog of war*
-    below. Also still open there: narrowing an *unanchored* shape to the cells it covers, which
-    milestone 14's `shapes_for` left for whenever fog existed.
+    **16b is done too** — the DM's manual override, the flood-fill reveal tool, and the unanchored
+    shape filter milestone 14 left for whenever fog existed. See `docs/fog.md`.
+
+    Both questions this file left open were answered by building it. `ForceRevealed` became **two**
+    brushes rather than one: `Explored` hands over the ground and `Lit` hands over what is standing
+    on it, because the conservative answer alone made the DM use two controls to say one thing.
+    `ForceHidden` **does** hide a creature the party otherwise has line of sight on — anything else
+    is the failure `hidden` was built to prevent.
+
+    And the file's own guess about how to land it was right: it is a different answer from
+    `in_sight` and not a fourth question. `Dark` subtracts from `visible` before anything reads it,
+    so `unseen_by_table` is still one line and nothing downstream knows the word "override".
+
+    Four things cost more than the state model, which was three lines again.
+
+    **The override had to be a mask and never a write**, which this file called, but the ordering
+    inside the mask is the part it could not have: `Dark` has to leave `visible` *before* the union
+    into `revealed` or a blacked-out cell enters the party's memory by the back door, and leave
+    `revealed` last or it does not take the memory. `Lit` and `Explored` as floors with `Dark` as
+    the one ceiling is what makes the rest of it order-independent.
+
+    **The fill runs on the client, and the command carries cells rather than a seed.** That looks
+    like the server giving up authority and is not: the DM may reveal whatever they like, so there
+    is no answer for the server to defend — only a size to bound and a board to clip against. What
+    it buys is that the preview and the result are *the same array*, rather than two runs of two
+    implementations that would have to agree. It is also not the raycast written twice; connectivity
+    and line of sight are different questions that happen to read the same walls.
+
+    **The override travels like the walls, not like the fog**, and that pairing is the thing worth
+    keeping: the walls and the override are what the DM authored, and the fog is the shadow both of
+    them cast. It reaches the DM or nobody, and the table is owed only the `FogChanged` beside it.
+    On the DM's own board it needs a tint of its own — with no undo, telling a blacked-out room from
+    a wall's shadow is the whole usability of the tool, and both are simply dark otherwise.
+
+    **The shape filter needed geometry the server did not have.** `coveredCells` and `containsPoint`
+    are client-only TypeScript, so `shape_covers` is a second copy in a second language. It is
+    affordable because the two only have to agree *loosely* — a disagreement changes whether a frame
+    is sent, never how it draws — and a `Line` needed a rule of its own, since `contains_point` is
+    false everywhere on one and every measuring line would otherwise have been withheld. `Sight`
+    grew a second reading with it: an unanchored shape's visibility can change with no token
+    involved, which the token loop gating `ShapesChanged` could not see.
+
+    One thing that was not foreseen at all: **the fog panel gained its first `stop()`**. 16a's note
+    that it was the one tab arming nothing was true *because the party's tokens are what move the
+    fog* — and the override is the one part the DM places by hand.
 
 ## Drawings
 
-Built — see *Drawings* in `docs/drawings.md` for what shipped. What remains here is one arm that
-16a did not take, and its design has moved to *16b* below, where the rest of the unfinished fog
-work is: narrowing an **unanchored** shape to the cells it covers.
+**Built, both halves** — see *Drawings* in `docs/drawings.md` and *Drawings on ground the party
+cannot see* in `docs/fog.md`.
 
-The anchored half is done and has been since milestone 14 — `shapes_for` withholds a shape whose
-anchor the recipient cannot see, and as of 16a that question includes line of sight without another
-line. An anchored shape's visibility follows its anchor token's rather than its own footprint, which
-is what that arm already does.
+The anchored arm shipped in milestone 14: `shapes_for` withholds a shape whose anchor the recipient
+cannot see, and as of 16a that question includes line of sight without another line. An anchored
+shape's visibility follows its anchor token's rather than its own footprint.
+
+The unanchored arm shipped in 16b, and it gates on `revealed` rather than on `visible`. A shape is
+painted on the floor rather than standing on it, so it belongs with the terrain — a player's own
+marker survives them leaving the room, and nothing on the board flickers as the party moves.
 
 ## Fog of war
 
@@ -286,35 +330,21 @@ drawings already go through.
 
 ### 16b — the DM's manual override
 
-Not built. Independent of line of sight, and a tri-state per cell — `Auto`, `ForceRevealed`,
-`ForceHidden` — rather than a write into `revealed`, because a manual hide that merely clears
-`revealed` evaporates the next time a token has line of sight on that cell.
+**Built — see `docs/fog.md`.** What this section asked for held, and the two questions it left open
+are answered under milestone 16 above: `ForceRevealed` became two brushes rather than one, and
+`ForceHidden` does hide a creature the party otherwise has line of sight on.
 
-The reveal tool is a flood fill bounded by walls, and it previews before it commits: one gap in a
-traced room otherwise reveals the whole dungeon in a single click, and there is no undo.
+The rest of it survived contact intact and is worth keeping as it was written, since the point of the
+list is that none of it had to change:
 
-**Two questions to settle before building it**, because they change what the override *is* rather
-than how it is stored, and both are about creatures rather than terrain:
+- Independent of line of sight, and a state per cell rather than a write into `revealed`, because a
+  manual hide that merely clears `revealed` evaporates the next time a token has line of sight on
+  that cell.
+- The reveal tool is a flood fill bounded by walls, and it previews before it commits: one gap in a
+  traced room otherwise reveals the whole dungeon in a single click, and there is no undo.
+- It lands as a different answer from `in_sight` rather than as a fourth question. `unseen_by_table`
+  is the funnel every filter goes through and it stayed one line.
 
-- **Does `ForceRevealed` reveal the creatures standing in those cells, or only the ground?** The two
-  readings are "show them the room" and "show them the room but not the ambush in it". Terrain-only
-  is the more conservative answer and leaves `hidden` as the DM's tool for the second, at the cost of
-  the DM having to use both to say one thing.
-- **Does `ForceHidden` hide a creature the party otherwise has line of sight on?** If it does not, a
-  DM blacking out a room still leaves the monster in it on the table's board, which is the same
-  failure `hidden` was built to prevent. If it does, it is a second way to hide a token and the two
-  can disagree.
-
-Whatever is decided, it should land as a different answer from `in_sight` rather than as a fourth
-question — `unseen_by_table` is the funnel every filter goes through and it should stay one line.
-
-Two things 16a leaves for it:
-
-- **Unanchored shapes are still not filtered by fog.** All-or-nothing on overlap: if any cell a
-  shape covers is visible, the whole shape is sent. Drawing shapes underneath the fog overlay and
-  calling them hidden would put the data on the client and paint over it, which is what invariant 4
-  forbids. That goes in `shapes_for`, which already withholds a shape whose *anchor* the recipient
-  cannot see — the arm that could not wait, since `hidden` predates fog. `coveredCells` on the client
-  already answers the same question for the drawing layer.
-- The override is a third input to `unseen_by_table`, which is now the funnel every filter goes
-  through. It should not need a fourth question, only a different answer from `in_sight`.
+Two things this file did not foresee, both recorded under milestone 16: the fill runs on the *client*
+and the command carries cells rather than a seed, and the override travels like the walls rather than
+like the fog — which is the pair the whole feature turns out to be about.

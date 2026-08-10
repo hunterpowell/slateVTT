@@ -14,12 +14,12 @@
 //! space the walls live in. `Cell` is the only grid-unit thing here and it is
 //! converted the moment it is used.
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 
 use serde::{Deserialize, Serialize};
 
-use crate::protocol::{MapInfo, Px, Rect, Wall};
-use crate::room::MAX_MAP_PX;
+use crate::protocol::{MapInfo, Pos, Px, Rect, ShapeKind, Wall};
+use crate::room::{MAX_MAP_PX, MAX_SHAPE_CELLS};
 
 /// A cell of the grid, by its integer coordinates. The cell a token at
 /// `(3.5, 3.5)` stands in is `(3, 3)`.
@@ -64,12 +64,40 @@ const KNOWN: char = 'o';
 /// In sight right now. Drawn clear.
 const SEEN: char = '.';
 
-/// The fog as it goes on the wire, and as it goes to disk.
-///
+/// No override on this cell — sight decides it. The hole in an `OverrideView`,
+/// and the only one of the four that is never stored: `Auto` is the *absence* of
+/// an entry in the map, so "not overridden" has one representation rather than
+/// two that could disagree.
+const AUTO: char = '-';
+/// Forced explored, whatever the rays say. Terrain the DM handed over.
+const FORCED_KNOWN: char = 'o';
+/// Forced in sight, which shows the creatures standing there as well.
+const FORCED_SEEN: char = '*';
+/// Forced dark, which is the one that takes something away.
+const FORCED_DARK: char = '#';
+
 /// A rectangle of cells packed one character each, row-major, rather than a JSON
 /// array of per-cell values: the wire protocol asks for frames a human can read
 /// in devtools, and a few thousand numbers is not one. A few thousand characters
 /// laid out as a map *is* — the shape of the dungeon is legible in the string.
+///
+/// Two things are packed this way and they are named separately below, because
+/// what a character *means* differs and the audiences are opposites. The encoding
+/// is one thing and lives here; which alphabet a given rectangle is written in is
+/// a fact about the field carrying it.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct CellRect {
+    /// Cell coordinates of the top-left of the packed rectangle.
+    pub x: i32,
+    pub y: i32,
+    pub w: u32,
+    pub h: u32,
+    /// `w * h` characters, row-major.
+    pub cells: String,
+}
+
+/// The fog as it goes on the wire, and as it goes to disk.
 ///
 /// The rectangle is the bounding box of everything the party has revealed, so an
 /// unexplored map packs to nothing at all. **Every cell outside it is `DARK`**,
@@ -78,16 +106,62 @@ const SEEN: char = '.';
 ///
 /// `None` in place of one of these means the map is not fogged — and, like
 /// `staged` being `None`, it is the only thing the server could mean by it.
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(default)]
-pub struct FogView {
-    /// Cell coordinates of the top-left of the packed rectangle.
-    pub x: i32,
-    pub y: i32,
-    pub w: u32,
-    pub h: u32,
-    /// `w * h` characters, row-major: `#` never seen, `o` explored, `.` in sight.
-    pub cells: String,
+///
+/// The same value reaches every recipient, which is the opposite of the type one
+/// line down: the geometry is the secret, and this is the shadow it casts.
+pub type FogView = CellRect;
+
+/// The DM's manual override, packed the same way and reaching the DM alone.
+///
+/// `#` forced dark, `o` forced explored, `*` forced in sight, `-` no override.
+/// The rectangle is the bounding box of the overridden cells, so a map nobody has
+/// painted on packs to nothing — and an empty one is therefore both "nothing
+/// overridden" and "you are not the DM", exactly as an empty wall list is.
+///
+/// A `Vec<(Cell, Override)>` would be the obvious shape and is the wrong one: a
+/// flood fill is thousands of cells, and thousands of JSON pairs is the frame
+/// `FogView` exists to avoid.
+pub type OverrideView = CellRect;
+
+/// What the DM has said about a cell, overriding what the rays say.
+///
+/// Three variants and not four: `Auto` is the absence of an entry, so a cell set
+/// back to it is removed rather than stored. Independent of line of sight by
+/// construction — writing into `revealed` instead would evaporate the next time
+/// a torch reached the cell, which is the whole reason this is its own state.
+///
+/// **`Explored` and `Lit` are floors and `Dark` is a ceiling**, which is what
+/// makes the application in `recompute_sight` order-independent and total.
+/// `Explored` does not demote a cell the rays already lit; "show the room but not
+/// the ambush in it" is what `hidden` is for.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Override {
+    /// At least explored: the ground, remembered, without the creatures on it.
+    Explored,
+    /// At least in sight, which shows whatever is standing there.
+    Lit,
+    /// Dark whatever the rays say, and it takes the memory with it.
+    Dark,
+}
+
+impl Override {
+    fn glyph(self) -> char {
+        match self {
+            Self::Explored => FORCED_KNOWN,
+            Self::Lit => FORCED_SEEN,
+            Self::Dark => FORCED_DARK,
+        }
+    }
+
+    fn from_glyph(c: char) -> Option<Self> {
+        match c {
+            FORCED_KNOWN => Some(Self::Explored),
+            FORCED_SEEN => Some(Self::Lit),
+            FORCED_DARK => Some(Self::Dark),
+            _ => None,
+        }
+    }
 }
 
 /// Packs two cell sets into one rectangle of characters.
@@ -96,36 +170,15 @@ pub struct FogView {
 /// — seeing a cell reveals it, and the room unions them in that order — so the
 /// three states are a total description and no cell needs two fields.
 pub fn pack(revealed: &HashSet<Cell>, visible: &HashSet<Cell>) -> FogView {
-    let Some((x0, y0, x1, y1)) = bounds(revealed) else {
-        return FogView::default();
-    };
-
-    let w = x1.abs_diff(x0) + 1;
-    let h = y1.abs_diff(y0) + 1;
-    if w > MAX_FOG_SIDE || h > MAX_FOG_SIDE {
-        return FogView::default();
-    }
-
-    let mut cells = String::with_capacity((w * h) as usize);
-    for y in y0..=y1 {
-        for x in x0..=x1 {
-            cells.push(if visible.contains(&(x, y)) {
-                SEEN
-            } else if revealed.contains(&(x, y)) {
-                KNOWN
-            } else {
-                DARK
-            });
+    pack_by(revealed.iter().copied(), |cell| {
+        if visible.contains(&cell) {
+            SEEN
+        } else if revealed.contains(&cell) {
+            KNOWN
+        } else {
+            DARK
         }
-    }
-
-    FogView {
-        x: x0,
-        y: y0,
-        w,
-        h,
-        cells,
-    }
+    })
 }
 
 /// The revealed cells back out of a packed rectangle, for a room coming off disk.
@@ -137,25 +190,84 @@ pub fn pack(revealed: &HashSet<Cell>, visible: &HashSet<Cell>) -> FogView {
 /// written before a wall moved cannot describe sight through it.
 pub fn unpack(view: &FogView) -> HashSet<Cell> {
     let mut revealed = HashSet::new();
-    // A `w` that disagrees with the string is a damaged file rather than a schema
-    // change, and `chars().nth()` per cell would be quadratic. Walking the
-    // characters in order and deriving the row is total either way.
-    for (i, c) in view.cells.chars().enumerate() {
-        if c == DARK || view.w == 0 {
-            continue;
+    for (cell, c) in walk(view) {
+        if c != DARK {
+            revealed.insert(cell);
         }
-        let i = i as u32;
-        revealed.insert((view.x + (i % view.w) as i32, view.y + (i / view.w) as i32));
     }
     revealed
 }
 
+/// Packs the DM's overrides, bounded by the cells they have actually painted.
+pub fn pack_overrides(overrides: &HashMap<Cell, Override>) -> OverrideView {
+    pack_by(overrides.keys().copied(), |cell| {
+        overrides.get(&cell).map_or(AUTO, |o| o.glyph())
+    })
+}
+
+/// The overrides back out, for a room coming off disk. Unlike the fog beside it
+/// this is restored whole: it is what the DM said, not what the rays found, and
+/// nothing in the room can derive it.
+pub fn unpack_overrides(view: &OverrideView) -> HashMap<Cell, Override> {
+    walk(view)
+        .filter_map(|(cell, c)| Override::from_glyph(c).map(|o| (cell, o)))
+        .collect()
+}
+
+/// Packs whatever `char_at` says about every cell in the bounding box of
+/// `within`. The one place the row-major layout is written down.
+fn pack_by(within: impl Iterator<Item = Cell>, char_at: impl Fn(Cell) -> char) -> CellRect {
+    let Some((x0, y0, x1, y1)) = bounds(within) else {
+        return CellRect::default();
+    };
+
+    let w = x1.abs_diff(x0) + 1;
+    let h = y1.abs_diff(y0) + 1;
+    if w > MAX_FOG_SIDE || h > MAX_FOG_SIDE {
+        return CellRect::default();
+    }
+
+    let mut cells = String::with_capacity((w * h) as usize);
+    for y in y0..=y1 {
+        for x in x0..=x1 {
+            cells.push(char_at((x, y)));
+        }
+    }
+
+    CellRect {
+        x: x0,
+        y: y0,
+        w,
+        h,
+        cells,
+    }
+}
+
+/// Every cell of a packed rectangle with the character that describes it.
+///
+/// A `w` that disagrees with the string is a damaged file rather than a schema
+/// change, and `chars().nth()` per cell would be quadratic. Walking the
+/// characters in order and deriving the row is total either way.
+fn walk(view: &CellRect) -> impl Iterator<Item = (Cell, char)> + '_ {
+    view.cells
+        .chars()
+        .enumerate()
+        .filter(|_| view.w != 0)
+        .map(|(i, c)| {
+            let i = i as u32;
+            (
+                (view.x + (i % view.w) as i32, view.y + (i / view.w) as i32),
+                c,
+            )
+        })
+}
+
 /// The smallest box containing every cell, or `None` for an empty set.
-fn bounds(cells: &HashSet<Cell>) -> Option<(i32, i32, i32, i32)> {
-    let mut iter = cells.iter();
-    let &(mut x0, mut y0) = iter.next()?;
+fn bounds(cells: impl Iterator<Item = Cell>) -> Option<(i32, i32, i32, i32)> {
+    let mut cells = cells;
+    let (mut x0, mut y0) = cells.next()?;
     let (mut x1, mut y1) = (x0, y0);
-    for &(x, y) in iter {
+    for (x, y) in cells {
         x0 = x0.min(x);
         y0 = y0.min(y);
         x1 = x1.max(x);
@@ -295,6 +407,17 @@ fn on_board(area: Option<Rect>, at: Px) -> bool {
     }
 }
 
+/// Whether a cell is one the party could stand in — asked of the DM's overrides
+/// before any of them are stored.
+///
+/// The same bound the sweep above clips itself to, and needed for the same
+/// reason: an override on cell one million puts that cell in the bounding box of
+/// `pack_overrides`, and the rectangle spanning it and the dungeon is the whole
+/// map's worth of characters on every send. A client bug is enough to do it.
+pub fn cell_on_board(map: &MapInfo, cell: Cell) -> bool {
+    on_board(map.play_area, cell_centre(map, cell))
+}
+
 /// The cell a point in image pixels falls in.
 pub fn cell_of(map: &MapInfo, at: Px) -> Cell {
     (
@@ -423,6 +546,133 @@ pub fn covered_cells(x: f32, y: f32, size: f32) -> Vec<Cell> {
         }
     }
     cells
+}
+
+/// Half the angle at a cone's apex, as a slope and a cosine — `atan(0.5)`, which
+/// makes a wedge exactly as wide at its far end as it is long. `shapes.ts` says
+/// the same thing; see `shape_covers` for why it is said twice.
+const CONE_SLOPE: f32 = 0.5;
+/// `cos(atan(0.5))`, written out because `f32::cos` is not a `const fn`.
+const CONE_COS: f32 = 0.894_427_2;
+/// How far outside a shape a cell centre may sit and still count as covered, in
+/// cells. Matches `COVERAGE_SLACK` in `shapes.ts`, and for the reason named
+/// there: a cone is narrow near its apex, and the squares plainly in front of it
+/// were the ones falling out.
+const COVERAGE_SLACK: f32 = 0.15;
+
+/// Whether any cell this shape covers is one of `cells`.
+///
+/// **All-or-nothing.** A shape is sent whole or withheld whole, so this asks for
+/// one cell rather than narrowing the geometry — drawing the rest under the fog
+/// overlay would put it on the client, which is what invariant 4 forbids.
+///
+/// This is the same rule `coveredCells` applies in `shapes.ts`, written a second
+/// time in a second language, and that duplication is deliberate rather than
+/// unfortunate. The filter has to run where the decision is made, and the client
+/// has to run it to tint the cells it draws. **The two only have to agree
+/// loosely**: a disagreement at the fringe changes whether a frame is sent, never
+/// how it draws, because the client draws exactly what it is given.
+///
+/// Walks the shape's bounding box rather than `cells`, which is what keeps the
+/// cost proportional to the shape instead of to how much dungeon the party has
+/// explored. The box is clipped to the largest shape `check` will accept, so a
+/// hand-edited save cannot turn one drawing into a sweep of the whole lattice.
+pub fn shape_covers(kind: ShapeKind, origin: Pos, to: Pos, cells: &HashSet<Cell>) -> bool {
+    if cells.is_empty() {
+        return false;
+    }
+
+    // A line encloses nothing, so `contains_point` is false everywhere on it and
+    // the box below would find nothing at all. What a line covers is the ground
+    // it is drawn across, which is a walk rather than a test.
+    if matches!(kind, ShapeKind::Line) {
+        return line_cells(origin, to).any(|cell| cells.contains(&cell));
+    }
+
+    let reach = match kind {
+        ShapeKind::Rect => (to.x.abs(), to.y.abs()),
+        _ => {
+            let r = hypot(to.x, to.y);
+            (r, r)
+        }
+    };
+    let clip = |v: f32| v.min(MAX_SHAPE_CELLS) + COVERAGE_SLACK;
+    let (rx, ry) = (clip(reach.0), clip(reach.1));
+
+    let x0 = (origin.x - rx).floor() as i32;
+    let x1 = (origin.x + rx).ceil() as i32;
+    let y0 = (origin.y - ry).floor() as i32;
+    let y1 = (origin.y + ry).ceil() as i32;
+
+    for cy in y0..=y1 {
+        for cx in x0..=x1 {
+            // The hash lookup first: it is the cheaper of the two questions, and
+            // it skips the geometry for every cell the party has never seen.
+            if cells.contains(&(cx, cy))
+                && contains_point(kind, origin, to, cx as f32 + 0.5, cy as f32 + 0.5)
+            {
+                return true;
+            }
+        }
+    }
+    false
+}
+
+/// The cells a line is drawn across, from its origin to its far point.
+///
+/// Sampled at half a cell rather than walked with Bresenham: the step cannot skip
+/// a cell it passes through, the count is bounded by the same cap the areas are,
+/// and it is four lines instead of twenty. Duplicates are fine — the caller is
+/// asking whether *any* of them is somewhere, not counting them.
+fn line_cells(origin: Pos, to: Pos) -> impl Iterator<Item = Cell> {
+    let length = hypot(to.x, to.y).min(MAX_SHAPE_CELLS);
+    let steps = (length * 2.0).ceil().max(1.0) as i32;
+    (0..=steps).map(move |i| {
+        let t = i as f32 / steps as f32;
+        (
+            (origin.x + to.x * t).floor() as i32,
+            (origin.y + to.y * t).floor() as i32,
+        )
+    })
+}
+
+/// Whether a point in grid units falls inside a shape, grown by `COVERAGE_SLACK`.
+///
+/// The port of `containsPoint` in `shapes.ts`, cone test and all: resolved along
+/// the wedge's own axis rather than into an angle, so a cone pointing due west
+/// cannot trip over the discontinuity two `atan2` results have.
+fn contains_point(kind: ShapeKind, origin: Pos, to: Pos, px: f32, py: f32) -> bool {
+    let dx = px - origin.x;
+    let dy = py - origin.y;
+
+    match kind {
+        ShapeKind::Line => false,
+        ShapeKind::Circle => hypot(dx, dy) <= hypot(to.x, to.y) + COVERAGE_SLACK,
+        ShapeKind::Rect => {
+            let (lo_x, hi_x) = (
+                to.x.min(0.0) - COVERAGE_SLACK,
+                to.x.max(0.0) + COVERAGE_SLACK,
+            );
+            let (lo_y, hi_y) = (
+                to.y.min(0.0) - COVERAGE_SLACK,
+                to.y.max(0.0) + COVERAGE_SLACK,
+            );
+            dx >= lo_x && dx <= hi_x && dy >= lo_y && dy <= hi_y
+        }
+        ShapeKind::Cone => {
+            let length = hypot(to.x, to.y);
+            if length == 0.0 || hypot(dx, dy) > length + COVERAGE_SLACK {
+                return false;
+            }
+            let (ux, uy) = (to.x / length, to.y / length);
+            let along = dx * ux + dy * uy;
+            let perp = (dx * uy - dy * ux).abs();
+            // The wedge as a perpendicular *distance* to its edge rather than as
+            // an angle, which is what a slack measured in cells can be compared
+            // against — and it is the same test at the apex as at the tip.
+            (perp - along * CONE_SLOPE) * CONE_COS <= COVERAGE_SLACK
+        }
+    }
 }
 
 #[cfg(test)]
@@ -571,7 +821,10 @@ mod tests {
         );
         assert!(seen.contains(&(1, 1)), "their own square");
         assert!(seen.contains(&(3, 1)), "and both ways along the wall");
-        assert!(seen.contains(&(-1, 1)), "not just the one the sign favoured");
+        assert!(
+            seen.contains(&(-1, 1)),
+            "not just the one the sign favoured"
+        );
     }
 
     #[test]
@@ -586,7 +839,10 @@ mod tests {
         let from_above = visible_cells(&corner, &wall, &[at((0, 0))]);
         let from_below = visible_cells(&corner, &wall, &[at((3, 3))]);
         assert!(!from_above.contains(&(3, 3)));
-        assert!(!from_below.contains(&(0, 0)), "and not the other way either");
+        assert!(
+            !from_below.contains(&(0, 0)),
+            "and not the other way either"
+        );
     }
 
     #[test]
@@ -605,5 +861,175 @@ mod tests {
     #[test]
     fn no_torches_light_nothing() {
         assert!(visible_cells(&map(60.0), &[], &[]).is_empty());
+    }
+
+    #[test]
+    fn a_closed_room_contains_its_own_light_and_one_missing_cell_does_not() {
+        // The property every other wall test here implies and none of them
+        // states: masonry alone encloses a room, with no door needed anywhere.
+        //
+        // The second half is the one worth having. A gap of a *single cell* —
+        // an untraced doorway, or a polyline run that never returned to its
+        // first corner — is not a small leak, it is the whole map. There is
+        // nothing gradual about it, which is why a room that looks traced can
+        // behave as though it were not, and why the fill previews before it
+        // commits.
+        let room = |south: Vec<Wall>| {
+            let mut walls = vec![
+                masonry(128.0, 128.0, 448.0, 128.0),
+                masonry(448.0, 128.0, 448.0, 448.0),
+                masonry(128.0, 448.0, 128.0, 128.0),
+            ];
+            walls.extend(south);
+            walls
+        };
+        let escaped = |walls: &[Wall]| {
+            visible_cells(&map(300.0), walls, &[at((4, 4))])
+                .iter()
+                .filter(|(x, y)| !(2..7).contains(x) || !(2..7).contains(y))
+                .count()
+        };
+
+        let closed = room(vec![masonry(448.0, 448.0, 128.0, 448.0)]);
+        assert_eq!(escaped(&closed), 0, "masonry alone encloses a room");
+
+        // The same wall with cells 4..5 of it left out.
+        let gap = vec![
+            masonry(448.0, 448.0, 320.0, 448.0),
+            masonry(256.0, 448.0, 128.0, 448.0),
+        ];
+        assert!(
+            escaped(&room(gap.clone())) > 500,
+            "and one cell of it missing spills sight across the whole board"
+        );
+
+        // Which is what hanging a shut door in the gap is for.
+        let mut shut = gap;
+        shut.push(Wall {
+            from: Px { x: 256.0, y: 448.0 },
+            to: Px { x: 320.0, y: 448.0 },
+            kind: WallKind::Door(false),
+            ..Wall::default()
+        });
+        assert_eq!(escaped(&room(shut)), 0, "a shut door closes it again");
+    }
+
+    // --- the DM's overrides -------------------------------------------------
+
+    #[test]
+    fn an_unpainted_map_has_no_overrides_to_pack() {
+        assert_eq!(pack_overrides(&HashMap::new()), OverrideView::default());
+    }
+
+    #[test]
+    fn the_three_states_pack_in_their_own_alphabet() {
+        // A different alphabet from the fog beside it, and it has to be: `o` and
+        // `#` mean the same thing in both, but `*` is a thing the fog cannot say
+        // and `-` is a hole, which the fog has none of.
+        let painted = HashMap::from([
+            ((0, 0), Override::Dark),
+            ((2, 0), Override::Explored),
+            ((2, 1), Override::Lit),
+        ]);
+        let view = pack_overrides(&painted);
+        assert_eq!((view.x, view.y, view.w, view.h), (0, 0, 3, 2));
+        assert_eq!(view.cells, "#-o--*");
+    }
+
+    #[test]
+    fn the_overrides_survive_the_round_trip_including_the_holes() {
+        // The holes are the point: a cell nobody painted has to come back as an
+        // *absent* entry rather than as a fourth variant, because that is the one
+        // representation of `Auto` the room stores.
+        let painted = HashMap::from([
+            ((-3, -2), Override::Lit),
+            ((4, 5), Override::Dark),
+            ((4, 6), Override::Explored),
+        ]);
+        let back = unpack_overrides(&pack_overrides(&painted));
+        assert_eq!(back, painted);
+        assert!(!back.contains_key(&(0, 0)), "and nothing in between");
+    }
+
+    // --- what a shape covers ------------------------------------------------
+
+    fn pos(x: f32, y: f32) -> Pos {
+        Pos { x, y }
+    }
+
+    fn covers(kind: ShapeKind, origin: (f32, f32), to: (f32, f32), cell: Cell) -> bool {
+        shape_covers(
+            kind,
+            pos(origin.0, origin.1),
+            pos(to.0, to.1),
+            &cells(&[cell]),
+        )
+    }
+
+    #[test]
+    fn a_circle_covers_the_cells_a_circle_covers() {
+        // Radius four, centred on a cell centre. The same blob `coveredCells`
+        // tints on the client, which is the point of porting it rather than
+        // approximating it with the bounding box.
+        let o = (4.5, 4.5);
+        let r = (4.0, 0.0);
+        assert!(covers(ShapeKind::Circle, o, r, (4, 4)), "its own square");
+        assert!(
+            covers(ShapeKind::Circle, o, r, (8, 4)),
+            "due east, at reach"
+        );
+        assert!(!covers(ShapeKind::Circle, o, r, (9, 4)), "and past it");
+        assert!(
+            !covers(ShapeKind::Circle, o, r, (8, 8)),
+            "a circle does not reach the corner of its own box"
+        );
+    }
+
+    #[test]
+    fn a_cone_is_a_wedge_and_its_apex_is_inside_it() {
+        // The apex was the case the client's first draft got wrong — there is no
+        // angle from a point to itself — so it is asserted here too.
+        let o = (2.5, 2.5);
+        let to = (6.0, 0.0);
+        assert!(covers(ShapeKind::Cone, o, to, (2, 2)), "the apex");
+        assert!(covers(ShapeKind::Cone, o, to, (6, 2)), "down the axis");
+        assert!(covers(ShapeKind::Cone, o, to, (7, 4)), "inside the wedge");
+        assert!(!covers(ShapeKind::Cone, o, to, (7, 7)), "outside it");
+        assert!(!covers(ShapeKind::Cone, o, to, (-2, 2)), "behind it");
+    }
+
+    #[test]
+    fn a_rect_covers_its_own_corner_whichever_way_it_was_drawn() {
+        // `to` is an offset and may be negative in either axis, which is what
+        // dragging up and to the left produces.
+        for to in [(3.0, 2.0), (-3.0, -2.0)] {
+            let inside = if to.0 > 0.0 { (6, 6) } else { (3, 4) };
+            assert!(covers(ShapeKind::Rect, (5.5, 5.5), to, inside), "{to:?}");
+            assert!(!covers(ShapeKind::Rect, (5.5, 5.5), to, (12, 12)), "{to:?}");
+        }
+    }
+
+    #[test]
+    fn a_line_covers_the_ground_it_is_drawn_across() {
+        // `contains_point` is false everywhere on a line, so without its own walk
+        // a measuring line would be withheld from everybody on a fogged map.
+        let o = (1.5, 1.5);
+        let to = (6.0, 0.0);
+        assert!(covers(ShapeKind::Line, o, to, (1, 1)), "where it starts");
+        assert!(covers(ShapeKind::Line, o, to, (4, 1)), "the middle of it");
+        assert!(covers(ShapeKind::Line, o, to, (7, 1)), "where it ends");
+        assert!(!covers(ShapeKind::Line, o, to, (4, 3)), "and nowhere else");
+    }
+
+    #[test]
+    fn a_shape_over_nothing_at_all_covers_nothing() {
+        // The empty set is what an unexplored map is, and every shape on it is
+        // withheld — which is the direction this has to fail.
+        assert!(!shape_covers(
+            ShapeKind::Circle,
+            pos(0.0, 0.0),
+            pos(30.0, 0.0),
+            &HashSet::new()
+        ));
     }
 }

@@ -1080,9 +1080,46 @@
 
       /* Greyed rather than hidden while fog is off: the radius is still the
          map's, and hiding it would make turning fog on look like it had also
-         invented a number. */
+         invented a number. The brushes go the same way for the same reason. */
       .fog-vision:has(input:disabled) {
         opacity: 0.5;
+      }
+
+      .fog-brushes {
+        display: grid;
+        grid-template-columns: repeat(4, 1fr);
+        gap: 4px;
+        margin-top: 10px;
+      }
+
+      /* A bar of the colour the brush actually paints in, so the four are told
+         apart by the thing they do rather than by reading four words. The values
+         match PAINT in overrides.ts, which is what the board is tinted with. */
+      .fog-brush {
+        border-bottom-width: 3px;
+      }
+
+      .fog-brush[data-brush='explored'] {
+        border-bottom-color: #5684d6;
+      }
+
+      .fog-brush[data-brush='lit'] {
+        border-bottom-color: #e8be5c;
+      }
+
+      .fog-brush[data-brush='dark'] {
+        border-bottom-color: #ce5460;
+      }
+
+      /* Handing squares back has no colour of its own — there is nothing to show
+         the result *as*, which is exactly what it means. */
+      .fog-brush[data-brush='clear'] {
+        border-bottom-color: #4a505a;
+      }
+
+      .fog-brush:disabled {
+        opacity: 0.45;
+        cursor: default;
       }
 
       /* The bitsets belong to the live board and the staged map has none, so
@@ -1251,10 +1288,11 @@
         </div>
         <p class="map-hint" id="wall-hint"></p>
       </aside>
-      <!-- Two controls and no third. Both are fields of the map, so both go out
-           as a set_map through the map tool — there is no set_fog, because two
-           writers for one record is how they come to disagree. Nothing here is a
-           tool: the party's tokens are what move the fog. -->
+      <!-- The switch and the radius are fields of the map, so both go out as a
+           set_map through the map tool — there is no set_fog, because two
+           writers for one record is how they come to disagree. The brush below
+           them is not the map's and sends its own command; it is also what
+           turned this panel into a tool, and so what gave it a stop(). -->
       <aside id="fogtool" hidden>
         <div class="map-head">Fog</div>
         <label class="token-check">
@@ -1277,6 +1315,20 @@
             <button id="fog-vision-up" type="button" title="Further">+</button>
             <span class="fog-unit">ft</span>
           </span>
+        </div>
+        <div id="fog-brushes" class="fog-brushes"></div>
+        <div class="wall-foot">
+          <button id="fog-gesture" class="map-subtle" type="button" title="Click a room to flood it, or drag to paint square by square">
+            fill
+          </button>
+          <button
+            id="fog-clear"
+            class="map-subtle"
+            type="button"
+            title="Forget the party's exploring and your painted squares, and start this map dark"
+          >
+            reset all
+          </button>
         </div>
         <p class="map-hint" id="fog-hint"></p>
       </aside>

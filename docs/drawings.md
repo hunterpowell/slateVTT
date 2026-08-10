@@ -28,8 +28,9 @@ an anchored shape carrying a position nothing reads is a field that can go stale
 could disagree. `Shape::anchor()` is the only thing that asks which it is.
 
 **There is no `ShapeView`.** The third layer that `TokenView` is does not exist here and should not
-be added: fog gates a shape *whole* — all-or-nothing on whether any cell it covers is visible — so
-the filtering seam is `message_for` dropping it, and a view type would have no field to redact.
+be added: fog gates a shape *whole* — all-or-nothing on whether any cell it covers has been explored
+— so the filtering seam is `message_for` dropping it, and a view type would have no field to redact.
+That guess held when 16b actually built the arm.
 
 ### Sketches, and what "ephemeral" means
 
@@ -62,11 +63,19 @@ adding, erasing and clearing, and three things that reach in from outside:
 - **A load into the live slot sweeps the board, and a recalibration must not.** The same `loading`
   that tells those two apart for the calibration table and for the staged plans. Promote is a load.
 
-`shapes_for` withholds a shape whose anchor the recipient cannot see, through `Token::unseen` so
-both reasons compose. **This is fog's rule arriving early and it had to**: the roadmap files anchor
-visibility under fog, but `hidden` exists now, and an aura on a monster the DM took off the board
-is that monster's position drawn in colour. It fails closed — an anchor that is not in the room at
-all is withheld too.
+`shapes_for` withholds a shape whose anchor the recipient cannot see, through `unseen_by_table` so
+all three reasons compose. **This is fog's rule arriving early and it had to**: the roadmap filed
+anchor visibility under fog, but `hidden` existed already, and an aura on a monster the DM took off
+the board is that monster's position drawn in colour. It fails closed — an anchor that is not in the
+room at all is withheld too.
+
+**An *unanchored* shape asks a different question**, and that arm is milestone 16b's: it is withheld
+unless one of the cells it covers is somewhere the party has explored. Not somewhere they can
+currently see — a shape is painted on the floor rather than standing on it, so it gates on `revealed`
+with the terrain rather than on `visible` with the creatures. A player's marker survives them leaving
+the room, and the board does not flicker as the party moves. See *Drawings on ground the party cannot
+see* in `docs/fog.md`, which also covers why the coverage test exists twice in two languages and why
+the two copies only have to agree loosely.
 
 Refusals are uniform on purpose. Anchoring to a token you cannot see is refused in the same words
 as one that does not exist, and erasing a shape you were never sent reads as "already gone" rather

@@ -4,7 +4,8 @@ import { firstLineAt, gridToWorld, playRect, worldToScreen } from './coords.js';
 import { darkFill, fogRect } from './fog.js';
 import type { Identity } from './identity.js';
 import { ownsToken } from './identity.js';
-import type { Hp } from './protocol.js';
+import { OVERRIDE_ALPHA, overrideRect, paintColor } from './overrides.js';
+import type { FogPaint, Hp } from './protocol.js';
 import type { Ruler } from './ruler.js';
 import { feetMoved } from './ruler.js';
 import type { Board, Scene, Token } from './scene.js';
@@ -33,6 +34,10 @@ const GRID_CORE_WIDTH = 1;
 const HALO_MIN_CELL_PX = 14;
 /** Laid over the parts of the image outside the play area. */
 const OUTSIDE_PLAY_AREA = 'rgba(11, 13, 16, 0.55)';
+/** The fill a click would commit, before it is committed. Translucent, and
+ *  outlined at full strength — the outline is the region and the fill is what it
+ *  would become, which is the same split a drawn shape makes. */
+const PREVIEW_FILL_ALPHA = 0.3;
 const TOKEN_RIM = 'rgba(0, 0, 0, 0.55)';
 /** Yours. Warm, so it never reads as the blue "being dragged" state. */
 const OWNED_RING = 'rgba(240, 212, 140, 0.9)';
@@ -198,6 +203,20 @@ export interface Frame {
     aim: Vec2 | null;
     hovered: string | null;
   } | null;
+  /** The fog tool's state: whether the panel is open, what the brush is loaded
+   *  with, and the cells a fill would take if the DM clicked now.
+   *
+   *  Null for a player, who has no panel and — like the walls above — no
+   *  overrides in their scene to draw either way. `armed` only decides how
+   *  strongly the layer washes, because unlike the wall editor this tool has
+   *  nothing to draw that is not already on the board. */
+  fog: {
+    armed: boolean;
+    paint: FogPaint | null;
+    /** Flat pairs, the way `coveredCells` returns them: this can be a few
+     *  thousand cells and it is rebuilt as the pointer crosses into a new one. */
+    preview: readonly number[];
+  } | null;
 }
 
 export function render(ctx: CanvasRenderingContext2D, view: Viewport, frame: Frame): void {
@@ -236,6 +255,12 @@ export function render(ctx: CanvasRenderingContext2D, view: Viewport, frame: Fra
   // Nothing while previewing. The staged map has no fog: the bitsets belong to
   // the board, exactly as the walls and the shapes do.
   if (!showingStaged(frame.scene)) drawFog(ctx, frame, board, area);
+
+  // And directly over it, because it is an annotation *on* the fog: which parts
+  // of that wash the DM put there by hand rather than the walls casting. A
+  // player's scene has none, so this draws nothing for them without needing to
+  // ask who they are.
+  if (!showingStaged(frame.scene)) drawOverrides(ctx, frame, board);
 
   drawTokens(ctx, frame, board);
 
@@ -392,6 +417,57 @@ function drawFog(
   ctx.imageSmoothingEnabled = false;
   ctx.drawImage(fog.shade, seen.x, seen.y, seen.w, seen.h);
   ctx.imageSmoothingEnabled = smoothing;
+  ctx.restore();
+}
+
+/**
+ * The DM's manual override, and the fill they are about to commit.
+ *
+ * Two layers with one thing in common: neither is a visibility decision. The
+ * board is already dark where the party cannot see; this says which of that the
+ * DM *decided*, which they cannot otherwise tell a blacked-out room from a wall's
+ * shadow. With no undo, that difference is the whole usability of the tool.
+ *
+ * The same `drawImage` trick the fog uses, for the same reason — a filled dungeon
+ * room is a few thousand cells — and the same reason smoothing goes off: the edge
+ * belongs on the cell boundary that was actually painted.
+ *
+ * Faint while the DM is playing, stronger while the panel is open. Masonry's
+ * bargain, and it is why this is one `globalAlpha` rather than two canvases.
+ */
+function drawOverrides(ctx: CanvasRenderingContext2D, frame: Frame, board: Board): void {
+  const { overrides } = frame.scene;
+  const tool = frame.fog;
+
+  if (overrides.tint !== null) {
+    const at = overrideRect(overrides, board.grid);
+    ctx.save();
+    ctx.globalAlpha = tool?.armed === true ? OVERRIDE_ALPHA.armed : OVERRIDE_ALPHA.idle;
+    const smoothing = ctx.imageSmoothingEnabled;
+    ctx.imageSmoothingEnabled = false;
+    ctx.drawImage(overrides.tint, at.x, at.y, at.w, at.h);
+    ctx.imageSmoothingEnabled = smoothing;
+    ctx.restore();
+  }
+
+  // The fill the DM has not committed yet, in the colour it would commit in.
+  // Drawn as one path of a few thousand `rect`s, which is what the shape tint
+  // already does and for the same reason a `fillRect` each would not be.
+  if (tool === null || tool.preview.length === 0) return;
+  const { grid } = board;
+  ctx.save();
+  ctx.beginPath();
+  for (let i = 0; i < tool.preview.length; i += 2) {
+    const corner = gridToWorld(grid, tool.preview[i] ?? 0, tool.preview[i + 1] ?? 0);
+    ctx.rect(corner.x, corner.y, grid.px, grid.px);
+  }
+  ctx.globalAlpha = PREVIEW_FILL_ALPHA;
+  ctx.fillStyle = paintColor(tool.paint);
+  ctx.fill();
+  ctx.globalAlpha = 1;
+  ctx.strokeStyle = paintColor(tool.paint);
+  ctx.lineWidth = 1 / frame.cam.zoom;
+  ctx.stroke();
   ctx.restore();
 }
 

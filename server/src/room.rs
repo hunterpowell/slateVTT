@@ -15,7 +15,7 @@ use tokio::time::{Instant, sleep_until};
 use tracing::{debug, error, warn};
 use uuid::Uuid;
 
-use crate::fog::{self, Cell, FogView};
+use crate::fog::{self, Cell, FogView, Override, OverrideView};
 use crate::protocol::{
     Calibration, ClientId, ClientMsg, Hp, Initiative, InitiativeEntry, MapInfo, Origin, Owner,
     PlayerId, Pos, Px, RoomView, RosterEntry, RosterSlot, ServerMsg, Shape, ShapeId, ShapeKind,
@@ -80,7 +80,7 @@ const MAX_SHAPES: usize = 64;
 /// tints every cell it covers, so the client walks the cells inside its bounding
 /// box. A circle a million cells across is a frozen browser on five other
 /// machines, and a sketch reaches them before anybody has decided to keep it.
-const MAX_SHAPE_CELLS: f32 = 30.0;
+pub const MAX_SHAPE_CELLS: f32 = 30.0;
 
 /// How many segments a map may hold. A traced dungeon is a couple of hundred, so
 /// this is generous rather than tight — it is here to bound the save file and
@@ -90,6 +90,16 @@ const MAX_WALLS: usize = 2000;
 /// while without finishing; the run is an authoring convenience and splitting a
 /// long one in two costs nothing.
 const MAX_WALL_POINTS: usize = 256;
+
+/// How many cells one override command may name.
+///
+/// A flood fill is legitimately thousands — a large dungeon room is a few
+/// hundred, the whole traced level is a few thousand — so this is generous on
+/// purpose. What it bounds is the fill that escapes through a gap the DM did not
+/// notice and the client that sends a million cells for any other reason: the
+/// frame is the cost, and the refusal names the size so the DM knows to fill a
+/// smaller region rather than wondering what went wrong.
+const MAX_OVERRIDE_CELLS: usize = 50_000;
 
 /// Five players plus the DM, per the brief. The DM holds no slot.
 const ROSTER: [(&str, &str); 5] = [
@@ -267,6 +277,18 @@ enum Event {
     /// and it is the reason a party walking a corridor does not ship a bitset
     /// thirty times a second.
     FogChanged,
+    /// The DM painted, filled, or cleared some cells of their manual override.
+    ///
+    /// Travels exactly as `WallsChanged` does and for the same reason: this is
+    /// what the DM *decided*, and `FogChanged` beside it is what the table gets to
+    /// see as a result. A player is not sent it, not even empty — a frame they
+    /// cannot use still says the DM just did something, and here it would say
+    /// *when*, on the one board they cannot see through.
+    ///
+    /// It is never the whole of the news. Painting a cell also moves the fog, so
+    /// `refresh_fog` produces a `FogChanged` beside this one whenever anything the
+    /// table can see actually changed.
+    OverridesChanged,
 }
 
 impl Initiative {
@@ -387,6 +409,16 @@ struct Sight {
     /// Every token the table could see. Ids rather than a count: which ones is
     /// the whole question, and two tokens can trade places in the same step.
     seen: HashSet<TokenId>,
+    /// Every shape the table could see, for the same reason and by the same
+    /// measure.
+    ///
+    /// It could not be folded into `seen` above, because the two are answering
+    /// different questions of different things — and it could not be left out at
+    /// all once an *unanchored* shape started gating on `revealed`. Before that,
+    /// a shape's visibility only ever moved when a token's did, so the token loop
+    /// was enough to gate `ShapesChanged` on; now the fog opening onto ground
+    /// somebody drew a circle on changes it with no token involved.
+    shapes: HashSet<ShapeId>,
 }
 
 pub struct RoomState {
@@ -415,23 +447,52 @@ pub struct RoomState {
     /// map has none, because walls staged alongside a map are the scene concept
     /// CLAUDE.md rules out.
     walls: Vec<Wall>,
-    /// Everywhere the party has ever had line of sight, in grid cells.
+    /// Everywhere the party's own torches have ever reached, in grid cells.
+    ///
+    /// **The rays and nothing else.** No override ever writes here — that is what
+    /// makes one removable, and 16b got it wrong: `Explored` and `Lit` used to be
+    /// unioned in on every pass, so the cells stayed after the paint was cleared
+    /// and a ground-fill was permanent. What the table is shown is `known` below,
+    /// which is this with the mask applied.
     ///
     /// Persisted, and the only half of the fog that is: it is what the party
     /// remembers about the dungeon, and an evening of exploring belongs to the
-    /// map it was done on. Cleared by `sweep_board` — grid-space, so a new map is
-    /// a new lattice and a recalibration invalidates it, which is exactly where
-    /// this differs from the walls beside it.
+    /// map it was done on. Cleared by `sweep_board` and by `ResetFog` — grid-space,
+    /// so a new map is a new lattice and a recalibration invalidates it, which is
+    /// exactly where this differs from the walls beside it.
     ///
-    /// Grows and never shrinks within one map. `fog.rs` clips what may go in it
-    /// to the board, which is what stops a token dragged into the void from
-    /// putting a cell a million squares away in here.
+    /// Grows and never shrinks within one map, short of those two. `fog.rs` clips
+    /// what may go in it to the board, which is what stops a token dragged into
+    /// the void from putting a cell a million squares away in here.
     revealed: HashSet<Cell>,
+    /// What the table is shown as terrain: `revealed`, as the DM's mask leaves it.
+    ///
+    /// Derived and never persisted, exactly like `visible` below — the pair of
+    /// them is one raycast plus one pass of the overrides, and `recompute_sight`
+    /// builds both together. It is what `fog_for` packs and what an unanchored
+    /// shape gates on; `revealed` itself is read by neither, and reading it
+    /// instead is how a blacked-out room comes back onto the table's board.
+    known: HashSet<Cell>,
     /// Where the party can see *now*. Derived, never persisted, and recomputed by
     /// `refresh_fog` rather than in the visibility filter — the filter runs
     /// against `&self` while the client map is borrowed, so it could not mutate
     /// this even if it wanted to, and it is better kept pure regardless.
     visible: HashSet<Cell>,
+    /// What the DM has said about particular cells, overriding the rays.
+    ///
+    /// **A mask applied after the raycast, not a write into `revealed`**, and that
+    /// is the whole reason it is its own state: a hide that merely cleared
+    /// `revealed` would evaporate the next time somebody carried a torch past, and
+    /// a reveal that merely wrote into it could never be taken back.
+    ///
+    /// The DM's authoring data, and it travels like the walls rather than like
+    /// the fog — sent whole to the DM, never to a player, and clipped to the board
+    /// before anything is stored. Persisted, unlike `visible`, because nothing in
+    /// the room can derive what somebody decided.
+    ///
+    /// Cleared by `sweep_board` with `revealed`, and for the same reason: these
+    /// are cells, so a new lattice invalidates them.
+    overrides: HashMap<Cell, Override>,
     /// How each map URL was last calibrated. Server-side only — it never enters
     /// a snapshot or a message, because the finished `MapInfo` already says
     /// everything a client needs.
@@ -447,10 +508,11 @@ pub fn spawn(dm_secret: String, saved: Option<Saved>, store: Store) -> RoomHandl
         Some(saved) => RoomState::restored(saved, dm_secret),
         None => RoomState::hardcoded(dm_secret),
     };
-    // `visible` is derived and is not on disk, so a room that has just booted
-    // holds none of it and the first client to join would be told the party can
-    // see nothing. Done here rather than in the two constructors so there is one
-    // place it can be forgotten instead of two.
+    // `known` and `visible` are derived and neither is on disk, so a room that
+    // has just booted holds neither and the first client to join would be told
+    // the party can see nothing and remembers nothing — the whole dungeon dark on
+    // a map they had explored. Done here rather than in the two constructors so
+    // there is one place it can be forgotten instead of two.
     state.recompute_sight();
 
     let (tx, rx) = mpsc::channel(ROOM_MAILBOX);
@@ -579,7 +641,10 @@ fn persists(event: &Event) -> bool {
         // along with the drop that caused it costs nothing — that frame already
         // marked the room dirty — and a session's exploration surviving a
         // restart is the difference between a map and a map with a memory.
-        | Event::FogChanged => true,
+        | Event::FogChanged
+        // The walls' argument again: this is somebody's work, and nothing in the
+        // room could reconstruct it from anything else if the file lost it.
+        | Event::OverridesChanged => true,
         // A sketch is not in the room to be saved. It is the one thing here
         // that exists only between two pointer events, which is exactly why a
         // measuring line costs the disk nothing at all.
@@ -620,7 +685,13 @@ fn moves_sight(msg: &ClientMsg) -> bool {
         | ClientMsg::AddWalls { .. }
         | ClientMsg::RemoveWall { .. }
         | ClientMsg::ToggleDoor { .. }
-        | ClientMsg::ClearWalls => true,
+        | ClientMsg::ClearWalls
+        // These two are the only commands here that change what the party can see
+        // without changing anything about the room they are looking at. The mask
+        // is applied inside `recompute_sight`, so they need no arm of their own
+        // anywhere else.
+        | ClientMsg::SetFogOverride { .. }
+        | ClientMsg::ResetFog => true,
         // Nothing drawn on the board occludes anything, a sketch is not in the
         // room at all, and the turn order is a panel.
         ClientMsg::Hello { .. }
@@ -798,11 +869,16 @@ impl RoomState {
             shapes: saved.shapes,
             walls: saved.walls,
             revealed: fog::unpack(&saved.revealed),
-            // Derived from where the tokens are standing, which this same file
-            // holds — so it is recomputed on boot rather than restored. That is
-            // what stops a save written before a door was shut from describing
-            // sight through it.
+            // Both derived from where the tokens are standing and what the DM
+            // painted, all of which this same file holds — so they are recomputed
+            // on boot rather than restored. That is what stops a save written
+            // before a door was shut from describing sight through it.
+            known: HashSet::new(),
             visible: HashSet::new(),
+            // Restored whole, unlike the line above it. Sight is derived from
+            // what this file already holds; what the DM decided is not derivable
+            // from anything, so losing it would lose the work.
+            overrides: fog::unpack_overrides(&saved.overrides),
             calibrations: saved.calibrations,
             clients: HashMap::new(),
             pending: HashMap::new(),
@@ -827,6 +903,7 @@ impl RoomState {
             // written. Both lit states unpack as explored, so the two encodings
             // agree without either side having to know which one it is reading.
             revealed: fog::pack(&self.revealed, &HashSet::new()),
+            overrides: fog::pack_overrides(&self.overrides),
             calibrations: self.calibrations.clone(),
         }
     }
@@ -880,7 +957,9 @@ impl RoomState {
             shapes: Vec::new(),
             walls: Vec::new(),
             revealed: HashSet::new(),
+            known: HashSet::new(),
             visible: HashSet::new(),
+            overrides: HashMap::new(),
             calibrations: HashMap::new(),
             clients: HashMap::new(),
             pending: HashMap::new(),
@@ -1077,6 +1156,14 @@ impl RoomState {
             // walls one line up that stay theirs alone — a player reads the
             // geometry off the edges of this instead.
             fog: self.fog_for(),
+            // And back to the walls' rule for the last field: this is what the DM
+            // decided, and the line above is what the table gets to see of it.
+            // Empty is both "nothing painted" and "you are not the DM".
+            overrides: if is_dm {
+                fog::pack_overrides(&self.overrides)
+            } else {
+                OverrideView::default()
+            },
         }
     }
 
@@ -1092,11 +1179,6 @@ impl RoomState {
     /// the next map is withheld by the same line. A shape whose anchor is not in
     /// the room at all cannot happen — deleting a token takes its shapes — and
     /// is withheld anyway, because this fails closed on purpose.
-    ///
-    /// Unanchored shapes are visible to everyone. Narrowing that to the cells a
-    /// shape covers is milestone 16b's — the anchor arm below already withholds
-    /// the case that leaks a *position*, and a fireball drawn on ground the party
-    /// cannot see is the DM's own annotation rather than a monster's whereabouts.
     fn shapes_for(&self, is_dm: bool) -> Vec<Shape> {
         self.shapes
             .iter()
@@ -1106,13 +1188,36 @@ impl RoomState {
     }
 
     /// Whether the table may see this shape at all.
+    ///
+    /// Two arms, and they ask different questions on purpose. **An anchored shape
+    /// follows its token's visibility** — an aura on a monster in the dark is that
+    /// monster's position drawn in colour, and it goes wherever the monster goes.
+    /// That arm shipped in milestone 14, because `hidden` predates fog and adding
+    /// shapes without it would have been a leak the day it landed.
+    ///
+    /// **An unanchored shape is ground, so it gates on `known` rather than on
+    /// `visible`.** A shape is painted on the floor and not standing on it: the
+    /// marker a player dropped in a corridor is still theirs after they walk out
+    /// of it, and gating on current sight would make every shape on the board
+    /// flicker as the party moved. That is the same split `docs/fog.md` already
+    /// draws between terrain and creatures, arriving for a third kind of thing.
+    ///
+    /// `known` and not `revealed`, so a circle drawn on ground the DM has painted
+    /// over is treated the way that ground is — handed over with an `Explored`
+    /// fill, and taken away again with a `Dark` one.
+    ///
+    /// The `map.fog` guard is load-bearing and not a shortcut: `known` is empty on
+    /// an unfogged map, so without it every loose shape in the room would vanish
+    /// from every player's board the moment fog was switched off.
     fn shape_seen(&self, shape: &Shape) -> bool {
-        match shape.anchor() {
-            None => true,
-            Some(id) => self
+        match &shape.from {
+            Origin::Token(id) => self
                 .tokens
                 .get(id)
                 .is_some_and(|t| !self.unseen_by_table(t)),
+            Origin::Point(at) => {
+                !self.map.fog || fog::shape_covers(shape.kind, *at, shape.to, &self.known)
+            }
         }
     }
 
@@ -1228,22 +1333,85 @@ impl RoomState {
         sources
     }
 
-    /// Recomputes line of sight and folds it into what has been explored.
+    /// Recomputes line of sight and applies the DM's overrides over the top.
     ///
-    /// The union is in this order, and it is what makes `visible` a subset of
-    /// `revealed` — which is in turn what lets `FogView` pack both facts into one
+    /// Three sets come out of one raycast. **Only the rays reach `revealed`**, and
+    /// the mask makes the other two:
+    ///
+    /// ```text
+    /// revealed ∪= rays                          // memory, persisted, rays only
+    /// visible   = rays  ∪ Lit − Dark            // in sight now
+    /// known     = revealed ∪ Lit ∪ Explored − Dark   // what the table is shown
+    /// ```
+    ///
+    /// **The order the old version agonised over is gone with the write it was
+    /// protecting.** `Dark` had to leave `visible` before the union into
+    /// `revealed` so a blacked-out cell could not enter the party's memory by the
+    /// back door; now nothing but a ray enters memory at all, one `match` arm per
+    /// cell settles both derived sets, and a cell can hold only one override, so
+    /// there is no order left to get wrong.
+    ///
+    /// What that buys is the thing 16b claimed and did not do: **clearing a paint
+    /// undoes it.** `Explored` used to be a one-way write, so a ground-fill was
+    /// permanent, `Dark` really did destroy the memory under it, and the only way
+    /// back was to reload the map.
+    ///
+    /// `visible ⊆ known` still holds — `revealed ⊇ rays`, and the mask does the
+    /// same thing to both — which is what lets `FogView` pack both facts into one
     /// character per cell.
     ///
-    /// An unfogged map has neither set: turning fog off is not the same as
-    /// turning the lights on and leaving a stale bitset behind, and a map that
-    /// gets fog turned back on should start from where the party is now.
+    /// Nothing downstream asks about an override: `in_sight` reads `visible` and
+    /// gets a different answer, which is exactly what the roadmap asked for
+    /// instead of a fourth question.
+    ///
+    /// An unfogged map has neither set and no mask: turning fog off is not the
+    /// same as turning the lights on and leaving a stale bitset behind, and a map
+    /// that gets fog turned back on should start from where the party is now. The
+    /// overrides survive it — they are what the DM said, not a derived thing —
+    /// and apply again the moment fog comes back.
     fn recompute_sight(&mut self) {
         if !self.map.fog {
             self.visible.clear();
+            self.known.clear();
             return;
         }
-        self.visible = fog::visible_cells(&self.map, &self.walls, &self.vision_sources());
-        self.revealed.extend(self.visible.iter().copied());
+        let rays = fog::visible_cells(&self.map, &self.walls, &self.vision_sources());
+
+        self.revealed.extend(rays.iter().copied());
+        self.known = self.revealed.clone();
+        self.visible = rays;
+
+        for (&cell, over) in &self.overrides {
+            match over {
+                Override::Lit => {
+                    self.visible.insert(cell);
+                    self.known.insert(cell);
+                }
+                Override::Explored => {
+                    self.known.insert(cell);
+                }
+                Override::Dark => {
+                    self.visible.remove(&cell);
+                    self.known.remove(&cell);
+                }
+            }
+        }
+    }
+
+    /// Forgets the dungeon: the party's memory and both sets derived from it.
+    ///
+    /// One call rather than three lines in three places, because the third set is
+    /// exactly what gets missed the next time somebody adds one — and a `known`
+    /// left standing after `revealed` is cleared is the entire map still sitting
+    /// on the table's board.
+    ///
+    /// Emits nothing. Every caller is followed by `refresh_fog`, which compares
+    /// against a reading taken before any of it, so the clear is already in the
+    /// difference it reports.
+    fn forget_fog(&mut self) {
+        self.revealed.clear();
+        self.known.clear();
+        self.visible.clear();
     }
 
     /// The fog as it goes on the wire. `None` on a map with fog turned off, which
@@ -1252,7 +1420,7 @@ impl RoomState {
     fn fog_for(&self) -> Option<FogView> {
         self.map
             .fog
-            .then(|| fog::pack(&self.revealed, &self.visible))
+            .then(|| fog::pack(&self.known, &self.visible))
     }
 
     /// Whether a connected client is the DM. `message_for` holds `&self` and a
@@ -1556,6 +1724,38 @@ impl RoomState {
             }
 
             ClientMsg::ClearWalls => require_dm(client, "clear the walls"),
+
+            ClientMsg::SetFogOverride { cells, .. } => {
+                require_dm(client, "override the fog")?;
+                // Refused rather than stored-and-ignored. An override on a map
+                // with no fog can have no effect at all, and a command that
+                // silently does nothing is worse than one that says why — the
+                // panel greys itself for the same reason.
+                if !self.map.fog {
+                    return Err("there is no fog on this map to override".to_owned());
+                }
+                if cells.is_empty() {
+                    return Err("that is no cells at all".to_owned());
+                }
+                // A fill can legitimately be a whole dungeon, so the cap is
+                // generous. What it is actually here for is the fill that escapes
+                // through a gap the DM did not notice and the client bug that
+                // sends a million cells; either way, the frame is the cost.
+                if cells.len() > MAX_OVERRIDE_CELLS {
+                    return Err(format!(
+                        "that is more than {MAX_OVERRIDE_CELLS} cells at once"
+                    ));
+                }
+                // Clipped for the reason the sweep in `fog.rs` clips itself: a
+                // cell a million squares out lands in the bounding box of the
+                // packed rectangle, and the box spanning it and the dungeon is
+                // the whole map's worth of characters on every send.
+                if cells.iter().any(|&c| !fog::cell_on_board(&self.map, c)) {
+                    return Err("that is not on the board".to_owned());
+                }
+                Ok(())
+            }
+            ClientMsg::ResetFog => require_dm(client, "reset the fog"),
 
             ClientMsg::SetInitiative { token, .. } => {
                 require_dm(client, "change initiative")?;
@@ -1867,8 +2067,16 @@ impl RoomState {
                     self.map = finished;
                     let mut events = vec![Event::MapChanged];
                     if reshaped {
-                        self.revealed.clear();
-                        self.visible.clear();
+                        self.forget_fog();
+                        // And the DM's overrides, by the identical argument: they
+                        // are cells, and the squares they name have just moved
+                        // out from under them. This one needs its own event —
+                        // nothing recomputes it, so the DM's panel would go on
+                        // drawing a mask the room no longer holds.
+                        if !self.overrides.is_empty() {
+                            self.overrides.clear();
+                            events.push(Event::OverridesChanged);
+                        }
                     }
                     // The drawings and the walls are the opposite case, and turn
                     // on the same `loading`: they describe this image, and a new
@@ -2026,6 +2234,41 @@ impl RoomState {
                 vec![Event::WallsChanged]
             }
 
+            ClientMsg::SetFogOverride { cells, state } => {
+                match state {
+                    // `Auto` is the absence of an entry rather than a fourth
+                    // variant, so handing cells back to the rays is a removal.
+                    // One representation of "not overridden", which is what keeps
+                    // `recompute_sight` from having a case that does nothing.
+                    None => {
+                        for cell in cells {
+                            self.overrides.remove(&cell);
+                        }
+                    }
+                    Some(state) => {
+                        for cell in cells {
+                            self.overrides.insert(cell, state);
+                        }
+                    }
+                }
+                // The fog moving is `refresh_fog`'s to report, not this arm's.
+                // It runs against a reading taken before `apply`, so whatever the
+                // mask did to the two sets is already in the difference — and if
+                // the DM painted `Dark` over cells nobody could see anyway, there
+                // is correctly no `FogChanged` at all.
+                vec![Event::OverridesChanged]
+            }
+
+            // The whole map back to dark, and then whatever the party can see
+            // from where they are standing. `sweep_board` without the board: the
+            // same three sets and the same mask, minus the shapes and the walls,
+            // because this is the fog starting over and not the map.
+            ClientMsg::ResetFog => {
+                self.forget_fog();
+                self.overrides.clear();
+                vec![Event::OverridesChanged]
+            }
+
             ClientMsg::SetInitiative { token, value } => {
                 self.initiative.set(token, value);
                 vec![Event::InitiativeChanged]
@@ -2058,6 +2301,12 @@ impl RoomState {
                 .values()
                 .filter(|t| !self.unseen_by_table(t))
                 .map(|t| t.id.clone())
+                .collect(),
+            shapes: self
+                .shapes
+                .iter()
+                .filter(|s| self.shape_seen(s))
+                .map(|s| s.id.clone())
                 .collect(),
         }
     }
@@ -2113,7 +2362,8 @@ impl RoomState {
                 | Event::SketchEnded { .. }
                 | Event::ShapesChanged
                 | Event::WallsChanged
-                | Event::FogChanged => None,
+                | Event::FogChanged
+                | Event::OverridesChanged => None,
             })
             .collect();
 
@@ -2140,6 +2390,17 @@ impl RoomState {
         if initiative {
             events.push(Event::InitiativeChanged);
         }
+        // The token loop above catches every *anchored* shape, since one of those
+        // is visible exactly when its token is. An unanchored one gates on
+        // `revealed` instead, so the fog opening onto ground somebody drew a
+        // circle on changes it with no token involved — and that is what this
+        // second reading is for. Still one gate and still one event: an
+        // unconditional `ShapesChanged` on every step would tell the table that
+        // *something happened* every time anybody moved.
+        shapes |= self
+            .shapes
+            .iter()
+            .any(|s| before.shapes.contains(&s.id) != self.shape_seen(s));
         if shapes {
             events.push(Event::ShapesChanged);
         }
@@ -2183,8 +2444,15 @@ impl RoomState {
         // `handle`, and it compares against a reading taken before any of it, so
         // the clear is already in the difference it reports. Emitting one here
         // would be the same news twice.
-        self.revealed.clear();
-        self.visible.clear();
+        self.forget_fog();
+        // The DM's overrides go with them, and this one *does* need its own
+        // event: it is authoring data rather than a derived set, so nothing
+        // recomputes it and the DM's own panel would go on drawing cells the room
+        // no longer holds. Gated like the two above, for the reason those are.
+        if !self.overrides.is_empty() {
+            self.overrides.clear();
+            events.push(Event::OverridesChanged);
+        }
         events
     }
 
@@ -2549,6 +2817,14 @@ impl RoomState {
             // this is the frame the walls above are withheld *in favour of*.
             Event::FogChanged => Some(ServerMsg::FogChanged {
                 fog: self.fog_for(),
+            }),
+
+            // And straight back to the walls' rule, one line below the one arm
+            // that does not filter. The pair is the whole design in two lines:
+            // what the DM decided reaches the DM, and the difference it made
+            // reaches the table.
+            Event::OverridesChanged => self.is_dm(recipient).then(|| ServerMsg::OverridesChanged {
+                overrides: fog::pack_overrides(&self.overrides),
             }),
         }
     }
@@ -7386,5 +7662,494 @@ mod tests {
             restored.visible.is_empty(),
             "and sight is not — it is derived on boot, from the tokens the same file holds"
         );
+    }
+
+    // --- the DM's manual override -------------------------------------------
+
+    /// What the DM's brush and their fill both send. The cells are the payload —
+    /// the fill is computed on their client, where the preview needs it anyway.
+    fn paint(cells: &[Cell], state: Option<Override>) -> ClientMsg {
+        ClientMsg::SetFogOverride {
+            cells: cells.to_vec(),
+            state,
+        }
+    }
+
+    /// The cell the ogre stands in, in `fog_room`.
+    const OGRE_CELL: Cell = (5, 1);
+
+    #[test]
+    fn blacking_out_a_cell_takes_the_creature_standing_in_it_off_the_table() {
+        // The question the roadmap left open, answered: `Dark` subtracts from
+        // `visible`, so `in_sight` says no and the token leaves through the
+        // machinery `hidden` already uses. A DM who blacks out a room and finds
+        // the monster still on the table's board has not blacked out the room.
+        let mut state = fog_room(60.0);
+        let _dm = join_as_dm(&mut state, ClientId(1));
+        assert!(sees_the_ogre(&state), "lit to begin with");
+
+        state.handle(ClientId(1), paint(&[OGRE_CELL], Some(Override::Dark)));
+
+        assert!(!sees_the_ogre(&state));
+        assert!(
+            names(&state.snapshot_for(&Identity::Dm)).contains(&"Ogre"),
+            "and the DM still sees their own monster, as they do through any fog"
+        );
+    }
+
+    #[test]
+    fn a_blacked_out_cell_stays_dark_with_a_torch_standing_in_it() {
+        // **The whole reason this is a mask rather than a write into `revealed`.**
+        // A hide that merely cleared the set would evaporate the next time
+        // somebody carried a light past, which is the one thing a manual override
+        // must not do — and the failure would look like a bug in the raycast.
+        let mut state = fog_room(60.0);
+        let _dm = join_as_dm(&mut state, ClientId(1));
+        state.handle(ClientId(1), paint(&[OGRE_CELL], Some(Override::Dark)));
+
+        walk(&mut state, 5.5);
+
+        assert!(
+            !state.visible.contains(&OGRE_CELL),
+            "the party is standing in it and it is still dark"
+        );
+        assert!(
+            !state.known.contains(&OGRE_CELL),
+            "and it did not enter what the table is shown by the back door either"
+        );
+        // The other direction, and the half 16b had backwards: the torch really
+        // did reach the cell, and the mask hides that rather than destroying it.
+        // Subtracting from memory here is what made a `Dark` fill unliftable.
+        assert!(
+            state.revealed.contains(&OGRE_CELL),
+            "the rays are not what the DM is editing"
+        );
+
+        state.handle(ClientId(1), paint(&[OGRE_CELL], None));
+
+        assert!(
+            state.known.contains(&OGRE_CELL),
+            "so lifting the paint gives back the ground they walked over"
+        );
+    }
+
+    #[test]
+    fn clearing_a_ground_fill_takes_the_ground_back() {
+        // The mirror of the test above, and the bug that sent me looking: an
+        // `Explored` paint was unioned into `revealed` on every pass, so the cells
+        // outlived the paint that put them there and a fill was permanent. One
+        // stray click through a gap in a traced wall could hand over the whole
+        // dungeon with no way back short of reloading the map.
+        let mut state = fog_room(10.0);
+        let _dm = join_as_dm(&mut state, ClientId(1));
+        state.handle(ClientId(1), paint(&[(9, 1)], Some(Override::Explored)));
+
+        assert!(state.known.contains(&(9, 1)), "the table is shown it");
+        assert!(
+            !state.revealed.contains(&(9, 1)),
+            "and nothing but a ray reaches memory"
+        );
+
+        state.handle(ClientId(1), paint(&[(9, 1)], None));
+
+        assert!(
+            !state.known.contains(&(9, 1)),
+            "handing the cell back un-paints it rather than leaving it explored forever"
+        );
+    }
+
+    #[test]
+    fn the_two_reveal_brushes_differ_over_who_is_standing_there() {
+        // Terrain and creatures, which is the split the whole feature is built
+        // on. `Explored` hands over the ground; `Lit` hands over what is on it.
+        let mut state = fog_room(10.0);
+        let _dm = join_as_dm(&mut state, ClientId(1));
+        assert!(!sees_the_ogre(&state), "four cells away with two of vision");
+
+        state.handle(ClientId(1), paint(&[OGRE_CELL], Some(Override::Explored)));
+        assert!(state.known.contains(&OGRE_CELL), "the ground is theirs");
+        assert!(
+            !sees_the_ogre(&state),
+            "and the ambush standing on it is not"
+        );
+
+        state.handle(ClientId(1), paint(&[OGRE_CELL], Some(Override::Lit)));
+        assert!(
+            sees_the_ogre(&state),
+            "which is what the other brush is for"
+        );
+    }
+
+    #[test]
+    fn revealing_the_ground_does_not_dim_a_square_the_rays_already_lit() {
+        // `Explored` is a floor and not an assignment. Making it demote a lit cell
+        // would be a fifth state — "the room but not the ambush in it" — and that
+        // is what `hidden` is.
+        let mut state = fog_room(60.0);
+        let _dm = join_as_dm(&mut state, ClientId(1));
+        state.handle(ClientId(1), paint(&[OGRE_CELL], Some(Override::Explored)));
+
+        assert!(state.visible.contains(&OGRE_CELL));
+        assert!(sees_the_ogre(&state));
+    }
+
+    #[test]
+    fn a_player_keeps_their_own_token_in_a_blacked_out_room() {
+        // `in_sight` returns true early for anything a player owns, so `Dark`
+        // stops short of deleting the party from their own screens. Deliberate:
+        // a magical darkness they cannot see out of is still one they are in.
+        let mut state = fog_room(60.0);
+        let _dm = join_as_dm(&mut state, ClientId(1));
+        state.handle(ClientId(1), paint(&[(1, 1)], Some(Override::Dark)));
+
+        assert!(
+            names(&state.snapshot_for(&as_player("vex"))).contains(&"Vex"),
+            "the party is still standing where they are standing"
+        );
+        assert!(
+            !state.visible.contains(&(1, 1)),
+            "on ground the table is nonetheless shown as dark"
+        );
+    }
+
+    #[test]
+    fn handing_a_cell_back_is_a_removal_and_the_rays_answer_again() {
+        let mut state = fog_room(60.0);
+        let _dm = join_as_dm(&mut state, ClientId(1));
+        state.handle(ClientId(1), paint(&[OGRE_CELL], Some(Override::Dark)));
+        assert!(!sees_the_ogre(&state));
+
+        state.handle(ClientId(1), paint(&[OGRE_CELL], None));
+
+        assert!(
+            state.overrides.is_empty(),
+            "`Auto` is the absence of an entry, not a fourth one"
+        );
+        assert!(sees_the_ogre(&state), "and sight decides the cell again");
+    }
+
+    #[test]
+    fn resetting_forgets_the_evening_and_the_paint_together() {
+        // "This map has not been seen yet" is one gesture, so it is one command.
+        // Clearing the paint alone leaves a dungeon the party has already walked
+        // through, which is not a reset of anything the DM was looking at.
+        let mut state = fog_room(10.0);
+        let _dm = join_as_dm(&mut state, ClientId(1));
+        state.handle(ClientId(1), paint(&[(9, 1)], Some(Override::Explored)));
+        walk(&mut state, 5.5);
+        walk(&mut state, 1.5);
+
+        assert!(state.known.contains(&(5, 1)), "explored on the way past");
+        assert!(!state.visible.contains(&(5, 1)), "and out of sight again");
+
+        state.handle(ClientId(1), ClientMsg::ResetFog);
+
+        assert!(state.overrides.is_empty(), "the paint goes");
+        assert!(!state.known.contains(&(9, 1)), "the ground it handed over");
+        assert!(!state.known.contains(&(5, 1)), "the evening's exploring");
+        assert!(
+            state.known.contains(&(1, 1)),
+            "and what is left is what the party can see from where they stand"
+        );
+    }
+
+    #[test]
+    fn resetting_the_fog_tells_the_table_and_not_only_the_dm() {
+        // `OverridesChanged` reaches the DM alone, so the whole of the table's
+        // news is the `FogChanged` beside it — and the board going dark under
+        // them is the one frame they most need.
+        let mut state = fog_room(10.0);
+        let _dm = join_as_dm(&mut state, ClientId(1));
+        walk(&mut state, 5.5);
+        let mut rx = join_as_player(&mut state, ClientId(2), "vex");
+        drain(&mut rx);
+
+        state.handle(ClientId(1), ClientMsg::ResetFog);
+
+        let frames = drain(&mut rx);
+        assert!(
+            frames
+                .iter()
+                .any(|m| matches!(m, ServerMsg::FogChanged { .. })),
+            "expected the table to be told, got {frames:?}"
+        );
+    }
+
+    #[test]
+    fn the_override_reaches_the_dm_or_nobody() {
+        // The walls' rule, arriving for the third time. What the DM decided is
+        // theirs; the difference it made is what the table is sent, in the
+        // `FogChanged` beside it.
+        let mut state = fog_room(60.0);
+        let _dm = join_as_dm(&mut state, ClientId(1));
+        let mut rx = join_as_player(&mut state, ClientId(2), "vex");
+        state.handle(ClientId(1), paint(&[OGRE_CELL], Some(Override::Dark)));
+
+        assert_eq!(
+            state.snapshot_for(&as_player("vex")).overrides,
+            OverrideView::default(),
+            "empty is both 'nothing painted' and 'you are not the DM'"
+        );
+        assert_ne!(
+            state.snapshot_for(&Identity::Dm).overrides,
+            OverrideView::default()
+        );
+
+        let frames = drain(&mut rx);
+        assert!(
+            !frames
+                .iter()
+                .any(|m| matches!(m, ServerMsg::OverridesChanged { .. })),
+            "not even an empty one: the frame itself would say the DM did something"
+        );
+        assert!(
+            frames
+                .iter()
+                .any(|m| matches!(m, ServerMsg::FogChanged { .. })),
+            "what they are owed is the shadow it cast, got {frames:?}"
+        );
+    }
+
+    #[test]
+    fn painting_over_ground_nobody_could_see_is_no_news_at_all() {
+        // The gate that keeps `FogChanged` honest. A DM blacking out a corner of
+        // the map the party has never been near changes nothing the table holds,
+        // and a frame saying so would say *when* the DM was working.
+        let mut state = fog_room(10.0);
+        let _dm = join_as_dm(&mut state, ClientId(1));
+        let mut rx = join_as_player(&mut state, ClientId(2), "vex");
+        drain(&mut rx);
+
+        state.handle(ClientId(1), paint(&[(30, 30)], Some(Override::Dark)));
+
+        let frames = drain(&mut rx);
+        assert!(frames.is_empty(), "expected silence, got {frames:?}");
+    }
+
+    #[test]
+    fn only_the_dm_may_override_the_fog() {
+        let mut state = fog_room(60.0);
+        let _vex = join_as_player(&mut state, ClientId(2), "vex");
+
+        for msg in [
+            paint(&[OGRE_CELL], Some(Override::Lit)),
+            ClientMsg::ResetFog,
+        ] {
+            assert!(state.check(ClientId(2), &msg).is_err());
+        }
+    }
+
+    #[test]
+    fn an_override_is_refused_where_it_could_do_nothing() {
+        let mut state = fog_room(60.0);
+        let _dm = join_as_dm(&mut state, ClientId(1));
+
+        assert!(
+            state
+                .check(ClientId(1), &paint(&[], Some(Override::Dark)))
+                .is_err(),
+            "no cells at all"
+        );
+
+        let too_many: Vec<Cell> = (0..=MAX_OVERRIDE_CELLS as i32).map(|i| (i, 0)).collect();
+        assert!(
+            state
+                .check(ClientId(1), &paint(&too_many, Some(Override::Dark)))
+                .is_err(),
+            "a fill that escaped through a gap the DM did not notice"
+        );
+
+        // Clipped for the reason the sweep in `fog.rs` clips itself: one cell out
+        // there puts the whole map's worth of characters in the packed rectangle.
+        assert!(
+            state
+                .check(ClientId(1), &paint(&[(9_000_000, 0)], Some(Override::Dark)))
+                .is_err(),
+            "and one cell a million squares away"
+        );
+
+        // Refused rather than stored and ignored: an override on an unfogged map
+        // can have no effect, and the panel greys itself for the same reason.
+        state.map.fog = false;
+        assert!(
+            state
+                .check(ClientId(1), &paint(&[OGRE_CELL], Some(Override::Dark)))
+                .is_err()
+        );
+    }
+
+    #[test]
+    fn moving_the_lattice_forgets_the_overrides_and_a_new_map_does_too() {
+        // Cells, like the two sets they mask — so the squares moving underneath
+        // them is enough, and this is where they part company with the walls they
+        // are stored beside, which trace the art and survive a recalibration.
+        for (what, msg) in [
+            (
+                "a recalibration",
+                fogged(set_map("/assets/map.png", 96.0, 0.0, 0.0), 60.0),
+            ),
+            (
+                "a new map",
+                fogged(set_map("/uploads/next.jpg", 64.0, 0.0, 0.0), 60.0),
+            ),
+        ] {
+            let mut state = fog_room(60.0);
+            let _dm = join_as_dm(&mut state, ClientId(1));
+            state.handle(ClientId(1), paint(&[OGRE_CELL], Some(Override::Dark)));
+            assert!(!state.overrides.is_empty());
+
+            state.handle(ClientId(1), msg);
+            assert!(state.overrides.is_empty(), "{what} should sweep them");
+        }
+    }
+
+    #[test]
+    fn the_overrides_survive_the_save_file() {
+        // The mirror image of the fog beside them. Sight is derived from what the
+        // file already holds; what somebody decided is derivable from nothing, so
+        // losing it would lose the work.
+        let mut state = fog_room(60.0);
+        let _dm = join_as_dm(&mut state, ClientId(1));
+        state.handle(
+            ClientId(1),
+            paint(&[OGRE_CELL, (9, 9)], Some(Override::Dark)),
+        );
+        state.handle(ClientId(1), paint(&[(2, 2)], Some(Override::Lit)));
+
+        let restored = RoomState::restored(state.to_saved(), SECRET.to_owned());
+
+        assert_eq!(restored.overrides, state.overrides);
+        assert!(
+            !sees_the_ogre(&restored),
+            "and they are applied again on boot, not merely stored"
+        );
+    }
+
+    // --- fog and the drawings on the board ----------------------------------
+
+    #[test]
+    fn a_drawing_on_ground_the_party_has_never_seen_is_withheld() {
+        // 16a left this: an unanchored shape was sent to everyone, so a marker the
+        // DM dropped on an unexplored room drew straight over the table's fog.
+        let mut state = fog_room(10.0);
+        let _dm = join_as_dm(&mut state, ClientId(1));
+
+        state.handle(ClientId(1), circle_at(20.5, 20.5));
+
+        assert_eq!(shapes_seen(&state, &as_player("vex")).len(), 0);
+        assert_eq!(
+            shapes_seen(&state, &Identity::Dm).len(),
+            1,
+            "their own annotation is still on their own board"
+        );
+    }
+
+    #[test]
+    fn a_drawing_on_explored_ground_stays_after_the_party_walks_away() {
+        // Gated on `revealed` and not on `visible`, which is the call this half of
+        // the milestone turned on: a shape is painted on the floor rather than
+        // standing on it, so it belongs with the terrain. Gating on current sight
+        // would take a player's own marker away as they left the room, and make
+        // every drawing on the board flicker as the party moved.
+        let mut state = fog_room(20.0);
+        let _dm = join_as_dm(&mut state, ClientId(1));
+        let _vex = join_as_player(&mut state, ClientId(2), "vex");
+
+        // Drawn on ground they are standing next to, then walked away from.
+        state.handle(ClientId(2), circle_at(1.5, 1.5));
+        assert_eq!(shapes_seen(&state, &as_player("vex")).len(), 1);
+
+        walk(&mut state, 20.5);
+        assert!(
+            !state.visible.contains(&(1, 1)),
+            "out of sight of where they drew it"
+        );
+        assert_eq!(
+            shapes_seen(&state, &as_player("vex")).len(),
+            1,
+            "and it is still their marker on ground they remember"
+        );
+    }
+
+    #[test]
+    fn turning_the_fog_off_does_not_take_every_drawing_with_it() {
+        // The guard in `shape_seen`, and it is load-bearing rather than defensive:
+        // `revealed` is empty on an unfogged map, so without it every loose shape
+        // in the room would vanish from every player's board the moment the switch
+        // was flipped.
+        let mut state = room();
+        let _dm = join_as_dm(&mut state, ClientId(1));
+        state.handle(ClientId(1), circle_at(50.5, 50.5));
+
+        assert!(!state.map.fog, "lights on");
+        assert_eq!(
+            shapes_seen(&state, &as_player("vex")).len(),
+            1,
+            "a board with no fog withholds nothing"
+        );
+    }
+
+    #[test]
+    fn the_fog_opening_onto_a_drawing_rebuilds_the_shape_list() {
+        // The second reading `Sight` had to grow. Every *anchored* shape moves
+        // with a token, so the token loop was enough to gate `ShapesChanged` on;
+        // an unanchored one gates on `revealed`, which the party can change by
+        // walking somewhere with no token of the DM's involved.
+        let mut state = fog_room(20.0);
+        let _dm = join_as_dm(&mut state, ClientId(1));
+        state.handle(ClientId(1), circle_at(20.5, 1.5));
+        let mut rx = join_as_player(&mut state, ClientId(2), "vex");
+        assert_eq!(shapes_seen(&state, &as_player("vex")).len(), 0);
+        drain(&mut rx);
+
+        walk(&mut state, 20.5);
+
+        let frames = drain(&mut rx);
+        assert!(
+            frames
+                .iter()
+                .any(|m| matches!(m, ServerMsg::ShapesChanged { shapes } if shapes.len() == 1)),
+            "expected the drawing to arrive as they reached it, got {frames:?}"
+        );
+    }
+
+    #[test]
+    fn nobody_is_told_about_a_drawing_that_was_visible_all_along() {
+        // The same gate as everywhere else in this file, for the fourth time: an
+        // unconditional `ShapesChanged` on every step would tell the table that
+        // *something happened* every time anybody moved.
+        let mut state = fog_room(60.0);
+        let _dm = join_as_dm(&mut state, ClientId(1));
+        state.handle(ClientId(1), circle_at(1.5, 1.5));
+        let mut rx = join_as_player(&mut state, ClientId(2), "vex");
+        drain(&mut rx);
+
+        walk(&mut state, 2.5);
+
+        let frames = drain(&mut rx);
+        assert!(
+            !frames
+                .iter()
+                .any(|m| matches!(m, ServerMsg::ShapesChanged { .. })),
+            "nothing about the shapes changed, got {frames:?}"
+        );
+    }
+
+    #[test]
+    fn a_blacked_out_room_takes_the_drawings_in_it_too() {
+        // Falls out of the two halves rather than being a rule of its own: `Dark`
+        // subtracts from `known`, and a loose shape gates on `known`.
+        let mut state = fog_room(60.0);
+        let _dm = join_as_dm(&mut state, ClientId(1));
+        state.handle(ClientId(1), circle_at(1.5, 1.5));
+        assert_eq!(shapes_seen(&state, &as_player("vex")).len(), 1);
+
+        // The whole footprint of a radius-four circle centred on (1,1).
+        let footprint: Vec<Cell> = (-4..=6)
+            .flat_map(|x| (-4..=6).map(move |y| (x, y)))
+            .collect();
+        state.handle(ClientId(1), paint(&footprint, Some(Override::Dark)));
+
+        assert_eq!(shapes_seen(&state, &as_player("vex")).len(), 0);
     }
 }

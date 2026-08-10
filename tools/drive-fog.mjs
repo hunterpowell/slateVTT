@@ -182,7 +182,131 @@ check('the table gets a great deal of board back', litPlayer > 8, true);
 // they are playing on.
 check('the DM’s board lifts by less, having never been dark', litDm < litPlayer, true);
 
-const code = verdict(dm) + verdict(player);
+// --- 16b: the DM's manual override ----------------------------------------
+//
+// The fill is the interesting half and it is checked the way everything else
+// here is: as a difference. This room has no walls traced, so a fill from
+// anywhere floods the whole play area — which is exactly the case worth driving,
+// because it is what one missed gap in a real dungeon turns into and it is what
+// the preview exists to show the DM before they commit.
+
+const brush = (session, name) =>
+  session.evaluate(`(() => {
+    const b = document.querySelector('.fog-brush[data-brush="${name}"]');
+    b.click();
+    return b.classList.contains('is-on');
+  })()`);
+const armed = (session) => session.evaluate('document.body.classList.contains("painting-fog")');
+/** The middle of the viewport, which is over the board and clear of the rail. */
+const centre = (session) =>
+  session.evaluate('[Math.round(innerWidth / 2), Math.round(innerHeight / 2)]');
+
+check('fog comes back on', await setFogOn(dm, true), true);
+await setVision(dm, NEAR_FT);
+await dm.wait(900);
+
+check(
+  'the four brushes are there',
+  await dm.evaluate('document.querySelectorAll(".fog-brush").length'),
+  4,
+);
+check('and they unlocked with the fog', await brush(dm, 'dark'), true);
+check('arming one takes the left button', await armed(dm), true);
+
+// Blacking the board out, and the two boards move in *opposite directions* —
+// which is the whole shape of the feature in one measurement. The table's goes
+// dark. The DM's gets brighter, because what lands on theirs is the override
+// tint: the annotation saying "you put this here", which is the only way to tell
+// a blacked-out room from a wall's shadow on a board where both are just dark.
+// A player is sent no such frame, so there is nothing on theirs to brighten.
+const [cx, cy] = await centre(dm);
+await mark(player);
+await mark(dm);
+await dm.click(cx, cy);
+await dm.wait(1200);
+
+const darkPlayer = await brightened(player);
+const darkDm = await brightened(dm);
+note(`filled dark — player brightened ${darkPlayer}%, DM ${darkDm}%`);
+check('a fill takes the board away from the table', darkPlayer < 1, true);
+check('and marks it up on the DM’s, who is the only one told', darkDm > 8, true);
+
+// Handing it back, which is a removal rather than a fourth state — and the whole
+// reason the override is a mask over the rays instead of a write into what the
+// party remembers.
+await mark(player);
+check('the clear brush arms', await brush(dm, 'clear'), true);
+await dm.click(cx, cy);
+await dm.wait(1200);
+const backPlayer = await brightened(player);
+note(`handed back — player brightened ${backPlayer}%`);
+check('line of sight decides the board again', backPlayer > 3, true);
+
+// And forcing it lit, which is the brush that reaches past terrain into who is
+// standing on it.
+await mark(player);
+check('the lit brush arms', await brush(dm, 'lit'), true);
+await dm.click(cx, cy);
+await dm.wait(1200);
+const litUp = await brightened(player);
+note(`filled lit — player brightened ${litUp}%`);
+check('the table is handed the whole dungeon', litUp > 8, true);
+
+// The sharpest check of the three, and the one no pixel could make: a client
+// joining *now* is sent the wraith, which means the snapshot went through the
+// same mask the deltas did. That is invariant 3 asked of the override — filter
+// every delta correctly and then hand over the whole world on connect is the
+// most common way this goes wrong.
+const latecomer = await open(base, { port: 9335 });
+await latecomer.wait(2000);
+await latecomer.evaluate(`[...document.querySelectorAll('.picker-list button')]
+  .find(b => b.textContent.includes('Grog')).click(); "ok"`);
+await latecomer.wait(2500);
+check(
+  'a client joining into a forced-lit board is sent the wraith',
+  await fetched(latecomer, 'wraith.png'),
+  true,
+);
+
+// Resetting every override at once. Behind a confirm, which CDP deadlocks on
+// unless it is stubbed — see `#wall-clear` in drive-ui.mjs.
+await mark(latecomer);
+await latecomer.evaluate('void 0');
+await dm.evaluate('window.confirm = () => true; document.querySelector("#fog-clear").click(); "ok"');
+await dm.wait(1200);
+const afterReset = await brightened(latecomer);
+note(`reset all — latecomer brightened ${afterReset}%`);
+check('the dungeon goes back to what the torches reach', afterReset < 1, true);
+
+// The other gesture. A stroke is a drag rather than a click, and it goes out as
+// one command however many squares it crossed — a frame per cell would be a
+// hundred of them across one drag.
+await dm.evaluate(`document.querySelector('#fog-gesture').click(); "ok"`);
+check(
+  'the gesture toggles to painting',
+  await dm.evaluate('document.querySelector("#fog-gesture").textContent.trim()'),
+  'paint',
+);
+await brush(dm, 'dark');
+await mark(dm);
+await dm.drag(cx - 120, cy, cx + 120, cy);
+await dm.wait(1000);
+const stroked = await brightened(dm);
+note(`painted a stroke — DM brightened ${stroked}%`);
+// Both halves matter. It has to mark *something*, and it has to be nothing like
+// the fill above — a stroke takes the squares the pointer crossed and stops,
+// which is the whole reason the tool has a second gesture at all.
+check('a stroke marks up the squares it crossed', stroked > 0.05, true);
+check('and stops there rather than taking the room', stroked < darkDm / 4, true);
+
+// And the brush is a tool like any other, so it puts down the way they do.
+await dm.evaluate(`document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' }));
+  window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' })); "ok"`);
+await dm.wait(300);
+check('Escape puts the brush down', await armed(dm), false);
+
+const code = verdict(dm) + verdict(player) + verdict(latecomer);
 dm.close();
 player.close();
+latecomer.close();
 process.exit(code === 0 ? 0 : 1);

@@ -4,6 +4,8 @@
 import type { GridSpec, Rect, Vec2 } from './coords.js';
 import type { Fog } from './fog.js';
 import { fogFromWire } from './fog.js';
+import type { Overrides } from './overrides.js';
+import { overridesFromWire } from './overrides.js';
 import type { Hp, Owner, WireMapInfo, WireRoomView, WireToken } from './protocol.js';
 import type { Shape } from './shapes.js';
 import { shapeFromWire } from './shapes.js';
@@ -86,6 +88,14 @@ export interface Scene {
    *  It is not a filter. A creature the table cannot see is absent from `tokens`
    *  entirely; this is the *terrain*, and nothing here decides who is drawn. */
   fog: Fog | null;
+  /** The cells the DM has painted over that fog by hand. Always empty for a
+   *  player, like `walls` two fields up rather than like `fog` between them —
+   *  the walls and this are what the DM authored, and the fog is what the table
+   *  gets to see of both.
+   *
+   *  Belongs to the live board for the reason they do. There is no fog on a
+   *  staged map, so there is nothing on one to override. */
+  overrides: Overrides;
 }
 
 /**
@@ -140,6 +150,7 @@ export function sceneFromView(view: WireRoomView, isDm: boolean): Scene {
     shapes: view.shapes.map(shapeFromWire),
     walls: view.walls.map(wallFromWire),
     fog: fogFromWire(view.fog, isDm),
+    overrides: overridesFromWire(view.overrides),
   };
 }
 

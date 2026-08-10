@@ -47,6 +47,31 @@ export interface WireFog {
   cells: string;
 }
 
+/**
+ * The cells the DM has overridden by hand, packed the same way the fog is.
+ *
+ * A different alphabet and the opposite audience. `#` forced dark, `o` forced
+ * explored, `*` forced in sight, `-` no override — and unlike the fog, the
+ * rectangle has holes in it, because it is bounded by the painted cells rather
+ * than describing every cell inside its own box.
+ *
+ * **Empty for a player, always**, exactly as `walls` is: this is what the DM
+ * decided, and `WireFog` above is the shadow the table gets to see. Empty is
+ * therefore both "nothing painted" and "you are not the DM".
+ */
+export interface WireOverrides {
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+  cells: string;
+}
+
+/** What the DM's brush is loaded with. `null` hands the cells back to the rays —
+ *  "no override" is an absence rather than a fourth state, on the wire as in the
+ *  room. */
+export type FogPaint = 'explored' | 'lit' | 'dark';
+
 export interface WireRect {
   x: number;
   y: number;
@@ -187,6 +212,11 @@ export interface WireRoomView {
    *  up that stay theirs alone; a player reads the geometry off the edges of
    *  this instead, which is the whole shape of the feature. */
   fog: WireFog | null;
+  /** The cells the DM has painted over the fog by hand — and empty for a player,
+   *  always, like the walls three lines up rather than like the fog between
+   *  them. The walls and this are what the DM authored; the fog is the shadow
+   *  both of them cast. */
+  overrides: WireOverrides;
 }
 
 export interface RosterSlot {
@@ -250,6 +280,10 @@ export type ServerMsg =
    *  map is not fogged. Reaches everyone, unlike the walls above it — and only
    *  on a drop, never on a drag frame. */
   | { type: 'fog_changed'; fog: WireFog | null }
+  /** Every cell the DM has overridden. DM connections only — a player is not
+   *  sent this frame at all, for the reason they are sent no `walls_changed`.
+   *  What they are owed is the `fog_changed` beside it. */
+  | { type: 'overrides_changed'; overrides: WireOverrides }
   | { type: 'error'; message: string };
 
 export type ClientMsg =
@@ -354,6 +388,20 @@ export type ClientMsg =
   /** DM-only. Every wall on the map — and unlike `clear_shapes` it reaches into
    *  nobody else's work, since the walls are all the DM's. */
   | { type: 'clear_walls' }
+  /** DM-only. What one brush stroke or one fill decided, as the cells it
+   *  decided it about.
+   *
+   *  **The cells are the payload, not a seed.** The fill is computed here,
+   *  because the preview has to compute it anyway — sending the previewed cells
+   *  is what makes the preview and the result the same object rather than two
+   *  runs of two implementations that would have to agree. `state` of null hands
+   *  them back to line of sight. */
+  | { type: 'set_fog_override'; cells: [number, number][]; state: FogPaint | null }
+  /** DM-only. The whole map back to dark: every override cleared and everywhere
+   *  the party has explored forgotten, then line of sight recomputed from where
+   *  the tokens are standing. One command because it is one gesture — "this map
+   *  has not been seen yet". */
+  | { type: 'reset_fog' }
   | { type: 'set_initiative'; token: string; value: number }
   | { type: 'remove_from_initiative'; token: string }
   | { type: 'clear_initiative' }

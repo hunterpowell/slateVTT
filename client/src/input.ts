@@ -2,6 +2,7 @@ import type { Calibration } from './calibrate.js';
 import type { Camera, Vec2 } from './coords.js';
 import { gridToWorld, screenToWorld, worldToGrid } from './coords.js';
 import type { DrawTool } from './drawtool.js';
+import type { FogTool } from './fogtool.js';
 import type { Identity } from './identity.js';
 import { canMove } from './identity.js';
 import type { ClientMsg, ShapeKind, WireOrigin } from './protocol.js';
@@ -43,6 +44,16 @@ type Drag =
       staged: boolean;
     }
   | { kind: 'calibrate'; pointerId: number; x0: number; y0: number }
+  /**
+   * The DM painting cells of the fog override by hand.
+   *
+   * The simplest of the five: there is nothing to predict, nothing to throttle,
+   * and no frame goes out until the button is released — the stroke accumulates
+   * on the tool and is sent as one command, because a frame per cell would be a
+   * hundred of them across one drag. A fill is not this; a fill is a click, and
+   * clicks are handled without a drag at all.
+   */
+  | { kind: 'fog'; pointerId: number }
   | {
       kind: 'draw';
       pointerId: number;
@@ -129,10 +140,17 @@ export interface InputState {
  * also why a browser that closes mid-trace leaves nothing behind on anyone
  * else's screen, unlike a sketch or a drag.
  *
- * Only one of the four can be armed at a time. Calibrate wins over the wall
- * editor and the wall editor over a shape tool, in the order they are tested
- * below; the panels also put each other away, so that ordering should never
- * decide anything in practice.
+ * The fog brush is the fifth, and it is two gestures rather than one: a fill is
+ * a click that commits the region already being previewed, and a paint stroke is
+ * a drag whose cells accumulate on the tool and go out as a single command when
+ * the button comes up. Nothing is predicted and nothing is throttled — there is
+ * no round trip anybody can feel, because the preview has already shown the
+ * answer.
+ *
+ * Only one of the five can be armed at a time. Calibrate wins over the wall
+ * editor, the wall editor over the fog brush, and the fog brush over a shape
+ * tool, in the order they are tested below; the panels also put each other away,
+ * so that ordering should never decide anything in practice.
  */
 export function attachInput(
   canvas: HTMLCanvasElement,
@@ -160,6 +178,9 @@ export function attachInput(
   /** The DM's wall editor. Null for players, who have no such panel and are
    *  never sent a wall to click on in the first place. */
   wallTool: WallTool | null,
+  /** The DM's fog brush. Null for players, who have no such panel and no
+   *  overrides in their scene for one to edit. */
+  fogTool: FogTool | null,
 ): InputState {
   let drag: Drag | null = null;
   let lastDragSentAt = 0;
@@ -197,6 +218,16 @@ export function attachInput(
    * pointer. It is the same rule, and this is the second feature to want it.
    */
   const tracing = (): boolean => wallTool !== null && wallTool.mode !== null && !previewing();
+
+  /**
+   * Whether the left button belongs to the fog brush right now.
+   *
+   * Never over a staged map, for the reason tracing is not: there is no fog on
+   * the map being prepared, so there is nothing on it to override. The tool
+   * disarms itself in that case anyway; this is the same belt-and-braces the
+   * two above it have.
+   */
+  const painting = (): boolean => fogTool !== null && fogTool.brush !== null && !previewing();
 
   /** How near a wall counts as on it, in world units at this zoom. */
   const wallSlack = (): number => WALL_HIT_PX / cam.zoom;
@@ -344,6 +375,7 @@ export function attachInput(
   /** What the cursor should be when nothing is being dragged. */
   const restingCursor = (w: Vec2): string => {
     if (calibration !== null && calibration.active) return 'crosshair';
+    if (painting()) return 'crosshair';
     if (tracing()) return wallTool?.hovered !== null ? 'pointer' : 'crosshair';
     if (sweeping()) return state.hoveredShapeId !== null ? 'pointer' : 'crosshair';
     if (tokenAt(scene, identity, w.x, w.y) !== null) return 'pointer';
@@ -393,6 +425,26 @@ export function attachInput(
       } else {
         wallTool.place(cornerAt(w, e.altKey));
       }
+      canvas.style.cursor = 'crosshair';
+      return;
+    }
+
+    // The fog brush is the fourth, and it takes the button the same way — a
+    // room to black out is usually a room with creatures standing in it, so
+    // nothing under the pointer may be grabbable while it is in hand.
+    //
+    // A fill is a click and commits what the preview is already showing; a paint
+    // stroke is a drag, which is the one of the two that needs capturing.
+    if (fogTool !== null && painting() && e.button === 0) {
+      const g = gridUnder(w);
+      if (fogTool.gesture === 'fill') {
+        fogTool.apply(g);
+        canvas.style.cursor = 'crosshair';
+        return;
+      }
+      drag = { kind: 'fog', pointerId: e.pointerId };
+      fogTool.apply(g);
+      canvas.setPointerCapture(e.pointerId);
       canvas.style.cursor = 'crosshair';
       return;
     }
@@ -485,6 +537,16 @@ export function attachInput(
       return;
     }
 
+    if (drag === null && painting() && fogTool !== null) {
+      // What a fill would take, which the renderer draws in the colour it would
+      // land in. The tool itself only re-floods when this crosses into a
+      // different cell, which is what makes a few thousand cells affordable on a
+      // pointer move.
+      fogTool.point(gridUnder(w));
+      canvas.style.cursor = 'crosshair';
+      return;
+    }
+
     if (drag === null) {
       // What a click would erase, which the renderer draws brighter and the
       // cursor turns into a pointer over. Only asked while a tool is in hand:
@@ -523,6 +585,13 @@ export function attachInput(
       return;
     }
 
+
+    if (drag.kind === 'fog') {
+      // Every cell the pointer crosses, and the tool drops the repeats. Nothing
+      // is sent until the button comes up.
+      fogTool?.apply(gridUnder(w));
+      return;
+    }
 
     if (drag.kind === 'pan') {
       // Panning is purely local — the camera is not shared state.
@@ -594,6 +663,9 @@ export function attachInput(
       calibration?.release({ x0: drag.x0, y0: drag.y0, x1: w.x, y1: w.y });
     } else if (drag.kind === 'draw') {
       endSweep(drag, gridUnder(w));
+    } else if (drag.kind === 'fog') {
+      // One command for the whole stroke, however many cells it crossed.
+      fogTool?.endStroke();
     } else if (!drag.moved) {
       // A click on empty map, as opposed to a pan. Panning is constant, so
       // losing the selection every time the board moves would be maddening.

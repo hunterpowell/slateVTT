@@ -5,7 +5,7 @@
 
 use serde::{Deserialize, Serialize};
 
-use crate::fog::FogView;
+use crate::fog::{Cell, FogView, Override, OverrideView};
 
 /// Server-assigned, unique per connection. Not an identity — it dies with the
 /// socket. `PlayerId` is the thing that survives a refresh.
@@ -638,6 +638,17 @@ pub struct RoomView {
     /// every other type here, because the encoding is the interesting part of it
     /// and splitting the two would leave a string nothing explains.
     pub fog: Option<FogView>,
+    /// The cells the DM has overridden by hand — and **empty for a player,
+    /// always**, exactly as `walls` is.
+    ///
+    /// It sits between its two neighbours and belongs with the first: the walls
+    /// and this are what the DM authored, the fog is the shadow both of them cast.
+    /// A player reads the result off `fog` above and is never told which parts of
+    /// it were decided rather than computed.
+    ///
+    /// Empty is therefore both "nothing painted" and "you are not the DM". Same
+    /// door `staged` and `walls` leave by.
+    pub overrides: OverrideView,
 }
 
 /// Inbound. Not `#[serde(default)]`: a malformed frame from a client should be
@@ -829,6 +840,38 @@ pub enum ClientMsg {
     /// it reaches into nobody else's work — it is all the DM's.
     ClearWalls,
 
+    // The manual fog override. DM-only, like the walls it is stored beside.
+    /// Says one thing about a set of cells: force them explored, force them lit,
+    /// force them dark, or hand them back to the rays.
+    ///
+    /// **The cells are the payload, not a seed to flood-fill from.** The DM's
+    /// client already holds the walls and already has to compute the fill to
+    /// preview it; sending the previewed cells is what makes the preview and the
+    /// result the same object rather than two runs of two implementations that
+    /// have to agree. Nothing is being adjudicated here — the DM may reveal
+    /// whatever they like — so the server stores what it is told, having clipped
+    /// it to the board and counted it.
+    ///
+    /// A brush and a fill send the same frame; the only difference is which cells
+    /// end up in it.
+    SetFogOverride {
+        cells: Vec<Cell>,
+        /// `None` hands the cells back to line of sight. Null rather than a
+        /// fourth variant, because "no override" is the absence of one — the same
+        /// thing the room stores by removing the entry.
+        state: Option<Override>,
+    },
+    /// The fog back to the start of the evening: every override cleared *and*
+    /// everywhere the party has explored forgotten, then line of sight recomputed
+    /// from where the tokens are standing right now.
+    ///
+    /// Both halves in one command because they are one gesture — "this map has
+    /// not been seen yet" — and splitting them would offer a reset that leaves the
+    /// map lit, which is the state nobody asks for. It is not `ClearWalls`'s
+    /// neighbour any more for exactly that reason: the walls are all the DM's
+    /// work, and half of this is the party's.
+    ResetFog,
+
     // Initiative. All DM-only.
     /// Adds the token at that value, or re-values it if already listed. One
     /// command covers "add" and "reorder", since ordering *is* the value.
@@ -984,6 +1027,15 @@ pub enum ServerMsg {
     /// worth thirty a second on the way.
     FogChanged {
         fog: Option<FogView>,
+    },
+    /// Every cell the DM has overridden by hand, packed. The whole rectangle
+    /// rather than a delta, for the reason `WallsChanged` carries the whole list.
+    ///
+    /// **It reaches the DM or nobody**, and it is the third message to have that
+    /// rule. What the table is owed arrives in the `FogChanged` above it, which is
+    /// the difference this made rather than the decision behind it.
+    OverridesChanged {
+        overrides: OverrideView,
     },
     Error {
         message: String,
