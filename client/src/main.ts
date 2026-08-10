@@ -129,6 +129,8 @@ interface Ui {
     artText: HTMLElement;
     artPreview: HTMLElement;
     artClear: HTMLButtonElement;
+    library: HTMLButtonElement;
+    libraryList: HTMLElement;
     save: HTMLButtonElement;
     remove: HTMLButtonElement;
     fresh: HTMLButtonElement;
@@ -238,6 +240,8 @@ function findUi(): Ui {
       artText: need('#token-art-text'),
       artPreview: need('#token-art-preview'),
       artClear: need<HTMLButtonElement>('#token-art-clear'),
+      library: need<HTMLButtonElement>('#token-library'),
+      libraryList: need('#token-library-list'),
       save: need<HTMLButtonElement>('#token-save'),
       remove: need<HTMLButtonElement>('#token-delete'),
       fresh: need<HTMLButtonElement>('#token-new'),
@@ -431,9 +435,14 @@ function boot(): void {
         // nothing on screen saying why.
         rail = createRail(ui.rail, [
           { tab: 'map', label: 'map', root: ui.maptool.root, stop: () => mapTool?.stop() },
-          // Nothing to put down: a selection is a ring on the board, which is
-          // still on screen with the panel closed.
-          { tab: 'token', label: 'token', root: ui.tokentool.root },
+          // Only the portrait list to put down. The selection stays: it is a
+          // ring on the board, which is still on screen with the panel closed.
+          {
+            tab: 'token',
+            label: 'token',
+            root: ui.tokentool.root,
+            stop: () => tokenTool?.stop(),
+          },
           { tab: 'walls', label: 'walls', root: ui.walltool.root, stop: () => wallTool?.stop() },
           { tab: 'fog', label: 'fog', root: ui.fogtool.root, stop: () => fogTool?.stop() },
         ]);

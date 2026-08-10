@@ -63,10 +63,13 @@ for local use:
 | `SLATE_STATE`      | `slate-state.json` | Path to the persisted room snapshot         |
 | `SLATE_UPLOADS`    | `uploads`        | Directory for DM-uploaded map images          |
 | `SLATE_MAPS`       | `../maps`        | Map library the DM picks from. Never served directly — a pick is copied into `SLATE_UPLOADS` |
+| `SLATE_PORTRAITS`  | `../portraits`   | Token-art library, the same way. DM-only to list or pick from |
 
-The player roster (currently Grog, Vex, Pike, Nyx, Bram) is a constant in
-[server/src/room.rs](server/src/room.rs), not runtime config — edit it there for a different
-group.
+The player roster (currently Cleodara, Saelyn, Torrin, Captain Bronzebeard, Thornwhistle
+Fernbark and Ignacio) is a constant in [server/src/room.rs](server/src/room.rs), not runtime
+config — edit it there for a different group. Each slot has a short id beside its name; the id
+is what `localStorage` remembers and what a token's owner is written as, so renaming a
+character is a change to the name alone and their tokens follow them.
 
 ## Project layout
 
@@ -76,6 +79,7 @@ server/   axum server: room actor, wire protocol, JSON persistence
 tools/    gen-assets.mjs — placeholder map/token art for local dev
           cdp.mjs, drive-*.mjs — drive the real client in a headless browser
 maps/     the map library — the DM picks from these in-app during play
+portraits/ the token-art library — the same, for faces rather than floors
 ```
 
 ## Testing

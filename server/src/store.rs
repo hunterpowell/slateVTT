@@ -229,11 +229,11 @@ mod tests {
             }),
             tokens: vec![Token {
                 id: TokenId::new("t1"),
-                name: "Grog".to_owned(),
+                name: "Cleodara".to_owned(),
                 x: 3.5,
                 y: 12.5,
-                owner: Owner::Player(PlayerId::new("grog")),
-                img: "/assets/tokens/grog.png".to_owned(),
+                owner: Owner::Player(PlayerId::new("cleodara")),
+                img: "/assets/tokens/cleodara.png".to_owned(),
                 // Odd, so the position above is a cell centre the snapping rule
                 // would actually produce for a token this wide.
                 size: 3.0,
@@ -262,7 +262,7 @@ mod tests {
                 kind: ShapeKind::Circle,
                 from: Origin::Token(TokenId::new("t1")),
                 to: Pos { x: 4.0, y: 0.0 },
-                by: Owner::Player(PlayerId::new("grog")),
+                by: Owner::Player(PlayerId::new("cleodara")),
                 color: "#ff8c42e6".to_owned(),
             }],
             // One of each kind, since the door is the one that carries state
@@ -340,7 +340,7 @@ mod tests {
         let token = loaded.tokens.first().expect("the token");
         // Invariant 1: grid units on the wire, on disk, everywhere but render.
         assert_eq!((token.x, token.y), (3.5, 12.5));
-        assert_eq!(token.owner, Owner::Player(PlayerId::new("grog")));
+        assert_eq!(token.owner, Owner::Player(PlayerId::new("cleodara")));
         assert_eq!(token.size, 3.0);
         // An ambush set up at the end of one evening is still set up at the
         // start of the next, and the DM's running total with it.
@@ -440,7 +440,7 @@ mod tests {
         let file = TempFile::new();
         std::fs::write(
             &file.0,
-            br#"{"map":{"url":"/assets/map.png"},"tokens":[{"id":"t1","name":"Grog","x":3.5,"y":12.5}]}"#,
+            br#"{"map":{"url":"/assets/map.png"},"tokens":[{"id":"t1","name":"Cleodara","x":3.5,"y":12.5}]}"#,
         )
         .expect("write");
 

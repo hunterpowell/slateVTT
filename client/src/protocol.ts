@@ -4,7 +4,7 @@
 // These types are the boundary. Nothing outside net.ts and scene.ts should
 // touch them — the rest of the client works in Scene/Token/Camera.
 
-/** Adjacently tagged on the Rust side: `{"kind":"player","id":"vex"}`. */
+/** Adjacently tagged on the Rust side: `{"kind":"player","id":"saelyn"}`. */
 export type Owner = { kind: 'dm' } | { kind: 'player'; id: string };
 
 export interface WireMapInfo {

@@ -143,12 +143,12 @@ check(
 const player = await open(base, { port: 9334 });
 await player.wait(2000);
 await player.evaluate(`[...document.querySelectorAll('.picker-list button')]
-  .find(b => b.textContent.includes('Vex')).click(); "ok"`);
+  .find(b => b.textContent.includes('Saelyn')).click(); "ok"`);
 await player.wait(2000);
 check(
   'joined as a player',
   await player.evaluate('document.querySelector("#whoami-name").textContent'),
-  'Vex',
+  'Saelyn',
 );
 
 // Not styled away — never built. The rail is the DM's editing surface and a
@@ -156,7 +156,7 @@ check(
 check('no fog panel on a player connection', await player.evaluate('document.querySelector("#fogtool").hidden'), true);
 check('and no rail at all', await player.evaluate('document.querySelectorAll(".rail-tab").length'), 0);
 
-check('their own token arrived', await fetched(player, 'vex.png'), true);
+check('their own token arrived', await fetched(player, 'saelyn.png'), true);
 check('the wraith out in the dark did not', await fetched(player, 'wraith.png'), false);
 
 // --- and the lights coming up ---------------------------------------------
@@ -260,7 +260,7 @@ check('the table is handed the whole dungeon', litUp > 8, true);
 const latecomer = await open(base, { port: 9335 });
 await latecomer.wait(2000);
 await latecomer.evaluate(`[...document.querySelectorAll('.picker-list button')]
-  .find(b => b.textContent.includes('Grog')).click(); "ok"`);
+  .find(b => b.textContent.includes('Cleodara')).click(); "ok"`);
 await latecomer.wait(2500);
 check(
   'a client joining into a forced-lit board is sent the wraith',

@@ -166,6 +166,9 @@ export function paintColor(paint: FogPaint | null): string {
  * traced corner to corner leaves a diagonal a fill would otherwise leak through,
  * and a fill that stops short is a second click, while one that escapes is a
  * repaint.
+ *
+ * The other thing a corner-to-corner wall does is run through cell centres, and
+ * those cells are dead ends here rather than holes — `cutByWall` below.
  */
 export function fillFrom(
   seed: Vec2,
@@ -199,6 +202,9 @@ export function fillFrom(
     for (const cell of queue) {
       found.push(cell.x, cell.y);
       const from = centre(cell.x, cell.y);
+      // A cell a wall runs through belongs to the fill that reached it and to
+      // nothing past it: taken, and never expanded out of. See `cutByWall`.
+      if (cutByWall(blockers, cell, from)) continue;
       for (const [dx, dy] of NEIGHBOURS) {
         const to = { x: cell.x + dx, y: cell.y + dy };
         const id = key(to.x, to.y);
@@ -269,6 +275,38 @@ function index(walls: readonly Wall[], grid: GridSpec): Map<number, Wall[]> {
   return buckets;
 }
 
+/**
+ * Whether a wall runs straight through this cell's centre — which makes it a
+ * dead end for the fill: taken by whichever side reaches it, expanded out of by
+ * neither.
+ *
+ * **This is what a 45-degree wall does, and it is systematic rather than rare.**
+ * Corner-snapped masonry runs *between* cell centres and never through one,
+ * whatever the grid offset. A wall at 45 degrees hits a centre every other cell,
+ * and a chamfered room corner is made of those — so the maps this matters on are
+ * the ones that were traced most carefully.
+ *
+ * Such a cell is genuinely half in and half out, and neither answer is right.
+ * Taking it and stopping is the one that is right *twice*: the room's fill covers
+ * its own corner rather than leaving a ragged square the DM has to notice and
+ * paint, and the fill cannot walk through the wall — which it did until this
+ * existed, wandering out into the void and back in everywhere else, because every
+ * step touching such a cell ties at one end or the other.
+ *
+ * The seed is not special-cased. Clicking exactly on a chamfer fills that one
+ * square, which is a strange thing to ask for and an honest answer to it; letting
+ * a seed expand would put both sides of the wall in one fill.
+ */
+function cutByWall(buckets: Map<number, Wall[]>, cell: Vec2, centre: Vec2): boolean {
+  for (const wall of buckets.get(key(cell.x, cell.y)) ?? []) {
+    // On the wall's line, and between its ends rather than past them.
+    if (side(wall.from, wall.to, centre) === 0 && within(wall.from, wall.to, centre)) {
+      return true;
+    }
+  }
+  return false;
+}
+
 /** Whether anything stands between two neighbouring cell centres. */
 function blocked(
   buckets: Map<number, Wall[]>,
@@ -294,42 +332,33 @@ function blocked(
  * Written the same way anyway, so a fill stops where the DM's intuition from
  * watching the fog says it should.
  *
- * **The one place it deliberately disagrees is a tie at the step's own ends**, and
- * that is the second thing 16b got wrong. The raycast is permissive there so a
- * creature standing on a wall is not blinded by it, and this copied the rule
- * without the creature. It has none: a step is not a viewer, and a cell whose
- * centre sits exactly on a wall let the fill walk in from one side and straight
- * out of the other, because *every* step touching that cell ties. One such cell
- * is a hole in the wall, and a hole is the whole map.
+ * **A tie at either end of the step is contact rather than a crossing**, which is
+ * the raycast's rule kept deliberately. A step that ends on a wall is a step into
+ * a cell the wall runs through, and `cutByWall` has already decided what happens
+ * there — the fill takes that cell and stops inside it. Answering "blocked" here
+ * as well would make the same cell unreachable from both sides instead, which is
+ * the ragged chamfer nobody asked for.
  *
- * Corner-snapped masonry cannot produce one — a wall on the corner lattice runs
- * between cell centres, never through them. **A wall at 45 degrees runs through
- * them every other cell**, which is what a chamfered room corner is made of, so
- * this is systematic on exactly the maps that look most carefully traced.
- *
- * A cell the wall passes through is genuinely half in and half out, and no single
- * answer for it is right — so it is neither side's, and the fill leaves it alone.
- * That costs a ragged cell at each chamfer, which is a click of the paint brush;
- * the other answer costs the dungeon.
+ * Until `cutByWall` existed this was the leak: a tie let the fill in from one side
+ * and straight out of the other, so a single cell on a 45-degree wall was a hole
+ * in it, and a hole is the whole map.
  */
 function crosses(p: Vec2, q: Vec2, a: Vec2, b: Vec2): boolean {
-  const side = (u: Vec2, v: Vec2, w: Vec2): number =>
-    (v.x - u.x) * (w.y - u.y) - (v.y - u.y) * (w.x - u.x);
-
   const d1 = side(a, b, p);
   const d2 = side(a, b, q);
-  // `within` because the tie can be anywhere on the wall's infinite line, and a
-  // cell centre level with a wall thirty feet away is not touching it.
-  if (d1 === 0 || d2 === 0) {
-    return (d1 === 0 && within(a, b, p)) || (d2 === 0 && within(a, b, q));
-  }
-  if (d1 > 0 === d2 > 0) return false;
+  if (d1 === 0 || d2 === 0 || d1 > 0 === d2 > 0) return false;
 
   const d3 = side(p, q, a);
   const d4 = side(p, q, b);
   if (d3 === 0) return within(p, q, a);
   if (d4 === 0) return within(p, q, b);
   return d3 > 0 !== d4 > 0;
+}
+
+/** Which side of the line `u`→`v` the point `w` falls on: the sign is the side,
+ *  and zero is exactly on it. */
+function side(u: Vec2, v: Vec2, w: Vec2): number {
+  return (v.x - u.x) * (w.y - u.y) - (v.y - u.y) * (w.x - u.x);
 }
 
 /** Whether `c`, already known to be on the line through `p` and `q`, is between

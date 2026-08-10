@@ -1,6 +1,6 @@
 # Slate
 
-A minimal virtual tabletop for a private, remote D&D game. Five players plus a DM.
+A minimal virtual tabletop for a private, remote D&D game. Six players plus a DM.
 It replaces Foundry for one specific group that only needs a shared map, tokens, and turn order.
 
 This file is the contract: what Slate is, what it must never become, and the rules that hold
@@ -205,14 +205,16 @@ token's `owner`, which is how a player is handed a token the DM built for them. 
 where a token lands — a player may move their own token and may not plan for it, because the
 plan is a cell on a map they have not been shown.
 
-The DM uploads all token art. The upload endpoint authenticates with the DM secret, and a
-player has no credential to offer it — giving them one would be the authentication this
-project does not build.
+The DM uploads all token art, and picks it out of `portraits/`. Both endpoints authenticate with
+the DM secret, and a player has no credential to offer either — giving them one would be the
+authentication this project does not build.
 
 Identity: the DM joins with a secret in the URL. Players join with a plain room link and
 claim a name from a roster the DM defined. `player_id` persists in `localStorage` so a
-refresh does not orphan a token. This is a private game among friends — do not build
-real authentication.
+refresh does not orphan a token. **A roster slot's id is a slug, not its name** — the id is what
+`localStorage` and a token's `owner` are written as, so renaming a character touches the name
+alone and every token they own still points at them. This is a private game among friends — do not
+build real authentication.
 
 ## Wire protocol
 
@@ -296,8 +298,15 @@ for a promote, before the sweep. It is what separates "it just vanished" from "y
 and getting it from `Token::unseen` instead sends the table a `TokenRemoved` naming an id they have
 never held, which announces that the id exists.
 
-→ **`docs/tokens.md`** before touching `tokens.ts`, `panel.ts`, `snap_to_cell`, `Token`/`TokenView`,
-or any `message_for` arm.
+Art is optional — a token without it draws as a named disc. The DM uploads it, or picks it out of
+`portraits/`, which is `maps/` one folder over: a pick copies into the uploads directory, so `img`
+holds the same kind of URL either way and nothing downstream can tell them apart. One
+implementation serves both libraries — `Library` on the server, `library.ts` on the client — and
+the only rule the second one added is that a copy's name is derived from a **prefixed** key, or the
+same filename in both folders lands on one file.
+
+→ **`docs/tokens.md`** before touching `tokens.ts`, `panel.ts`, `library.ts`, `snap_to_cell`,
+`Token`/`TokenView`, or any `message_for` arm.
 
 ## Drawings and distance
 
@@ -434,14 +443,16 @@ and a recalibration must sweep away none of them.
 The DM picks maps out of the repository's `maps/` folder rather than re-uploading; **a pick is a
 copy into the uploads directory, not a second way to serve files.** Listing and picking are
 DM-only. This is the only place a client-supplied path reaches the filesystem — canonicalise it
-and confirm it resolves inside the maps directory before opening it.
+and confirm it resolves inside the library before opening it. **`portraits/` is the same feature
+over token art** and shares every line of it; the folder, the size cap and the noun in the
+refusals are the whole of what a library differs by.
 
 **Preview is client-only: the server does not know the DM is previewing and must not learn.**
 That is why intent rides on the command — `SetMap`, `MoveToken` and `CreateToken` each carry
 `staged` — rather than on a mode. Everything that draws or hit-tests reads `shownBoard(scene)`,
 never the live board directly.
 
-→ **`docs/maps.md`** before touching `maptool.ts`, `calibrate.ts`, `library.rs`, or
+→ **`docs/maps.md`** before touching `maptool.ts`, `calibrate.ts`, `library.rs`, `library.ts`, or
 `SetMap`/`MapInfo` on the server.
 
 ## Working agreement

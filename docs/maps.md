@@ -3,8 +3,8 @@
 The two map slots, the map library, and the DM's preview mode.
 
 `.claude/CLAUDE.md` is loaded into every session; this file is not. **Read it before touching
-`maptool.ts`, `calibrate.ts`, `library.rs`, or `SetMap` / `MapInfo` on the server** — the
-loading-versus-recalibrating rule below is depended on by three separate features and is the arm
+`maptool.ts`, `calibrate.ts`, `library.rs`, `library.ts`, or `SetMap` / `MapInfo` on the server** —
+the loading-versus-recalibrating rule below is depended on by three separate features and is the arm
 that gets missed.
 
 ## Maps and the map library
@@ -51,6 +51,14 @@ same reason walls will.
 
 An uploaded map gets a fresh UUID each time and so will not match an earlier calibration — that
 asymmetry is deliberate, and content-hashing uploads to close it is not worth the change.
+
+**There are two libraries now, and one implementation of them.** `portraits/` is the same feature
+over token art — see *The portrait library* in `docs/tokens.md`. The folder, the size cap and the
+noun in the refusals are all a library differs by, so they ride on `Library` in `main.rs` and on
+two arguments to `createLibraryList` in `library.ts`; `library.rs` itself never learns there is
+more than one. The only rule the second library added is that a copy's name is derived from a
+**prefixed** key, or the same filename in both folders resolves to one file — and maps keep the
+empty prefix, because the calibration table above is keyed on the URL their names produce.
 
 ## Staged maps
 

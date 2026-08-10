@@ -4,9 +4,9 @@ The token struct, where a token settles, its two DM-only field pairs, and how on
 leaves the room in several different shapes.
 
 `.claude/CLAUDE.md` is loaded into every session; this file is not. **Read it before touching
-`tokens.ts`, `panel.ts`, `snap_to_cell`, `Token` / `TokenView`, or any `message_for` arm** — the
-per-recipient filtering below is where a leak would come from, and the arms that drop a message
-entirely are the ones that get missed.
+`tokens.ts`, `panel.ts`, `library.ts`, `snap_to_cell`, `Token` / `TokenView`, or any `message_for`
+arm** — the per-recipient filtering below is where a leak would come from, and the arms that drop a
+message entirely are the ones that get missed.
 
 ## Tokens
 
@@ -43,6 +43,28 @@ that vanishes the evening that server is down, and the one thing in a save the u
 would not back. Uploading it shares the map upload's handler, since proving some bytes are an image
 and giving them a name of ours is the same operation either way; the two routes differ only in the
 size they cap at.
+
+### The portrait library
+
+`portraits/` is to token art what `maps/` is to maps, and deliberately not a second mechanism: the
+DM lists what is there and picks one by path, the pick **copies into the uploads directory**, and
+what lands on the token is the same kind of URL an upload gives back. Everything downstream —
+`img`, the save file, what a player is sent — cannot tell the two apart, which is the point. The
+directory is `SLATE_PORTRAITS`, defaulting to `../portraits`. The reasoning for all of it is in
+*Maps and the map library* in `docs/maps.md`; this is that feature one folder over, and both sides
+of it are shared code rather than a copy — `Library` in `main.rs`, `library.ts` on the client.
+
+**The one thing the second library added is a prefix.** Copy names are derived from the source
+path, so `cave.png` in `maps/` and `cave.png` in `portraits/` would otherwise resolve to one file:
+the second pick finds the first already written, skips the write, and hands back a map as somebody's
+portrait. `Library::prefix` is what separates them, and **maps keep the empty prefix** — the
+remembered calibration table is keyed on the URL those names produce, so giving maps a prefix would
+silently orphan every map the DM has ever calibrated.
+
+Why it exists: the party's six portraits are the same six files every session, and the tokens they
+go on are rebuilt whenever a map changes. Uploading the same face by hand each time is the work a
+folder can do instead. Listing and picking are DM-only, like every route under `/api` — a player has
+no credential to offer, and would only be reading off the DM's cast list for next week.
 
 ## Hidden tokens and hit points
 

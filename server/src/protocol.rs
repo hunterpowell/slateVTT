@@ -12,8 +12,8 @@ use crate::fog::{Cell, FogView, Override, OverrideView};
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct ClientId(pub u64);
 
-/// A roster slot. This *is* the player's identity: claiming "Vex" means your
-/// `player_id` is literally `vex`, so a refresh reclaims the same slot and no
+/// A roster slot. This *is* the player's identity: claiming "Saelyn" means your
+/// `player_id` is literally `saelyn`, so a refresh reclaims the same slot and no
 /// token is ever orphaned. There is no separate claim table.
 #[derive(Debug, Clone, Default, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 pub struct PlayerId(pub String);
@@ -39,7 +39,7 @@ impl PlayerId {
     }
 }
 
-/// Adjacently tagged: `{"kind":"dm"}` / `{"kind":"player","id":"vex"}`.
+/// Adjacently tagged: `{"kind":"dm"}` / `{"kind":"player","id":"saelyn"}`.
 /// Internal tagging cannot express a newtype variant wrapping a string, and
 /// serde's default external tagging would produce two different JSON shapes.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -550,7 +550,7 @@ pub struct RosterEntry {
 }
 
 /// A roster slot as offered to someone choosing an identity. `claimed` is
-/// advisory — it stops two people picking Vex by accident, it does not stop
+/// advisory — it stops two people picking Saelyn by accident, it does not stop
 /// anyone deliberately (a player on both a laptop and a phone is legitimate).
 #[derive(Debug, Clone, Serialize)]
 pub struct RosterSlot {

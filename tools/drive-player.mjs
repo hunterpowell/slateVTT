@@ -22,10 +22,10 @@ await wait(2000);
 
 check('the picker is offered', await evaluate('!document.querySelector("#picker").hidden'), true);
 await evaluate(`[...document.querySelectorAll('.picker-list button')]
-  .find(b => b.textContent.includes('Vex')).click(); "ok"`);
+  .find(b => b.textContent.includes('Saelyn')).click(); "ok"`);
 await wait(1500);
 
-check('joined as a player', await evaluate('document.querySelector("#whoami-name").textContent'), 'Vex');
+check('joined as a player', await evaluate('document.querySelector("#whoami-name").textContent'), 'Saelyn');
 
 // The DM's panels are not built on this connection at all — they are not
 // styled away, they were never created.

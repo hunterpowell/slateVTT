@@ -164,32 +164,39 @@ the DM holds in their head is *a fill is bounded by everything I traced*, and th
 plus the corridor past its open door is two clicks — the conservative side again, and the same
 argument four-neighbour already made.
 
-### A tie is contact, and contact separates
+### A cell a wall runs through is a dead end
 
 The second thing 16b got wrong, and the one that actually escaped. `crosses` was copied from the
-raycast including its permissive ties, and the raycast is permissive at the ray's ends *for a
-creature* — a viewer standing on a wall is not blinded by it. **A step is not a viewer.** With the
-rule copied over, a cell whose centre sat exactly on a wall let the fill walk in from one side and
-straight out of the other, because every step touching that cell ties at one end or the other. One
-such cell is a hole, and by now this file has said three times what a hole is worth.
+raycast including its permissive ties, which is right for a *creature* — a viewer standing on a wall
+is not blinded by it — and says nothing useful about a step. A cell whose centre sat exactly on a wall
+let the fill walk in from one side and straight out of the other, because every step touching that
+cell ties at one end or the other. One such cell is a hole, and by now this file has said three times
+what a hole is worth.
 
 It is not a rare tie. Corner-snapped masonry cannot produce one — a wall on the corner lattice runs
 *between* cell centres and never through them, whatever the grid offset. **A wall at 45 degrees runs
-through a cell centre every other cell**, and a chamfered room corner is made of exactly those. So
-the leak fired on the carefully traced maps and not on the boxy ones: the dungeon this was found on
-had four such cells, and a fill from the middle of the party took 308 of the board's 368 squares,
-including the void outside the building.
+through a cell centre every other cell**, and a chamfered room corner is made of exactly those. So the
+leak fired on the carefully traced maps and not on the boxy ones: the dungeon it was found on has four
+such cells, and a fill from the middle of the party took 308 of the board's 368 squares, including the
+void outside the building.
 
-A cell a wall passes through is genuinely half in and half out, and there is no right single answer
-for it. So it is neither side's: ties block, the cell joins no region, and a chamfer costs one ragged
-square that the paint brush fixes in a click. `within` is still asked, because a tie can be anywhere
-on the wall's infinite line and a cell centre level with a wall thirty feet away is not touching it.
+Such a cell is genuinely half in and half out, and there is no right single answer for it. **So it is
+taken by whichever fill reaches it, and expanded out of by none** — `cutByWall`, checked once per cell
+as it comes off the queue rather than folded into `crosses`, which stays permissive. That is the
+answer that is right twice: a room's fill covers its own chamfered corner, so the DM gets no ragged
+square to notice and paint over; and the fill cannot get through the wall, because the way out is what
+was taken away. Both sides may claim the same cell, which is the honest reading of a square the wall
+cuts in half. On the dungeon above, the party's fill goes from 308 squares to 101 and reaches the
+image border nowhere.
 
-**`fog.rs` still has the permissive rule and keeps it** — a creature in a doorway is a real case there
-and there are tests named after it. The two are allowed to disagree; that is the paragraph above this
-one. What is worth knowing is that the same lattice fact reaches sight from the other side: a token
-standing on a 45-degree wall sees through it, because that is the tie at `p` working as designed on a
-case it was not designed for.
+The seed is not special-cased: clicking exactly on a chamfer fills that one square. Strange to ask
+for, and letting it expand would put both sides of the wall into one fill.
+
+**`fog.rs` keeps the permissive tie and needs no equivalent** — a creature in a doorway is a real case
+there, with tests named after it, and sight has no notion of walking through a cell to reach the next
+one. The two are allowed to disagree; that is the paragraph above this one. What is worth knowing is
+that the same lattice fact reaches sight from the other side: a token standing on a 45-degree wall
+sees through it, because that is the tie at `p` working as designed on a case it was not designed for.
 
 ## Raycasting, not shadowcasting
 

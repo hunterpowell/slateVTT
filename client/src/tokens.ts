@@ -22,6 +22,7 @@
 // server re-checks every command regardless.
 
 import type { Vec2 } from './coords.js';
+import { createLibraryList, urlFrom } from './library.js';
 import type { ClientMsg, Hp, Owner, RosterEntry } from './protocol.js';
 import type { Scene, Token } from './scene.js';
 import { shownPos } from './scene.js';
@@ -39,6 +40,8 @@ export interface TokenToolUi {
   artText: HTMLElement;
   artPreview: HTMLElement;
   artClear: HTMLButtonElement;
+  library: HTMLButtonElement;
+  libraryList: HTMLElement;
   save: HTMLButtonElement;
   remove: HTMLButtonElement;
   fresh: HTMLButtonElement;
@@ -52,6 +55,14 @@ export interface TokenTool {
   select(id: string | null): void;
   /** Called on Welcome and after every token delta. */
   update(scene: Scene): void;
+  /**
+   * Puts the panel down, called by the rail as it closes this tab.
+   *
+   * Only the portrait list, and only so the tab reopens on the panel rather
+   * than mid-browse — unlike the map and wall panels this one arms nothing on
+   * the canvas, and the selection it holds is a ring the DM can still see.
+   */
+  stop(): void;
 }
 
 /** The DM option in the owner dropdown. A player id is never empty. */
@@ -259,6 +270,23 @@ export function createTokenTool(
     showArt();
   });
 
+  /**
+   * Both ways of getting a portrait end here, because from this side they are
+   * the same thing: some bytes are now served at `url`. Picking one out of
+   * `portraits/` is a copy into the uploads directory, so what lands on the
+   * token is the same kind of URL an upload produces — the map panel's rule,
+   * one folder over.
+   *
+   * Committed on the spot for a token that already exists, rather than waiting
+   * for save: choosing a face for the creature on screen is almost never
+   * something the DM then wants to press a second button for.
+   */
+  const useArt = (url: string): void => {
+    art = url;
+    showArt();
+    if (selected() !== null) save();
+  };
+
   ui.art.addEventListener('change', () => {
     const file = ui.art.files?.[0];
     // Cleared so that picking the same file twice still fires a change event.
@@ -275,14 +303,7 @@ export function createTokenTool(
         headers: { 'x-slate-dm-secret': dmSecret },
         body: file,
       });
-      const body = await response.text();
-      if (!response.ok) throw new Error(body || `upload failed (${response.status})`);
-
-      art = (JSON.parse(body) as { url: string }).url;
-      showArt();
-      // Uploading art for a token that already exists is almost always meant to
-      // be that token's art now, rather than something to press save for.
-      if (selected() !== null) save();
+      useArt(await urlFrom(response, 'upload failed'));
     } catch (err) {
       report(err instanceof Error ? err.message : 'could not upload that image');
     } finally {
@@ -291,12 +312,26 @@ export function createTokenTool(
     }
   }
 
+  // The party's portraits are the same six files every session, so uploading
+  // them once per token is work the folder can do instead.
+  const library = createLibraryList(
+    { root: ui.root, button: ui.library, list: ui.libraryList },
+    dmSecret,
+    'portraits',
+    useArt,
+    report,
+  );
+
   return {
     get selectedId() {
       return selectedId;
     },
 
     select,
+
+    stop() {
+      library.close();
+    },
 
     update(next) {
       scene = next;

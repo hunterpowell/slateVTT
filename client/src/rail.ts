@@ -43,11 +43,12 @@ export interface RailPanel {
   /**
    * Put down whatever this panel armed, called as it closes.
    *
-   * Load-bearing rather than tidy. The wall editor and the calibration box both
-   * take the left mouse button, and a tool still holding it with its panel out
-   * of sight is a click that does something the DM cannot see the reason for.
-   * The token panel has nothing to put down — a selection is a ring on the
-   * board, which is still on screen — so it passes nothing.
+   * Load-bearing rather than tidy where a panel arms the canvas. The wall editor
+   * and the calibration box both take the left mouse button, and a tool still
+   * holding it with its panel out of sight is a click that does something the DM
+   * cannot see the reason for. The token panel arms nothing and closes only its
+   * portrait list, so the tab reopens on the panel rather than mid-browse — and
+   * it keeps its selection, which is a ring on the board and still on screen.
    */
   stop?: () => void;
 }

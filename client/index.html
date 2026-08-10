@@ -610,7 +610,10 @@
         font-size: 12px;
       }
 
-      #map-library.is-active {
+      /* Both panels' disclosure buttons. The list styles above are shared with
+         them, which is why they are on `.map-library` rather than an id. */
+      #map-library.is-active,
+      #token-library.is-active {
         border-color: #4a525e;
         color: #e8e6e1;
       }
@@ -1267,6 +1270,11 @@
             <span id="token-art-text">upload art…</span>
           </label>
         </div>
+        <!-- The same widget the map panel uses, one folder over: `portraits/`
+             rather than `maps/`. A pick copies into the uploads directory, so
+             what lands on the token is the same kind of URL an upload gives. -->
+        <button id="token-library" class="map-button" type="button">choose from library…</button>
+        <div id="token-library-list" class="map-library" hidden></div>
         <button id="token-art-clear" class="map-subtle" type="button" hidden>remove art</button>
         <div class="token-actions">
           <button id="token-save" class="map-button map-primary" type="button">create</button>

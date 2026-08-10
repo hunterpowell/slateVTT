@@ -101,13 +101,20 @@ const MAX_WALL_POINTS: usize = 256;
 /// smaller region rather than wondering what went wrong.
 const MAX_OVERRIDE_CELLS: usize = 50_000;
 
-/// Five players plus the DM, per the brief. The DM holds no slot.
-const ROSTER: [(&str, &str); 5] = [
-    ("grog", "Grog"),
-    ("vex", "Vex"),
-    ("pike", "Pike"),
-    ("nyx", "Nyx"),
-    ("bram", "Bram"),
+/// The table, plus the DM, who holds no slot.
+///
+/// The id is a short slug rather than the name, because it is what
+/// `localStorage` remembers and what a token's `owner` is written as — a name
+/// with a space and a title in it makes both harder to read for no gain. The
+/// two are independent: renaming a character is an edit here to the right-hand
+/// column alone, and every token they own still points at them.
+const ROSTER: [(&str, &str); 6] = [
+    ("cleodara", "Cleodara"),
+    ("saelyn", "Saelyn"),
+    ("torrin", "Torrin"),
+    ("bronzebeard", "Captain Bronzebeard"),
+    ("fernbark", "Thornwhistle Fernbark"),
+    ("ignacio", "Ignacio"),
 ];
 
 pub enum RoomCmd {
@@ -911,20 +918,37 @@ impl RoomState {
     /// The room a first boot starts from, with no save on disk yet. Milestone 6
     /// replaces the map from the browser.
     fn hardcoded(dm_secret: String) -> Self {
-        let specs: [(&str, &str, f32, f32, Owner); 7] = [
-            ("t1", "Grog", 3.5, 3.5, Owner::Player(PlayerId::new("grog"))),
-            ("t2", "Vex", 4.5, 2.5, Owner::Player(PlayerId::new("vex"))),
+        // The art is named separately rather than derived from the name: a
+        // character called "Captain Bronzebeard" is a file called
+        // `bronzebeard.png`, and these are stand-ins anyway — the real portraits
+        // are picked out of the library onto whichever tokens end up being used.
+        let party = |id: &'static str| Owner::Player(PlayerId::new(id));
+        let specs: [(&str, &str, &str, f32, f32, Owner); 8] = [
+            ("t1", "Cleodara", "cleodara", 3.5, 3.5, party("cleodara")),
+            ("t2", "Saelyn", "saelyn", 4.5, 2.5, party("saelyn")),
+            ("t3", "Torrin", "torrin", 13.5, 2.5, party("torrin")),
             (
-                "t3",
-                "Pike",
-                13.5,
-                2.5,
-                Owner::Player(PlayerId::new("pike")),
+                "t4",
+                "Captain Bronzebeard",
+                "bronzebeard",
+                12.5,
+                3.5,
+                party("bronzebeard"),
             ),
-            ("t4", "Nyx", 12.5, 3.5, Owner::Player(PlayerId::new("nyx"))),
-            ("t5", "Bram", 5.5, 4.5, Owner::Player(PlayerId::new("bram"))),
-            ("t6", "Ogre", 14.5, 9.5, Owner::Dm),
-            ("t7", "Wraith", 21.5, 4.5, Owner::Dm),
+            (
+                "t5",
+                "Thornwhistle Fernbark",
+                "fernbark",
+                5.5,
+                4.5,
+                party("fernbark"),
+            ),
+            // Not t6: the two monsters below were here first and the tests name
+            // them by id, so the newest slot goes on the end rather than
+            // renumbering the board out from under them.
+            ("t8", "Ignacio", "ignacio", 6.5, 3.5, party("ignacio")),
+            ("t6", "Ogre", "ogre", 14.5, 9.5, Owner::Dm),
+            ("t7", "Wraith", "wraith", 21.5, 4.5, Owner::Dm),
         ];
 
         Self {
@@ -938,7 +962,7 @@ impl RoomState {
             initiative: Initiative::default(),
             tokens: specs
                 .into_iter()
-                .map(|(id, name, x, y, owner)| {
+                .map(|(id, name, art, x, y, owner)| {
                     let id = TokenId::new(id);
                     let token = Token {
                         id: id.clone(),
@@ -946,7 +970,7 @@ impl RoomState {
                         x,
                         y,
                         owner,
-                        img: format!("/assets/tokens/{}.png", name.to_lowercase()),
+                        img: format!("/assets/tokens/{art}.png"),
                         // The DM resizes anything that should be bigger. A
                         // first-boot room is a starting point, not a scene.
                         ..Token::default()
@@ -1418,9 +1442,7 @@ impl RoomState {
     /// is the only thing the server could mean by it — and, like `staged` being
     /// `None`, indistinguishable from the client side from a map that has none.
     fn fog_for(&self) -> Option<FogView> {
-        self.map
-            .fog
-            .then(|| fog::pack(&self.known, &self.visible))
+        self.map.fog.then(|| fog::pack(&self.known, &self.visible))
     }
 
     /// Whether a connected client is the DM. `message_for` holds `&self` and a
@@ -2931,7 +2953,7 @@ mod tests {
         );
 
         match rx.try_recv().expect("a reply") {
-            ServerMsg::ChooseIdentity { roster } => assert_eq!(roster.len(), 5),
+            ServerMsg::ChooseIdentity { roster } => assert_eq!(roster.len(), ROSTER.len()),
             other => panic!("expected ChooseIdentity, got {other:?}"),
         }
         assert!(
@@ -3015,13 +3037,13 @@ mod tests {
         let mut state = room();
         // A refresh is a new connection claiming the same slot; ownership is by
         // slot, so nothing is orphaned.
-        let _first = join_as_player(&mut state, ClientId(1), "vex");
+        let _first = join_as_player(&mut state, ClientId(1), "saelyn");
         state.clients.remove(&ClientId(1)); // the old socket closes
-        let _second = join_as_player(&mut state, ClientId(2), "vex");
+        let _second = join_as_player(&mut state, ClientId(2), "saelyn");
 
         let client = state.clients.get(&ClientId(2)).expect("rejoined");
-        let vex_token = state.tokens.get(&TokenId::new("t2")).expect("t2");
-        assert!(can_move(client, vex_token));
+        let saelyn_token = state.tokens.get(&TokenId::new("t2")).expect("t2");
+        assert!(can_move(client, saelyn_token));
     }
 
     // --- permissions --------------------------------------------------------
@@ -3029,11 +3051,17 @@ mod tests {
     #[test]
     fn a_player_may_move_only_their_own_token() {
         let mut state = room();
-        let _rx = join_as_player(&mut state, ClientId(1), "vex");
+        let _rx = join_as_player(&mut state, ClientId(1), "saelyn");
         let client = state.clients.get(&ClientId(1)).expect("joined");
 
-        let own = state.tokens.get(&TokenId::new("t2")).expect("Vex's token");
-        let other_player = state.tokens.get(&TokenId::new("t1")).expect("Grog's token");
+        let own = state
+            .tokens
+            .get(&TokenId::new("t2"))
+            .expect("Saelyn's token");
+        let other_player = state
+            .tokens
+            .get(&TokenId::new("t1"))
+            .expect("Cleodara's token");
         let monster = state
             .tokens
             .get(&TokenId::new("t6"))
@@ -3058,7 +3086,7 @@ mod tests {
     #[test]
     fn moving_someone_elses_token_is_refused_by_name() {
         let mut state = room();
-        let _rx = join_as_player(&mut state, ClientId(1), "vex");
+        let _rx = join_as_player(&mut state, ClientId(1), "saelyn");
 
         let err = state
             .check(
@@ -3072,7 +3100,10 @@ mod tests {
                 },
             )
             .expect_err("should be refused");
-        assert!(err.contains("Grog"), "error should name the token: {err}");
+        assert!(
+            err.contains("Cleodara"),
+            "error should name the token: {err}"
+        );
     }
 
     #[test]
@@ -3099,8 +3130,8 @@ mod tests {
     #[test]
     fn a_refused_move_changes_nothing_and_tells_nobody() {
         let mut state = room();
-        let _vex = join_as_player(&mut state, ClientId(1), "vex");
-        let mut grog = join_as_player(&mut state, ClientId(2), "grog");
+        let _saelyn = join_as_player(&mut state, ClientId(1), "saelyn");
+        let mut cleodara = join_as_player(&mut state, ClientId(2), "cleodara");
 
         let before = state.tokens.get(&TokenId::new("t1")).expect("t1").x;
         state.handle(
@@ -3115,13 +3146,16 @@ mod tests {
         );
 
         assert_eq!(state.tokens.get(&TokenId::new("t1")).expect("t1").x, before);
-        assert!(grog.try_recv().is_err(), "a refusal must not be broadcast");
+        assert!(
+            cleodara.try_recv().is_err(),
+            "a refusal must not be broadcast"
+        );
     }
 
     #[test]
     fn identity_cannot_be_changed_after_joining() {
         let mut state = room();
-        let mut rx = join_as_player(&mut state, ClientId(1), "vex");
+        let mut rx = join_as_player(&mut state, ClientId(1), "saelyn");
 
         state.handle(
             ClientId(1),
@@ -3133,7 +3167,7 @@ mod tests {
 
         assert!(matches!(rx.try_recv(), Ok(ServerMsg::Error { .. })));
         let client = state.clients.get(&ClientId(1)).expect("still joined");
-        assert_eq!(client.identity, Identity::Player(PlayerId::new("vex")));
+        assert_eq!(client.identity, Identity::Player(PlayerId::new("saelyn")));
     }
 
     // --- movement (unchanged from milestone 2) ------------------------------
@@ -3504,16 +3538,16 @@ mod tests {
     #[test]
     fn handing_a_token_to_a_player_lets_them_move_it_and_taking_it_back_does_not() {
         // The wild shape story end to end: the DM builds a big cat, gives it to
-        // Vex, and takes it back when the spell ends.
+        // Saelyn, and takes it back when the spell ends.
         let mut state = room();
         let _dm = join_as_dm(&mut state, ClientId(1));
-        let _vex = join_as_player(&mut state, ClientId(2), "vex");
+        let _saelyn = join_as_player(&mut state, ClientId(2), "saelyn");
 
         state.handle(ClientId(1), create("Dire Wolf", 2.0, Owner::Dm));
         let wolf = made(&state, "Dire Wolf");
 
-        let vex = state.clients.get(&ClientId(2)).expect("joined");
-        assert!(!can_move(vex, &wolf), "it starts as the DM's");
+        let saelyn = state.clients.get(&ClientId(2)).expect("joined");
+        assert!(!can_move(saelyn, &wolf), "it starts as the DM's");
 
         let hand_to = |owner: Owner| ClientMsg::UpdateToken {
             id: wolf.id.clone(),
@@ -3525,19 +3559,19 @@ mod tests {
             hp: None,
         };
 
-        state.handle(ClientId(1), hand_to(Owner::Player(PlayerId::new("vex"))));
-        let vex = state.clients.get(&ClientId(2)).expect("joined");
-        assert!(can_move(vex, &made(&state, "Dire Wolf")));
+        state.handle(ClientId(1), hand_to(Owner::Player(PlayerId::new("saelyn"))));
+        let saelyn = state.clients.get(&ClientId(2)).expect("joined");
+        assert!(can_move(saelyn, &made(&state, "Dire Wolf")));
 
         state.handle(ClientId(1), hand_to(Owner::Dm));
-        let vex = state.clients.get(&ClientId(2)).expect("joined");
-        assert!(!can_move(vex, &made(&state, "Dire Wolf")));
+        let saelyn = state.clients.get(&ClientId(2)).expect("joined");
+        assert!(!can_move(saelyn, &made(&state, "Dire Wolf")));
     }
 
     #[test]
     fn a_player_cannot_touch_the_lifecycle_at_all() {
         let mut state = room();
-        let _vex = join_as_player(&mut state, ClientId(1), "vex");
+        let _saelyn = join_as_player(&mut state, ClientId(1), "saelyn");
         let _dm = join_as_dm(&mut state, ClientId(2));
 
         // Including their own token: reassigning `owner` is how a token is given
@@ -3547,10 +3581,10 @@ mod tests {
                 create("Goblin", 1.0, Owner::Dm),
                 ClientMsg::UpdateToken {
                     id: TokenId::new("t2"),
-                    name: "Vex".to_owned(),
+                    name: "Saelyn".to_owned(),
                     img: String::new(),
                     size: 4.0,
-                    owner: Owner::Player(PlayerId::new("vex")),
+                    owner: Owner::Player(PlayerId::new("saelyn")),
                     hidden: false,
                     hp: None,
                 },
@@ -3577,7 +3611,7 @@ mod tests {
     #[test]
     fn a_players_refused_edit_changes_nothing() {
         let mut state = room();
-        let _vex = join_as_player(&mut state, ClientId(1), "vex");
+        let _saelyn = join_as_player(&mut state, ClientId(1), "saelyn");
 
         state.handle(
             ClientId(1),
@@ -3586,7 +3620,7 @@ mod tests {
                 name: "Mine Now".to_owned(),
                 img: String::new(),
                 size: 4.0,
-                owner: Owner::Player(PlayerId::new("vex")),
+                owner: Owner::Player(PlayerId::new("saelyn")),
                 hidden: false,
                 hp: None,
             },
@@ -3808,11 +3842,11 @@ mod tests {
         // the id — so this echo is how the DM's panel learns what it just built.
         let mut state = room();
         let mut dm = join_as_dm(&mut state, ClientId(1));
-        let mut vex = join_as_player(&mut state, ClientId(2), "vex");
+        let mut saelyn = join_as_player(&mut state, ClientId(2), "saelyn");
 
         state.handle(ClientId(1), create("Goblin", 1.0, Owner::Dm));
 
-        for (who, rx) in [("the DM", &mut dm), ("a player", &mut vex)] {
+        for (who, rx) in [("the DM", &mut dm), ("a player", &mut saelyn)] {
             match rx.try_recv() {
                 Ok(ServerMsg::TokenChanged { token }) => assert_eq!(token.name, "Goblin"),
                 other => panic!("{who} should have been told: {other:?}"),
@@ -3824,7 +3858,7 @@ mod tests {
     fn a_deleted_token_reaches_everyone() {
         let mut state = room();
         let mut dm = join_as_dm(&mut state, ClientId(1));
-        let mut vex = join_as_player(&mut state, ClientId(2), "vex");
+        let mut saelyn = join_as_player(&mut state, ClientId(2), "saelyn");
 
         state.handle(
             ClientId(1),
@@ -3833,7 +3867,7 @@ mod tests {
             },
         );
 
-        for (who, rx) in [("the DM", &mut dm), ("a player", &mut vex)] {
+        for (who, rx) in [("the DM", &mut dm), ("a player", &mut saelyn)] {
             match rx.try_recv() {
                 Ok(ServerMsg::TokenRemoved { id }) => assert_eq!(id, TokenId::new("t6")),
                 other => panic!("{who} should have been told: {other:?}"),
@@ -3885,7 +3919,7 @@ mod tests {
         let _dm = join_as_dm(&mut state, ClientId(1));
         state.handle(ClientId(1), create_hidden("Ambusher"));
 
-        let theirs = state.snapshot_for(&as_player("vex"));
+        let theirs = state.snapshot_for(&as_player("saelyn"));
         let ours = state.snapshot_for(&Identity::Dm);
 
         assert!(!names(&theirs).contains(&"Ambusher"));
@@ -3934,7 +3968,8 @@ mod tests {
             },
         );
 
-        let json = serde_json::to_string(&state.snapshot_for(&as_player("vex"))).expect("encodes");
+        let json =
+            serde_json::to_string(&state.snapshot_for(&as_player("saelyn"))).expect("encodes");
         assert!(!json.contains("Ambusher"), "the name reached the table");
         assert!(!json.contains("4242"), "the hit points reached the table");
     }
@@ -3945,11 +3980,11 @@ mod tests {
         // `ServerMsg` exists for.
         let mut state = room();
         let mut dm = join_as_dm(&mut state, ClientId(1));
-        let mut vex = join_as_player(&mut state, ClientId(2), "vex");
+        let mut saelyn = join_as_player(&mut state, ClientId(2), "saelyn");
 
         state.handle(ClientId(1), set_hidden(&token(&state, "t6"), true));
 
-        match drain(&mut vex).as_slice() {
+        match drain(&mut saelyn).as_slice() {
             [ServerMsg::TokenRemoved { id }] => assert_eq!(id, &TokenId::new("t6")),
             other => panic!("the table should have been told it is gone: {other:?}"),
         }
@@ -3969,7 +4004,7 @@ mod tests {
         let _dm = join_as_dm(&mut state, ClientId(1));
         state.handle(ClientId(1), set_hidden(&token(&state, "t6"), true));
 
-        let mut vex = join_as_player(&mut state, ClientId(2), "vex");
+        let mut saelyn = join_as_player(&mut state, ClientId(2), "saelyn");
         let ogre = token(&state, "t6");
         state.handle(
             ClientId(1),
@@ -3996,7 +4031,7 @@ mod tests {
         );
 
         assert!(
-            drain(&mut vex).is_empty(),
+            drain(&mut saelyn).is_empty(),
             "a token they were never told about has no news"
         );
     }
@@ -4005,11 +4040,11 @@ mod tests {
     fn a_token_created_hidden_is_never_announced() {
         let mut state = room();
         let _dm = join_as_dm(&mut state, ClientId(1));
-        let mut vex = join_as_player(&mut state, ClientId(2), "vex");
+        let mut saelyn = join_as_player(&mut state, ClientId(2), "saelyn");
 
         state.handle(ClientId(1), create_hidden("Ambusher"));
 
-        assert!(drain(&mut vex).is_empty());
+        assert!(drain(&mut saelyn).is_empty());
         assert!(made(&state, "Ambusher").hidden);
     }
 
@@ -4020,11 +4055,11 @@ mod tests {
         let mut state = room();
         let _dm = join_as_dm(&mut state, ClientId(1));
         state.handle(ClientId(1), create_hidden("Ambusher"));
-        let mut vex = join_as_player(&mut state, ClientId(2), "vex");
+        let mut saelyn = join_as_player(&mut state, ClientId(2), "saelyn");
 
         state.handle(ClientId(1), set_hidden(&made(&state, "Ambusher"), false));
 
-        match drain(&mut vex).as_slice() {
+        match drain(&mut saelyn).as_slice() {
             [ServerMsg::TokenChanged { token }] => assert_eq!(token.name, "Ambusher"),
             other => panic!("the table should meet it now: {other:?}"),
         }
@@ -4037,7 +4072,7 @@ mod tests {
         let mut state = room();
         let mut dm = join_as_dm(&mut state, ClientId(1));
         state.handle(ClientId(1), set_hidden(&token(&state, "t6"), true));
-        let mut vex = join_as_player(&mut state, ClientId(2), "vex");
+        let mut saelyn = join_as_player(&mut state, ClientId(2), "saelyn");
 
         for dragging in [true, false] {
             state.handle(
@@ -4052,7 +4087,7 @@ mod tests {
             );
         }
 
-        assert!(drain(&mut vex).is_empty(), "the table watched it move");
+        assert!(drain(&mut saelyn).is_empty(), "the table watched it move");
         assert!(
             drain(&mut dm)
                 .iter()
@@ -4066,7 +4101,7 @@ mod tests {
         let mut state = room();
         let _dm = join_as_dm(&mut state, ClientId(1));
         state.handle(ClientId(1), set_hidden(&token(&state, "t6"), true));
-        let mut vex = join_as_player(&mut state, ClientId(2), "vex");
+        let mut saelyn = join_as_player(&mut state, ClientId(2), "saelyn");
 
         state.handle(
             ClientId(1),
@@ -4076,7 +4111,7 @@ mod tests {
         );
 
         assert!(!state.tokens.contains_key(&TokenId::new("t6")));
-        assert!(drain(&mut vex).is_empty());
+        assert!(drain(&mut saelyn).is_empty());
     }
 
     #[test]
@@ -4085,7 +4120,7 @@ mod tests {
         // one the table can see, and one field of it is not theirs.
         let mut state = room();
         let mut dm = join_as_dm(&mut state, ClientId(1));
-        let mut vex = join_as_player(&mut state, ClientId(2), "vex");
+        let mut saelyn = join_as_player(&mut state, ClientId(2), "saelyn");
 
         let ogre = token(&state, "t6");
         state.handle(
@@ -4127,7 +4162,7 @@ mod tests {
             })
         );
         assert_eq!(
-            hp_of(&drain(&mut vex)),
+            hp_of(&drain(&mut saelyn)),
             None,
             "hit points are the DM's note"
         );
@@ -4141,7 +4176,7 @@ mod tests {
                 .hp
         };
         assert!(ogre_in(&state.snapshot_for(&Identity::Dm)).is_some());
-        assert_eq!(ogre_in(&state.snapshot_for(&as_player("vex"))), None);
+        assert_eq!(ogre_in(&state.snapshot_for(&as_player("saelyn"))), None);
     }
 
     #[test]
@@ -4273,11 +4308,11 @@ mod tests {
                 value: 15,
             },
         );
-        let mut vex = join_as_player(&mut state, ClientId(2), "vex");
+        let mut saelyn = join_as_player(&mut state, ClientId(2), "saelyn");
 
         state.handle(ClientId(1), set_hidden(&token(&state, "t6"), true));
 
-        match drain(&mut vex).as_slice() {
+        match drain(&mut saelyn).as_slice() {
             [
                 ServerMsg::TokenRemoved { .. },
                 ServerMsg::InitiativeChanged { initiative },
@@ -4517,7 +4552,7 @@ mod tests {
     #[test]
     fn only_the_dm_may_touch_initiative() {
         let mut state = room();
-        let _player = join_as_player(&mut state, ClientId(1), "vex");
+        let _player = join_as_player(&mut state, ClientId(1), "saelyn");
         let _dm = join_as_dm(&mut state, ClientId(2));
 
         let commands = || {
@@ -4563,7 +4598,7 @@ mod tests {
     #[test]
     fn a_players_refused_initiative_edit_changes_nothing() {
         let mut state = room();
-        let _player = join_as_player(&mut state, ClientId(1), "vex");
+        let _player = join_as_player(&mut state, ClientId(1), "saelyn");
         state.handle(
             ClientId(1),
             ClientMsg::SetInitiative {
@@ -4579,7 +4614,7 @@ mod tests {
     #[test]
     fn occupied_slots_are_reported_as_claimed() {
         let mut state = room();
-        let _vex = join_as_player(&mut state, ClientId(1), "vex");
+        let _saelyn = join_as_player(&mut state, ClientId(1), "saelyn");
 
         let slots = state.roster_slots();
         let claimed: Vec<_> = slots
@@ -4587,10 +4622,10 @@ mod tests {
             .filter(|s| s.claimed)
             .map(|s| s.id.0.as_str())
             .collect();
-        assert_eq!(claimed, ["vex"]);
+        assert_eq!(claimed, ["saelyn"]);
         assert_eq!(
             slots.len(),
-            5,
+            ROSTER.len(),
             "every slot is still offered — claiming is advisory"
         );
     }
@@ -4598,7 +4633,7 @@ mod tests {
     #[test]
     fn a_slot_frees_up_when_its_client_disconnects() {
         let mut state = room();
-        let _vex = join_as_player(&mut state, ClientId(1), "vex");
+        let _saelyn = join_as_player(&mut state, ClientId(1), "saelyn");
         state.clients.remove(&ClientId(1));
 
         assert!(state.roster_slots().iter().all(|s| !s.claimed));
@@ -4624,12 +4659,12 @@ mod tests {
         );
         watcher.try_recv().expect("the initial roster");
 
-        let _vex = join_as_player(&mut state, ClientId(2), "vex");
+        let _saelyn = join_as_player(&mut state, ClientId(2), "saelyn");
 
         match watcher.try_recv().expect("an updated roster") {
             ServerMsg::ChooseIdentity { roster } => {
-                let vex = roster.iter().find(|s| s.id.0 == "vex").expect("vex");
-                assert!(vex.claimed, "the open picker should have been refreshed");
+                let saelyn = roster.iter().find(|s| s.id.0 == "saelyn").expect("saelyn");
+                assert!(saelyn.claimed, "the open picker should have been refreshed");
             }
             other => panic!("expected ChooseIdentity, got {other:?}"),
         }
@@ -4741,7 +4776,7 @@ mod tests {
     #[test]
     fn only_the_dm_may_change_the_map() {
         let mut state = room();
-        let _player = join_as_player(&mut state, ClientId(1), "vex");
+        let _player = join_as_player(&mut state, ClientId(1), "saelyn");
         let _dm = join_as_dm(&mut state, ClientId(2));
 
         assert!(
@@ -4990,7 +5025,7 @@ mod tests {
         let _dm = join_as_dm(&mut state, ClientId(1));
         stage(&mut state, ClientId(1), "/uploads/next.png");
 
-        let view = state.snapshot_for(&Identity::Player(PlayerId::new("vex")));
+        let view = state.snapshot_for(&Identity::Player(PlayerId::new("saelyn")));
         assert!(view.staged.is_none());
 
         let json = serde_json::to_string(&view).expect("serialises");
@@ -5018,7 +5053,7 @@ mod tests {
         let dm = ClientId(1);
         let player = ClientId(2);
         let mut dm_rx = join_as_dm(&mut state, dm);
-        let mut player_rx = join_as_player(&mut state, player, "vex");
+        let mut player_rx = join_as_player(&mut state, player, "saelyn");
 
         stage(&mut state, dm, "/uploads/next.png");
 
@@ -5050,7 +5085,7 @@ mod tests {
     #[test]
     fn a_player_cannot_stage_promote_or_discard() {
         let mut state = room();
-        let _player = join_as_player(&mut state, ClientId(1), "vex");
+        let _player = join_as_player(&mut state, ClientId(1), "saelyn");
         let _dm = join_as_dm(&mut state, ClientId(2));
         stage(&mut state, ClientId(2), "/uploads/next.png");
 
@@ -5086,7 +5121,7 @@ mod tests {
         let dm = ClientId(1);
         let player = ClientId(2);
         let mut dm_rx = join_as_dm(&mut state, dm);
-        let mut player_rx = join_as_player(&mut state, player, "vex");
+        let mut player_rx = join_as_player(&mut state, player, "saelyn");
         stage(&mut state, dm, "/uploads/next.png");
         let _staged_echo = dm_rx.try_recv().expect("the staging echo");
 
@@ -5258,7 +5293,7 @@ mod tests {
         let dm = ClientId(1);
         let player = ClientId(2);
         let _dm_rx = join_as_dm(&mut state, dm);
-        let _player_rx = join_as_player(&mut state, player, "vex");
+        let _player_rx = join_as_player(&mut state, player, "saelyn");
 
         assert!(state.message_for(dm, dm, &Event::StagedChanged).is_some());
         assert!(
@@ -5369,13 +5404,13 @@ mod tests {
         // players have not been shown, so the frame carrying it does not exist
         // for them — it is not sent and left undrawn.
         let (mut state, _dm_rx) = staged_room(ClientId(1));
-        let mut vex = join_as_player(&mut state, ClientId(2), "vex");
-        let id = token(&state, "t2").id; // Vex's own token
+        let mut saelyn = join_as_player(&mut state, ClientId(2), "saelyn");
+        let id = token(&state, "t2").id; // Saelyn's own token
 
         state.handle(ClientId(1), drop_at(&id, 15.0, 15.0, true));
 
         assert!(
-            drain(&mut vex).is_empty(),
+            drain(&mut saelyn).is_empty(),
             "a plan for a player's own token is still not theirs to know"
         );
     }
@@ -5408,7 +5443,7 @@ mod tests {
     fn only_the_dm_may_plan_a_move() {
         // A player may move their own token; the plan for it is not theirs.
         let (mut state, _dm_rx) = staged_room(ClientId(1));
-        let _vex = join_as_player(&mut state, ClientId(2), "vex");
+        let _saelyn = join_as_player(&mut state, ClientId(2), "saelyn");
         let id = token(&state, "t2").id;
 
         assert!(
@@ -5429,11 +5464,11 @@ mod tests {
         // creature was never on the board rather than taken off it, and every
         // door out of the room has to be shut just the same.
         let (mut state, _dm_rx) = staged_room(ClientId(1));
-        let mut vex = join_as_player(&mut state, ClientId(2), "vex");
+        let mut saelyn = join_as_player(&mut state, ClientId(2), "saelyn");
         state.handle(ClientId(1), create_staged("Ambusher"));
         let id = made(&state, "Ambusher").id;
 
-        let view = state.snapshot_for(&as_player("vex"));
+        let view = state.snapshot_for(&as_player("saelyn"));
         assert!(!names(&view).contains(&"Ambusher"));
         let json = serde_json::to_string(&view).expect("serialises");
         assert!(!json.contains("Ambusher"), "leaked into a snapshot: {json}");
@@ -5442,7 +5477,7 @@ mod tests {
         state.handle(ClientId(1), drop_at(&id, 9.0, 9.0, true));
         state.handle(ClientId(1), drop_at(&id, 9.0, 9.0, false));
         assert!(
-            drain(&mut vex).is_empty(),
+            drain(&mut saelyn).is_empty(),
             "the table heard about it anyway"
         );
     }
@@ -5567,9 +5602,9 @@ mod tests {
 
         state.handle(ClientId(1), ClientMsg::PromoteStaged);
 
-        let grog = token(&state, "t1");
-        assert_eq!((grog.x, grog.y), (20.5, 1.5), "the plan came true");
-        assert_eq!(grog.staged_pos, None, "and stopped being a plan");
+        let cleodara = token(&state, "t1");
+        assert_eq!((cleodara.x, cleodara.y), (20.5, 1.5), "the plan came true");
+        assert_eq!(cleodara.staged_pos, None, "and stopped being a plan");
 
         let ambusher = made(&state, "Ambusher");
         assert!(!ambusher.staged_only, "it exists on the board now");
@@ -5586,14 +5621,14 @@ mod tests {
     #[test]
     fn a_promote_says_three_different_things_to_three_recipients() {
         let (mut state, mut dm_rx) = staged_room(ClientId(1));
-        let mut vex = join_as_player(&mut state, ClientId(2), "vex");
+        let mut saelyn = join_as_player(&mut state, ClientId(2), "saelyn");
 
         let moving = token(&state, "t1").id; // seen all along, and planned
         state.handle(ClientId(1), drop_at(&moving, 20.5, 1.5, true));
         state.handle(ClientId(1), create_staged("Ambusher")); // never seen
         let ambusher = made(&state, "Ambusher").id;
         drain(&mut dm_rx);
-        drain(&mut vex);
+        drain(&mut saelyn);
 
         state.handle(ClientId(1), ClientMsg::PromoteStaged);
 
@@ -5611,28 +5646,28 @@ mod tests {
             );
         }
 
-        let to_vex = drain(&mut vex);
+        let to_saelyn = drain(&mut saelyn);
         // A creation for the one they are meeting for the first time…
         assert!(
-            to_vex.iter().any(|msg| matches!(
+            to_saelyn.iter().any(|msg| matches!(
                 msg,
                 ServerMsg::TokenChanged { token } if token.id == ambusher
             )),
-            "the ambusher should arrive as a creation: {to_vex:?}"
+            "the ambusher should arrive as a creation: {to_saelyn:?}"
         );
         // …and a plain move for the one they have been watching all along.
         assert!(
-            to_vex.iter().any(|msg| matches!(
+            to_saelyn.iter().any(|msg| matches!(
                 msg,
                 ServerMsg::TokenMoved { id, x, y, .. } if id == &moving && (*x, *y) == (20.5, 1.5)
             )),
-            "the planned token should arrive as a move: {to_vex:?}"
+            "the planned token should arrive as a move: {to_saelyn:?}"
         );
         assert!(
-            !to_vex
+            !to_saelyn
                 .iter()
                 .any(|msg| matches!(msg, ServerMsg::TokenChanged { token } if token.id == moving)),
-            "and not also as an edit: {to_vex:?}"
+            "and not also as an edit: {to_saelyn:?}"
         );
     }
 
@@ -5641,21 +5676,21 @@ mod tests {
         // A promote settles `staged_only`. It says nothing about a monster the
         // DM also took off the board, and the table must not meet it early.
         let (mut state, _dm_rx) = staged_room(ClientId(1));
-        let mut vex = join_as_player(&mut state, ClientId(2), "vex");
+        let mut saelyn = join_as_player(&mut state, ClientId(2), "saelyn");
         state.handle(
             ClientId(1),
             with(create_staged("Ambusher"), |hidden, _| *hidden = true),
         );
-        drain(&mut vex);
+        drain(&mut saelyn);
 
         state.handle(ClientId(1), ClientMsg::PromoteStaged);
 
-        let to_vex = drain(&mut vex);
+        let to_saelyn = drain(&mut saelyn);
         assert!(
-            to_vex
+            to_saelyn
                 .iter()
                 .all(|msg| matches!(msg, ServerMsg::MapChanged { .. })),
-            "only the map should have reached the table: {to_vex:?}"
+            "only the map should have reached the table: {to_saelyn:?}"
         );
         assert!(made(&state, "Ambusher").hidden, "and it is still hidden");
     }
@@ -5688,16 +5723,16 @@ mod tests {
         // so the only thing a frame could carry them is the news that the DM
         // just threw a plan away — which is news, and invariant 4's concern.
         let (mut state, _dm_rx) = staged_room(ClientId(1));
-        let mut vex = join_as_player(&mut state, ClientId(2), "vex");
+        let mut saelyn = join_as_player(&mut state, ClientId(2), "saelyn");
         let planned = token(&state, "t1").id;
         state.handle(ClientId(1), drop_at(&planned, 20.5, 1.5, true));
         state.handle(ClientId(1), create_staged("Ambusher"));
-        drain(&mut vex);
+        drain(&mut saelyn);
 
         state.handle(ClientId(1), ClientMsg::ClearStaged);
 
         assert!(
-            drain(&mut vex).is_empty(),
+            drain(&mut saelyn).is_empty(),
             "nothing about this was the table's to hear"
         );
     }
@@ -6061,13 +6096,13 @@ mod tests {
         // The first thing a player may add to the room. No `require_dm` on the
         // way in, unlike every other command that creates something.
         let mut state = room();
-        let _vex = join_as_player(&mut state, ClientId(2), "vex");
+        let _saelyn = join_as_player(&mut state, ClientId(2), "saelyn");
 
         assert!(state.handle(ClientId(2), circle_at(3.0, 4.0)));
 
         let shape = only_shape(&state);
         assert!(!shape.id.0.is_empty(), "the server invents the id");
-        assert_eq!(shape.by, Owner::Player(PlayerId::new("vex")));
+        assert_eq!(shape.by, Owner::Player(PlayerId::new("saelyn")));
         assert_eq!(shape.kind, ShapeKind::Circle);
         assert_eq!(shape.anchor(), None);
     }
@@ -6076,8 +6111,8 @@ mod tests {
     fn a_player_may_erase_their_own_drawing_and_not_someone_elses() {
         let mut state = room();
         let _dm = join_as_dm(&mut state, ClientId(1));
-        let _vex = join_as_player(&mut state, ClientId(2), "vex");
-        let _grog = join_as_player(&mut state, ClientId(3), "grog");
+        let _saelyn = join_as_player(&mut state, ClientId(2), "saelyn");
+        let _cleodara = join_as_player(&mut state, ClientId(3), "cleodara");
 
         state.handle(ClientId(2), circle_at(3.0, 4.0));
         let id = only_shape(&state).id;
@@ -6085,7 +6120,7 @@ mod tests {
         assert_eq!(
             state.check(ClientId(3), &ClientMsg::RemoveShape { id: id.clone() }),
             Err("that is not yours to erase".to_owned()),
-            "grog did not draw it"
+            "cleodara did not draw it"
         );
         // The DM may erase anything, and so may whoever drew it.
         assert!(
@@ -6106,7 +6141,7 @@ mod tests {
     #[test]
     fn only_the_dm_may_sweep_the_board() {
         let mut state = room();
-        let _vex = join_as_player(&mut state, ClientId(2), "vex");
+        let _saelyn = join_as_player(&mut state, ClientId(2), "saelyn");
         state.handle(ClientId(2), circle_at(3.0, 4.0));
 
         assert_eq!(
@@ -6135,12 +6170,13 @@ mod tests {
             ),
         );
 
-        assert_eq!(shapes_seen(&state, &as_player("vex")), Vec::new());
+        assert_eq!(shapes_seen(&state, &as_player("saelyn")), Vec::new());
         assert_eq!(shapes_seen(&state, &Identity::Dm).len(), 1);
 
         // And not merely absent from the list — the id must not be in the bytes
         // at all, which is how invariant 4 has to be checked.
-        let json = serde_json::to_string(&state.snapshot_for(&as_player("vex"))).expect("encodes");
+        let json =
+            serde_json::to_string(&state.snapshot_for(&as_player("saelyn"))).expect("encodes");
         assert!(!json.contains(&ambusher.0));
     }
 
@@ -6148,7 +6184,7 @@ mod tests {
     fn revealing_a_monster_brings_what_is_drawn_on_it_along() {
         let mut state = room();
         let _dm = join_as_dm(&mut state, ClientId(1));
-        let mut vex = join_as_player(&mut state, ClientId(2), "vex");
+        let mut saelyn = join_as_player(&mut state, ClientId(2), "saelyn");
         state.handle(ClientId(1), create_hidden("Ambusher"));
         let monster = made(&state, "Ambusher");
 
@@ -6160,11 +6196,11 @@ mod tests {
                 (2.0, 0.0),
             ),
         );
-        drain(&mut vex);
+        drain(&mut saelyn);
 
         state.handle(ClientId(1), set_hidden(&monster, false));
 
-        let frames = drain(&mut vex);
+        let frames = drain(&mut saelyn);
         let shapes = frames.iter().find_map(|f| match f {
             ServerMsg::ShapesChanged { shapes } => Some(shapes),
             _ => None,
@@ -6178,7 +6214,7 @@ mod tests {
         // And hiding it again takes it back off their board.
         let monster = made(&state, "Ambusher");
         state.handle(ClientId(1), set_hidden(&monster, true));
-        assert_eq!(shapes_seen(&state, &as_player("vex")), Vec::new());
+        assert_eq!(shapes_seen(&state, &as_player("saelyn")), Vec::new());
     }
 
     #[test]
@@ -6188,15 +6224,15 @@ mod tests {
         // that the DM hid something, which is the thing being withheld.
         let mut state = room();
         let _dm = join_as_dm(&mut state, ClientId(1));
-        let mut vex = join_as_player(&mut state, ClientId(2), "vex");
+        let mut saelyn = join_as_player(&mut state, ClientId(2), "saelyn");
         state.handle(ClientId(1), circle_at(3.0, 4.0));
         let ogre = token(&state, "t6");
-        drain(&mut vex);
+        drain(&mut saelyn);
 
         state.handle(ClientId(1), set_hidden(&ogre, true));
 
         assert!(
-            !drain(&mut vex)
+            !drain(&mut saelyn)
                 .iter()
                 .any(|f| matches!(f, ServerMsg::ShapesChanged { .. })),
             "nothing was anchored to the ogre"
@@ -6210,7 +6246,7 @@ mod tests {
         // space, and the refusals map out the DM's monsters.
         let mut state = room();
         let _dm = join_as_dm(&mut state, ClientId(1));
-        let _vex = join_as_player(&mut state, ClientId(2), "vex");
+        let _saelyn = join_as_player(&mut state, ClientId(2), "saelyn");
         state.handle(ClientId(1), create_hidden("Ambusher"));
         let hidden = made(&state, "Ambusher").id;
 
@@ -6247,7 +6283,7 @@ mod tests {
     fn a_player_cannot_erase_a_drawing_they_are_not_sent() {
         let mut state = room();
         let _dm = join_as_dm(&mut state, ClientId(1));
-        let _vex = join_as_player(&mut state, ClientId(2), "vex");
+        let _saelyn = join_as_player(&mut state, ClientId(2), "saelyn");
         state.handle(ClientId(1), create_hidden("Ambusher"));
         let monster = made(&state, "Ambusher").id;
         state.handle(
@@ -6322,9 +6358,9 @@ mod tests {
     fn a_sketch_reaches_everyone_but_the_client_sweeping_it() {
         let mut state = room();
         let mut dm = join_as_dm(&mut state, ClientId(1));
-        let mut vex = join_as_player(&mut state, ClientId(2), "vex");
+        let mut saelyn = join_as_player(&mut state, ClientId(2), "saelyn");
         drain(&mut dm);
-        drain(&mut vex);
+        drain(&mut saelyn);
 
         state.handle(ClientId(2), sketch((1.0, 1.0), true));
 
@@ -6333,7 +6369,7 @@ mod tests {
             [ServerMsg::Sketch { by, .. }] if *by == ClientId(2)
         ));
         assert!(
-            drain(&mut vex).is_empty(),
+            drain(&mut saelyn).is_empty(),
             "the sweeper draws it from their own pointer"
         );
 
@@ -6349,7 +6385,7 @@ mod tests {
         // The whole of what makes a measuring line free: it is not in the room,
         // so there is nothing to filter, nothing to snapshot, nothing to write.
         let mut state = room();
-        let _vex = join_as_player(&mut state, ClientId(2), "vex");
+        let _saelyn = join_as_player(&mut state, ClientId(2), "saelyn");
 
         assert!(!state.handle(ClientId(2), sketch((1.0, 1.0), true)));
         assert!(!state.handle(ClientId(2), sketch((2.0, 2.0), false)));
@@ -6361,7 +6397,7 @@ mod tests {
     fn a_client_that_vanishes_mid_sweep_does_not_strand_its_line() {
         let mut state = room();
         let mut dm = join_as_dm(&mut state, ClientId(1));
-        let _vex = join_as_player(&mut state, ClientId(2), "vex");
+        let _saelyn = join_as_player(&mut state, ClientId(2), "saelyn");
         state.handle(ClientId(2), sketch((1.0, 1.0), true));
         drain(&mut dm);
 
@@ -6381,7 +6417,7 @@ mod tests {
         // one is a frozen browser on five other machines, and the sketch reaches
         // them before anybody has decided to keep it.
         let mut state = room();
-        let _vex = join_as_player(&mut state, ClientId(2), "vex");
+        let _saelyn = join_as_player(&mut state, ClientId(2), "saelyn");
 
         let huge = ClientMsg::Sketch {
             kind: ShapeKind::Circle,
@@ -6405,7 +6441,7 @@ mod tests {
     #[test]
     fn a_drawing_needs_a_colour_the_client_could_actually_use() {
         let mut state = room();
-        let _vex = join_as_player(&mut state, ClientId(2), "vex");
+        let _saelyn = join_as_player(&mut state, ClientId(2), "saelyn");
 
         for bad in ["", "red", "#ff8c42", "#ff8c42e6ff"] {
             let msg = ClientMsg::AddShape {
@@ -6425,7 +6461,7 @@ mod tests {
     #[test]
     fn a_board_cannot_be_filled_with_drawings_without_limit() {
         let mut state = room();
-        let _vex = join_as_player(&mut state, ClientId(2), "vex");
+        let _saelyn = join_as_player(&mut state, ClientId(2), "saelyn");
 
         // `apply` rather than `handle`, like the token cap above and for the
         // same reason: the rule under test is in `check`, and running sixty-four
@@ -6530,7 +6566,7 @@ mod tests {
         // per-item permission underneath — the walls are all the DM's.
         let mut state = room();
         let _dm = join_as_dm(&mut state, ClientId(1));
-        let _vex = join_as_player(&mut state, ClientId(2), "vex");
+        let _saelyn = join_as_player(&mut state, ClientId(2), "saelyn");
         state.handle(ClientId(1), trace(&[(0.0, 0.0), (64.0, 0.0)], true));
         let door = state.walls.first().expect("the door").id.clone();
 
@@ -6556,20 +6592,20 @@ mod tests {
         let mut state = room();
         let dm_client = ClientId(1);
         let _dm = join_as_dm(&mut state, dm_client);
-        let mut vex = join_as_player(&mut state, ClientId(2), "vex");
-        drain(&mut vex);
+        let mut saelyn = join_as_player(&mut state, ClientId(2), "saelyn");
+        drain(&mut saelyn);
 
         state.handle(dm_client, a_corner());
 
         let dm_view = state.snapshot_for(&Identity::Dm);
-        let player_view = state.snapshot_for(&Identity::Player(PlayerId::new("vex")));
+        let player_view = state.snapshot_for(&Identity::Player(PlayerId::new("saelyn")));
         assert_eq!(dm_view.walls.len(), 2);
         assert!(
             player_view.walls.is_empty(),
             "empty is both 'nothing traced' and 'not the DM'"
         );
         assert!(
-            vex.try_recv().is_err(),
+            saelyn.try_recv().is_err(),
             "not even an empty walls_changed: the frame itself is news"
         );
         assert!(
@@ -6945,7 +6981,7 @@ mod tests {
     #[test]
     fn a_drag_frame_is_not_worth_saving_but_the_drop_is() {
         let mut state = room();
-        let _vex = join_as_player(&mut state, ClientId(1), "vex");
+        let _saelyn = join_as_player(&mut state, ClientId(1), "saelyn");
 
         let at = |dragging| ClientMsg::MoveToken {
             id: TokenId::new("t2"),
@@ -6995,7 +7031,7 @@ mod tests {
     #[test]
     fn a_refused_command_is_not_worth_saving() {
         let mut state = room();
-        let _vex = join_as_player(&mut state, ClientId(1), "vex");
+        let _saelyn = join_as_player(&mut state, ClientId(1), "saelyn");
 
         let steal = ClientMsg::MoveToken {
             id: TokenId::new("t1"),
@@ -7018,7 +7054,7 @@ mod tests {
 
         let hello = ClientMsg::Hello {
             dm_secret: None,
-            player_id: Some(PlayerId::new("vex")),
+            player_id: Some(PlayerId::new("saelyn")),
         };
         assert!(!state.handle(ClientId(1), hello));
         assert!(
@@ -7079,7 +7115,7 @@ mod tests {
         );
         assert_eq!(
             restored.roster.len(),
-            5,
+            ROSTER.len(),
             "the roster comes from the build, not the file"
         );
     }
@@ -7089,16 +7125,22 @@ mod tests {
         // The point of persisting `owner`: a player who reconnects after a
         // restart gets their token back and no one else's.
         let mut state = RoomState::restored(room().to_saved(), SECRET.to_owned());
-        let _vex = join_as_player(&mut state, ClientId(1), "vex");
+        let _saelyn = join_as_player(&mut state, ClientId(1), "saelyn");
         let client = state.clients.get(&ClientId(1)).expect("joined");
 
         assert!(can_move(
             client,
-            state.tokens.get(&TokenId::new("t2")).expect("Vex's token")
+            state
+                .tokens
+                .get(&TokenId::new("t2"))
+                .expect("Saelyn's token")
         ));
         assert!(!can_move(
             client,
-            state.tokens.get(&TokenId::new("t1")).expect("Grog's token")
+            state
+                .tokens
+                .get(&TokenId::new("t1"))
+                .expect("Cleodara's token")
         ));
         assert!(!can_move(
             client,
@@ -7155,7 +7197,7 @@ mod tests {
         state.initiative = Initiative::default();
 
         for (id, name, x, owner) in [
-            ("p", "Vex", 1.5, Owner::Player(PlayerId::new("vex"))),
+            ("p", "Saelyn", 1.5, Owner::Player(PlayerId::new("saelyn"))),
             ("m", "Ogre", 5.5, Owner::Dm),
         ] {
             state.tokens.insert(
@@ -7191,7 +7233,7 @@ mod tests {
     }
 
     fn sees_the_ogre(state: &RoomState) -> bool {
-        names(&state.snapshot_for(&as_player("vex"))).contains(&"Ogre")
+        names(&state.snapshot_for(&as_player("saelyn"))).contains(&"Ogre")
     }
 
     /// Walks the viewer along row 1 and settles it there, as a drop would.
@@ -7215,10 +7257,10 @@ mod tests {
         // show", indistinguishable from the client side — the trick `staged`
         // plays, and the reason turning fog off needs no second field.
         let state = room();
-        assert_eq!(state.snapshot_for(&as_player("vex")).fog, None);
+        assert_eq!(state.snapshot_for(&as_player("saelyn")).fog, None);
         assert_eq!(state.snapshot_for(&Identity::Dm).fog, None);
         assert!(
-            names(&state.snapshot_for(&as_player("vex"))).contains(&"Ogre"),
+            names(&state.snapshot_for(&as_player("saelyn"))).contains(&"Ogre"),
             "with the lights on the table sees everything"
         );
     }
@@ -7262,7 +7304,7 @@ mod tests {
         let mut state = fog_room(60.0);
         let _dm = join_as_dm(&mut state, ClientId(1));
         state.handle(ClientId(1), between(false));
-        let mut rx = join_as_player(&mut state, ClientId(2), "vex");
+        let mut rx = join_as_player(&mut state, ClientId(2), "saelyn");
 
         assert!(!sees_the_ogre(&state));
         drain(&mut rx);
@@ -7308,7 +7350,7 @@ mod tests {
                 staged: false,
             },
         );
-        let mut rx = join_as_player(&mut state, ClientId(2), "vex");
+        let mut rx = join_as_player(&mut state, ClientId(2), "saelyn");
         assert!(sees_the_ogre(&state));
         drain(&mut rx);
 
@@ -7367,7 +7409,7 @@ mod tests {
         // needs it to see what the table can see.
         let mut state = fog_room(60.0);
         let mut dm = join_as_dm(&mut state, ClientId(1));
-        let mut player = join_as_player(&mut state, ClientId(2), "vex");
+        let mut player = join_as_player(&mut state, ClientId(2), "saelyn");
         drain(&mut dm);
         drain(&mut player);
 
@@ -7539,7 +7581,7 @@ mod tests {
         // held — which announces that the id exists.
         let mut state = fog_room(10.0);
         let _dm = join_as_dm(&mut state, ClientId(1));
-        let mut rx = join_as_player(&mut state, ClientId(2), "vex");
+        let mut rx = join_as_player(&mut state, ClientId(2), "saelyn");
         assert!(!sees_the_ogre(&state));
         drain(&mut rx);
 
@@ -7563,7 +7605,7 @@ mod tests {
         let _dm = join_as_dm(&mut state, ClientId(1));
 
         let mut handed = token(&state, "m");
-        handed.owner = Owner::Player(PlayerId::new("grog"));
+        handed.owner = Owner::Player(PlayerId::new("cleodara"));
         state.handle(ClientId(1), edit(&handed));
 
         assert!(
@@ -7803,7 +7845,7 @@ mod tests {
         state.handle(ClientId(1), paint(&[(1, 1)], Some(Override::Dark)));
 
         assert!(
-            names(&state.snapshot_for(&as_player("vex"))).contains(&"Vex"),
+            names(&state.snapshot_for(&as_player("saelyn"))).contains(&"Saelyn"),
             "the party is still standing where they are standing"
         );
         assert!(
@@ -7861,7 +7903,7 @@ mod tests {
         let mut state = fog_room(10.0);
         let _dm = join_as_dm(&mut state, ClientId(1));
         walk(&mut state, 5.5);
-        let mut rx = join_as_player(&mut state, ClientId(2), "vex");
+        let mut rx = join_as_player(&mut state, ClientId(2), "saelyn");
         drain(&mut rx);
 
         state.handle(ClientId(1), ClientMsg::ResetFog);
@@ -7882,11 +7924,11 @@ mod tests {
         // `FogChanged` beside it.
         let mut state = fog_room(60.0);
         let _dm = join_as_dm(&mut state, ClientId(1));
-        let mut rx = join_as_player(&mut state, ClientId(2), "vex");
+        let mut rx = join_as_player(&mut state, ClientId(2), "saelyn");
         state.handle(ClientId(1), paint(&[OGRE_CELL], Some(Override::Dark)));
 
         assert_eq!(
-            state.snapshot_for(&as_player("vex")).overrides,
+            state.snapshot_for(&as_player("saelyn")).overrides,
             OverrideView::default(),
             "empty is both 'nothing painted' and 'you are not the DM'"
         );
@@ -7917,7 +7959,7 @@ mod tests {
         // and a frame saying so would say *when* the DM was working.
         let mut state = fog_room(10.0);
         let _dm = join_as_dm(&mut state, ClientId(1));
-        let mut rx = join_as_player(&mut state, ClientId(2), "vex");
+        let mut rx = join_as_player(&mut state, ClientId(2), "saelyn");
         drain(&mut rx);
 
         state.handle(ClientId(1), paint(&[(30, 30)], Some(Override::Dark)));
@@ -7929,7 +7971,7 @@ mod tests {
     #[test]
     fn only_the_dm_may_override_the_fog() {
         let mut state = fog_room(60.0);
-        let _vex = join_as_player(&mut state, ClientId(2), "vex");
+        let _saelyn = join_as_player(&mut state, ClientId(2), "saelyn");
 
         for msg in [
             paint(&[OGRE_CELL], Some(Override::Lit)),
@@ -8036,7 +8078,7 @@ mod tests {
 
         state.handle(ClientId(1), circle_at(20.5, 20.5));
 
-        assert_eq!(shapes_seen(&state, &as_player("vex")).len(), 0);
+        assert_eq!(shapes_seen(&state, &as_player("saelyn")).len(), 0);
         assert_eq!(
             shapes_seen(&state, &Identity::Dm).len(),
             1,
@@ -8053,11 +8095,11 @@ mod tests {
         // every drawing on the board flicker as the party moved.
         let mut state = fog_room(20.0);
         let _dm = join_as_dm(&mut state, ClientId(1));
-        let _vex = join_as_player(&mut state, ClientId(2), "vex");
+        let _saelyn = join_as_player(&mut state, ClientId(2), "saelyn");
 
         // Drawn on ground they are standing next to, then walked away from.
         state.handle(ClientId(2), circle_at(1.5, 1.5));
-        assert_eq!(shapes_seen(&state, &as_player("vex")).len(), 1);
+        assert_eq!(shapes_seen(&state, &as_player("saelyn")).len(), 1);
 
         walk(&mut state, 20.5);
         assert!(
@@ -8065,7 +8107,7 @@ mod tests {
             "out of sight of where they drew it"
         );
         assert_eq!(
-            shapes_seen(&state, &as_player("vex")).len(),
+            shapes_seen(&state, &as_player("saelyn")).len(),
             1,
             "and it is still their marker on ground they remember"
         );
@@ -8083,7 +8125,7 @@ mod tests {
 
         assert!(!state.map.fog, "lights on");
         assert_eq!(
-            shapes_seen(&state, &as_player("vex")).len(),
+            shapes_seen(&state, &as_player("saelyn")).len(),
             1,
             "a board with no fog withholds nothing"
         );
@@ -8098,8 +8140,8 @@ mod tests {
         let mut state = fog_room(20.0);
         let _dm = join_as_dm(&mut state, ClientId(1));
         state.handle(ClientId(1), circle_at(20.5, 1.5));
-        let mut rx = join_as_player(&mut state, ClientId(2), "vex");
-        assert_eq!(shapes_seen(&state, &as_player("vex")).len(), 0);
+        let mut rx = join_as_player(&mut state, ClientId(2), "saelyn");
+        assert_eq!(shapes_seen(&state, &as_player("saelyn")).len(), 0);
         drain(&mut rx);
 
         walk(&mut state, 20.5);
@@ -8121,7 +8163,7 @@ mod tests {
         let mut state = fog_room(60.0);
         let _dm = join_as_dm(&mut state, ClientId(1));
         state.handle(ClientId(1), circle_at(1.5, 1.5));
-        let mut rx = join_as_player(&mut state, ClientId(2), "vex");
+        let mut rx = join_as_player(&mut state, ClientId(2), "saelyn");
         drain(&mut rx);
 
         walk(&mut state, 2.5);
@@ -8142,7 +8184,7 @@ mod tests {
         let mut state = fog_room(60.0);
         let _dm = join_as_dm(&mut state, ClientId(1));
         state.handle(ClientId(1), circle_at(1.5, 1.5));
-        assert_eq!(shapes_seen(&state, &as_player("vex")).len(), 1);
+        assert_eq!(shapes_seen(&state, &as_player("saelyn")).len(), 1);
 
         // The whole footprint of a radius-four circle centred on (1,1).
         let footprint: Vec<Cell> = (-4..=6)
@@ -8150,6 +8192,6 @@ mod tests {
             .collect();
         state.handle(ClientId(1), paint(&footprint, Some(Override::Dark)));
 
-        assert_eq!(shapes_seen(&state, &as_player("vex")).len(), 0);
+        assert_eq!(shapes_seen(&state, &as_player("saelyn")).len(), 0);
     }
 }

@@ -46,9 +46,63 @@ struct AppState {
     /// because an HTTP upload never reaches the room actor to be checked there.
     dm_secret: Arc<str>,
     uploads: Arc<Path>,
-    /// The library the DM picks maps out of. Never served directly — a pick
-    /// copies into `uploads`, so there stays one kind of map URL.
+    /// The two libraries the DM picks out of. Neither is served directly — a
+    /// pick copies into `uploads`, so there stays one kind of image URL.
     maps: Arc<Path>,
+    portraits: Arc<Path>,
+}
+
+/// Which folder a listing or a pick is about.
+///
+/// A map and a portrait are the same operation — prove some bytes are an image,
+/// give them a name of ours, report the URL — against different directories and
+/// different size caps, exactly as the two upload routes already are. This is
+/// what tells them apart, so there is one copy of the path handling that
+/// `library.rs` guards rather than two that can drift.
+#[derive(Clone, Copy)]
+enum Library {
+    Maps,
+    Portraits,
+}
+
+impl Library {
+    fn dir(self, state: &AppState) -> Arc<Path> {
+        match self {
+            Self::Maps => state.maps.clone(),
+            Self::Portraits => state.portraits.clone(),
+        }
+    }
+
+    /// Named in the refusals, so a DM reading one knows which list it is about.
+    fn noun(self) -> &'static str {
+        match self {
+            Self::Maps => "map",
+            Self::Portraits => "portrait",
+        }
+    }
+
+    fn max_bytes(self) -> usize {
+        match self {
+            Self::Maps => MAX_MAP_BYTES,
+            Self::Portraits => MAX_TOKEN_BYTES,
+        }
+    }
+
+    /// Prepended to the key the copy's name is derived from, so `cave.png` in
+    /// one library and `cave.png` in the other do not resolve to one file — the
+    /// second pick would find the first already there, skip the write, and hand
+    /// back a map as somebody's portrait.
+    ///
+    /// **Maps deliberately keep the empty prefix.** Their copy names predate this
+    /// and the remembered calibration table is keyed on the URL those names
+    /// produce, so changing it would silently orphan every map the DM has ever
+    /// calibrated.
+    fn prefix(self) -> &'static str {
+        match self {
+            Self::Maps => "",
+            Self::Portraits => "portrait/",
+        }
+    }
 }
 
 static NEXT_CLIENT_ID: AtomicU64 = AtomicU64::new(1);
@@ -96,12 +150,18 @@ async fn main() {
     std::fs::create_dir_all(&uploads_dir)
         .unwrap_or_else(|err| panic!("could not create {uploads_dir}: {err}"));
 
-    // Deliberately not created if it is absent. It holds maps someone put there
-    // on purpose, so an empty one conjured at boot would hide a mistyped
-    // SLATE_MAPS behind a picker that simply looks empty.
+    // Deliberately not created if either is absent. They hold files someone put
+    // there on purpose, so an empty one conjured at boot would hide a mistyped
+    // SLATE_MAPS or SLATE_PORTRAITS behind a picker that simply looks empty.
     let maps_dir = std::env::var("SLATE_MAPS").unwrap_or_else(|_| "../maps".to_owned());
     if !Path::new(&maps_dir).is_dir() {
         warn!(%maps_dir, "no map library there; the DM can still upload maps");
+    }
+
+    let portraits_dir =
+        std::env::var("SLATE_PORTRAITS").unwrap_or_else(|_| "../portraits".to_owned());
+    if !Path::new(&portraits_dir).is_dir() {
+        warn!(%portraits_dir, "no portrait library there; the DM can still upload token art");
     }
 
     let room = room::spawn(dm_secret.clone(), saved, store);
@@ -110,6 +170,7 @@ async fn main() {
         dm_secret: dm_secret.into(),
         uploads: Path::new(&uploads_dir).into(),
         maps: Path::new(&maps_dir).into(),
+        portraits: Path::new(&portraits_dir).into(),
     };
 
     let app = Router::new()
@@ -125,8 +186,13 @@ async fn main() {
             "/api/token",
             post(upload_image).layer(DefaultBodyLimit::max(MAX_TOKEN_BYTES)),
         )
+        // Two libraries behind four routes that are each one line of their own.
+        // The folder is the only thing that differs, so `Library` carries it and
+        // the pair of handlers below is shared.
         .route("/api/maps", get(list_maps))
         .route("/api/maps/pick", post(pick_map))
+        .route("/api/portraits", get(list_portraits))
+        .route("/api/portraits/pick", post(pick_portrait))
         .nest_service("/uploads", ServeDir::new(&uploads_dir))
         .fallback_service(ServeDir::new(&client_dir).append_index_html_on_directories(true))
         .with_state(state);
@@ -191,7 +257,7 @@ async fn shutdown_signal() {
 }
 
 #[derive(Serialize)]
-struct UploadedMap {
+struct StoredImage {
     url: String,
 }
 
@@ -211,84 +277,104 @@ fn not_the_dm(what: &str) -> (StatusCode, String) {
 }
 
 #[derive(Serialize)]
-struct MapLibrary {
-    maps: Vec<String>,
+struct Listing {
+    /// Neutrally named because both libraries answer with this shape, and the
+    /// client parsing it does not care which folder the paths came out of.
+    files: Vec<String>,
 }
 
-/// Everything in the map library, as paths to hand back to `pick_map`.
+/// Everything in a library, as paths to hand back to the matching pick route.
 ///
 /// DM-only. No room state is involved, so this is not invariant 4 in the strict
 /// sense, but a player reading off the names of every map the DM has prepared is
 /// the same problem wearing a different hat.
+async fn listing(
+    state: &AppState,
+    headers: &HeaderMap,
+    which: Library,
+) -> Result<Json<Listing>, (StatusCode, String)> {
+    if !is_dm(state, headers) {
+        return Err(not_the_dm(&format!("browse the {} library", which.noun())));
+    }
+
+    Ok(Json(Listing {
+        files: library::list(&which.dir(state)).await,
+    }))
+}
+
 async fn list_maps(
     State(state): State<AppState>,
     headers: HeaderMap,
-) -> Result<Json<MapLibrary>, (StatusCode, String)> {
-    if !is_dm(&state, &headers) {
-        return Err(not_the_dm("browse the map library"));
-    }
+) -> Result<Json<Listing>, (StatusCode, String)> {
+    listing(&state, &headers, Library::Maps).await
+}
 
-    Ok(Json(MapLibrary {
-        maps: library::list(&state.maps).await,
-    }))
+async fn list_portraits(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+) -> Result<Json<Listing>, (StatusCode, String)> {
+    listing(&state, &headers, Library::Portraits).await
 }
 
 #[derive(Deserialize)]
 struct PickRequest {
-    /// Relative to the library root, exactly as `list_maps` reported it.
+    /// Relative to the library root, exactly as the listing reported it.
     path: String,
 }
 
-/// Copies a map out of the library into the uploads directory and reports the
+/// Copies a file out of a library into the uploads directory and reports the
 /// URL it is now served at.
 ///
-/// The response is deliberately the same shape `upload_map` returns: from the
+/// The response is deliberately the same shape `upload_image` returns: from the
 /// client's point of view a pick and an upload differ only in where the bytes
-/// came from, and both are followed by an ordinary `set_map`.
-async fn pick_map(
-    State(state): State<AppState>,
-    headers: HeaderMap,
-    Json(request): Json<PickRequest>,
-) -> Result<Json<UploadedMap>, (StatusCode, String)> {
-    if !is_dm(&state, &headers) {
-        return Err(not_the_dm("pick a map"));
+/// came from, and both are followed by an ordinary `set_map` or `update_token`.
+async fn pick(
+    state: &AppState,
+    headers: &HeaderMap,
+    request: PickRequest,
+    which: Library,
+) -> Result<Json<StoredImage>, (StatusCode, String)> {
+    let noun = which.noun();
+    if !is_dm(state, headers) {
+        return Err(not_the_dm(&format!("pick a {noun}")));
     }
 
-    let pick = library::resolve(&state.maps, &request.path).map_err(|err| match err {
+    let dir = which.dir(state);
+    let pick = library::resolve(&dir, &request.path).map_err(|err| match err {
         library::PickError::Rejected => {
-            warn!(path = %request.path, "refused a map path that left the library");
+            warn!(path = %request.path, %noun, "refused a path that left the library");
             (
                 StatusCode::BAD_REQUEST,
-                "that is not a map in the library".to_owned(),
+                format!("that is not a {noun} in the library"),
             )
         }
         library::PickError::Missing => (
             StatusCode::NOT_FOUND,
-            "there is no such map in the library".to_owned(),
+            format!("there is no such {noun} in the library"),
         ),
     })?;
 
     // Checked before the read rather than after, so a file that does not belong
     // in a library cannot be pulled into memory just to be rejected.
     let size = fs::metadata(&pick.path).await.map_err(|err| {
-        error!(%err, path = %pick.path.display(), "could not read that map");
+        error!(%err, path = %pick.path.display(), "could not read that {noun}");
         (
             StatusCode::INTERNAL_SERVER_ERROR,
-            "could not read that map".to_owned(),
+            format!("could not read that {noun}"),
         )
     })?;
-    if size.len() > MAX_MAP_BYTES as u64 {
+    if size.len() > which.max_bytes() as u64 {
         return Err((
             StatusCode::PAYLOAD_TOO_LARGE,
-            "that map is too large".to_owned(),
+            format!("that {noun} is too large"),
         ));
     }
 
     let bytes = fs::read(&pick.path).await.map_err(|err| {
-        error!(%err, path = %pick.path.display(), "could not read that map");
+        error!(%err, path = %pick.path.display(), "could not read that {noun}");
         (
             StatusCode::INTERNAL_SERVER_ERROR,
-            "could not read that map".to_owned(),
+            format!("could not read that {noun}"),
         )
     })?;
 
@@ -302,26 +388,42 @@ async fn pick_map(
         ));
     };
 
-    let name = library::copy_name(&pick.key, extension);
+    let name = library::copy_name(&format!("{}{}", which.prefix(), pick.key), extension);
     let path = state.uploads.join(&name);
 
     // The name is derived from the source path, so an existing copy is already
-    // this map. Rewriting it would only churn the disk and, worse, break the URL
+    // this file. Rewriting it would only churn the disk and, worse, break the URL
     // the calibration table is keyed on if the write failed halfway.
     if fs::metadata(&path).await.is_err() {
         fs::write(&path, &bytes).await.map_err(|err| {
-            error!(%err, path = %path.display(), "could not copy that map");
+            error!(%err, path = %path.display(), "could not copy that {noun}");
             (
                 StatusCode::INTERNAL_SERVER_ERROR,
-                "could not copy that map".to_owned(),
+                format!("could not copy that {noun}"),
             )
         })?;
-        info!(%name, source = %pick.key, bytes = bytes.len(), "copied a map out of the library");
+        info!(%name, source = %pick.key, %noun, bytes = bytes.len(), "copied a file out of a library");
     }
 
-    Ok(Json(UploadedMap {
+    Ok(Json(StoredImage {
         url: format!("/uploads/{name}"),
     }))
+}
+
+async fn pick_map(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Json(request): Json<PickRequest>,
+) -> Result<Json<StoredImage>, (StatusCode, String)> {
+    pick(&state, &headers, request, Library::Maps).await
+}
+
+async fn pick_portrait(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Json(request): Json<PickRequest>,
+) -> Result<Json<StoredImage>, (StatusCode, String)> {
+    pick(&state, &headers, request, Library::Portraits).await
 }
 
 /// Stores an uploaded image — a map or a token's portrait — and reports the URL
@@ -335,7 +437,7 @@ async fn upload_image(
     State(state): State<AppState>,
     headers: HeaderMap,
     body: Bytes,
-) -> Result<Json<UploadedMap>, (StatusCode, String)> {
+) -> Result<Json<StoredImage>, (StatusCode, String)> {
     if !is_dm(&state, &headers) {
         return Err(not_the_dm("upload images"));
     }
@@ -361,7 +463,7 @@ async fn upload_image(
     })?;
 
     info!(%name, bytes = body.len(), "stored an uploaded image");
-    Ok(Json(UploadedMap {
+    Ok(Json(StoredImage {
         url: format!("/uploads/{name}"),
     }))
 }
@@ -391,6 +493,23 @@ mod tests {
         assert_eq!(image_format(b"\x89PNG\r\n\x1a\n\x00\x00"), Some("png"));
         assert_eq!(image_format(&[0xff, 0xd8, 0xff, 0xe0, 0x00]), Some("jpg"));
         assert_eq!(image_format(b"RIFF\x00\x00\x00\x00WEBPVP8 "), Some("webp"));
+    }
+
+    #[test]
+    fn one_name_in_two_libraries_is_two_copies() {
+        // Without the prefix these collide: the second pick finds the first
+        // already written, skips the write, and hands back the wrong image.
+        let as_map = library::copy_name(&format!("{}cave.png", Library::Maps.prefix()), "png");
+        let as_portrait =
+            library::copy_name(&format!("{}cave.png", Library::Portraits.prefix()), "png");
+        assert_ne!(as_map, as_portrait);
+    }
+
+    #[test]
+    fn a_picked_map_keeps_the_name_it_has_always_had() {
+        // The calibration table is keyed on the URL this produces, so a change
+        // here would orphan every map the DM has ever calibrated.
+        assert_eq!(Library::Maps.prefix(), "");
     }
 
     #[test]

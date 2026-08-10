@@ -1,5 +1,5 @@
-// Generates the milestone-1 placeholder assets: one dungeon map and four token
-// portraits. Deliberately dependency-free — raw PNG encoding on top of node's
+// Generates the milestone-1 placeholder assets: one dungeon map and a disc per
+// token in the built-in room. Deliberately dependency-free — raw PNG encoding on top of node's
 // built-in zlib. Run with `node tools/gen-assets.mjs` from the repo root.
 //
 // Everything here is deterministic (seeded hash noise, no Math.random) so
@@ -257,14 +257,19 @@ function hsl(h, s, l) {
   return [f(0) * 255, f(8) * 255, f(4) * 255];
 }
 
-// Five players plus the DM's monsters. Hues are spread far enough apart to stay
+// The table plus the DM's monsters. Hues are spread far enough apart to stay
 // distinguishable at low zoom, where a token is only a few pixels across.
+//
+// These are stand-ins for the built-in room, one per roster slot and named after
+// it — real portraits live in `portraits/` and are picked onto tokens from the
+// token panel, which is what a played room actually runs on.
 const TOKENS = [
-  { file: 'grog.png', hue: 18, sat: 0.55 },
-  { file: 'vex.png', hue: 138, sat: 0.42 },
-  { file: 'pike.png', hue: 208, sat: 0.5 },
-  { file: 'nyx.png', hue: 272, sat: 0.4 },
-  { file: 'bram.png', hue: 45, sat: 0.5 },
+  { file: 'cleodara.png', hue: 18, sat: 0.55 },
+  { file: 'saelyn.png', hue: 138, sat: 0.42 },
+  { file: 'torrin.png', hue: 208, sat: 0.5 },
+  { file: 'bronzebeard.png', hue: 272, sat: 0.4 },
+  { file: 'fernbark.png', hue: 45, sat: 0.5 },
+  { file: 'ignacio.png', hue: 95, sat: 0.45 },
   { file: 'ogre.png', hue: 305, sat: 0.34 },
   { file: 'wraith.png', hue: 178, sat: 0.3 },
 ];
