@@ -76,6 +76,18 @@ pub struct Saved {
     /// tokens would give it back. It is the walls' neighbour on this file rather
     /// than the fog's.
     pub overrides: OverrideView,
+    /// Whether the board writes each token's name under it. Room-wide, and the
+    /// DM's to set.
+    ///
+    /// **The one field here that carries a default of its own**, because the
+    /// container's is wrong for it. Every other field falls back to
+    /// `Saved::default()`, where a bool is `false` — so a file written before
+    /// this existed would load with every name gone from the board, which is a
+    /// change nobody asked for. `MapInfo::grid_px` is the same trap and `fog`
+    /// defaulting off is the same argument pointing the other way: the safe
+    /// default is whatever the room was already doing.
+    #[serde(default = "shown")]
+    pub show_names: bool,
     /// Remembered grid calibrations, keyed by map URL.
     ///
     /// The first thing here that is not part of any client's view of the room.
@@ -87,6 +99,12 @@ pub struct Saved {
     /// hundred bytes an entry that is not worth a cap; a DM would have to load
     /// tens of thousands of maps before this rivalled a single token image.
     pub calibrations: HashMap<String, Calibration>,
+}
+
+/// The default for `Saved::show_names`. Serde wants a function rather than a
+/// literal, and this is the only place on this file that needs one.
+fn shown() -> bool {
+    true
 }
 
 #[derive(Debug)]
@@ -295,6 +313,9 @@ mod tests {
                 ((9, 9), Override::Lit),
                 ((9, 10), Override::Explored),
             ])),
+            // Off, which is not the default — a field that only ever round-trips
+            // its own default proves nothing about the round trip.
+            show_names: false,
             calibrations: HashMap::from([(
                 "/uploads/digital-goblin-camp-1a2b3c4d.jpg".to_owned(),
                 Calibration {
@@ -385,6 +406,11 @@ mod tests {
         assert_eq!(remembered.grid_px, 82.0);
         assert_eq!((remembered.offset_x, remembered.offset_y), (11.0, -6.0));
         assert_eq!(remembered.grid_color, "#00ff00ff");
+
+        assert!(
+            !loaded.show_names,
+            "the DM turned the names off, and a restart is not them turning them back on"
+        );
     }
 
     #[tokio::test]
@@ -496,6 +522,11 @@ mod tests {
         assert!(
             loaded.staged.is_none(),
             "a save predating staging has no next map waiting"
+        );
+        assert!(
+            loaded.show_names,
+            "a save predating the switch is a board that was drawing names; \
+             defaulting the other way would strip every label on an upgrade"
         );
     }
 

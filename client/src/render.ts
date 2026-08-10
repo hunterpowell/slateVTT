@@ -996,6 +996,12 @@ function drawRulers(ctx: CanvasRenderingContext2D, frame: Frame, board: Board): 
  * The name under each token and the DM's hit point bar over it, both in screen
  * space so they keep a fixed size as the camera zooms — the things on the map
  * that should not scale with the world.
+ *
+ * `scene.showNames` puts the names away, for everyone at once — it is the DM's
+ * switch and the same value on every client, so this is not a visibility
+ * decision and there is nothing here to filter. The bar is untouched by it: a
+ * running total is not a label, it already reaches nobody but the DM, and a
+ * switch that took it away as well would be two features on one checkbox.
  */
 function drawTokenChrome(ctx: CanvasRenderingContext2D, frame: Frame, board: Board): void {
   const { scene, cam } = frame;
@@ -1018,6 +1024,8 @@ function drawTokenChrome(ctx: CanvasRenderingContext2D, frame: Frame, board: Boa
     if (token.hp !== null) {
       drawHitPoints(ctx, worldToScreen(cam, centre.x, centre.y - radius), radius * cam.zoom, token.hp);
     }
+
+    if (!scene.showNames) continue;
 
     // Under the token's own edge, so a name does not land inside a big one.
     const p = worldToScreen(cam, centre.x, centre.y + radius);

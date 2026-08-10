@@ -103,6 +103,9 @@ struct RoomState {
     /// The map the DM is preparing. DM-only — see `docs/maps.md`.
     staged: Option<MapInfo>,
     tokens: HashMap<TokenId, Token>,
+    /// Whether the board writes each token's name under it. Room-wide, the DM's
+    /// to set and everyone's to hold — see `docs/tokens.md`. Defaults on.
+    show_names: bool,
     initiative: Initiative,
     /// Drawn on the board, in draw order — see `docs/drawings.md`.
     shapes: Vec<Shape>,
@@ -200,8 +203,10 @@ underneath, because they are all the DM's. A player is not merely stopped from e
 are never sent one, and never told one changed. **The fog override is the second thing with exactly
 that rule**, and for the same reason: it is what the DM authored, and the fog is the shadow it casts.
 
-Token creation, deletion, map changes, and initiative edits are DM-only. So is reassigning a
-token's `owner`, which is how a player is handed a token the DM built for them. So is planning
+Token creation, deletion, map changes, initiative edits, and whether the board writes token names
+under them are DM-only. That last one is the one whose *result* everybody is sent — see the wire
+protocol below. So is reassigning a token's `owner`, which is how a player is handed a token the DM
+built for them. So is planning
 where a token lands — a player may move their own token and may not plan for it, because the
 plan is a cell on a map they have not been shown.
 
@@ -239,7 +244,10 @@ every client's 256-slot mailbox is sized at the largest variant. Serde sees stra
 and the frame on the wire is unchanged.
 
 `fog` is the exception to all of that: it is the same value for every recipient. There is nothing
-per-client in a party-shared answer to build.
+per-client in a party-shared answer to build. **`show_names` is the second exception and the clearer
+one** — the DM alone may flip it and everyone is told, because who may set it is a permission and
+what it says is not a secret. `NamesChanged` sits beside `FogChanged` for that reason and not beside
+`WallsChanged`, which is the frame it most resembles on paper.
 
 **`Token` never reaches the wire; `TokenView` does.** `Token::view_for(is_dm)` names every field
 that leaves the room, so `RoomView.tokens` and `ServerMsg::TokenChanged` both carry views. This
@@ -298,12 +306,21 @@ for a promote, before the sweep. It is what separates "it just vanished" from "y
 and getting it from `Token::unseen` instead sends the table a `TokenRemoved` naming an id they have
 never held, which announces that the id exists.
 
+**Whether the board writes those names under the tokens is one switch on the room**, `SetShowNames`,
+DM-only to set and sent to everyone — six familiar party portraits need no labels and a room full of
+goblins does. Not on `MapInfo` beside `fog` and not on `UpdateToken`: it belongs to neither the image
+nor any one creature. It defaults on, which is the only thing keeping an older save from losing every
+label. The hit point bar is not a label and the switch leaves it alone.
+
 Art is optional — a token without it draws as a named disc. The DM uploads it, or picks it out of
 `portraits/`, which is `maps/` one folder over: a pick copies into the uploads directory, so `img`
 holds the same kind of URL either way and nothing downstream can tell them apart. One
 implementation serves both libraries — `Library` on the server, `library.ts` on the client — and
-the only rule the second one added is that a copy's name is derived from a **prefixed** key, or the
-same filename in both folders lands on one file.
+the two rules the second one added are one rule twice: **what a copy's name is derived from decides
+what a re-pick resolves to.** It is a **prefixed** key, or the same filename in both folders lands
+on one file; and it is fingerprinted by **content**, or art replaced in the folder keeps resolving
+to the copy it replaced. **Maps opt out of both** — their calibration table is keyed on the URL
+those names produce — so replacing a map's art does nothing, deliberately.
 
 → **`docs/tokens.md`** before touching `tokens.ts`, `panel.ts`, `library.ts`, `snap_to_cell`,
 `Token`/`TokenView`, or any `message_for` arm.
@@ -444,8 +461,8 @@ The DM picks maps out of the repository's `maps/` folder rather than re-uploadin
 copy into the uploads directory, not a second way to serve files.** Listing and picking are
 DM-only. This is the only place a client-supplied path reaches the filesystem — canonicalise it
 and confirm it resolves inside the library before opening it. **`portraits/` is the same feature
-over token art** and shares every line of it; the folder, the size cap and the noun in the
-refusals are the whole of what a library differs by.
+over token art** and shares every line of it; the folder, the size cap, the noun in the refusals
+and what a copy's name is fingerprinted over are the whole of what a library differs by.
 
 **Preview is client-only: the server does not know the DM is previewing and must not learn.**
 That is why intent rides on the command — `SetMap`, `MoveToken` and `CreateToken` each carry

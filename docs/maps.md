@@ -14,13 +14,18 @@ session: list what is there, then pick one by path. The directory is `SLATE_MAPS
 `../maps` the way `SLATE_CLIENT_DIR` defaults to `../client`.
 
 **A pick is a copy into the uploads directory, not a second way to serve files.** The copy is
-named deterministically from the source path, so picking the same map twice resolves to the same
-file and the same URL rather than accumulating a duplicate per pick. That name is a readable slug
-of the relative path with a short hash of the same path appended — the slug because
-`%LOCALAPPDATA%\Slate` is meant to be browsable, the hash because two different paths can slug
-identically and silently collide onto one file. Everything downstream is then identical to an
-upload — one kind of map URL, and `%LOCALAPPDATA%\Slate` stays a complete backup on its own,
-which serving `maps/` directly would quietly break.
+named deterministically, so picking the same map twice resolves to the same file and the same URL
+rather than accumulating a duplicate per pick. That name is a readable slug of the relative path
+with a short hash appended — the slug because `%LOCALAPPDATA%\Slate` is meant to be browsable, the
+hash because two different paths can slug identically and silently collide onto one file.
+Everything downstream is then identical to an upload — one kind of map URL, and
+`%LOCALAPPDATA%\Slate` stays a complete backup on its own, which serving `maps/` directly would
+quietly break.
+
+**What that hash is taken over is the caller's choice, and the two libraries differ on it** —
+`copy_name` takes a fingerprint beside the key, and `Library::names_by_content` decides which. A
+map hashes its path; a portrait hashes its bytes. See *The portrait library* in `docs/tokens.md`
+for why, and read the rest of this section before considering the same for maps.
 
 Listing and picking are DM-only, authenticated with the same secret header the upload endpoint
 uses. A player enumerating the maps folder is the next dungeon in devtools, which is invariant 4's
@@ -52,13 +57,24 @@ same reason walls will.
 An uploaded map gets a fresh UUID each time and so will not match an earlier calibration — that
 asymmetry is deliberate, and content-hashing uploads to close it is not worth the change.
 
+**The calibration table is why a map is named from its path, and it is load-bearing.** Replacing a
+map's art in `maps/` therefore does nothing: the pick recomputes the same name, finds the copy
+already written, and serves the bytes it replaced. That is a real wart and it is the cheaper side
+of the trade — naming a map by its contents would give every recalibrated map a new URL and orphan
+every calibration the DM has ever made. Closing it properly means migrating that table, not
+flipping `names_by_content`. Two tests hold the line: `a_picked_map_keeps_the_name_it_has_always_had`
+asserts both the empty prefix and the path fingerprint, and
+`a_replaced_portrait_is_a_new_copy_and_a_replaced_map_is_not` states the asymmetry from both ends.
+
 **There are two libraries now, and one implementation of them.** `portraits/` is the same feature
 over token art — see *The portrait library* in `docs/tokens.md`. The folder, the size cap and the
 noun in the refusals are all a library differs by, so they ride on `Library` in `main.rs` and on
 two arguments to `createLibraryList` in `library.ts`; `library.rs` itself never learns there is
-more than one. The only rule the second library added is that a copy's name is derived from a
-**prefixed** key, or the same filename in both folders resolves to one file — and maps keep the
-empty prefix, because the calibration table above is keyed on the URL their names produce.
+more than one. The second library added exactly two rules, and they are the same rule twice: a
+copy's name is derived from a **prefixed** key, or the same filename in both folders resolves to
+one file; and it is fingerprinted by **content**, or replaced art keeps resolving to the copy it
+replaced. **Maps opt out of both**, because the calibration table above is keyed on the URL their
+names produce.
 
 ## Staged maps
 

@@ -103,6 +103,32 @@ impl Library {
             Self::Portraits => "portrait/",
         }
     }
+
+    /// Whether a copy is named from the bytes it holds rather than from the path
+    /// it came from. The second axis a library differs by, and for the same
+    /// reason as `prefix`: what feeds the name decides what a re-pick resolves
+    /// to.
+    ///
+    /// **Portraits are named from their contents** so that replacing the art in
+    /// the folder replaces it on the token. Named from the path, the copy is
+    /// written once and every later pick finds it already there and skips the
+    /// write — the DM swaps a portrait, re-picks it, builds a new token, and is
+    /// handed the old image every time with nothing to say why.
+    ///
+    /// **Maps are named from their path, and must stay that way.** The
+    /// remembered calibration table is keyed on the URL these names produce, so
+    /// naming a map by its contents would orphan every map the DM has ever
+    /// calibrated — the same trap as giving maps a prefix, one field over. The
+    /// cost is that replacing a map's art in `maps/` still does nothing; that is
+    /// the standing asymmetry with uploads described in `docs/maps.md`, and
+    /// closing it means migrating the calibration table rather than changing
+    /// this.
+    fn names_by_content(self) -> bool {
+        match self {
+            Self::Maps => false,
+            Self::Portraits => true,
+        }
+    }
 }
 
 static NEXT_CLIENT_ID: AtomicU64 = AtomicU64::new(1);
@@ -388,12 +414,21 @@ async fn pick(
         ));
     };
 
-    let name = library::copy_name(&format!("{}{}", which.prefix(), pick.key), extension);
+    let key = format!("{}{}", which.prefix(), pick.key);
+    let fingerprint: &[u8] = if which.names_by_content() {
+        &bytes
+    } else {
+        key.as_bytes()
+    };
+    let name = library::copy_name(&key, fingerprint, extension);
     let path = state.uploads.join(&name);
 
-    // The name is derived from the source path, so an existing copy is already
-    // this file. Rewriting it would only churn the disk and, worse, break the URL
-    // the calibration table is keyed on if the write failed halfway.
+    // An existing copy under this name is already this file, so there is nothing
+    // to write. For a portrait that is a fact about the bytes — the name came
+    // from them — and for a map it is the weaker promise that the same path was
+    // picked before. Rewriting either would only churn the disk and, worse,
+    // break the URL the calibration table is keyed on if the write failed
+    // halfway.
     if fs::metadata(&path).await.is_err() {
         fs::write(&path, &bytes).await.map_err(|err| {
             error!(%err, path = %path.display(), "could not copy that {noun}");
@@ -495,21 +530,48 @@ mod tests {
         assert_eq!(image_format(b"RIFF\x00\x00\x00\x00WEBPVP8 "), Some("webp"));
     }
 
+    /// The name `pick` would land on, without the filesystem it reads from.
+    fn copy_name_for(which: Library, path: &str, bytes: &[u8], extension: &str) -> String {
+        let key = format!("{}{}", which.prefix(), path);
+        let fingerprint: &[u8] = if which.names_by_content() {
+            bytes
+        } else {
+            key.as_bytes()
+        };
+        library::copy_name(&key, fingerprint, extension)
+    }
+
     #[test]
     fn one_name_in_two_libraries_is_two_copies() {
         // Without the prefix these collide: the second pick finds the first
         // already written, skips the write, and hands back the wrong image.
-        let as_map = library::copy_name(&format!("{}cave.png", Library::Maps.prefix()), "png");
-        let as_portrait =
-            library::copy_name(&format!("{}cave.png", Library::Portraits.prefix()), "png");
+        let as_map = copy_name_for(Library::Maps, "cave.png", b"an image", "png");
+        let as_portrait = copy_name_for(Library::Portraits, "cave.png", b"an image", "png");
         assert_ne!(as_map, as_portrait);
     }
 
     #[test]
     fn a_picked_map_keeps_the_name_it_has_always_had() {
-        // The calibration table is keyed on the URL this produces, so a change
-        // here would orphan every map the DM has ever calibrated.
+        // The calibration table is keyed on the URL this produces, so either of
+        // these would orphan every map the DM has ever calibrated.
         assert_eq!(Library::Maps.prefix(), "");
+        assert!(!Library::Maps.names_by_content());
+    }
+
+    #[test]
+    fn a_replaced_portrait_is_a_new_copy_and_a_replaced_map_is_not() {
+        // The asymmetry `Library::names_by_content` exists for, both halves of
+        // it, so neither can be flipped without a test saying what it costs.
+        assert_ne!(
+            copy_name_for(Library::Portraits, "cleo.jpg", b"the old art", "jpg"),
+            copy_name_for(Library::Portraits, "cleo.jpg", b"the new art", "jpg"),
+            "a swapped portrait must stop resolving to the copy it replaced"
+        );
+        assert_eq!(
+            copy_name_for(Library::Maps, "cave.png", b"the old art", "png"),
+            copy_name_for(Library::Maps, "cave.png", b"the new art", "png"),
+            "a map's URL must survive its art changing, or its calibration is lost"
+        );
     }
 
     #[test]

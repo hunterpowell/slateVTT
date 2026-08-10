@@ -138,16 +138,25 @@ fn slug(text: &str) -> String {
     out
 }
 
-/// The name a picked map is copied to, derived from `Pick::key`.
+/// The name a picked file is copied to: a readable slug of `Pick::key`, and a
+/// short hash of `fingerprint`.
 ///
 /// Readable because `%LOCALAPPDATA%\Slate` is meant to be a backup someone can
-/// look through, and hashed because the slug alone collides: two maps whose
+/// look through, and hashed because the slug alone collides: two files whose
 /// names differ only in punctuation would otherwise overwrite each other and the
 /// DM would pick one and get the other.
-pub fn copy_name(key: &str, extension: &str) -> String {
+///
+/// **The fingerprint is the caller's choice and the two libraries differ on it**
+/// — see `Library::names_by_content` in `main.rs`. Passing the key gives a name
+/// that is stable across a change to the file's contents; passing the contents
+/// gives one that is stable across a change to its name. Either way the slug
+/// comes from the key, so what the DM reads in the folder is the path they
+/// picked.
+pub fn copy_name(key: &str, fingerprint: &[u8], extension: &str) -> String {
     // The extension is dropped from the readable half — it is already the
-    // extension of the copy — but stays in the hash, so the same name as a PNG
-    // and as a JPEG remains two maps.
+    // extension of the copy. A key fingerprint keeps it, so the same name as a
+    // PNG and as a JPEG stays two files; a content fingerprint does not need it,
+    // because two encodings of one image are already two different byte strings.
     let stem = key.rsplit_once('.').map_or(key, |(stem, _)| stem);
     let readable = slug(stem);
     let readable = if readable.is_empty() {
@@ -155,7 +164,7 @@ pub fn copy_name(key: &str, extension: &str) -> String {
     } else {
         &readable
     };
-    format!("{readable}-{:08x}.{extension}", fnv1a(key.as_bytes()))
+    format!("{readable}-{:08x}.{extension}", fnv1a(fingerprint))
 }
 
 fn is_image(name: &str) -> bool {
@@ -377,9 +386,14 @@ mod tests {
         }
     }
 
+    /// A copy named from its path, the way a map is.
+    fn by_path(key: &str, extension: &str) -> String {
+        copy_name(key, key.as_bytes(), extension)
+    }
+
     #[test]
     fn a_copy_name_is_readable_and_stable() {
-        let name = copy_name("digital/arctic tundra (digital).jpg", "jpg");
+        let name = by_path("digital/arctic tundra (digital).jpg", "jpg");
         assert!(
             name.starts_with("digital-arctic-tundra-digital-"),
             "{name} should have stayed readable"
@@ -387,16 +401,28 @@ mod tests {
         assert!(name.ends_with(".jpg"));
         assert_eq!(
             name,
-            copy_name("digital/arctic tundra (digital).jpg", "jpg"),
+            by_path("digital/arctic tundra (digital).jpg", "jpg"),
             "picking the same map twice must resolve to the same file"
         );
     }
 
     #[test]
+    fn a_slug_reads_as_the_path_however_the_name_was_fingerprinted() {
+        // What the DM browses in `%LOCALAPPDATA%\Slate` comes from the key in
+        // both libraries; only the eight hex digits after it differ.
+        let name = copy_name("portrait/cleo.jpg", b"some image bytes", "jpg");
+        assert!(
+            name.starts_with("portrait-cleo-"),
+            "{name} should have stayed readable"
+        );
+        assert!(name.ends_with(".jpg"));
+    }
+
+    #[test]
     fn two_maps_that_slug_alike_still_get_their_own_file() {
         // The whole reason the name is not the slug on its own.
-        let one = copy_name("digital/goblin camp.jpg", "jpg");
-        let two = copy_name("digital/goblin-camp.jpg", "jpg");
+        let one = by_path("digital/goblin camp.jpg", "jpg");
+        let two = by_path("digital/goblin-camp.jpg", "jpg");
         assert_ne!(
             one, two,
             "one of these maps would have overwritten the other"
@@ -405,19 +431,41 @@ mod tests {
 
     #[test]
     fn the_same_name_in_two_formats_is_two_maps() {
-        assert_ne!(copy_name("cave.png", "png"), copy_name("cave.jpg", "jpg"));
+        assert_ne!(by_path("cave.png", "png"), by_path("cave.jpg", "jpg"));
+    }
+
+    #[test]
+    fn replacing_the_art_under_one_path_gives_a_new_name() {
+        // The portrait bug: the DM swaps the file in `portraits/`, re-picks it,
+        // and must not be handed the copy made from the bytes it replaced.
+        let before = copy_name("portrait/cleo.jpg", b"the old portrait", "jpg");
+        let after = copy_name("portrait/cleo.jpg", b"the new portrait", "jpg");
+        assert_ne!(
+            before, after,
+            "the replaced art would have kept resolving to the old copy"
+        );
+    }
+
+    #[test]
+    fn the_same_art_picked_twice_is_still_one_file() {
+        // The other half of it: re-picking an unchanged portrait must not pile
+        // up a duplicate per pick, exactly as for a map.
+        assert_eq!(
+            copy_name("portrait/cleo.jpg", b"the portrait", "jpg"),
+            copy_name("portrait/cleo.jpg", b"the portrait", "jpg")
+        );
     }
 
     #[test]
     fn a_copy_name_survives_a_path_with_nothing_sluggable_in_it() {
-        let name = copy_name("...jpg", "jpg");
+        let name = by_path("...jpg", "jpg");
         assert!(name.starts_with("map-"), "{name} should have a usable stem");
         assert!(name.ends_with(".jpg"));
     }
 
     #[test]
     fn a_long_path_does_not_become_a_long_filename() {
-        let name = copy_name(&format!("{}/map.jpg", "a directory".repeat(40)), "jpg");
+        let name = by_path(&format!("{}/map.jpg", "a directory".repeat(40)), "jpg");
         assert!(name.len() <= MAX_SLUG_LEN + "-00000000.jpg".len());
     }
 

@@ -25,6 +25,9 @@ export interface Handlers {
   onTokenChanged(token: WireToken): void;
   onTokenRemoved(id: string): void;
   onMapChanged(map: WireMapInfo): void;
+  /** The board writes token names under them now, or it stopped. Called on every
+   *  connection — the DM sets it, everyone holds it. */
+  onNamesChanged(show: boolean): void;
   /** Only ever called on a DM connection; the server sends no such frame to a
    *  player. Null means the slot is now empty. */
   onStagedChanged(map: WireMapInfo | null): void;
@@ -93,6 +96,9 @@ export function connect(on: Handlers): Net {
         break;
       case 'map_changed':
         on.onMapChanged(msg.map);
+        break;
+      case 'names_changed':
+        on.onNamesChanged(msg.show);
         break;
       case 'staged_changed':
         on.onStagedChanged(msg.map);

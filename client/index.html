@@ -845,6 +845,28 @@
         color: #c4b2ec;
       }
 
+      /* Ruled off from the form above it, which describes one token. This
+         describes the board, and the line is what stops it being read as a
+         seventh field of whatever is selected. */
+      .token-board {
+        margin-top: 10px;
+        padding-top: 8px;
+        border-top: 1px solid #23272e;
+      }
+
+      .token-board .map-hint {
+        margin-top: 2px;
+      }
+
+      /* Blue, like the fog switch and the grid controls: this is a board
+         setting. Violet is reserved for what the table cannot see, and there is
+         nothing hidden about a label. */
+      #token-names {
+        margin: 0;
+        accent-color: #78beff;
+        cursor: pointer;
+      }
+
       .token-art {
         display: flex;
         align-items: center;
@@ -1282,6 +1304,17 @@
         </div>
         <button id="token-new" class="map-subtle" type="button" hidden>+ new token</button>
         <p class="map-hint" id="token-hint">Click a token on the map to edit it.</p>
+        <!-- Below the rule on purpose. Everything above it describes the one
+             token in the form; this describes the board, and it sits next to
+             "hidden from the table" — which is per token — closely enough that
+             a divider is what keeps it from reading as another field of it. -->
+        <div class="token-board">
+          <label class="token-check">
+            <input id="token-names" type="checkbox" checked />
+            <span>names under tokens</span>
+          </label>
+          <p class="map-hint">Everyone's board, not just yours.</p>
+        </div>
       </aside>
       <!-- DM only, and the walls it traces reach nobody else at all — a player
            is not sent one, so there is nothing on their board for this panel to

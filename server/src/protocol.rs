@@ -649,6 +649,16 @@ pub struct RoomView {
     /// Empty is therefore both "nothing painted" and "you are not the DM". Same
     /// door `staged` and `walls` leave by.
     pub overrides: OverrideView,
+    /// Whether the board writes each token's name under it.
+    ///
+    /// **The same value for everyone, like `fog` and unlike everything else here
+    /// that only the DM may set.** Who may flip it is a permission; what it says
+    /// is not a secret — a name the table can already read off their own
+    /// initiative panel is not withheld by leaving it off the board, and the
+    /// point of the switch is that the DM's board and theirs agree about what is
+    /// written on it. Room-wide rather than per map: it is a fact about how
+    /// tokens are labelled, and swapping the map is not a request to relabel them.
+    pub show_names: bool,
 }
 
 /// Inbound. Not `#[serde(default)]`: a malformed frame from a client should be
@@ -723,6 +733,17 @@ pub enum ClientMsg {
     },
     DeleteToken {
         id: TokenId,
+    },
+    /// Whether the board writes each token's name under it. DM-only, and the one
+    /// command in this block that is about no particular token.
+    ///
+    /// Its own command rather than a field on `SetMap`, which is where `fog`
+    /// went: this belongs to the room and not to the image, so riding on a map
+    /// change would fork it between the two slots and reset it every time the DM
+    /// loaded a dungeon. It is not on `UpdateToken` either, for the mirror of
+    /// that reason — there is one answer for the board, not one per creature.
+    SetShowNames {
+        show: bool,
     },
 
     /// The map image and its grid, in one command. DM-only.
@@ -952,6 +973,16 @@ pub enum ServerMsg {
     /// whole panel: it is four fields and only a deliberate DM action moves it.
     MapChanged {
         map: MapInfo,
+    },
+    /// The board now writes token names under them, or it does not.
+    ///
+    /// **Identical for every recipient, which makes it `FogChanged`'s neighbour
+    /// rather than `WallsChanged`'s** — the DM decides it and everyone is told,
+    /// because the whole point is that one board is not labelled differently from
+    /// another. Echoed to the DM who sent it, like `MapChanged`: nothing here is
+    /// predicted locally, so this frame is how their own checkbox settles.
+    NamesChanged {
+        show: bool,
     },
     /// The staged map, or `None` once there is not one. Reaches the DM and
     /// nobody else — this is the first message that exists for one identity

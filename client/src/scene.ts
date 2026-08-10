@@ -96,6 +96,13 @@ export interface Scene {
    *  Belongs to the live board for the reason they do. There is no fog on a
    *  staged map, so there is nothing on one to override. */
   overrides: Overrides;
+  /** Whether the board writes each token's name under it. The DM's to set and
+   *  everyone's to hold, so this is the same for every client — a board labelled
+   *  one way for the DM and another for the table is the thing it prevents.
+   *
+   *  Room-wide, so it is here rather than on `Board`: it applies to the map
+   *  being previewed as much as to the one on screen. */
+  showNames: boolean;
 }
 
 /**
@@ -151,6 +158,7 @@ export function sceneFromView(view: WireRoomView, isDm: boolean): Scene {
     walls: view.walls.map(wallFromWire),
     fog: fogFromWire(view.fog, isDm),
     overrides: overridesFromWire(view.overrides),
+    showNames: view.show_names,
   };
 }
 

@@ -226,6 +226,10 @@ enum Event {
         /// token that only came into existence where it already stood.
         moved: bool,
     },
+    /// The board writes token names under them now, or it stopped. Payload-free
+    /// like the ones below it, and the one of them that is rebuilt into the same
+    /// answer for everybody — `FogChanged`'s shape rather than `WallsChanged`'s.
+    NamesChanged,
     /// Carries no payload on purpose: `message_for` has `&self` and builds the
     /// panel per recipient. That seam is now load-bearing — a hidden creature's
     /// row is dropped from the copy the table receives, and fog of war will hide
@@ -500,6 +504,14 @@ pub struct RoomState {
     /// Cleared by `sweep_board` with `revealed`, and for the same reason: these
     /// are cells, so a new lattice invalidates them.
     overrides: HashMap<Cell, Override>,
+    /// Whether the board writes each token's name under it.
+    ///
+    /// Room-wide, not per map and not per token. Per map would fork it between
+    /// the two slots and reset it every time a dungeon was loaded, which is not
+    /// what "label the board" means; per token would be six checkboxes to answer
+    /// one question. It is the DM's to set and everyone's to hold — see
+    /// `RoomView::show_names` for why this one is not filtered.
+    show_names: bool,
     /// How each map URL was last calibrated. Server-side only — it never enters
     /// a snapshot or a message, because the finished `MapInfo` already says
     /// everything a client needs.
@@ -636,6 +648,8 @@ fn persists(event: &Event) -> bool {
         | Event::TokenRemoved { .. }
         | Event::TokenPlanChanged { .. }
         | Event::Promoted { .. }
+        // A switch the DM flipped once and expects to find flipped next week.
+        | Event::NamesChanged
         | Event::InitiativeChanged
         | Event::MapChanged
         | Event::StagedChanged
@@ -700,8 +714,10 @@ fn moves_sight(msg: &ClientMsg) -> bool {
         | ClientMsg::SetFogOverride { .. }
         | ClientMsg::ResetFog => true,
         // Nothing drawn on the board occludes anything, a sketch is not in the
-        // room at all, and the turn order is a panel.
+        // room at all, the turn order is a panel, and a label is written over
+        // the light rather than in it.
         ClientMsg::Hello { .. }
+        | ClientMsg::SetShowNames { .. }
         | ClientMsg::Sketch { .. }
         | ClientMsg::AddShape { .. }
         | ClientMsg::RemoveShape { .. }
@@ -886,6 +902,7 @@ impl RoomState {
             // what this file already holds; what the DM decided is not derivable
             // from anything, so losing it would lose the work.
             overrides: fog::unpack_overrides(&saved.overrides),
+            show_names: saved.show_names,
             calibrations: saved.calibrations,
             clients: HashMap::new(),
             pending: HashMap::new(),
@@ -911,6 +928,7 @@ impl RoomState {
             // agree without either side having to know which one it is reading.
             revealed: fog::pack(&self.revealed, &HashSet::new()),
             overrides: fog::pack_overrides(&self.overrides),
+            show_names: self.show_names,
             calibrations: self.calibrations.clone(),
         }
     }
@@ -984,6 +1002,10 @@ impl RoomState {
             known: HashSet::new(),
             visible: HashSet::new(),
             overrides: HashMap::new(),
+            // On, which is what the board did before there was a switch. A first
+            // boot is a room with eight named tokens and nothing else to tell
+            // them apart yet.
+            show_names: true,
             calibrations: HashMap::new(),
             clients: HashMap::new(),
             pending: HashMap::new(),
@@ -1188,6 +1210,10 @@ impl RoomState {
             } else {
                 OverrideView::default()
             },
+            // And back to `fog`'s rule for the last field, one line after the
+            // walls': everyone is sent this, because the board being labelled the
+            // same way for everybody is the whole of what it says.
+            show_names: self.show_names,
         }
     }
 
@@ -1553,6 +1579,11 @@ impl RoomState {
                     Err(format!("no such token: {}", id.0))
                 }
             }
+
+            // Nothing to bound: a bool has no bad value, and either state is a
+            // legitimate thing for the DM to ask for — what is said of `hidden`
+            // on a token and of `fog` on a map.
+            ClientMsg::SetShowNames { .. } => require_dm(client, "label the board"),
 
             // Which slot this is for makes no difference here: a grid size or a
             // play area is no more or less usable for being staged, so both go
@@ -1981,6 +2012,15 @@ impl RoomState {
             // is most of why it lives on the token.
             ClientMsg::DeleteToken { id } => self.delete_token(&id),
 
+            // Emitted whether or not it changed anything, like `ClearWalls` next
+            // to it: a frame that says what the room already said is a no-op on
+            // arrival, and a comparison here would be a second place the answer
+            // is decided.
+            ClientMsg::SetShowNames { show } => {
+                self.show_names = show;
+                vec![Event::NamesChanged]
+            }
+
             // Tokens are deliberately untouched. They are stored in grid units,
             // so recalibrating changes where a token *draws* without changing
             // which cell it is in — invariant 1, and the whole reason positions
@@ -2377,6 +2417,7 @@ impl RoomState {
                 | Event::TokenPlanChanged { id }
                 | Event::Promoted { id, .. } => Some(id),
                 Event::TokenMoved { .. }
+                | Event::NamesChanged
                 | Event::InitiativeChanged
                 | Event::MapChanged
                 | Event::StagedChanged
@@ -2781,6 +2822,14 @@ impl RoomState {
             // server confirmed, so this frame is how the DM sees the result.
             Event::MapChanged => Some(ServerMsg::MapChanged {
                 map: self.map.clone(),
+            }),
+
+            // Everyone, unfiltered, and echoed to the DM for the reason above —
+            // their checkbox settles on this frame rather than on their click.
+            // The DM decides it and the table is told, which is `FogChanged`'s
+            // shape: the switch is theirs, the labelling is the board's.
+            Event::NamesChanged => Some(ServerMsg::NamesChanged {
+                show: self.show_names,
             }),
 
             // The filter doing its actual job. Every arm above drops a message
@@ -3888,6 +3937,72 @@ mod tests {
         let wolf = made(&restored, "Dire Wolf");
         assert_eq!(wolf.size, 2.0);
         assert_eq!((wolf.x, wolf.y), (6.0, 5.0));
+    }
+
+    // --- names on the board -------------------------------------------------
+
+    #[test]
+    fn only_the_dm_can_label_the_board() {
+        let mut state = room();
+        let _saelyn = join_as_player(&mut state, ClientId(1), "saelyn");
+
+        state.handle(ClientId(1), ClientMsg::SetShowNames { show: false });
+
+        assert!(
+            state.show_names,
+            "a player relabelled the board five other people are looking at"
+        );
+    }
+
+    #[test]
+    fn the_switch_reaches_the_table_and_the_dm_alike() {
+        // The opposite of the walls beside it in `message_for`: this is the one
+        // thing the DM decides that everybody is told, because a board labelled
+        // one way for the DM and another way for the table is the bug.
+        let mut state = room();
+        let mut dm = join_as_dm(&mut state, ClientId(1));
+        let mut saelyn = join_as_player(&mut state, ClientId(2), "saelyn");
+
+        state.handle(ClientId(1), ClientMsg::SetShowNames { show: false });
+
+        // Echoed to the DM who sent it: nothing here is predicted locally, so
+        // this frame is how their own checkbox settles.
+        assert!(
+            matches!(
+                drain(&mut dm).as_slice(),
+                [ServerMsg::NamesChanged { show: false }]
+            ),
+            "the DM was not told their own switch landed"
+        );
+        assert!(
+            matches!(
+                drain(&mut saelyn).as_slice(),
+                [ServerMsg::NamesChanged { show: false }]
+            ),
+            "the table was not told the names came off"
+        );
+    }
+
+    #[test]
+    fn the_switch_is_in_every_snapshot_and_survives_the_save_file() {
+        let mut state = room();
+        let _dm = join_as_dm(&mut state, ClientId(1));
+        state.handle(ClientId(1), ClientMsg::SetShowNames { show: false });
+
+        // Invariant 3, and the unusual direction of it: the join snapshot goes
+        // through the same filter as the delta, and for this one field that
+        // filter is the identity.
+        assert!(!state.snapshot_for(&Identity::Dm).show_names);
+        assert!(!state.snapshot_for(&as_player("saelyn")).show_names);
+
+        let json = serde_json::to_vec(&state.to_saved()).expect("encodes");
+        let saved: Saved = serde_json::from_slice(&json).expect("decodes");
+        let restored = RoomState::restored(saved, SECRET.to_owned());
+
+        assert!(
+            !restored.show_names,
+            "a switch the DM flipped once should be found flipped next week"
+        );
     }
 
     // --- hidden tokens and hit points ---------------------------------------

@@ -46,6 +46,7 @@ export interface TokenToolUi {
   remove: HTMLButtonElement;
   fresh: HTMLButtonElement;
   hint: HTMLElement;
+  names: HTMLInputElement;
 }
 
 export interface TokenTool {
@@ -53,7 +54,8 @@ export interface TokenTool {
   readonly selectedId: string | null;
   /** From a click on the map, or from this panel's own "new token" button. */
   select(id: string | null): void;
-  /** Called on Welcome and after every token delta. */
+  /** Called on Welcome, after every token delta, and when the board's own
+   *  switch moves — which may have been the DM's other tab. */
   update(scene: Scene): void;
   /**
    * Puts the panel down, called by the rail as it closes this tab.
@@ -263,6 +265,22 @@ export function createTokenTool(
     select(null);
   });
 
+  // --- the board's own switch -----------------------------------------------
+
+  // The one control on this panel that is about no particular token: whether the
+  // board writes names under them, for everyone at once. It lives here because
+  // it is a fact about tokens and this is where tokens are edited, and it is
+  // ruled off in the markup because everything above it describes the selection
+  // and this does not.
+  //
+  // Sent rather than applied. Like every other change this panel makes, what is
+  // on screen moves when the server says so — so the checkbox is put back by
+  // `update` below rather than by the click, and a refused command leaves it
+  // saying what the room actually holds.
+  ui.names.addEventListener('change', () => {
+    send({ type: 'set_show_names', show: ui.names.checked });
+  });
+
   // --- art ------------------------------------------------------------------
 
   ui.artClear.addEventListener('click', () => {
@@ -336,6 +354,11 @@ export function createTokenTool(
     update(next) {
       scene = next;
       const token = selected();
+
+      // Unconditionally, unlike the fields below — this one is not something the
+      // DM is halfway through typing, so there is no edit here to eat, and it
+      // has to follow the room whether it moved from this tab or another one.
+      ui.names.checked = next.showNames;
 
       // A token deleted out from under the panel — by this DM on another tab,
       // or by this one — leaves the form describing something that is gone.

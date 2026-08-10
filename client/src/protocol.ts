@@ -217,6 +217,13 @@ export interface WireRoomView {
    *  them. The walls and this are what the DM authored; the fog is the shadow
    *  both of them cast. */
   overrides: WireOverrides;
+  /** Whether the board writes each token's name under it.
+   *
+   *  The same value for everyone, like `fog` and unlike the two fields above it:
+   *  the DM flips it, and the point of it is that every board is labelled the
+   *  same way afterwards. Room-wide, not per map — swapping the dungeon is not a
+   *  request to relabel the tokens standing on it. */
+  show_names: boolean;
 }
 
 export interface RosterSlot {
@@ -262,6 +269,10 @@ export type ServerMsg =
   | { type: 'token_changed'; token: WireToken }
   | { type: 'token_removed'; id: string }
   | { type: 'map_changed'; map: WireMapInfo }
+  /** The board writes token names under them now, or it stopped. Reaches
+   *  everyone, including the DM who flipped it — nothing here is predicted
+   *  locally, so this frame is how their own checkbox settles. */
+  | { type: 'names_changed'; show: boolean }
   /** The staged slot, or null once there is not one. DM connections only. */
   | { type: 'staged_changed'; map: WireMapInfo | null }
   | { type: 'initiative_changed'; initiative: Initiative }
@@ -351,6 +362,12 @@ export type ClientMsg =
       hp: Hp | null;
     }
   | { type: 'delete_token'; id: string }
+  /** DM-only. Whether the board writes token names under them, for everyone.
+   *
+   *  Its own command rather than a field on `set_map`, where the fog switch
+   *  went: this belongs to the room and not to the image, so riding on a map
+   *  change would fork it between the two slots and reset it on every load. */
+  | { type: 'set_show_names'; show: boolean }
   /** A shape being swept out right now: relayed to everyone watching, stored by
    *  nobody. `drawing: false` is the release that ends it.
    *

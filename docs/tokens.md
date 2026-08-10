@@ -4,9 +4,9 @@ The token struct, where a token settles, its two DM-only field pairs, and how on
 leaves the room in several different shapes.
 
 `.claude/CLAUDE.md` is loaded into every session; this file is not. **Read it before touching
-`tokens.ts`, `panel.ts`, `library.ts`, `snap_to_cell`, `Token` / `TokenView`, or any `message_for`
-arm** — the per-recipient filtering below is where a leak would come from, and the arms that drop a
-message entirely are the ones that get missed.
+`tokens.ts`, `panel.ts`, `library.ts`, `snap_to_cell`, `SetShowNames`, `Token` / `TokenView`, or any
+`message_for` arm** — the per-recipient filtering below is where a leak would come from, and the arms
+that drop a message entirely are the ones that get missed.
 
 ## Tokens
 
@@ -54,17 +54,74 @@ directory is `SLATE_PORTRAITS`, defaulting to `../portraits`. The reasoning for 
 *Maps and the map library* in `docs/maps.md`; this is that feature one folder over, and both sides
 of it are shared code rather than a copy — `Library` in `main.rs`, `library.ts` on the client.
 
-**The one thing the second library added is a prefix.** Copy names are derived from the source
-path, so `cave.png` in `maps/` and `cave.png` in `portraits/` would otherwise resolve to one file:
-the second pick finds the first already written, skips the write, and hands back a map as somebody's
-portrait. `Library::prefix` is what separates them, and **maps keep the empty prefix** — the
-remembered calibration table is keyed on the URL those names produce, so giving maps a prefix would
-silently orphan every map the DM has ever calibrated.
+**The second library added two rules, and they are the same rule twice: what a copy's name is
+derived from decides what a re-pick resolves to.**
+
+The first is a prefix. Copy names are derived from the source path, so `cave.png` in `maps/` and
+`cave.png` in `portraits/` would otherwise resolve to one file: the second pick finds the first
+already written, skips the write, and hands back a map as somebody's portrait. `Library::prefix` is
+what separates them.
+
+The second is that **a portrait is fingerprinted by its bytes rather than by its path**
+(`Library::names_by_content`). Named from the path, a copy is written once and never again: the DM
+replaces the art in `portraits/`, re-picks it, builds a fresh token, and is handed the old image
+every time — the pick reads the new bytes, computes the same name, sees the file is there and skips
+the write. Hashing the contents makes replaced art a genuinely different copy under a different URL,
+which the token then picks up through the ordinary `update_token` that follows every pick. It also
+makes the skip honest: the same name now means the same bytes, rather than merely the same path
+asked for twice. Old copies are left behind rather than overwritten, which is the point — a token
+already wearing one keeps it until the DM re-picks, instead of every token sharing that URL changing
+at once, in every saved room.
+
+**Maps opt out of both**, and this is the trap to avoid: the remembered calibration table is keyed
+on the URL those names produce, so either a prefix or a content fingerprint would silently orphan
+every map the DM has ever calibrated. The cost is that replacing a map's art in `maps/` still does
+nothing — see *Maps and the map library* in `docs/maps.md`, which owns that reasoning.
 
 Why it exists: the party's six portraits are the same six files every session, and the tokens they
 go on are rebuilt whenever a map changes. Uploading the same face by hand each time is the work a
 folder can do instead. Listing and picking are DM-only, like every route under `/api` — a player has
 no credential to offer, and would only be reading off the DM's cast list for next week.
+
+## Names on the board
+
+The board writes each token's name under it, and `RoomState::show_names` is the DM's switch for
+whether it does. Off, the board is portraits and rings; on, it is portraits and rings and eight
+labels. Six familiar party tokens do not need naming and a room full of goblins does, which is why
+this is a switch rather than a decision.
+
+**Room-wide, and the DM sets it for everybody.** Three placements were available and two are wrong.
+Per map is where `fog` went and would be wrong here: it would fork the answer between the live and
+staged slots and reset it every time a dungeon was loaded, and swapping the map is not a request to
+relabel the tokens standing on it. Per token is wrong in the other direction — six checkboxes to
+answer one question about the board. So it is a field on the room, `ClientMsg::SetShowNames` is its
+own command rather than a field on `SetMap` or `UpdateToken`, and neither of those had to grow.
+
+**It reaches everyone, which makes it `FogChanged`'s neighbour and not `WallsChanged`'s** — and that
+is the interesting thing about it, because everything else the DM alone may *set* is also something
+the table alone may not *see*. Not here: who flips it is a permission, what it says is not a secret.
+A name the table can already read off their own initiative panel is not being withheld by leaving it
+off the board, and the whole point of the switch is that one board is not labelled differently from
+another. So `RoomView::show_names` is the same value for every recipient, `snapshot_for` does not
+branch on identity for it, and `Event::NamesChanged` produces the same message for the DM and the
+table alike — including an echo to the DM who sent it, because nothing on that panel is predicted
+locally and that frame is how their own checkbox settles.
+
+**It defaults to shown, and that costs `Saved` its only field-level serde default.** Every other
+field on that file falls back to the container's `Default`, where a bool is `false` — so a save
+written before this existed would load with every label gone. `#[serde(default = "shown")]` is what
+keeps an upgrade from stripping a board nobody asked to strip; it is `MapInfo::grid_px`'s trap and
+`fog: false`'s argument pointing the other way, and `a_save_from_an_older_schema_loads_with_defaults`
+is what holds it.
+
+The hit point bar is untouched by the switch. A running total is not a label, it already reaches
+nobody but the DM, and hiding it here would be two features on one checkbox.
+
+On the panel it sits **below a rule**, under the hint. Everything above that line describes the one
+token in the form — including `hidden from the table`, which is a checkbox of the same shape two rows
+up — and this describes the board. Without the divider it reads as a seventh field of whatever
+happens to be selected. `tools/drive-names.mjs` drives the whole of it in two browsers at once,
+because the half that matters happens on a connection the DM's client knows nothing about.
 
 ## Hidden tokens and hit points
 

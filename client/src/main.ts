@@ -135,6 +135,7 @@ interface Ui {
     remove: HTMLButtonElement;
     fresh: HTMLButtonElement;
     hint: HTMLElement;
+    names: HTMLInputElement;
   };
 }
 
@@ -246,6 +247,7 @@ function findUi(): Ui {
       remove: need<HTMLButtonElement>('#token-delete'),
       fresh: need<HTMLButtonElement>('#token-new'),
       hint: need('#token-hint'),
+      names: need<HTMLInputElement>('#token-names'),
     },
   };
 }
@@ -537,6 +539,18 @@ function boot(): void {
       // the switch was flipped — including by the DM's other tab.
       fogTool?.update(scene);
       afterBoardChanged(wasShowing, newImage);
+    },
+
+    // Reaches everyone, unlike the staged map below it and like the fog: the DM
+    // decides whether the board is labelled and every board is labelled that way
+    // afterwards, which is the whole of what the switch means. The renderer reads
+    // it straight off the scene, so there is nothing to redraw by hand — only the
+    // checkbox that has to follow the room, including when it was the DM's other
+    // tab that moved it.
+    onNamesChanged: (show) => {
+      if (room === null) return;
+      room.scene.showNames = show;
+      tokenTool?.update(room.scene);
     },
 
     // Never reaches a player: the server sends this frame to the DM alone.
