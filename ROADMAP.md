@@ -5,9 +5,9 @@ What is not built yet, and the order it gets built in.
 `.claude/CLAUDE.md` holds the rules that hold across every feature and is loaded into every
 session. This file is not, deliberately — it is design for features that do not exist, and it
 would otherwise cost context in every session that has nothing to do with it. `docs/maps.md`,
-`docs/tokens.md` and `docs/drawings.md` are out of context for the same reason from the other
-direction: they are why each built feature is the shape it is, and only the session touching that
-subsystem needs them.
+`docs/tokens.md`, `docs/drawings.md`, `docs/walls.md` and `docs/fog.md` are out of context for the
+same reason from the other direction: they are why each built feature is the shape it is, and only
+the session touching that subsystem needs them.
 
 **Read this before starting a new milestone.** The invariants in CLAUDE.md are what make
 everything below addable without a rewrite; if a decision here turns out to conflict with one of
@@ -25,8 +25,8 @@ Do not work ahead. Each milestone should run and be usable before starting the n
 6. Map upload and grid calibration UI.
 7. Package for Windows session hosting and deploy behind a Cloudflare Tunnel.
 
-Milestones 1–14 are done. Everything from 8 on was planned after the original seven, and the
-order of what remains is deliberate:
+Milestones 1–18 are done. Everything from 8 on was planned after the original seven, and 17 and 18
+were workshopped after 16 landed:
 
 8. **Done.** Map library — list `maps/`, pick one, remember its calibration. The smallest thing
    on this list and the only one that touched nothing else.
@@ -235,6 +235,60 @@ order of what remains is deliberate:
     that it was the one tab arming nothing was true *because the party's tokens are what move the
     fog* — and the override is the one part the DM places by hand.
 
+17. **Done.** The movement pass — the trail, the diagonal switch, and the wall hint this file asked
+    for under *Fog of war* and never scheduled. See *Distance* in `docs/drawings.md`.
+
+    The trail was chosen to be the ruler's **straight line** rather than the path the mouse took,
+    and that decision paid for the feature twice. It is derived from `ruler.from` and where the
+    token is — both of which every watching client already holds — so it cost nothing on the wire
+    and nothing in the room. And under the existing convention a rasterised line is exactly
+    `max + 1` cells against a reading of `max × 5`, which makes the trail *a picture of the number*
+    rather than a second thing that has to be kept in step with it. The recorded-path version would
+    have been worse at the actual job: drag frames are throttled, so a watcher's recording is
+    coarser than the dragger's and the same move draws differently on six screens.
+
+    Three things cost more than the state model, which was one function and one field.
+
+    **The diagonal switch is `show_names` a third time, and the shape is now unmistakable.** DM-only
+    to set, identical for every recipient, `DiagonalsChanged` beside `FogChanged` rather than beside
+    `WallsChanged`. It is the sharpest instance of that pattern because the server *never computes
+    with it* — there is no movement distance in the crate — so the only thing the room is
+    authoritative over is that six clients agree. That is also the whole argument against
+    `localStorage`, which is where a client-only reading would otherwise want to live.
+
+    **The rule had to be per-measurement, not per-turn.** `5 × (max + ⌊min/2⌋)` counts diagonals
+    from the start of each reading, so the first one anybody measures costs five. The alternative
+    needs a movement budget to carry a remainder in, which is a character sheet, and produces a
+    number that cannot be checked by looking at it.
+
+    **Two clocks, not one.** `end` had to stop deleting a ruler and start it fading, which meant
+    `forget` for the case where the token itself goes away — a trail left behind by a token that
+    just vanished is a line pointing at where it went. And `active` had to stop applying `STALE_MS`
+    to a ruler that has landed, since one that landed has stopped receiving frames by definition.
+
+    The wall hint turned out to be the cheapest part and the best test. `crossesWall` is four signed
+    areas, and the assertion that it cannot leak needs no mock and no identity check: one drag, one
+    set of frames, amber on the DM's screen and blue on the player's, because their client holds no
+    walls to test against. `tools/drive-ruler.mjs` measures exactly that.
+
+18. **Done.** The initiative panel — portraits on the rows, hit points on the DM's, and clicking a
+    row to look at that creature. See *Initiative* in `docs/tokens.md`.
+
+    The whole milestone touched no Rust at all, which is worth recording as the shape of a certain
+    kind of feature: `panel.update` was already handed the entire `Scene`, so every row could
+    already resolve its id to the token and read `img` and `hp` off it. Nothing was missing from the
+    wire; something was missing from the panel.
+
+    The one interesting line is the one that is not there. The hit point bar has **no check for who
+    is reading it**, because `hp` is redacted in `TokenView` and a player's copy carries null. That
+    is invariant 4 failing the safe way round, and it is the same argument `drawHitPoints` already
+    made on the canvas — a secret added to `Token` and forgotten in `view_for` goes missing from the
+    DM's own panel rather than appearing in everybody's. The driver asserts the negative directly.
+
+    The only real cost was layout: the portrait and the bar both eat the column the name had to
+    itself, so the panel went from 208px to 248px and the name learned to ellipsis. Layout is a
+    constraint on what this UI can grow, which milestone 15 already said about the rail.
+
 ## Drawings
 
 **Built, both halves** — see *Drawings* in `docs/drawings.md` and *Drawings on ground the party
@@ -306,7 +360,12 @@ makes this a rule rather than a preference:
 If the DM finds themselves saying "there is a wall there" often, the answer is a *hint on their own
 screen* — a movement ruler drawn in a warning colour when a drag crosses a wall or a shut door. No
 command, no event, no refusal, and it cannot leak, because a player holds no walls for their client
-to test against. That is the whole of the idea; it is not built and needs no groundwork.
+to test against.
+
+**Built in milestone 17**, and every word of the paragraph above held. What it did not predict is
+how good a *test* it makes: the leak-proofness is normally the hard thing to assert, and here it is
+one drag photographed from two connections — amber on the DM's screen, blue on the player's, no
+identity check anywhere in the code that produces the difference.
 
 Vision range is one DM-set radius per map, stored in feet on `MapInfo` and converted to cells
 where it is used. This asked for a generous `Default`, because the container-level `#[serde(default)]`

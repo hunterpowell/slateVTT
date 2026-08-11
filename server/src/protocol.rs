@@ -407,6 +407,37 @@ pub enum ShapeKind {
     Rect,
 }
 
+/// How the movement ruler charges a diagonal step. Room-wide, the DM's to set.
+///
+/// **The server stores this and relays it and never computes with it.** There is
+/// no movement distance in this crate to compute — `feetMoved` is client-only,
+/// deliberately, because a reading is drawn and never enforced. What the room
+/// owns is that all six clients agree on the convention, which is the same thing
+/// `show_names` owns and the same reason it cannot live in `localStorage`.
+///
+/// Not on `MapInfo` beside `fog`, for the reason `show_names` is not: this is a
+/// house rule about counting, and swapping the map is not a request to change
+/// how the table counts.
+///
+/// It moves the ruler and nothing else. A drawn circle's radius and a token's
+/// vision are geometry — `contains_point` and `visible_cells` stay Euclidean,
+/// and the disagreement between the two that `docs/drawings.md` names is
+/// deliberate on both sides of the switch.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Diagonals {
+    /// Every step costs one cell, orthogonal or not — "5-5-5" at the table. The
+    /// default, which is what keeps a save written before this field existed
+    /// reading exactly as it did.
+    #[default]
+    Equal,
+    /// The second diagonal of a move costs double, and every other one after —
+    /// "5-10-5". Counted from the start of each reading rather than across a
+    /// turn: nothing here holds a creature's movement budget, and the first
+    /// diagonal of anything anyone measures costs five.
+    Alternating,
+}
+
 /// Where a shape's first point is.
 ///
 /// An enum rather than a position beside an `Option<TokenId>`, for the reason
@@ -659,6 +690,12 @@ pub struct RoomView {
     /// written on it. Room-wide rather than per map: it is a fact about how
     /// tokens are labelled, and swapping the map is not a request to relabel them.
     pub show_names: bool,
+    /// How the movement ruler charges a diagonal.
+    ///
+    /// **The same value for everyone, for the reason `show_names` above is.** It
+    /// is a counting convention the table shares, so a client holding a different
+    /// one from its neighbour is the only way this can be wrong.
+    pub diagonals: Diagonals,
 }
 
 /// Inbound. Not `#[serde(default)]`: a malformed frame from a client should be
@@ -744,6 +781,12 @@ pub enum ClientMsg {
     /// that reason — there is one answer for the board, not one per creature.
     SetShowNames {
         show: bool,
+    },
+    /// How the movement ruler charges a diagonal. DM-only, and `SetShowNames`'s
+    /// neighbour in every respect: room-wide, about no particular token, and not
+    /// a field on `SetMap` because the table's counting outlives the dungeon.
+    SetDiagonals {
+        diagonals: Diagonals,
     },
 
     /// The map image and its grid, in one command. DM-only.
@@ -983,6 +1026,15 @@ pub enum ServerMsg {
     /// predicted locally, so this frame is how their own checkbox settles.
     NamesChanged {
         show: bool,
+    },
+    /// The ruler counts diagonals differently now.
+    ///
+    /// `NamesChanged`'s neighbour and `FogChanged`'s: identical for every
+    /// recipient, echoed to the DM who sent it. A client left holding the old
+    /// convention would read a different number off the same move than the
+    /// person beside it, which is the one failure this message exists to prevent.
+    DiagonalsChanged {
+        diagonals: Diagonals,
     },
     /// The staged map, or `None` once there is not one. Reaches the DM and
     /// nobody else — this is the first message that exists for one identity

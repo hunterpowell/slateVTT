@@ -106,6 +106,10 @@ struct RoomState {
     /// Whether the board writes each token's name under it. Room-wide, the DM's
     /// to set and everyone's to hold — see `docs/tokens.md`. Defaults on.
     show_names: bool,
+    /// How the movement ruler charges a diagonal. Room-wide, the DM's to set and
+    /// everyone's to hold, exactly like `show_names`. The server stores it and
+    /// relays it and never computes with it — see `docs/drawings.md`.
+    diagonals: Diagonals,
     initiative: Initiative,
     /// Drawn on the board, in draw order — see `docs/drawings.md`.
     shapes: Vec<Shape>,
@@ -125,6 +129,10 @@ struct RoomState {
 /// `Auto` is the absence of an entry rather than a fourth variant. `Explored`
 /// and `Lit` are floors, `Dark` is a ceiling — see `docs/fog.md`.
 enum Override { Explored, Lit, Dark }
+
+/// What a diagonal step costs the ruler. `Equal` is the default and is what the
+/// ruler did before the switch existed — see *Distance* in `docs/drawings.md`.
+enum Diagonals { Equal, Alternating }
 
 /// A cell of the grid. A tuple, not a struct: it indexes a lattice rather than
 /// naming a position, and it never reaches the wire as itself — `FogView` packs
@@ -247,7 +255,9 @@ and the frame on the wire is unchanged.
 per-client in a party-shared answer to build. **`show_names` is the second exception and the clearer
 one** — the DM alone may flip it and everyone is told, because who may set it is a permission and
 what it says is not a secret. `NamesChanged` sits beside `FogChanged` for that reason and not beside
-`WallsChanged`, which is the frame it most resembles on paper.
+`WallsChanged`, which is the frame it most resembles on paper. **`diagonals` is the third**, and the
+sharpest: the server never counts a diagonal, so the only thing it is authoritative over there is
+that everybody counts them the same way.
 
 **`Token` never reaches the wire; `TokenView` does.** `Token::view_for(is_dm)` names every field
 that leaves the room, so `RoomView.tokens` and `ServerMsg::TokenChanged` both carry views. This
@@ -322,6 +332,13 @@ on one file; and it is fingerprinted by **content**, or art replaced in the fold
 to the copy it replaced. **Maps opt out of both** — their calibration table is keyed on the URL
 those names produce — so replacing a map's art does nothing, deliberately.
 
+**The initiative panel is the DM's combat screen.** Each row carries the token's portrait and, for
+the DM, its hit points — and none of that touched the wire, because `panel.update` is handed the
+whole `Scene` and resolves each row's id to the token itself. The bar has *no permission check*: a
+player's copy of the token carries no `hp`, so there is nothing to decline to draw, which is
+invariant 4 the safe way round. Clicking a row centres the camera on that creature; it is not an
+automatic pan on turn change, which would move the board under whoever is mid-drag.
+
 → **`docs/tokens.md`** before touching `tokens.ts`, `panel.ts`, `library.ts`, `snap_to_cell`,
 `Token`/`TokenView`, or any `message_for` arm.
 
@@ -339,13 +356,23 @@ There are no staged shapes. `shapes_for` withholds a shape whose anchor the reci
 through `unseen_by_table` — so an aura on a monster in the dark goes with it, and no new line was
 needed for that. An *unanchored* shape is withheld unless a cell it covers has been explored.
 
-A grid cell is five feet, and distance is counted in cells crossed — a diagonal step costs what an
-orthogonal one costs, so every reading is a multiple of five. The movement ruler is client-only:
-no command, no event, nothing persisted, built from the `TokenMoved` frames the room already
-decided to send.
+A grid cell is five feet, and distance is counted in cells crossed. **What a diagonal step costs is
+the DM's switch** — `Equal` charges one cell, `Alternating` charges double for every second
+diagonal, counted from the start of each reading rather than across a turn. Both keep every reading
+a multiple of five. It moves the ruler and nothing else: a circle's radius and a token's vision are
+geometry and stay Euclidean either way. The reading itself is client-only — `feetMoved` has no
+server counterpart — and is built from the `TokenMoved` frames the room already decided to send.
 
-→ **`docs/drawings.md`** before touching `shapes.ts`, `drawtool.ts`, `ruler.ts`, or
-`Shape`/`ShapeKind`/`Sketch` on the server.
+**The ruler tints the squares the move crossed**, and they are the squares of the straight line from
+origin to token, never the path the mouse took. Under `Equal` that makes the trail a picture of the
+number: `max + 1` cells for a reading of `max × 5`, from the same two integers, so they cannot
+disagree — and every client rasterises the same line from data it already holds, so nothing was
+added to the wire. It lingers a couple of seconds after the drop and the line and reading fade with
+it, on one alpha. **A drag through a wall or a shut door draws the DM's amber**; that is a hint and
+never a refusal, and it cannot leak because a player holds no walls to test against.
+
+→ **`docs/drawings.md`** before touching `shapes.ts`, `drawtool.ts`, `ruler.ts`, `trailCells`,
+`crossesWall`, `SetDiagonals`, or `Shape`/`ShapeKind`/`Sketch` on the server.
 
 ## Walls and doors
 

@@ -17,9 +17,9 @@ use uuid::Uuid;
 
 use crate::fog::{self, Cell, FogView, Override, OverrideView};
 use crate::protocol::{
-    Calibration, ClientId, ClientMsg, Hp, Initiative, InitiativeEntry, MapInfo, Origin, Owner,
-    PlayerId, Pos, Px, RoomView, RosterEntry, RosterSlot, ServerMsg, Shape, ShapeId, ShapeKind,
-    Token, TokenId, TokenView, Wall, WallId, WallKind,
+    Calibration, ClientId, ClientMsg, Diagonals, Hp, Initiative, InitiativeEntry, MapInfo, Origin,
+    Owner, PlayerId, Pos, Px, RoomView, RosterEntry, RosterSlot, ServerMsg, Shape, ShapeId,
+    ShapeKind, Token, TokenId, TokenView, Wall, WallId, WallKind,
 };
 use crate::store::{Saved, Store};
 
@@ -230,6 +230,9 @@ enum Event {
     /// like the ones below it, and the one of them that is rebuilt into the same
     /// answer for everybody — `FogChanged`'s shape rather than `WallsChanged`'s.
     NamesChanged,
+    /// The ruler charges diagonals differently now. Payload-free and rebuilt into
+    /// the same answer for everybody, exactly like the one above it.
+    DiagonalsChanged,
     /// Carries no payload on purpose: `message_for` has `&self` and builds the
     /// panel per recipient. That seam is now load-bearing — a hidden creature's
     /// row is dropped from the copy the table receives, and fog of war will hide
@@ -512,6 +515,14 @@ pub struct RoomState {
     /// one question. It is the DM's to set and everyone's to hold — see
     /// `RoomView::show_names` for why this one is not filtered.
     show_names: bool,
+    /// How the movement ruler charges a diagonal.
+    ///
+    /// The field above it in every respect that matters: room-wide, the DM's to
+    /// set, everyone's to hold, filtered by nobody. **Nothing on this server
+    /// reads it** — there is no movement distance in this crate — and that is
+    /// not dead state: what the room owns is that six clients agree, which is
+    /// exactly what it would not own if this lived in a browser.
+    diagonals: Diagonals,
     /// How each map URL was last calibrated. Server-side only — it never enters
     /// a snapshot or a message, because the finished `MapInfo` already says
     /// everything a client needs.
@@ -648,8 +659,9 @@ fn persists(event: &Event) -> bool {
         | Event::TokenRemoved { .. }
         | Event::TokenPlanChanged { .. }
         | Event::Promoted { .. }
-        // A switch the DM flipped once and expects to find flipped next week.
+        // Two switches the DM flipped once and expects to find flipped next week.
         | Event::NamesChanged
+        | Event::DiagonalsChanged
         | Event::InitiativeChanged
         | Event::MapChanged
         | Event::StagedChanged
@@ -718,6 +730,9 @@ fn moves_sight(msg: &ClientMsg) -> bool {
         // the light rather than in it.
         ClientMsg::Hello { .. }
         | ClientMsg::SetShowNames { .. }
+        // A ruler is drawn over the light and never in it, and this only
+        // changes what the ruler says.
+        | ClientMsg::SetDiagonals { .. }
         | ClientMsg::Sketch { .. }
         | ClientMsg::AddShape { .. }
         | ClientMsg::RemoveShape { .. }
@@ -903,6 +918,7 @@ impl RoomState {
             // from anything, so losing it would lose the work.
             overrides: fog::unpack_overrides(&saved.overrides),
             show_names: saved.show_names,
+            diagonals: saved.diagonals,
             calibrations: saved.calibrations,
             clients: HashMap::new(),
             pending: HashMap::new(),
@@ -929,6 +945,7 @@ impl RoomState {
             revealed: fog::pack(&self.revealed, &HashSet::new()),
             overrides: fog::pack_overrides(&self.overrides),
             show_names: self.show_names,
+            diagonals: self.diagonals,
             calibrations: self.calibrations.clone(),
         }
     }
@@ -1006,6 +1023,9 @@ impl RoomState {
             // boot is a room with eight named tokens and nothing else to tell
             // them apart yet.
             show_names: true,
+            // What the ruler did before there was a switch, which is the same
+            // rule the line above follows to the opposite value.
+            diagonals: Diagonals::Equal,
             calibrations: HashMap::new(),
             clients: HashMap::new(),
             pending: HashMap::new(),
@@ -1214,6 +1234,9 @@ impl RoomState {
             // walls': everyone is sent this, because the board being labelled the
             // same way for everybody is the whole of what it says.
             show_names: self.show_names,
+            // And the same again, for the same reason. A counting convention
+            // half the table holds is worse than either convention.
+            diagonals: self.diagonals,
         }
     }
 
@@ -1584,6 +1607,10 @@ impl RoomState {
             // legitimate thing for the DM to ask for — what is said of `hidden`
             // on a token and of `fog` on a map.
             ClientMsg::SetShowNames { .. } => require_dm(client, "label the board"),
+
+            // Nothing to bound either: serde has already refused anything that
+            // is not one of the two variants, which is what a closed set is for.
+            ClientMsg::SetDiagonals { .. } => require_dm(client, "set how diagonals count"),
 
             // Which slot this is for makes no difference here: a grid size or a
             // play area is no more or less usable for being staged, so both go
@@ -2021,6 +2048,14 @@ impl RoomState {
                 vec![Event::NamesChanged]
             }
 
+            // Unconditional for the reason above it, and this one has a second:
+            // a client that missed a frame has no way to ask, so a redundant
+            // send is the cheapest resync there is.
+            ClientMsg::SetDiagonals { diagonals } => {
+                self.diagonals = diagonals;
+                vec![Event::DiagonalsChanged]
+            }
+
             // Tokens are deliberately untouched. They are stored in grid units,
             // so recalibrating changes where a token *draws* without changing
             // which cell it is in — invariant 1, and the whole reason positions
@@ -2418,6 +2453,7 @@ impl RoomState {
                 | Event::Promoted { id, .. } => Some(id),
                 Event::TokenMoved { .. }
                 | Event::NamesChanged
+                | Event::DiagonalsChanged
                 | Event::InitiativeChanged
                 | Event::MapChanged
                 | Event::StagedChanged
@@ -2830,6 +2866,13 @@ impl RoomState {
             // shape: the switch is theirs, the labelling is the board's.
             Event::NamesChanged => Some(ServerMsg::NamesChanged {
                 show: self.show_names,
+            }),
+
+            // The same again, and the sharpest example of the rule: the server
+            // never counts a diagonal, so the only thing it is authoritative
+            // over here is that everybody counts them the same way.
+            Event::DiagonalsChanged => Some(ServerMsg::DiagonalsChanged {
+                diagonals: self.diagonals,
             }),
 
             // The filter doing its actual job. Every arm above drops a message
@@ -4002,6 +4045,121 @@ mod tests {
         assert!(
             !restored.show_names,
             "a switch the DM flipped once should be found flipped next week"
+        );
+    }
+
+    // --- how diagonals count -------------------------------------------------
+
+    #[test]
+    fn only_the_dm_can_change_how_diagonals_count() {
+        let mut state = room();
+        let _saelyn = join_as_player(&mut state, ClientId(1), "saelyn");
+
+        state.handle(
+            ClientId(1),
+            ClientMsg::SetDiagonals {
+                diagonals: Diagonals::Alternating,
+            },
+        );
+
+        assert_eq!(
+            state.diagonals,
+            Diagonals::Equal,
+            "a player changed the counting convention for the whole table"
+        );
+    }
+
+    #[test]
+    fn the_convention_reaches_the_table_and_the_dm_alike() {
+        // `NamesChanged`'s test written again, and deliberately: this is the
+        // second thing the DM alone may set that everybody is told, and the
+        // failure it guards against is a player's ruler reading a different
+        // number off the same move than the DM's.
+        let mut state = room();
+        let mut dm = join_as_dm(&mut state, ClientId(1));
+        let mut saelyn = join_as_player(&mut state, ClientId(2), "saelyn");
+
+        state.handle(
+            ClientId(1),
+            ClientMsg::SetDiagonals {
+                diagonals: Diagonals::Alternating,
+            },
+        );
+
+        assert!(
+            matches!(
+                drain(&mut dm).as_slice(),
+                [ServerMsg::DiagonalsChanged {
+                    diagonals: Diagonals::Alternating
+                }]
+            ),
+            "the DM was not told their own switch landed"
+        );
+        assert!(
+            matches!(
+                drain(&mut saelyn).as_slice(),
+                [ServerMsg::DiagonalsChanged {
+                    diagonals: Diagonals::Alternating
+                }]
+            ),
+            "the table was not told how to count"
+        );
+    }
+
+    #[test]
+    fn the_convention_is_in_every_snapshot_and_survives_the_save_file() {
+        let mut state = room();
+        let _dm = join_as_dm(&mut state, ClientId(1));
+        state.handle(
+            ClientId(1),
+            ClientMsg::SetDiagonals {
+                diagonals: Diagonals::Alternating,
+            },
+        );
+
+        assert_eq!(
+            state.snapshot_for(&Identity::Dm).diagonals,
+            Diagonals::Alternating
+        );
+        assert_eq!(
+            state.snapshot_for(&as_player("saelyn")).diagonals,
+            Diagonals::Alternating
+        );
+
+        let json = serde_json::to_vec(&state.to_saved()).expect("encodes");
+        let saved: Saved = serde_json::from_slice(&json).expect("decodes");
+        let restored = RoomState::restored(saved, SECRET.to_owned());
+
+        assert_eq!(
+            restored.diagonals,
+            Diagonals::Alternating,
+            "a switch the DM flipped once should be found flipped next week"
+        );
+    }
+
+    #[test]
+    fn a_save_written_before_the_field_existed_counts_the_old_way() {
+        // Invariant 2, and the one case where getting the default wrong would be
+        // silent: an old room would still load, still play, and quietly report a
+        // different distance than it did last week. `show_names` needed a custom
+        // default to avoid this; `Equal` being the first variant is what saves
+        // this one from needing one.
+        let mut state = room();
+        let _dm = join_as_dm(&mut state, ClientId(1));
+
+        let mut json = serde_json::to_value(state.to_saved()).expect("encodes");
+        json.as_object_mut()
+            .expect("a saved room is an object")
+            .remove("diagonals")
+            .expect("the field is there to remove");
+
+        let saved: Saved = serde_json::from_value(json).expect("decodes without it");
+        let restored = RoomState::restored(saved, SECRET.to_owned());
+
+        assert_eq!(
+            restored.diagonals,
+            Diagonals::Equal,
+            "a room saved before the switch existed changed how it counts"
         );
     }
 

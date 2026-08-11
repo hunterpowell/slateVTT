@@ -108,11 +108,16 @@ wrap, lets the slack be a distance in cells rather than an angle that would mean
 at the apex and the tip, and puts the **apex inside the shape**, which an arc-cosine cannot say:
 there is no angle from a point to itself, so a cone left its own square untinted.
 
-This is where the honest inconsistency lives. *Distance* counts a diagonal step as one cell, under which "everything within
+This is where the honest inconsistency lives. *Distance* counts a diagonal step in cells, under which "everything within
 20 ft" is a square; a circle here is a circle, and the cells it covers are a round blob. They
 disagree at the corners because they answer different questions — how far something walked, and
 what a shape covers — and the tint is what makes the second countable. A shape's own reading is its
 actual length quantised to five feet, for the same reason.
+
+The diagonal switch does not touch this. It changes what a *step* costs, which is the left half of
+the disagreement; a length and a radius of light are geometry and are Euclidean whichever way the
+room is counting. A DM who sets 5-10-5 to get closer to true distance has not asked for their
+fireballs to change shape.
 
 The coverage rule and the hit test are `containsPoint`, one function. That is what makes
 click-to-erase nearly free: the tint has to ask it of every cell centre anyway.
@@ -142,17 +147,102 @@ Escape mid-sweep — or the release frame never goes out and the line strands on
 
 ## Distance
 
-A grid cell is five feet, and distance is counted in cells crossed — a diagonal step costs what an
-orthogonal one costs, so every reading is a multiple of five. This section used to say
-"straight-line", which would make a one-cell diagonal 7 ft; the table counts in fives and the
-wording changed to match. The 5e variant where every *other* diagonal costs double is still a rule
-and still a non-goal, and nothing here knows a creature's speed: that is a character sheet.
+A grid cell is five feet, and distance is counted in cells crossed. **How much a diagonal step
+costs is the DM's to set, one switch for the room** — `Diagonals::Equal` charges one cell for every
+step, `Alternating` charges double for every second diagonal. Both keep every reading a multiple of
+five, which is the property worth protecting: it is what the table says out loud. This section used
+to say "straight-line", which would make a one-cell diagonal 7 ft, and then said `Equal` was the
+rule rather than the default; each rewording is the same admission, that how a table counts is a
+house rule and not a fact about the software. Nothing here knows a creature's speed: that is a
+character sheet.
+
+The two are one expression. A straight move on a king-move lattice decomposes exactly one way, into
+`min(|Δx|, |Δy|)` diagonal steps and the rest orthogonal, and the conventions differ only in what
+the diagonals cost:
+
+```
+equal        5 × max
+alternating  5 × (max + ⌊min / 2⌋)
+```
+
+**`⌊min / 2⌋` counts from the start of each reading, not across a turn.** The first diagonal of
+anything anybody measures costs five. That is deliberate and it is what makes the alternating rule
+affordable here: there is no movement budget in this project to carry a remainder in, and a number
+that depended on how far you had already come could not be checked by looking at it.
+
+It is one field on `RoomState`, `SetDiagonals`, and `DiagonalsChanged` — the third thing shaped like
+`show_names`, DM-only to set and sent to everyone, because who may set it is a permission and what
+it says is not a secret. **The server stores it and relays it and never computes with it**: there is
+no movement distance in that crate at all. What the room is authoritative over is that six clients
+agree, which is exactly what it would not own if this lived in `localStorage`. `Equal` is the
+default, and that is not luck — it is what the ruler did before the switch existed, so a save
+written without the field reads as it always did.
+
+The switch moves the ruler and nothing else. A drawn circle's radius and a token's vision are
+geometry and stay Euclidean on both settings; see the paragraph above about the honest
+inconsistency, which the switch changes only the left half of.
 
 The movement ruler shows how far the token being dragged has come from where its drag began.
 `feetMoved` rounds the delta to whole cells before converting, which needs no knowledge of where a
 token settles — a drag starts from a settled position and the lattice is one cell apart whatever
 the token's size, so the difference between the two ends is a whole number of cells. Which cell it
 lands *in* is `snap_to_cell`'s business, and stays on the server as the only copy of that rule.
+
+### The trail
+
+**The ruler also tints the squares the move crossed**, and they are the squares of the *straight
+line* from the origin to where the token is now — not the path the mouse wandered along. Under
+`Equal` that makes the trail a picture of the reading: a rasterised line is exactly `max + 1` cells,
+the reading is `max × 5`, and the two are computed from the same two integers, so they cannot
+disagree. Counting the lit squares and reading the label are the same act.
+
+It also costs nothing. `trailCells` is derived from `ruler.from` and where the token is, both of
+which every client watching the drag already holds, so all six screens rasterise an identical line
+with nothing added to the wire and nothing added to the room. The recorded-path alternative would
+have been *worse* for the thing this feature is for: drag frames are throttled, so a watcher's
+recording is coarser than the dragger's, and the same move would draw differently on each screen.
+
+Under `Alternating` the trail stops being a picture of the number — a three-cell diagonal lights
+four squares and reads 20 ft. That is the documented cost of the mode. Shading every second diagonal
+to show where the doubling fell was considered and left out: it is noise in aid of a number the
+label already states.
+
+A step can land exactly on a cell boundary, and `floor` takes the later cell. Either is defensible
+when the line runs down the join; what matters is that every client gets the same answer from the
+same two integers, and that dragging the line backwards lights the same squares — the ties fall on
+whole numbers, which floor to themselves from both directions.
+
+A wide token traces its centre, one cell across whatever it is. The trail answers "which way did it
+come", and a 4×4 footprint swept over four cells of travel is a smear rather than a path.
+
+**The trail lingers about two seconds after the drop, and the line and the reading fade with it.**
+One alpha over all three, because they are one annotation and a halo outliving its line by a frame
+reads as a rendering fault. That is a second clock beside `STALE_MS` and a different one: `STALE_MS`
+is a guess about a client that vanished mid-drag, and this is a deliberate pause on a move that
+landed. The drop is the moment everyone looks up, and a trail that goes out on the same frame as it
+arrives is a trail nobody read. `end` therefore starts a ruler fading rather than deleting it, and
+`forget` is the one that really removes it — a token that was deleted or hidden mid-drag must not
+leave a line pointing at where it went.
+
+### The wall hint
+
+**A drag that passes through a wall or a shut door draws the DM's ruler and trail in amber.** This
+is the idea `ROADMAP.md` filed under fog of war and never built, and it is a *hint*: nothing is
+blocked, no command is refused, and the DM says "there is a wall there" the way they would at a
+table. A server that rejected the move would hand the floor plan to anyone who dragged a token
+around and watched which moves stuck.
+
+It cannot leak, and not because anything checks who is asking: a player's scene carries no walls, so
+`crossesWall` finds nothing to cross and their trail is blue. The driver asserts exactly that
+asymmetry — one drag, one set of frames, amber on one screen and blue on the other.
+
+`segmentsCross` is four signed areas and no division, so a wall traced exactly vertical needs no
+special case. Collinear overlap reads as false: a move sliding *along* a wall has not gone through
+it. `blocksSight` is `Wall::blocks` written a second time in a second language, which is affordable
+for `shape_covers`' reason — a disagreement changes what a line looks like on one screen, never what
+anybody is permitted to see. The whole trail changes colour rather than the two squares either side
+of the wall: the DM is being told this move went through something, and which step did it is a
+precision the hint does not have.
 
 **Every client draws a ruler for any token it sees moving, not only the one dragging it.** That
 costs nothing on the wire, which is what makes it affordable: `TokenMoved` already says whether a

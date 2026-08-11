@@ -1,5 +1,5 @@
 import type { Camera, Vec2 } from './coords.js';
-import { screenToWorld, worldToGrid } from './coords.js';
+import { gridToWorld, screenToWorld, worldToGrid } from './coords.js';
 import type { DrawTool } from './drawtool.js';
 import { createDrawTool } from './drawtool.js';
 import { fogFromWire } from './fog.js';
@@ -29,8 +29,15 @@ import type { Viewport } from './render.js';
 import { render } from './render.js';
 import type { Rulers } from './ruler.js';
 import { createRulers } from './ruler.js';
-import type { Scene } from './scene.js';
-import { boardFromWire, removeToken, sceneFromView, shownBoard, upsertToken } from './scene.js';
+import type { Scene, Token } from './scene.js';
+import {
+  boardFromWire,
+  removeToken,
+  sceneFromView,
+  shownBoard,
+  shownPos,
+  upsertToken,
+} from './scene.js';
 import type { Sketches } from './shapes.js';
 import { createSketches, shapeFromWire } from './shapes.js';
 import type { TokenTool } from './tokens.js';
@@ -136,6 +143,7 @@ interface Ui {
     fresh: HTMLButtonElement;
     hint: HTMLElement;
     names: HTMLInputElement;
+    diagonals: HTMLSelectElement;
   };
 }
 
@@ -248,6 +256,7 @@ function findUi(): Ui {
       fresh: need<HTMLButtonElement>('#token-new'),
       hint: need('#token-hint'),
       names: need<HTMLInputElement>('#token-names'),
+      diagonals: need<HTMLSelectElement>('#token-diagonals'),
     },
   };
 }
@@ -346,7 +355,15 @@ function boot(): void {
         scene: sceneFromView(welcome.state, identity.isDm),
         initiative: welcome.state.initiative,
       };
-      panel = createPanel(ui.panel, identity, (msg) => net.send(msg));
+      panel = createPanel(
+        ui.panel,
+        identity,
+        (msg) => net.send(msg),
+        // Clicking a row looks at that creature. Read lazily off the stage,
+        // which does not exist yet at this point — the board is built after the
+        // panel is, and it is the only thing holding a camera.
+        (token) => stage?.lookAt(token),
+      );
       panel.update(room.initiative, room.scene);
 
       // Built for everyone, unlike the two panels below it. Anyone may draw —
@@ -487,7 +504,7 @@ function boot(): void {
       } else {
         // The drop. Ours never reaches here — the server does not echo our own
         // drag frames — and input.ts has already ended that one on pointerup.
-        rulers.end(move.id);
+        rulers.end(move.id, performance.now());
       }
 
       // The server is authoritative, including over our own prediction.
@@ -518,8 +535,10 @@ function boot(): void {
       if (room === null) return;
       removeToken(room.scene, id);
       // Deleted, or just hidden from us mid-drag. Either way there is no longer
-      // a token for a ruler to measure to.
-      rulers.end(id);
+      // a token for a ruler to measure to — and no trail to leave behind, which
+      // is why this forgets rather than ending: a fading line pointing into the
+      // dark is a line saying where something went.
+      rulers.forget(id);
       afterTokens(room);
     },
 
@@ -550,6 +569,15 @@ function boot(): void {
     onNamesChanged: (show) => {
       if (room === null) return;
       room.scene.showNames = show;
+      tokenTool?.update(room.scene);
+    },
+
+    // The frame above's twin, and nothing more: the ruler reads the convention
+    // off the scene every time it draws, so a reading already on screen changes
+    // on the next frame without anything here recomputing it.
+    onDiagonalsChanged: (diagonals) => {
+      if (room === null) return;
+      room.scene.diagonals = diagonals;
       tokenTool?.update(room.scene);
     },
 
@@ -675,6 +703,15 @@ interface Stage {
   naturalSize(): { width: number; height: number };
   /** Middle of the viewport, in grid units. Where a new token goes. */
   viewCentre(): Vec2;
+  /**
+   * Puts a token in the middle of the viewport. `viewCentre`'s inverse, and it
+   * is here for the same reason: the camera belongs to the board and nothing
+   * outside it should be holding one.
+   *
+   * A no-op for a token with no position on the board on screen — one staged for
+   * the next map, asked for from a panel that is looking at this one.
+   */
+  lookAt(token: Token): void;
 }
 
 async function start(
@@ -797,21 +834,33 @@ async function start(
       const w = screenToWorld(cam, view.width / 2, view.height / 2);
       return worldToGrid(shownBoard(scene).grid, w.x, w.y);
     },
+    lookAt: (token) => {
+      // Through `shownPos`, because the DM may be previewing the staged map and
+      // the camera has to land on the board that is actually on screen.
+      const at = shownPos(scene, token);
+      if (at === null) return;
+      const world = gridToWorld(shownBoard(scene).grid, at.x, at.y);
+      centreOn(cam, syncCanvasSize(ui.canvas), world);
+    },
   };
 
   let lastHud = '';
   const frame = (): void => {
     const view = syncCanvasSize(ui.canvas);
+    // Read once and passed down, so the sweep below and the fade the renderer
+    // draws cannot disagree about what time it is within one frame.
+    const now = performance.now();
     render(ui.ctx, view, {
       cam,
       scene,
       identity,
       map,
+      now,
       tokenImages,
       draggingId: input.draggingId,
       // Swept here rather than in the renderer: a client that vanished mid-drag
       // sends no drop frame, and nothing else in a frame is watching a clock.
-      rulers: rulers.active(performance.now()),
+      rulers: rulers.active(now),
       // Not swept for staleness the way the rulers are: a sweep ends on its
       // release frame or on the `sketch_ended` the room sends when a socket
       // closes, so there is no case left for a clock to catch.
@@ -895,6 +944,19 @@ function fitToMap(cam: Camera, view: Viewport, mapW: number, mapH: number): void
   cam.zoom = Math.min(view.width / mapW, view.height / mapH, 1);
   cam.x = mapW / 2 - view.width / (2 * cam.zoom);
   cam.y = mapH / 2 - view.height / (2 * cam.zoom);
+}
+
+/**
+ * Puts a world point in the middle of the viewport, at whatever zoom is already
+ * set.
+ *
+ * `fitToMap`'s sibling with the zoom left alone, deliberately: this is asked for
+ * mid-fight by somebody who wants to *look* at something, and changing how far
+ * in they are zoomed is a second thing they did not ask for.
+ */
+function centreOn(cam: Camera, view: Viewport, at: Vec2): void {
+  cam.x = at.x - view.width / (2 * cam.zoom);
+  cam.y = at.y - view.height / (2 * cam.zoom);
 }
 
 function loadImage(url: string): Promise<HTMLImageElement> {

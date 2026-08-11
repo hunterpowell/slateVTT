@@ -224,7 +224,27 @@ export interface WireRoomView {
    *  same way afterwards. Room-wide, not per map — swapping the dungeon is not a
    *  request to relabel the tokens standing on it. */
   show_names: boolean;
+  /** How the movement ruler charges a diagonal.
+   *
+   *  The field above it in every respect: the DM's to set, everyone's to hold,
+   *  the same value for every client. A counting convention only half the table
+   *  holds is worse than either convention. */
+  diagonals: Diagonals;
 }
+
+/**
+ * How the movement ruler charges a diagonal step.
+ *
+ * `equal` is "5-5-5": every step costs one cell whichever way it goes.
+ * `alternating` is "5-10-5": the second diagonal of a reading costs double, and
+ * every other one after it. Counted from the start of each measurement rather
+ * than across a turn — nothing here holds a movement budget, so the first
+ * diagonal of anything anyone measures costs five.
+ *
+ * It moves the ruler and nothing else. A drawn circle and a token's vision are
+ * geometry, and stay Euclidean on both settings.
+ */
+export type Diagonals = 'equal' | 'alternating';
 
 export interface RosterSlot {
   id: string;
@@ -273,6 +293,9 @@ export type ServerMsg =
    *  everyone, including the DM who flipped it — nothing here is predicted
    *  locally, so this frame is how their own checkbox settles. */
   | { type: 'names_changed'; show: boolean }
+  /** The ruler charges diagonals differently now. `names_changed`'s neighbour,
+   *  and echoed to the DM who set it for the same reason. */
+  | { type: 'diagonals_changed'; diagonals: Diagonals }
   /** The staged slot, or null once there is not one. DM connections only. */
   | { type: 'staged_changed'; map: WireMapInfo | null }
   | { type: 'initiative_changed'; initiative: Initiative }
@@ -368,6 +391,10 @@ export type ClientMsg =
    *  went: this belongs to the room and not to the image, so riding on a map
    *  change would fork it between the two slots and reset it on every load. */
   | { type: 'set_show_names'; show: boolean }
+  /** DM-only. How the ruler charges a diagonal, for everyone. Room-wide and not
+   *  on `set_map`, for the reason above: the table's counting outlives the
+   *  dungeon it is being done on. */
+  | { type: 'set_diagonals'; diagonals: Diagonals }
   /** A shape being swept out right now: relayed to everyone watching, stored by
    *  nobody. `drawing: false` is the release that ends it.
    *

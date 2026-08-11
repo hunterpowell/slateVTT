@@ -654,9 +654,10 @@ export function attachInput(
       // Always sent, never throttled: this frame carries the final position and
       // is what the server snaps to the grid and echoes back.
       sendMove(drag, false);
-      // The measuring is over the moment the token is let go. Everyone else
-      // drops theirs on the drop frame this just sent.
-      rulers.end(drag.token.id);
+      // The measuring is over the moment the token is let go, and the line
+      // fades from here rather than vanishing. Everyone else starts theirs
+      // fading on the drop frame this just sent.
+      rulers.end(drag.token.id, performance.now());
     } else if (drag.kind === 'calibrate') {
       // Not a commit — the tool keeps the box so the cell count can be tuned
       // against it, and stays in calibrate mode until the DM applies.

@@ -174,6 +174,27 @@ is what is happening.
 deleting one does. Nothing else about a token edit rebuilds the panel, so without it the table
 keeps a row naming a token their client has just been told to forget.
 
+**A row carries a portrait, and the DM's rows carry hit points.** Neither needed anything on the
+wire: `update` is handed the whole `Scene`, so it resolves each row's id to the token and reads
+`img` and `hp` off it. The portrait is a `<span>` whose `background-color` is the same `#5a6472` the
+canvas fills a token with, so "no art" degrades to the same grey disc in both places and there is no
+image cache and no second download — the browser already has the URL.
+
+The hit point bar has **no check for who is reading it**, and that is the point rather than an
+oversight. `hp` is redacted in `TokenView`, so a player's copy of the token carries null and there is
+nothing to decline to draw. It is invariant 4's shape, the same reason `drawHitPoints` needs no
+guard, and it fails the safe way round: a secret added to `Token` and forgotten in `view_for` goes
+missing from the DM's own panel rather than appearing in everyone's. `hpColour` is imported from
+`render.ts` rather than copied, so the bar in a row and the bar over the token cannot come to
+disagree about which monster is nearly down.
+
+**Clicking a row looks at that creature** — the camera centres on it at whatever zoom is already
+set, since somebody who wants to see something has not asked to be zoomed somewhere else. Everyone
+gets it, not just the DM: the panel already lists only what that client may see. It is deliberately
+*not* an automatic pan on turn change, which would yank the view out from under whoever was
+mid-drag. The `×` stops the click propagating, because a click that deletes something is the last
+one that should also be doing something else.
+
 ### On screen
 
 Hidden tokens are the DM's alone, so the client never has to defend against drawing one — the

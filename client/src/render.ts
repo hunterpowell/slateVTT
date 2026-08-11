@@ -7,11 +7,12 @@ import { ownsToken } from './identity.js';
 import { OVERRIDE_ALPHA, overrideRect, paintColor } from './overrides.js';
 import type { FogPaint, Hp } from './protocol.js';
 import type { Ruler } from './ruler.js';
-import { feetMoved } from './ruler.js';
+import { feetMoved, rulerAlpha, trailCells } from './ruler.js';
 import type { Board, Scene, Token } from './scene.js';
 import { shownBoard, shownPos, showingStaged } from './scene.js';
 import type { Shape, Sketch } from './shapes.js';
 import { CONE_HALF_ANGLE, coveredCells, isArea, labelFor, shapeEnd, shapeOrigin } from './shapes.js';
+import { crossesWall } from './walls.js';
 
 const TAU = Math.PI * 2;
 
@@ -91,6 +92,34 @@ const RULER_FONT = '600 12px ui-sans-serif, system-ui, sans-serif';
 /** Between the token's edge and the reading, which sits beside the token: above
  *  and below are taken by the hit point bar and the name. */
 const RULER_TEXT_GAP = 10;
+
+/**
+ * The squares the move crossed, in the ruler's own blue — it is the same
+ * annotation, and a second colour would imply a second thing being said.
+ *
+ * Fainter than a drawn shape's tint, because a shape is the subject of the
+ * question being asked and this is the answer to one nobody asked out loud. The
+ * outline is what makes the individual squares countable at a glance, which is
+ * the entire point of drawing them rather than the line alone; it is ruled at a
+ * constant screen width like the fog preview's.
+ */
+const TRAIL_FILL = 'rgba(120, 190, 255, 0.9)';
+const TRAIL_FILL_ALPHA = 0.16;
+const TRAIL_EDGE_ALPHA = 0.45;
+
+/**
+ * The ruler when the move it measures passes through a wall or a shut door.
+ *
+ * **Only ever on the DM's screen**, and not by a check — a player's scene holds
+ * no walls, so there is nothing for `crossesWall` to find and this never comes
+ * up for them. It is a hint and never a refusal: nothing is blocked, no command
+ * is rejected, and the DM says "there is a wall there" the way they would at a
+ * table. `ROADMAP.md` has why blocking the move instead would be a leak.
+ *
+ * Amber, which the board already spends on a door — the two things this line is
+ * ever about — and which the ring vocabulary leaves alone.
+ */
+const RULER_BLOCKED = 'rgba(255, 176, 74, 0.95)';
 
 /** The hit point bar, in screen pixels — it does not scale with the camera, for
  *  the same reason a name does not. */
@@ -174,6 +203,9 @@ export interface Frame {
   scene: Scene;
   identity: Identity;
   map: HTMLImageElement;
+  /** `performance.now()` for this frame. The only clock the renderer reads, and
+   *  it reads it for one thing: how far a landed ruler has faded. */
+  now: number;
   /** Token art, keyed by image URL — see `loadArt` in main.ts. */
   tokenImages: Map<string, HTMLImageElement>;
   draggingId: string | null;
@@ -261,6 +293,12 @@ export function render(ctx: CanvasRenderingContext2D, view: Viewport, frame: Fra
   // player's scene has none, so this draws nothing for them without needing to
   // ask who they are.
   if (!showingStaged(frame.scene)) drawOverrides(ctx, frame, board);
+
+  // Under the tokens, unlike the ruler's line that measures the same move: the
+  // squares are terrain being pointed at, and the thing standing on them is what
+  // anyone is actually looking at. It is the shapes' argument one line down,
+  // reached from the other side.
+  drawTrails(ctx, frame, board);
 
   drawTokens(ctx, frame, board);
 
@@ -925,6 +963,87 @@ function drawCalibration(
  * chrome above it is — it lasts a couple of seconds and its entire job is to be
  * read.
  */
+/**
+ * Whether this move passes through something that stops sight, which is the
+ * question only the DM's client can answer — a player holds no walls.
+ *
+ * False over the staged map without asking: `scene.walls` belongs to the board,
+ * exactly as the fog and the shapes do, and testing a plan for the next dungeon
+ * against this one's masonry would warn about a wall that is not there.
+ *
+ * Recomputed per frame per ruler rather than cached on one. It is a couple of
+ * hundred segments against one line, the walls can change under it when a door
+ * swings, and a cache would have to be invalidated by the one event most likely
+ * to be the reason the DM is looking.
+ */
+function rulerBlocked(scene: Scene, board: Board, ruler: Ruler, at: Vec2): boolean {
+  if (ruler.staged || scene.walls.length === 0) return false;
+  const from = gridToWorld(board.grid, ruler.from.x, ruler.from.y);
+  const to = gridToWorld(board.grid, at.x, at.y);
+  return crossesWall(scene.walls, from, to);
+}
+
+/**
+ * The squares each move crossed: the ruler's reading, drawn on the ground.
+ *
+ * World space, unlike the line and the label above it, because these are cells
+ * and a cell is a thing on the map — it has to sit exactly on the grid at every
+ * zoom, which is the opposite requirement from a label that must not shrink.
+ *
+ * One `beginPath` of `grid.px` rects and one `fill`, the trick `paintShape` and
+ * the fog preview both use: a move is at most a few dozen squares, but there can
+ * be one of these per token in flight and a `fillRect` each would be a few
+ * hundred calls a frame for a picture one call draws.
+ *
+ * Every skip here mirrors `drawRulers` exactly, and has to: the two are one
+ * annotation drawn in two coordinate spaces, and a trail surviving a frame that
+ * its own reading was skipped on is a path with no number on the end of it.
+ */
+function drawTrails(ctx: CanvasRenderingContext2D, frame: Frame, board: Board): void {
+  const { scene, cam, rulers, now } = frame;
+  if (rulers.size === 0) return;
+  const staged = showingStaged(scene);
+  const { grid } = board;
+
+  ctx.save();
+  for (const [id, ruler] of rulers) {
+    if (ruler.staged !== staged) continue;
+
+    const token = scene.tokens.find((t) => t.id === id);
+    if (token === undefined) continue;
+    const at = shownPos(scene, token);
+    if (at === null) continue;
+
+    const cells = trailCells(ruler.from, at);
+    // Still in the cell it was picked up from — the same nothing-to-report the
+    // reading skips on, arrived at from the geometry rather than from the
+    // arithmetic.
+    if (cells.length === 0) continue;
+
+    const alpha = rulerAlpha(ruler, now);
+    if (alpha <= 0) continue;
+
+    // The whole trail rather than the squares either side of the wall: the DM is
+    // being told this move went through something, and picking out which step
+    // did it is a precision the hint does not have and does not need.
+    const colour = rulerBlocked(scene, board, ruler, at) ? RULER_BLOCKED : TRAIL_FILL;
+
+    ctx.beginPath();
+    for (let i = 0; i < cells.length; i += 2) {
+      const corner = gridToWorld(grid, cells[i] ?? 0, cells[i + 1] ?? 0);
+      ctx.rect(corner.x, corner.y, grid.px, grid.px);
+    }
+    ctx.fillStyle = colour;
+    ctx.strokeStyle = colour;
+    ctx.globalAlpha = alpha * TRAIL_FILL_ALPHA;
+    ctx.fill();
+    ctx.globalAlpha = alpha * TRAIL_EDGE_ALPHA;
+    ctx.lineWidth = 1 / cam.zoom;
+    ctx.stroke();
+  }
+  ctx.restore();
+}
+
 function drawRulers(ctx: CanvasRenderingContext2D, frame: Frame, board: Board): void {
   const { scene, cam, rulers } = frame;
   if (rulers.size === 0) return;
@@ -948,10 +1067,20 @@ function drawRulers(ctx: CanvasRenderingContext2D, frame: Frame, board: Board): 
     const at = shownPos(scene, token);
     if (at === null) continue;
 
-    const feet = feetMoved(ruler.from, at);
+    const feet = feetMoved(ruler.from, at, scene.diagonals);
     // Still in the cell it was picked up from. There is nothing to report, and
     // a "0 ft" flashing under the cursor on every click is noise.
     if (feet === 0) continue;
+
+    // Full while the drag runs, fading once it has landed. Set on the context
+    // rather than folded into each colour, so the halo, the line and the text
+    // go together — they are one annotation and a halo outliving its line by a
+    // frame reads as a rendering fault.
+    // `frame.now` rather than a destructured one: the local `now` just below is
+    // where the token is *now*, which pairs with `start` and reads better there.
+    const alpha = rulerAlpha(ruler, frame.now);
+    if (alpha <= 0) continue;
+    ctx.globalAlpha = alpha;
 
     const start = gridToWorld(board.grid, ruler.from.x, ruler.from.y);
     const now = gridToWorld(board.grid, at.x, at.y);
@@ -975,7 +1104,9 @@ function drawRulers(ctx: CanvasRenderingContext2D, frame: Frame, board: Board): 
     ctx.strokeStyle = RULER_HALO;
     ctx.lineWidth = RULER_HALO_WIDTH;
     ctx.stroke();
-    ctx.strokeStyle = RULER_LINE;
+    // Amber where the move went through masonry. The DM's screen only, and
+    // without asking who they are: a player's scene carries no walls to hit.
+    ctx.strokeStyle = rulerBlocked(scene, board, ruler, at) ? RULER_BLOCKED : RULER_LINE;
     ctx.lineWidth = RULER_WIDTH;
     ctx.stroke();
 
@@ -1063,12 +1194,12 @@ function drawHitPoints(
   const y = top.y - HP_BAR_GAP - HP_BAR_H;
   // A maximum of zero has no ratio to draw. The numbers below still say what
   // happened, which is why the bar is allowed to be the part that gives up.
-  const filled = hp.max > 0 ? clamp(hp.current / hp.max, 0, 1) : 0;
+  const filled = hpFilled(hp);
 
   ctx.fillStyle = HP_TRACK;
   ctx.fillRect(left, y, width, HP_BAR_H);
   if (filled > 0) {
-    ctx.fillStyle = filled > 0.5 ? HP_HEALTHY : filled > 0.25 ? HP_HURT : HP_LOW;
+    ctx.fillStyle = hpColour(filled);
     ctx.fillRect(left, y, width * filled, HP_BAR_H);
   }
   // Half-pixel inset so a 1px stroke lands on pixels rather than straddling two.
@@ -1086,6 +1217,30 @@ function drawHitPoints(
   ctx.strokeText(text, top.x, y - HP_TEXT_GAP);
   ctx.fillStyle = LABEL_TEXT;
   ctx.fillText(text, top.x, y - HP_TEXT_GAP);
+}
+
+/**
+ * How full a hit point bar is, 0 to 1.
+ *
+ * A maximum of zero has no ratio to draw. The numbers beside the bar still say
+ * what happened, which is why the bar is allowed to be the part that gives up.
+ */
+export function hpFilled(hp: Hp): number {
+  return hp.max > 0 ? clamp(hp.current / hp.max, 0, 1) : 0;
+}
+
+/**
+ * The colour a bar that full is drawn in.
+ *
+ * Exported, and it is the only thing in this file the initiative panel imports —
+ * that panel draws the same bar in DOM, and two copies of these three numbers
+ * would let the board and the panel disagree about which monster is nearly down.
+ * The bands are three rather than a gradient for the reason given where the
+ * colours are defined: a DM glancing at six monsters is sorting them, not
+ * reading a percentage.
+ */
+export function hpColour(filled: number): string {
+  return filled > 0.5 ? HP_HEALTHY : filled > 0.25 ? HP_HURT : HP_LOW;
 }
 
 function clamp(v: number, lo: number, hi: number): number {

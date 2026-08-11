@@ -12,7 +12,7 @@ use serde::{Deserialize, Serialize};
 use tokio::fs;
 
 use crate::fog::{FogView, OverrideView};
-use crate::protocol::{Calibration, Initiative, MapInfo, Shape, Token, Wall};
+use crate::protocol::{Calibration, Diagonals, Initiative, MapInfo, Shape, Token, Wall};
 
 /// What actually goes to disk.
 ///
@@ -88,6 +88,14 @@ pub struct Saved {
     /// default is whatever the room was already doing.
     #[serde(default = "shown")]
     pub show_names: bool,
+    /// How the movement ruler charges a diagonal. Room-wide, and the DM's to set.
+    ///
+    /// `show_names`' neighbour that does *not* need a default of its own, and the
+    /// reason is worth keeping beside the note above: `Diagonals::Equal` is what
+    /// the ruler did before this field existed, so the container's default and
+    /// "whatever the room was already doing" are the same value here. That is not
+    /// luck — the variants were ordered to make it true.
+    pub diagonals: Diagonals,
     /// Remembered grid calibrations, keyed by map URL.
     ///
     /// The first thing here that is not part of any client's view of the room.
@@ -316,6 +324,10 @@ mod tests {
             // Off, which is not the default — a field that only ever round-trips
             // its own default proves nothing about the round trip.
             show_names: false,
+            // Alternating, for the same reason and it is the same trap: `Equal`
+            // is what a missing field decodes to, so a round trip that lost this
+            // one entirely would pass.
+            diagonals: Diagonals::Alternating,
             calibrations: HashMap::from([(
                 "/uploads/digital-goblin-camp-1a2b3c4d.jpg".to_owned(),
                 Calibration {

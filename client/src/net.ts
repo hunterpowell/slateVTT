@@ -1,5 +1,6 @@
 import type {
   ClientMsg,
+  Diagonals,
   Initiative,
   RosterSlot,
   ServerMsg,
@@ -28,6 +29,9 @@ export interface Handlers {
   /** The board writes token names under them now, or it stopped. Called on every
    *  connection — the DM sets it, everyone holds it. */
   onNamesChanged(show: boolean): void;
+  /** The ruler charges diagonals differently now. Called on every connection,
+   *  for the reason above: the DM sets it, everyone holds it. */
+  onDiagonalsChanged(diagonals: Diagonals): void;
   /** Only ever called on a DM connection; the server sends no such frame to a
    *  player. Null means the slot is now empty. */
   onStagedChanged(map: WireMapInfo | null): void;
@@ -99,6 +103,9 @@ export function connect(on: Handlers): Net {
         break;
       case 'names_changed':
         on.onNamesChanged(msg.show);
+        break;
+      case 'diagonals_changed':
+        on.onDiagonalsChanged(msg.diagonals);
         break;
       case 'staged_changed':
         on.onStagedChanged(msg.map);

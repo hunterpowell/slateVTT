@@ -1,10 +1,11 @@
 // Walls and doors: the geometry the DM traces over the map image.
 //
-// Nothing reads these yet. They block line of sight once there is line of sight
-// to block, and until then a wall is a line on the DM's screen and a row in the
-// save file. That is deliberate — the editor is worth building before the thing
-// it feeds, because per-segment click-drag across a two-hundred-segment dungeon
-// is what makes people quietly stop using fog of war.
+// The server reads them: they cull the raycast that decides what the party can
+// see, and the fog is the only form in which any of it reaches a player. On this
+// side there is one reader, `crossesWall`, and it belongs to the DM alone — it
+// colours their movement ruler when a drag passes through masonry. That is a
+// hint and never a refusal; see `ROADMAP.md` on why blocking the move instead
+// would hand the floor plan to anybody willing to drag a token about.
 //
 // **Everything here is in image pixels**, which is `world` on this side. A wall
 // traces a feature painted on the map, so it is anchored to the art rather than
@@ -82,6 +83,65 @@ export function wallAt(walls: Wall[], at: Vec2, tolerance: number): Wall | null 
     }
   }
   return best;
+}
+
+/**
+ * Whether this wall stops sight: masonry always, a door only while it is shut.
+ *
+ * `Wall::blocks` on the server, written a second time because the two callers
+ * are in two languages — that one culls the raycast, this one colours a ruler.
+ * They are allowed to be two copies for the reason `shape_covers` is: a
+ * disagreement changes what a line looks like on one screen, never what anybody
+ * is permitted to see.
+ */
+export function blocksSight(wall: Wall): boolean {
+  return wall.door !== true;
+}
+
+/**
+ * Whether a wall stands between two points — the movement hint `ROADMAP.md`
+ * asked for, and the only thing in this client that reads a wall as geometry
+ * rather than drawing it.
+ *
+ * It cannot leak, and not because of a check: a player's scene carries no walls
+ * at all, so their client has nothing to test against and this returns false for
+ * them without ever being told who they are. That is the whole reason the hint
+ * was affordable — it is a warning colour rather than a refusal, so the server
+ * is never asked whether a move is legal and never answers, which is what would
+ * hand the floor plan to anyone who dragged a token around and watched.
+ *
+ * Strict on the endpoints: a line that merely touches a corner is not crossing
+ * anything. Doors count as walls while they are shut, and stop counting the
+ * moment the DM swings one — which is the point, since that is the difference
+ * the DM is looking at.
+ */
+export function crossesWall(walls: readonly Wall[], from: Vec2, to: Vec2): boolean {
+  for (const wall of walls) {
+    if (!blocksSight(wall)) continue;
+    if (segmentsCross(from, to, wall.from, wall.to)) return true;
+  }
+  return false;
+}
+
+/** Which side of the line `a`→`b` the point `p` falls on, as a signed area. */
+function side(a: Vec2, b: Vec2, p: Vec2): number {
+  return (b.x - a.x) * (p.y - a.y) - (b.y - a.y) * (p.x - a.x);
+}
+
+/**
+ * Whether two segments properly cross.
+ *
+ * Each segment has to straddle the other's line, which is four signed areas and
+ * no division — so a wall traced exactly vertical needs no special case, the way
+ * a slope-based test would. Collinear overlap reads as false, deliberately: a
+ * move sliding *along* a wall has not gone through it.
+ */
+function segmentsCross(a1: Vec2, a2: Vec2, b1: Vec2, b2: Vec2): boolean {
+  const d1 = side(b1, b2, a1);
+  const d2 = side(b1, b2, a2);
+  const d3 = side(a1, a2, b1);
+  const d4 = side(a1, a2, b2);
+  return d1 > 0 !== d2 > 0 && d3 > 0 !== d4 > 0;
 }
 
 /** Perpendicular distance from a point to a segment, clamped to its ends. */

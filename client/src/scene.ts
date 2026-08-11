@@ -6,7 +6,7 @@ import type { Fog } from './fog.js';
 import { fogFromWire } from './fog.js';
 import type { Overrides } from './overrides.js';
 import { overridesFromWire } from './overrides.js';
-import type { Hp, Owner, WireMapInfo, WireRoomView, WireToken } from './protocol.js';
+import type { Diagonals, Hp, Owner, WireMapInfo, WireRoomView, WireToken } from './protocol.js';
 import type { Shape } from './shapes.js';
 import { shapeFromWire } from './shapes.js';
 import type { Wall } from './walls.js';
@@ -103,6 +103,11 @@ export interface Scene {
    *  Room-wide, so it is here rather than on `Board`: it applies to the map
    *  being previewed as much as to the one on screen. */
   showNames: boolean;
+  /** How the movement ruler charges a diagonal. Room-wide and the same for every
+   *  client, exactly like the switch above it — and here rather than on `Board`
+   *  for the same reason too: it is how the table counts, not a property of the
+   *  image they are counting over. */
+  diagonals: Diagonals;
 }
 
 /**
@@ -159,6 +164,7 @@ export function sceneFromView(view: WireRoomView, isDm: boolean): Scene {
     fog: fogFromWire(view.fog, isDm),
     overrides: overridesFromWire(view.overrides),
     showNames: view.show_names,
+    diagonals: view.diagonals,
   };
 }
 

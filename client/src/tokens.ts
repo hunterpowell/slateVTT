@@ -23,7 +23,7 @@
 
 import type { Vec2 } from './coords.js';
 import { createLibraryList, urlFrom } from './library.js';
-import type { ClientMsg, Hp, Owner, RosterEntry } from './protocol.js';
+import type { ClientMsg, Diagonals, Hp, Owner, RosterEntry } from './protocol.js';
 import type { Scene, Token } from './scene.js';
 import { shownPos } from './scene.js';
 
@@ -47,6 +47,7 @@ export interface TokenToolUi {
   fresh: HTMLButtonElement;
   hint: HTMLElement;
   names: HTMLInputElement;
+  diagonals: HTMLSelectElement;
 }
 
 export interface TokenTool {
@@ -281,6 +282,15 @@ export function createTokenTool(
     send({ type: 'set_show_names', show: ui.names.checked });
   });
 
+  // The second board-wide control, and the same bargain: sent, not applied, so
+  // the dropdown settles on the frame the room sends back. The cast is safe
+  // because the two options are the only two in the markup — and if it ever were
+  // not, the server refuses anything serde does not recognise, which is the
+  // check that actually matters.
+  ui.diagonals.addEventListener('change', () => {
+    send({ type: 'set_diagonals', diagonals: ui.diagonals.value as Diagonals });
+  });
+
   // --- art ------------------------------------------------------------------
 
   ui.artClear.addEventListener('click', () => {
@@ -359,6 +369,7 @@ export function createTokenTool(
       // DM is halfway through typing, so there is no edit here to eat, and it
       // has to follow the room whether it moved from this tab or another one.
       ui.names.checked = next.showNames;
+      ui.diagonals.value = next.diagonals;
 
       // A token deleted out from under the panel — by this DM on another tab,
       // or by this one — leaves the form describing something that is gone.

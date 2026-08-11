@@ -5,6 +5,10 @@
 
 import type { Identity } from './identity.js';
 import type { ClientMsg, Initiative } from './protocol.js';
+// The only thing this panel takes from the renderer, and it takes it so that the
+// bar in a row and the bar over the token cannot disagree about which monster is
+// nearly down. See `hpColour` for the argument.
+import { hpColour, hpFilled } from './render.js';
 import type { Scene, Token } from './scene.js';
 
 export interface Panel {
@@ -28,6 +32,16 @@ export function createPanel(
   ui: PanelUi,
   identity: Identity,
   send: (msg: ClientMsg) => void,
+  /**
+   * Put the camera on this token. Everyone gets it, not just the DM: a player
+   * looking for whoever just went is the same want, and the panel already only
+   * lists what that client may see.
+   *
+   * A callback rather than a camera, because the camera is main.ts's and the
+   * panel has no business holding one — it knows which row was clicked and
+   * nothing about coordinates.
+   */
+  look: (token: Token) => void,
 ): Panel {
   const isDm = identity.isDm;
 
@@ -69,6 +83,8 @@ export function createPanel(
 
       ui.list.replaceChildren(
         ...initiative.entries.map((entry) => {
+          const token = tokenFor(entry.token);
+
           const row = document.createElement('li');
           row.className = 'init-row';
           if (entry.token === initiative.current) row.classList.add('is-current');
@@ -76,17 +92,61 @@ export function createPanel(
           // out of the table's copy server-side. It is marked because the two
           // panels now differ, and the DM is the one who has to know that this
           // row is a name only they can read.
-          if (tokenFor(entry.token)?.hidden === true) row.classList.add('is-unseen');
+          if (token?.hidden === true) row.classList.add('is-unseen');
 
           const value = document.createElement('span');
           value.className = 'init-value';
           value.textContent = String(entry.value);
 
+          // The same disc the canvas draws, in DOM: a circle whose grey shows
+          // through when there is no art, so a token without a picture degrades
+          // to exactly what it looks like on the board. No image cache and no
+          // second download — the browser already has this URL from the canvas.
+          const art = document.createElement('span');
+          art.className = 'init-art';
+          const src = token?.img ?? '';
+          if (src !== '') art.style.backgroundImage = `url("${src}")`;
+
+          // Name over bar. Two lines rather than one row of three things,
+          // because the panel is narrow and a name is the part that has to stay
+          // readable when a monster is called "Bugbear Chieftain".
+          const body = document.createElement('span');
+          body.className = 'init-body';
+
+          const line = document.createElement('span');
+          line.className = 'init-line';
+
           const name = document.createElement('span');
           name.className = 'init-name';
           name.textContent = nameOf(entry.token);
+          line.append(name);
 
-          row.append(value, name);
+          // No check for who is reading this. `hp` is redacted server-side, so a
+          // player's copy of the token carries null and there is nothing here to
+          // decline to draw — invariant 4's shape, and the same reason
+          // `drawHitPoints` needs no guard either.
+          const hp = token?.hp ?? null;
+          if (hp !== null) {
+            const filled = hpFilled(hp);
+
+            const total = document.createElement('span');
+            total.className = 'init-hp-text';
+            total.textContent = `${hp.current}/${hp.max}`;
+            line.append(total);
+
+            const track = document.createElement('span');
+            track.className = 'init-hp';
+            const fill = document.createElement('span');
+            fill.className = 'init-hp-fill';
+            fill.style.width = `${filled * 100}%`;
+            fill.style.backgroundColor = hpColour(filled);
+            track.append(fill);
+            body.append(line, track);
+          } else {
+            body.append(line);
+          }
+
+          row.append(value, art, body);
 
           if (isDm) {
             const remove = document.createElement('button');
@@ -94,10 +154,22 @@ export function createPanel(
             remove.className = 'init-remove';
             remove.title = `Remove ${nameOf(entry.token)}`;
             remove.textContent = '×';
-            remove.addEventListener('click', () =>
-              send({ type: 'remove_from_initiative', token: entry.token }),
-            );
+            remove.addEventListener('click', (e) => {
+              // The row underneath would otherwise also fire, and the last thing
+              // a click that deletes something should do is move the camera.
+              e.stopPropagation();
+              send({ type: 'remove_from_initiative', token: entry.token });
+            });
             row.append(remove);
+          }
+
+          // A token staged for the next map has no position on this one, and
+          // `look` will find that out — but a row that cannot be looked at
+          // should not offer to be, so the pointer only changes where it can.
+          if (token !== undefined) {
+            row.classList.add('is-lookable');
+            row.title = `Look at ${nameOf(entry.token)}`;
+            row.addEventListener('click', () => look(token));
           }
 
           return row;

@@ -205,11 +205,14 @@
 
       /* --- initiative ------------------------------------------------------ */
 
+      /* Wider than it was: the portrait and the hit point bar both eat into the
+         column the name used to have to itself, and a truncated name in the one
+         panel that is always on screen is worth more than 40px of map. */
       #initiative {
         position: fixed;
         top: 12px;
         right: 12px;
-        width: 208px;
+        width: 248px;
         padding: 10px;
         border-radius: 6px;
         background: rgba(12, 14, 18, 0.88);
@@ -294,8 +297,78 @@
         color: #e8e6e1;
       }
 
+      /* The same disc the canvas draws for a token, in DOM: the grey is what
+         shows when there is no art, so a token without a picture looks the same
+         in the panel as it does on the board. `flex: none` because `.init-body`
+         beside it takes the rest of the row. */
+      .init-art {
+        width: 24px;
+        height: 24px;
+        flex: none;
+        border-radius: 50%;
+        background-color: #5a6472;
+        background-position: center;
+        background-size: cover;
+      }
+
+      /* Name over bar. A column, so a long name keeps the full width of the row
+         rather than sharing it with a hit point total. */
+      .init-body {
+        display: flex;
+        flex: 1;
+        min-width: 0;
+        flex-direction: column;
+        gap: 2px;
+      }
+
+      .init-line {
+        display: flex;
+        align-items: baseline;
+        gap: 6px;
+      }
+
       .init-name {
         flex: 1;
+        min-width: 0;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+
+      /* Only ever on the DM's screen, and not because of a rule here — a
+         player's copy of the token carries no hit points, so this element is
+         never built for them. */
+      .init-hp-text {
+        flex: none;
+        color: #8d939c;
+        font-size: 11px;
+        font-variant-numeric: tabular-nums;
+      }
+
+      .init-hp {
+        display: block;
+        height: 4px;
+        border-radius: 2px;
+        background: rgba(0, 0, 0, 0.55);
+        overflow: hidden;
+      }
+
+      /* Width and colour are both set from the token — the colour by `hpColour`,
+         the same function the canvas bar uses, so the two cannot disagree. */
+      .init-hp-fill {
+        display: block;
+        height: 100%;
+      }
+
+      /* Clicking a row looks at that creature. Only rows with a token on the
+         board on screen get this, so the cursor never promises a jump that
+         nothing would answer. */
+      .init-row.is-lookable {
+        cursor: pointer;
+      }
+
+      .init-row.is-lookable:hover {
+        background: rgba(255, 255, 255, 0.06);
       }
 
       /* A row only the DM has. The table's copy of the panel does not contain
@@ -303,6 +376,12 @@
          panel as the one everyone else is looking at. */
       .init-row.is-unseen .init-name {
         color: #b29ce8;
+      }
+
+      /* And the portrait with it, so the whole row reads as one only they can
+         see rather than a dimmed name beside a full-strength face. */
+      .init-row.is-unseen .init-art {
+        opacity: 0.5;
       }
 
       .init-row.is-unseen .init-name::after {
@@ -867,6 +946,22 @@
         cursor: pointer;
       }
 
+      /* Borrows `.token-field`'s row, which is the only reason it fits under a
+         rule that everything else crosses as a checkbox. The extra top margin is
+         because the hint above it belongs to the checkbox, not to this. */
+      .token-diagonals {
+        margin-top: 8px;
+        margin-bottom: 2px;
+      }
+
+      /* The label column above is 40px, which fits "name" and "owner" and not
+         this. Sized to its own text instead, and the selector has to out-specify
+         `.token-field > span` the way the hit point slash already does. */
+      .token-field > .token-diagonals-label {
+        width: auto;
+        flex: none;
+      }
+
       .token-art {
         display: flex;
         align-items: center;
@@ -1314,6 +1409,19 @@
             <span>names under tokens</span>
           </label>
           <p class="map-hint">Everyone's board, not just yours.</p>
+          <!-- The second thing under this rule that is about no token at all,
+               and it is here for want of a better home rather than because it
+               belongs to tokens: it is how the table counts, and a rail tab of
+               its own for one dropdown would cost more than it is worth. The
+               labels are what people say out loud, not the values on the wire. -->
+          <label class="token-field token-diagonals">
+            <span class="token-diagonals-label">diagonals</span>
+            <select id="token-diagonals">
+              <option value="equal">5-5-5</option>
+              <option value="alternating">5-10-5</option>
+            </select>
+          </label>
+          <p class="map-hint">How the ruler charges a diagonal step. (Do we care about Pythagoras?)</p>
         </div>
       </aside>
       <!-- DM only, and the walls it traces reach nobody else at all — a player
