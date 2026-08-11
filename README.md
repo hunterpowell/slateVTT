@@ -3,12 +3,20 @@
 A minimal virtual tabletop for a private, remote D&D game — handful of players plus a DM. It
 replaces Foundry for one group that only needs a shared map, tokens, and turn order.
 
-- Pan/zoom map with DM-controlled upload and grid calibration
-- Tokens the DM can move freely and players can move only their own
-- An initiative tracker with round counter and next/previous turn
+- Pan/zoom map with DM-controlled upload and grid calibration, or a pick out of a map library
+- A second map slot the DM prepares out of sight of the table, then promotes
+- Tokens the DM can move freely and players can move only their own, with uploaded or
+  library art, a size in grid units, and an owner the DM can reassign
+- Monsters the DM can keep hidden, with hit points only they can see, and positions
+  planned on the map the table has not been shown yet
+- An initiative tracker with round counter, next/previous turn, portraits, and — for the
+  DM — a hit point bar on each row
+- A movement ruler that tints the squares a drag crossed, counting diagonals whichever
+  way the DM sets the room to
 - Measuring and spell-area drawing that anyone at the table can use
 - Walls and doors the DM traces over the map, which block line of sight and never movement
-- Fog of war: the table sees what their own tokens can see, and remembers where they have been
+- Fog of war: the table sees what their own tokens can see, and remembers where they have
+  been — with a DM override to reveal or black out a room by hand
 - State is saved to a JSON file on disk and restored on restart
 
 See [CLAUDE.md](.claude/CLAUDE.md) for the architecture, invariants, and non-goals, and [docs/](docs/)
@@ -86,8 +94,16 @@ portraits/ the token-art library — the same, for faces rather than floors
 
 ```sh
 cd server && cargo test
-cd client && npm run check   # typecheck + build
+cd client && npm run check   # typecheck + unit tests + build
+cd client && npm test        # just the unit tests
 ```
+
+The client's tests cover its pure half — the coordinate spaces, the two distance
+rules and the trail, the wall crossing test, shape coverage, and the DM's flood
+fill. They run under node's own test runner against an esbuild bundle, because
+the client imports its own modules as `./coords.js` and node will not resolve
+that to a `.ts` file. Anything needing a canvas or a socket is the browser
+drivers' job, below.
 
 ### Driving the real client
 

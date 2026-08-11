@@ -67,8 +67,10 @@ locks on room state and there is no `Arc<Mutex<RoomState>>` anywhere. Clients se
 into the room over an `mpsc` channel; the room sends messages back to each client over that
 client's own `mpsc` sender.
 
-A single `RwLock<HashMap<RoomId, RoomHandle>>` guards the room registry. It is touched on
-connect and disconnect only — never on a token move.
+**There is one room and it is hardcoded**, so its `RoomHandle` lives directly on `AppState` and
+there is no registry and no `RoomId`. A second room would add a `RwLock<HashMap<RoomId, RoomHandle>>`
+touched on connect and disconnect only — never on a token move — which is the shape everything above
+is built to allow and none of it is waiting for. Do not build it before there is a second room.
 
 Per WebSocket connection, split the socket and spawn two tasks:
 - recv task: reads the WS stream, deserializes, pushes `(ClientId, ClientMsg)` into the room's `mpsc::Sender`
@@ -77,7 +79,7 @@ Per WebSocket connection, split the socket and spawn two tasks:
 ### Do not use `tokio::sync::broadcast`
 
 This is deliberate and non-obvious. `broadcast` delivers one identical value to every
-subscriber, which makes per-recipient filtering impossible. Fog of war (see `ROADMAP.md`) requires
+subscriber, which makes per-recipient filtering impossible. Fog of war (see `docs/fog.md`) requires
 that different clients receive different messages for the same underlying event. Per-client
 `mpsc` senders cost nothing at six clients and keep that door open.
 
@@ -98,7 +100,8 @@ messages for different recipients.
 
 ```rust
 struct RoomState {
-    id: RoomId,
+    dm_secret: String,
+    roster: Vec<RosterEntry>,
     map: MapInfo,
     /// The map the DM is preparing. DM-only — see `docs/maps.md`.
     staged: Option<MapInfo>,
@@ -123,7 +126,14 @@ struct RoomState {
     /// What the DM said about particular cells anyway. A mask applied after the
     /// raycast, never a write into the two above. DM-only, whole, like the walls.
     overrides: HashMap<Cell, Override>,
+    /// How each map URL was last calibrated. Server-side only — it never enters a
+    /// snapshot or a message, because the finished `MapInfo` already says
+    /// everything a client needs — see `docs/maps.md`.
+    calibrations: HashMap<String, Calibration>,
+    /// Identified clients, who are the only ones any event reaches, and the
+    /// sockets that are connected but have not said who they are yet.
     clients: HashMap<ClientId, Client>,
+    pending: HashMap<ClientId, mpsc::Sender<ServerMsg>>,
 }
 
 /// `Auto` is the absence of an entry rather than a fourth variant. `Explored`

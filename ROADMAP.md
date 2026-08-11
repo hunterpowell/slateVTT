@@ -304,9 +304,9 @@ marker survives them leaving the room, and nothing on the board flickers as the 
 
 ## Fog of war
 
-**16a is built — see `docs/fog.md` for what shipped and why.** What remains here is 16b: the DM's
-manual override and the reveal tool, plus the notes below that turned out to be right and are worth
-keeping for whoever builds it.
+**Built, both halves — see `docs/fog.md` for what shipped and why.** What is kept below is the
+design as it was written before either half existed, because the point of it is how much of it
+survived contact; where it did not, milestone 16 above says so.
 
 The constraints this section was written to protect all held. They are listed here as they were,
 because the point of the list is that none of them had to change:
