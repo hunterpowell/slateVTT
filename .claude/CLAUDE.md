@@ -35,8 +35,17 @@ unless explicitly asked:
 - Character sheets, stat blocks, or any 5e rules knowledge. A hit point total the DM keeps on
   a monster is not a stat block and is in scope; anything that knows what a hit point *means* is not.
 - Dice rolling (the group uses physical dice)
-- Chat, voice, or video (the group uses Discord)
-- Journals, compendiums, handouts, audio
+- Voice and video (the group uses Discord). **Text is a bounded exception and the boundary is the
+  whole of it** — a player may whisper the DM or shout to the table, and that is the entire feature.
+  No player-to-player messages, no channels, no threads, no history between sessions, no formatting,
+  no emotes, no commands, no dice. Two destinations, so a player's box needs no recipient picker;
+  the noun is "whisper and shout" rather than "chat" because chat is a thing that grows. Scheduled as
+  milestone 23 in `ROADMAP.md`, and its motivating case is six people posting initiative rolls
+  without clogging voice.
+- Compendiums, handouts, audio, and journals — **with one bounded exception**: a scratchpad,
+  scheduled as milestone 24. One box of text per person, private to whoever wrote it, and the DM's is
+  no different from anyone else's. **A second document makes it a journal.** No titles, no pages, no
+  sharing, no handout button.
 - Module or plugin systems
 - User accounts, email, password reset, OAuth
 - Mobile-first design (desktop browser is the target; don't break touch, don't optimize for it)
@@ -509,6 +518,31 @@ never the live board directly.
 → **`docs/maps.md`** before touching `maptool.ts`, `calibrate.ts`, `library.rs`, `library.ts`, or
 `SetMap`/`MapInfo` on the server.
 
+## Testing
+
+Three suites; which one a change belongs in is decided by what can observe it.
+
+**`cd server && cargo test`** — the room's own, and the bulk of them. They are **child modules of
+`room`**, in `server/src/room/tests/`, split along the same seams as `docs/`: tests for a feature go
+in the file named for its subsystem and never back into `room.rs`, which the split emptied of 5,000
+lines and which stays that way. They are children rather than a sibling integration test because
+they drive `RoomState` through its *private* surface, which is the only way to assert **what a client was not
+sent** — and for a permission, a visibility filter, or an event's `was_unseen`, the message that
+never left is the whole assertion. `server/src/room/tests.rs` holds what more than one file needs; a
+helper one file uses stays in that file, which opens with `use super::*` to pick both up.
+
+**`cd client && npm test`** — the client's pure half, `src/*.test.ts` behind `test.mjs`: the
+coordinate spaces, the two distance rules and the trail, `crossesWall`, shape coverage, the DM's
+flood fill. It bundles with esbuild first, which is not ceremony — the client imports its own
+modules as `./coords.js` and node's resolver will not rewrite that to a `.ts` file. Nothing that
+needs a canvas or a socket can be tested here. `npm run check` is this plus the typecheck and build.
+
+**`tools/drive-*.mjs`** — headless Chrome against a running server, and the only thing that can see
+a canvas, a layout failure, or a **difference between two connections**. Much of what this project
+guarantees is what a *second* client is not holding, and one browser cannot see it; the drivers that
+matter most open two. They mutate the room they connect to, so point `SLATE_STATE` at a scratch file
+every time. The README lists them and what each drives.
+
 ## Working agreement
 
 - When a requirement is ambiguous, ask before implementing. A wrong guess costs more than a question.
@@ -523,6 +557,9 @@ never the live board directly.
 - Stay within the milestone currently being worked on. Do not scaffold future milestones,
   do not add abstraction for features that are not being built yet. The invariants here, and the
   design in `ROADMAP.md`, are the only forward-looking work permitted.
+- **A change to a permission, a visibility filter, or a `was_unseen` is not finished until a test
+  asserts what a client was _not_ sent.** The server suite is where that assertion belongs;
+  `drive-player.mjs` is the same question asked of a real browser, and neither is the client's.
 - Prefer the smaller change. Prefer deleting code to adding a flag.
 - No `unwrap()` outside tests and startup. Errors that can happen at runtime get handled.
 - Do not add dependencies without flagging it and giving the reason.

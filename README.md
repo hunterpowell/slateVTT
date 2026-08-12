@@ -98,6 +98,12 @@ cd client && npm run check   # typecheck + unit tests + build
 cd client && npm test        # just the unit tests
 ```
 
+The server's tests live in [server/src/room/tests/](server/src/room/tests/), one file per
+subsystem along the same seams as [docs/](docs/). They are child modules of the room rather
+than a sibling integration test, because they drive `RoomState` through its private surface —
+which is the only way to assert what a client was *not* sent, and that is most of what is
+interesting about a room that filters every message per recipient.
+
 The client's tests cover its pure half — the coordinate spaces, the two distance
 rules and the trail, the wall crossing test, shape coverage, and the DM's flood
 fill. They run under node's own test runner against an esbuild bundle, because
@@ -107,25 +113,41 @@ drivers' job, below.
 
 ### Driving the real client
 
-`tools/drive-ui.mjs` and `tools/drive-player.mjs` open the actual client in headless Chrome and
-click through it, asserting on the DOM and — where only pixels can tell the difference — on the
-canvas itself. They speak the DevTools protocol directly, so there is nothing to install beyond
-the browser already on the machine.
+The `tools/drive-*.mjs` scripts open the actual client in headless Chrome and click through it,
+asserting on the DOM and — where only pixels can tell the difference — on the canvas itself. They
+speak the DevTools protocol directly, so there is nothing to install beyond the browser already on
+the machine.
 
-They need a server running with a **known** DM secret, and they change the room they connect to:
+| Driver             | What it drives                                                    | Browsers |
+| ------------------ | ----------------------------------------------------------------- | -------- |
+| `drive-ui.mjs`     | The wall and door editor, as the DM                               | DM       |
+| `drive-player.mjs` | A player's connection — that the DM's half is *absent*, not hidden | player   |
+| `drive-rail.mjs`   | The left rail's tab strip, and the layout failures it fixed        | DM       |
+| `drive-fog.mjs`    | Fog of war, including what a player's client never fetched         | both     |
+| `drive-names.mjs`  | The names-under-tokens switch, on both boards at once              | both     |
+| `drive-ruler.mjs`  | The movement trail, the diagonal switch, the initiative panel      | both     |
+
+The ones marked *both* open two browsers at once, and that is the point of them: almost everything
+they assert is a **difference** between what two people are holding, which one client cannot see.
+
+They need a server running with a **known** DM secret, and they change the room they connect to.
+Each takes an optional base URL, and the DM-side ones an optional secret after it — the defaults
+are exactly what is written below:
 
 ```sh
 cd server
 SLATE_DM_SECRET=test-secret SLATE_STATE=scratch.json cargo run
 
-# elsewhere
-node tools/drive-ui.mjs      http://127.0.0.1:3000 test-secret
-node tools/drive-player.mjs  http://127.0.0.1:3000
+# elsewhere — the arguments below are the defaults, so bare `node tools/…` does the same
+node tools/drive-ui.mjs     http://127.0.0.1:3000 test-secret
+node tools/drive-player.mjs http://127.0.0.1:3000
 ```
 
 Point them at a scratch `SLATE_STATE`, never at the room you are about to play in — the first
-thing `drive-ui.mjs` does is erase every wall on the board. Set `SLATE_BROWSER` if Chrome or Edge
-is somewhere unusual.
+thing `drive-ui.mjs` does is erase every wall on the board, and the fog, names and ruler drivers
+each persist a setting. Run them one at a time: they share debug ports (9333 for a DM, 9334 for a
+player), so two at once attach to each other's browser. Set `SLATE_BROWSER` if Chrome or Edge is
+somewhere unusual.
 
 ## Hosting a remote session from Windows
 

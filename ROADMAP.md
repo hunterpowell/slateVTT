@@ -25,8 +25,8 @@ Do not work ahead. Each milestone should run and be usable before starting the n
 6. Map upload and grid calibration UI.
 7. Package for Windows session hosting and deploy behind a Cloudflare Tunnel.
 
-Milestones 1–18 are done. Everything from 8 on was planned after the original seven, and 17 and 18
-were workshopped after 16 landed:
+Milestones 1–18 are done. Everything from 8 on was planned after the original seven; 17 and 18 were
+workshopped after 16 landed, and 19–24 after 18:
 
 8. **Done.** Map library — list `maps/`, pick one, remember its calibration. The smallest thing
    on this list and the only one that touched nothing else.
@@ -288,6 +288,233 @@ were workshopped after 16 landed:
     The only real cost was layout: the portrait and the bar both eat the column the name had to
     itself, so the panel went from 208px to 248px and the name learned to ellipsis. Layout is a
     constraint on what this UI can grow, which milestone 15 already said about the rail.
+
+19. **Ping.** Hold the left mouse button with no tool in hand and a ring appears where everyone can
+    see it. Foundry's gesture, chosen because half the table has already used it.
+
+    It separates from what the button already does by **duration rather than by target**, which is
+    what lets it coexist with the one place a click's meaning depends on what is under it. On
+    `pointerdown` with nothing armed, start a ~400ms timer: a few pixels of movement cancels it —
+    that was a pan or a token drag — an early release cancels it and the existing click runs, so
+    **doors still swing**, and the timer firing consumes the gesture so the `pointerup` does nothing.
+    An armed tool takes the button first, exactly as it always has.
+
+    A hold **on a token** pings rather than doing anything else. A drag only begins on movement, so a
+    stationary hold on a creature is free, and pointing at one is most of what pinging is for.
+
+    **Watch what "an armed tool takes the button first" does to the draw tool here.** It is pinned to
+    the rail rather than on the strip, everybody has it, and if it stays selected between uses then
+    that player can never ping again and will get no hint as to why — a dead gesture is invisible,
+    and the people least likely to report it are the ones this whole milestone is for. Either the
+    draw tool disarms after it completes a shape, or ping ignores that one tool specifically.
+    Disarming is the better fix if it does not annoy whoever is drawing three circles in a row.
+
+    The ring grows from ~150ms, local-only until it commits. That is not decoration: 400ms of nothing
+    happening is how a long press feels broken, and a ring that has started growing is also how an
+    accidental ping gets noticed before it fires.
+
+    **No fog gate — decided.** A ping is relayed to everyone wherever it lands, including ground the
+    party has never explored. A ring over black says the DM is gesturing in a direction and not what
+    is standing there; the DM can see the fog on their own board while they hold; and the alternative
+    is a deliberate 400ms gesture that silently does nothing. It is the one place in this project
+    where something the DM places appears to the table over unexplored ground, and it is safe
+    precisely because it carries no state — there is nothing in a ping for a player to read but its
+    position.
+
+    Ephemeral, whole: no persistence, absent from `snapshot_for`, does not mark the room dirty. The
+    ring is the owner's colour with their name beside it, because colour alone does not scale to
+    seven people.
+
+    **A ping off the edge of your view draws an arrow at the edge of the screen** for its lifetime,
+    pointing at it. Six players looking at different parts of the map is the normal case, and a ping
+    nobody sees is worse than no ping at all. It is not a camera pan — moving the board under whoever
+    is mid-drag is the same thing the initiative panel refuses to do on a turn change.
+
+20. **Walls and fog overrides on the staged map.** The next dungeon gets traced before the table is
+    shown it, rather than in front of them after the promote.
+
+    Note first what already stages: `fog` and `vision_ft` are on `MapInfo`, so they have ridden along
+    since 16a. What does not is `walls` and `overrides`, which sit on `RoomState` beside the live
+    board.
+
+    This is the cheapest subsystem in the project to stage, and the reason is worth stating because
+    every previous staging feature was the opposite: **walls reach the DM or nobody.** There is no
+    `WallView` and no filtered form, so a staged wall adds *zero* new visibility surface — unlike
+    `staged_only`, which had to grow `unseen_by_table` a third reason. The work is a `staged: bool`
+    on each wall and override command, which is the `SetMap` / `MoveToken` / `CreateToken` pattern
+    for the fourth time; a bundle holding the staged map with its own walls and overrides; and a
+    promote that moves them across instead of `sweep_board` clearing them.
+
+    The client half should be the milestone-10 shape a third time, since everything that draws or
+    hit-tests already reads `shownBoard(scene)`. `rulerBlocked` is the marker: it returns false over
+    the staged board on purpose today, and that early return is exactly what this milestone deletes.
+
+    **Deliberately out: previewing the staged map's fog.** "Will they see the dragon when the door
+    opens" is a real question and it is a second raycast. The DM's client will hold the staged walls,
+    the staged token positions and the radius, so if it is ever wanted it is client-only and costs
+    the room nothing — `shape_covers` is the precedent for a geometry rule living in two languages.
+    Do not put it in the room.
+
+21. **Room lighting.** `lighting: Dynamic | Room` on `MapInfo`, beside `fog` and `vision_ft` and
+    remembered per URL with them, so the outdoor map keeps line of sight and the dungeon reveals a
+    room at a time.
+
+    Under `Room`, `recompute_sight` stops raycasting and becomes a flood fill from each party token's
+    cell, bounded by traced segments and shut doors, unioned over the party. It is the connectivity
+    question 16b's reveal tool already asks — the same walls read a different way, not the raycast
+    written twice — so it is a second copy in a second language like `shape_covers`, and the two only
+    have to agree loosely.
+
+    **The fill is bounded by the radius as well as by the walls**, and that is not a detail. A pure
+    fill does not respect corners: walk into a winding corridor and the whole of it lights to its far
+    end, around every bend. Bounding by `vision_ft` stops it at the radius, keeps that number
+    meaningful in both modes rather than dead in one, and still reads as a whole-room reveal in any
+    room the radius covers. A hall bigger than the radius is a map whose radius should be raised; do
+    not add a second number.
+
+    Leaving a room un-lights it. Terrain gates on `revealed` and creatures on `visible`, so the room
+    stays dimmed and whatever wandered into it while the party was away does not show — the existing
+    rule doing its job rather than a new one.
+
+    Two things this mode buys past the reveal itself. **A shut door genuinely seals a room**, which
+    makes doors load-bearing rather than decorative. And a bad trace fails *loudly* — one gap merges
+    two rooms in front of everybody — instead of leaking a sliver of sight nobody notices. That
+    second one is why **20 comes first**: it is an argument for tracing carefully out of sight, and
+    it is a dependency of quality rather than of code.
+
+22. **Undo, for the DM.** One stack, roughly ten deep, no redo.
+
+    Nearly all of it falls out of things that already exist.
+
+    **`persists` is already the trigger list.** It is enumerated, it is already exactly "commands
+    that changed something worth keeping", and it already excludes drag frames — a stack growing
+    thirty times a second while a token is dragged is the obvious failure here, and this avoids it
+    without a rule of its own.
+
+    **A snapshot is the persisted subset**, which is to say the save file kept in memory instead of
+    written to disk. Defining it that way is what keeps `clients` and `pending` out of it: restoring
+    a live socket table from ten commands ago is the one way this feature hard-fails, and reusing the
+    disk serializer's own definition of what is state means never deciding it a second time.
+
+    **Minus anything persisted that the DM did not author**, and today that is exactly milestone 24's
+    scratchpads. The rule above is otherwise a quiet way to lose a player's paragraph: an undo of a
+    wall erase would restore every note in the room to what it said ten commands ago, with nothing on
+    screen to say it happened and no way for its author to get it back. The ring holds the persisted
+    subset less the notes, and the general form is the part to keep — **the undo stack may only
+    contain state the undoing hand wrote.** Anything persisted and owned by somebody else has to be
+    excluded when it is added, or it inherits this bug silently. Milestone 23's log dodges it for
+    free by never being persisted at all.
+
+    **Restoring re-sends `Welcome` to everyone.** Reconnection is already a full resync, so undo
+    needs no new event type and no diffing — "there is no diffing or resync protocol" is the rule
+    that makes this affordable rather than the rule it strains against.
+
+    The alternative, an inverse per command, dies on `sweep_board`: a map load destroys walls, shapes
+    and fog together, and writing an inverse for that is most of a second state model. A snapshot
+    restores it for free — and that case is also the one that makes undo worth having at all.
+
+23. **Whisper and shout.** Not chat, and the distinction is the whole design. **Two destinations and
+    no third** — a player whispers the DM, or shouts to the table.
+
+    The non-goal in CLAUDE.md was written on the premise that the group uses Discord. Half the table
+    has a Discord account because the DM made them one, and tabbing out of the browser to send one
+    sentence is friction the VTT itself created. That premise is what changed, and the non-goal has
+    been amended in place rather than left to contradict this file — go and read it, because the
+    bounded version is the specification and the boundary is most of it.
+
+    The motivating case is six people posting initiative rolls without clogging voice, which is why
+    the general channel that "six people already talking get nothing from" earned its place after
+    all. What stays out is player-to-player: **no DMs between players**, which is table-splitting at
+    a voice table and is also the entire reason a player's box needs no recipient picker. Two
+    buttons. The DM picks a player to whisper; a player never picks anything.
+
+    - **Kept in session memory, never written to disk.** The last ~200 messages live on `RoomState`
+      and go out in `Welcome`, so a browser hiccup mid-combat does not eat the initiative rolls; they
+      are gone next game night, and old whispers are never durable on a disk. The cap is a cap, not a
+      policy — trim from the front.
+    - That log is **per-recipient in `snapshot_for`**, because a whisper cannot go to everyone. It is
+      invariant 3 doing exactly its job, on the first piece of state where getting it wrong hands
+      over words rather than positions.
+    - No history between sessions, no formatting, no emotes, no commands, no dice. A shout is text
+      and is filtered by nothing at all; the fog does not apply to words.
+    - **No coupling to the initiative panel.** A shouted number is text and a panel row is state, and
+      they stay strangers — parsing chat content to fill a row makes this milestone reach into a
+      subsystem it otherwise touches none of. The DM reads the number and types it.
+
+    Architecturally it is the cleanest thing this project could be asked for: `Whispered` is the
+    first message whose **content** is per-recipient rather than per-recipient-*filtered*. That is
+    precisely what refusing `tokio::sync::broadcast` bought, and it has never once been spent.
+
+    A whisper and a shout interleave in **one log**, styled apart, rather than living in two panes.
+    Attribution is the roster name in the owner's colour, the same pair milestone 19's ring uses.
+
+24. **The scratchpad.** One box of text per person, private to whoever wrote it. A
+    `HashMap<Owner, String>` on `RoomState`, one `SetNotes` carrying only the text — the sender's
+    own key is never on the wire, because a key a client could name is a key it could name somebody
+    else's — and an `Event::NotesChanged` that reaches its author and nobody else.
+
+    **It is the first state in this project Slate does not send the DM**, and that is worth pausing
+    on: every asymmetry so far runs the other way, so `snapshot_for` and `message_for` have both only
+    ever been asked to withhold *downward*. There is no `is_dm` in either arm here. A scratchpad the
+    DM's client can open is not a scratchpad, it is a surveillance feature, and the reason it stays
+    out is the same reason it is worth having at all — nobody writes honestly in a box somebody else
+    can read.
+
+    Be accurate about how far that goes, though, and do not describe it to the table as privacy.
+    The notes are in the save file and the DM hosts the server, so anyone holding the JSON can read
+    every one of them. What this milestone guarantees is that **no client is ever sent somebody
+    else's notes**, which is the only guarantee this project's architecture can make about anything
+    and is the same one the walls and the hit points get.
+
+    What it is worth over the Notepad window everyone already tabs to is one thing: it is in the
+    window, and it persists with the room. That is enough and it is also the entire scope.
+
+    **It cannot be a rail tab.** Only one rail panel is open at a time, notes have to stay readable
+    while a tool is armed, and the rail is the DM's furniture in the first place while this belongs
+    to everybody.
+
+    The line to hold: **a second document makes it a journal.** No titles, no pages, no sharing, no
+    handout button.
+
+### The right dock
+
+Milestones 23 and 24 share one piece of client infrastructure and should be built with it rather
+than around it: **a collapsible dock on the right edge with a tab strip**, mirroring the left rail's
+established pattern instead of inventing floating windows.
+
+Everybody sees the same two tabs, Chat and Notes — which is the first time the two sides of this
+application have had the same furniture, and it falls out of the fact that neither feature is the
+DM's. The left rail's two rules are satisfied for nothing, since neither panel arms a tool, and the
+wall editor is on the opposite edge so nothing here can hide an armed left mouse button.
+
+An unread count sits on a collapsed tab, and an arriving message **also surfaces for a few seconds
+beside the dock**. A whisper nobody notices is the main way this feature fails a table where half
+the players are not technical, and a badge in a corner asks them to already be looking at it. It
+does not auto-open the dock: expanding a panel reflows the layout under whoever is mid-drag, which
+is what the ping arrow and the initiative panel each declined to do for the same reason. One box.
+
+## Cursors — unscheduled
+
+Everyone's pointer drawn on everyone's board. Written down deliberately without a number, because
+**milestone 19 may absorb the entire need** and that is not knowable before playing a session with
+pings in it.
+
+What is already settled, so the question can be reopened cheaply rather than re-argued:
+
+- It is `Ping`'s shape with the ephemerality turned up — a throttled `CursorMoved` carrying a `Pos`,
+  no persistence, absent from the snapshot, never dirty. Nothing has to be built first.
+- It would be **the busiest thing in the room by an order of magnitude.** Drag frames exist only
+  while a token is moving; cursor frames exist whenever anybody's hand is on the mouse. Seven clients
+  at 15Hz is still nothing at this scale, but this is the first feature where that sentence has to be
+  said out loud rather than assumed. Send only on movement, decay after a few seconds of stillness.
+- **The fog question is not settled the way 19's is, and probably lands the other way.** A ping is a
+  deliberate gesture and a cursor is not, so "the DM's pointer drifted across an unexplored room" is
+  a different question from "the DM pointed at it" — gate on `known`, which is the answer 19 was able
+  to refuse.
+- Seven pointers twitching over a board that already carries tokens, nameplates, hit point bars,
+  rulers, trails, shapes and fog is a real cost against a real benefit — ambient presence, and
+  knowing where somebody is looking without them having to gesture. That trade only reads correctly
+  in a live session, which is the other reason this waits.
 
 ## Drawings
 
