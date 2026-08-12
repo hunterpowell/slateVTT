@@ -586,3 +586,146 @@ fn a_blacked_out_room_takes_the_drawings_in_it_too() {
 
     assert_eq!(shapes_seen(&state, &as_player("saelyn")).len(), 0);
 }
+
+// --- ping -----------------------------------------------------------------
+
+fn ping(x: f32, y: f32) -> ClientMsg {
+    ClientMsg::Ping { at: Pos { x, y } }
+}
+
+/// Every ping in a batch of frames, as (sender, position).
+fn pings_in(frames: &[ServerMsg]) -> Vec<(Owner, (f32, f32))> {
+    frames
+        .iter()
+        .filter_map(|m| match m {
+            ServerMsg::Pinged { by, at } => Some((by.clone(), (at.x, at.y))),
+            _ => None,
+        })
+        .collect()
+}
+
+#[test]
+fn a_ping_reaches_everyone_but_the_client_that_sent_it() {
+    // The sketch rule, and for a sharper version of the same reason: our own
+    // ring has been growing under the held button since 150ms, so an echo would
+    // land a round trip later and restart it.
+    let mut state = room();
+    let mut dm = join_as_dm(&mut state, ClientId(1));
+    let mut saelyn = join_as_player(&mut state, ClientId(2), "saelyn");
+    let mut torrin = join_as_player(&mut state, ClientId(3), "torrin");
+    drain(&mut dm);
+    drain(&mut saelyn);
+    drain(&mut torrin);
+
+    state.handle(ClientId(2), ping(7.5, 3.5));
+
+    let expected = vec![(Owner::Player(PlayerId::new("saelyn")), (7.5, 3.5))];
+    assert_eq!(pings_in(&drain(&mut dm)), expected);
+    assert_eq!(pings_in(&drain(&mut torrin)), expected);
+    assert!(
+        drain(&mut saelyn).is_empty(),
+        "the pinger is already drawing their own ring"
+    );
+}
+
+#[test]
+fn a_ping_is_attributed_to_who_sent_it_and_not_to_their_socket() {
+    // `Owner` rather than `ClientId` is what lets the recipients look up a name
+    // and a colour. A `ClientId` would be a number that means nothing to them,
+    // and a different number every time that person refreshed.
+    let mut state = room();
+    let mut saelyn = join_as_player(&mut state, ClientId(2), "saelyn");
+    let _dm = join_as_dm(&mut state, ClientId(1));
+    drain(&mut saelyn);
+
+    state.handle(ClientId(1), ping(2.0, 2.0));
+
+    assert_eq!(pings_in(&drain(&mut saelyn)), vec![(Owner::Dm, (2.0, 2.0))]);
+}
+
+#[test]
+fn a_ping_is_never_stored_and_never_saved() {
+    // Stronger than the sketch above it: a sweep at least exists between two
+    // pointer events, and there has never been a moment at which the room held
+    // one of these.
+    let mut state = room();
+    let _saelyn = join_as_player(&mut state, ClientId(2), "saelyn");
+
+    assert!(!state.handle(ClientId(2), ping(1.0, 1.0)));
+    let before = state.to_saved();
+    assert!(!state.handle(ClientId(2), ping(2.0, 2.0)));
+
+    // Nothing in the snapshot to compare, so the assertion is that the save is
+    // byte-for-byte what it was — a ping cannot have added a field to it.
+    assert_eq!(
+        serde_json::to_string(&before).expect("save"),
+        serde_json::to_string(&state.to_saved()).expect("save"),
+    );
+}
+
+#[test]
+fn a_ping_reaches_the_table_over_ground_they_have_never_explored() {
+    // **The decision this milestone turns on.** Every other frame in this file
+    // carrying a position is filtered by what the recipient may see; this one is
+    // not, deliberately. A ring over black says somebody is gesturing in a
+    // direction and not what is standing there — and the alternative is a
+    // 400ms gesture that silently does nothing, which is worse than no gesture.
+    let mut state = fog_room(30.0);
+    let _dm = join_as_dm(&mut state, ClientId(1));
+    let mut saelyn = join_as_player(&mut state, ClientId(2), "saelyn");
+    drain(&mut saelyn);
+
+    // Far outside the party's torch, and never walked past: the fog says dark.
+    let dark: Cell = (40, 40);
+    assert!(
+        !state.known.contains(&dark),
+        "this cell has to be unexplored or the test proves nothing"
+    );
+
+    state.handle(ClientId(1), ping(40.5, 40.5));
+
+    assert_eq!(
+        pings_in(&drain(&mut saelyn)),
+        vec![(Owner::Dm, (40.5, 40.5))],
+        "a ping is relayed wherever it lands"
+    );
+}
+
+#[test]
+fn a_ping_does_not_light_anything_up() {
+    // The other half of the arrangement above, and the half that would be a leak
+    // if it were wrong: pointing at a room must not *explore* it. `moves_sight`
+    // says no, so no `FogChanged` goes out and no cell changes state.
+    let mut state = fog_room(30.0);
+    let _dm = join_as_dm(&mut state, ClientId(1));
+    let mut saelyn = join_as_player(&mut state, ClientId(2), "saelyn");
+    drain(&mut saelyn);
+
+    let before = state.known.clone();
+    state.handle(ClientId(1), ping(40.5, 40.5));
+
+    assert_eq!(state.known, before, "a ping is not a torch");
+    let frames = drain(&mut saelyn);
+    assert!(
+        !frames
+            .iter()
+            .any(|m| matches!(m, ServerMsg::FogChanged { .. })),
+        "nothing about the fog changed, got {frames:?}"
+    );
+}
+
+#[test]
+fn a_ping_nowhere_is_refused() {
+    // `finite`'s job everywhere else is protecting the save file. Here there is
+    // no save file to protect and the reason is the other one: a NaN reaches six
+    // clients and draws a ring nowhere at all.
+    let mut state = room();
+    let _saelyn = join_as_player(&mut state, ClientId(2), "saelyn");
+
+    assert!(state.check(ClientId(2), &ping(f32::NAN, 0.0)).is_err());
+    assert!(state.check(ClientId(2), &ping(0.0, f32::INFINITY)).is_err());
+    assert!(
+        state.check(ClientId(2), &ping(9_000.0, -9_000.0)).is_ok(),
+        "a ping off the map is a ping"
+    );
+}

@@ -14,6 +14,8 @@ replaces Foundry for one group that only needs a shared map, tokens, and turn or
 - A movement ruler that tints the squares a drag crossed, counting diagonals whichever
   way the DM sets the room to
 - Measuring and spell-area drawing that anyone at the table can use
+- A ping: hold the mouse button and a ring appears on everyone's board, with an arrow at
+  the edge of the screen for whoever is looking somewhere else
 - Walls and doors the DM traces over the map, which block line of sight and never movement
 - Fog of war: the table sees what their own tokens can see, and remembers where they have
   been — with a DM override to reveal or black out a room by hand
@@ -126,6 +128,7 @@ the machine.
 | `drive-fog.mjs`    | Fog of war, including what a player's client never fetched         | both     |
 | `drive-names.mjs`  | The names-under-tokens switch, on both boards at once              | both     |
 | `drive-ruler.mjs`  | The movement trail, the diagonal switch, the initiative panel      | both     |
+| `drive-ping.mjs`   | The hold that pings, and the ring reaching an unexplored corner    | both     |
 
 The ones marked *both* open two browsers at once, and that is the point of them: almost everything
 they assert is a **difference** between what two people are holding, which one client cannot see.
@@ -144,10 +147,10 @@ node tools/drive-player.mjs http://127.0.0.1:3000
 ```
 
 Point them at a scratch `SLATE_STATE`, never at the room you are about to play in — the first
-thing `drive-ui.mjs` does is erase every wall on the board, and the fog, names and ruler drivers
-each persist a setting. Run them one at a time: they share debug ports (9333 for a DM, 9334 for a
-player), so two at once attach to each other's browser. Set `SLATE_BROWSER` if Chrome or Edge is
-somewhere unusual.
+thing `drive-ui.mjs` does is erase every wall on the board, and the fog, names, ruler and ping
+drivers each build a token or flip a switch that persists. Run them one at a time: they share debug
+ports (9333 for a DM, 9334 for a player), so two at once attach to each other's browser. Set
+`SLATE_BROWSER` if Chrome or Edge is somewhere unusual.
 
 ## Hosting a remote session from Windows
 

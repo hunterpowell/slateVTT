@@ -1,12 +1,13 @@
 # Drawings and distance
 
-Spell areas, sketches, the coverage rule, and the movement ruler. Everything measured in cells
-and read out in feet.
+Spell areas, sketches, the coverage rule, the movement ruler, and the ping. Everything anyone puts
+on the board that is not a token or a wall.
 
 `.claude/CLAUDE.md` is loaded into every session; this file is not. **Read it before touching
-`shapes.ts`, `drawtool.ts`, `ruler.ts`, or `Shape` / `ShapeKind` / `Sketch` on the server** — the
-geometry here is one function doing two jobs, and the honest inconsistency between how distance
-counts and how coverage counts is deliberate.
+`shapes.ts`, `drawtool.ts`, `ruler.ts`, `pings.ts`, or `Shape` / `ShapeKind` / `Sketch` / `Ping` on
+the server** — the geometry here is one function doing two jobs, the honest inconsistency between
+how distance counts and how coverage counts is deliberate, and the ping is the one thing in this
+project that no visibility filter touches.
 
 ## Drawings
 
@@ -261,3 +262,152 @@ screen for a few seconds by a browser that closed.
 A ruler belongs to the board its drag is happening on, and only the board on screen draws it —
 `shownBoard` again. The DM planning a move on the staged map measures there, and the table, who
 are sent no such frame, see nothing.
+
+## Ping
+
+Hold the left mouse button with no tool in hand and a ring appears where everyone can see it.
+Foundry's gesture, chosen because half the table has already used it. `pings.ts` on the client,
+`ClientMsg::Ping` and `Event::Pinged` and `ServerMsg::Pinged` on the server, and nothing else.
+
+### It separates by duration, not by target
+
+This is the design, and everything else follows from it. On `pointerdown` with nothing modal armed,
+a ~400ms timer starts *alongside* whatever the press also began. A few pixels of movement cancels it
+— that was a pan or a drag. An early release cancels it and the click underneath runs exactly as it
+always did, **so doors still swing**. The timer firing consumes the gesture, so the `pointerup` that
+follows does nothing.
+
+Separating this way is what makes it fit at all. A click already means five things depending on what
+is under it and what is in hand, and a door is the one place where what a click means depends on
+what it *lands on*. A ping defined by target would have had to join that argument; defined by
+duration it does not participate in it, and no existing branch had to learn about it.
+
+`HOLD_SLOP_PX` is deliberately **equal** to the draw tool's `DRAW_CLICK_SLOP_PX` and the hold is
+checked first on every move. Larger, and a press could cross into sweeping and *then* fire, killing
+a sketch that five other screens had already been shown with no release frame left to take it off
+them. The equality is load-bearing; the comment in `input.ts` says so.
+
+A hold **on a token** pings. A drag only begins on movement, so a stationary hold on a creature is
+free — and pointing at one is most of what pinging is for. Firing takes back what the press started:
+`rulers.forget`, because a zero-length ruler measuring a move nobody made would otherwise be left on
+the board. The DM's *selection* is deliberately kept: it happened on the way down, it is visible, and
+un-selecting a creature somebody just pointed at is the opposite of what they meant.
+
+**Ping ignores the draw tool specifically**, which is the one exception to "an armed tool takes the
+button first". That tool is pinned to the rail rather than the tab strip, everybody has it, and it is
+used in the middle of a fight — so a player who leaves it selected between uses would lose the
+gesture permanently and get no hint as to why. A dead gesture is invisible, and the people least
+likely to report it are the ones this feature is for. The cost is real and small: a *slow* click on a
+shape pings instead of erasing it. Disarming the tool after every completed shape was the other
+candidate and was rejected because the measure tool is used repeatedly, and re-arming it after every
+measurement is a worse tax than a slow erase.
+
+### The ring grows before it fires
+
+From ~150ms, local-only until it commits. That is not decoration and the two arguments for it pull
+in opposite directions and both land in the same place: 400ms of nothing happening is how a long
+press feels broken, and a ring that has *started* growing is how an accidental ping gets noticed in
+time to let go.
+
+`startedAt` is the moment the button went down rather than the moment it fires, which is what makes
+the preview and the landed ring **one drawing**. Committing moves the same object out of `holding`
+and into the list without touching it, so nothing on screen restarts, jumps or blinks. The cost is
+that the pinger's own ring expires `HOLD_MS` before everyone else's, which nobody can perceive.
+
+Sized in **screen pixels**, positioned in world space. A ring measured in cells vanishes when the
+camera pulls back, and pulling back to see the whole dungeon is exactly when somebody needs to point
+at a corner of it.
+
+### No fog gate, and that is the decision
+
+**A ping is relayed to everyone wherever it lands, including ground the party has never explored.**
+It is the one message in this project carrying a position that no filter on either side of the wire
+touches, and the one place something the DM places appears to the table over unexplored ground.
+
+Three reasons, and the first is the one that makes it safe rather than merely convenient:
+
+- **There is nothing in it to read.** A ping carries a position and a sender. A ring over black says
+  somebody is gesturing in a direction, not what is standing there — which is the same information
+  the DM would give by saying "over there" on Discord.
+- The DM can see their own fog while they hold the button, so they know what they are pointing over
+  before it goes.
+- The alternative is a deliberate 400ms gesture that *sometimes silently does nothing*. A gesture you
+  cannot tell has failed is one you stop trusting, and the failure would land hardest on the players
+  least likely to work out why.
+
+The other half is asserted separately and matters as much: **a ping does not light anything up.**
+`Ping` is not in `moves_sight`, so no cell changes state and no `FogChanged` goes out. Pointing at a
+room must not explore it. `drive-ping.mjs` checks both directions on one gesture — the ring lands on
+the player's black, and once it fades the ground under it is exactly as dark as it was.
+
+Contrast this with the cursor feature `ROADMAP.md` leaves unscheduled, which probably lands the other
+way: a ping is a deliberate act and a drifting pointer is not, so "the DM's cursor wandered across an
+unexplored room" is a different question from "the DM pointed at it".
+
+### Ephemeral, whole
+
+No persistence, absent from `snapshot_for`, does not mark the room dirty, not in `persists`. Stronger
+than a sketch on every count, and the comparison is the clearest way to see the shape: a sketch at
+least exists *between* two pointer events, so the room participates in its lifetime — the next frame
+replaces it, a release closes it, and a socket dying has to close it too. A ping is one frame that
+lands, is relayed, and is over. Nothing ends one but the clock on each client, which is why `active`
+is the only thing that ever takes one off a board.
+
+`apply` is a misnomer for exactly one command and this is it: there is no `&mut self` in that arm. It
+goes through the four-step pipeline anyway rather than short-circuiting somewhere earlier, because
+those steps are where permission and delivery live and a command with a path around them is how one
+of the two gets forgotten.
+
+`finite` is still checked. Everywhere else that guard protects the save file; here there is no save
+file to protect and the reason is the other one — a NaN reaches six clients and draws a ring nowhere.
+
+### Whose ring it is
+
+`ServerMsg::Pinged` carries an **`Owner`**, not a `ClientId`, and that is the one place it differs
+from `Sketch`. A sketch is keyed by connection because the recipient has to replace the previous
+frame from that socket and end it on release. A ping replaces nothing and ends by itself, so what the
+recipient needs is not which socket sent it but whose ring to draw — and a `ClientId` is a number
+that means nothing to a player and a different number every time somebody refreshes.
+
+Colour is **derived, not chosen**: `colourOf` indexes a fixed palette by the sender's position in the
+roster, which every client holds from the same `Welcome`. Nothing on the wire, nothing persisted,
+nothing anybody sets at the start of a session, and six clients cannot disagree. The name is written
+beside the ring because colour alone does not scale to seven people, and it is the roster name rather
+than the slug.
+
+Letting players pick their own colour is a feature worth having and is deliberately **not** this one
+— it needs a command a player may send, persisted state keyed to them, and an answer to how a
+personal colour relates to the draw palette. When it lands it replaces the body of `colourOf` and
+touches nothing else, with these as the defaults for whoever never picks. Milestone 23's chat
+attribution reads the same two functions.
+
+The sender is not echoed their own ping, for `Sketch`'s reason twice over: it has been on their board
+since the hold was 150ms old, and a copy arriving a round trip later would restart it.
+
+### The arrow at the edge
+
+**A ping off the edge of your view draws an arrow at the edge of the screen for its lifetime**,
+pointing at it. Six players looking at different parts of the map is the normal case, and a ping
+nobody sees is worse than no ping at all.
+
+It is **not** a camera pan. Moving the board under whoever is mid-drag is the same thing the
+initiative panel refuses to do on a turn change, and being told where to look is a different act from
+being taken there.
+
+`edgeMarker` puts it where the line from the middle of the view to the ping leaves a rectangle inset
+by the room the arrowhead and the name need. Computing the crossing rather than clamping each axis is
+what keeps a ping directly above the camera at the top middle instead of in a corner. The inset is
+clamped to half the view, or a narrow window turns the rectangle inside out and every arrow lands
+behind the camera.
+
+### On screen, and not on the staged one
+
+Drawn last, over the names and the hit point bars, and it is the only thing that earns that: it is
+somebody saying *look here*, it is worth more for two seconds than anything it covers, and it
+uncovers it again by itself.
+
+Nothing draws while previewing, and nothing can be pinged from there. A ping's position is in the
+live board's grid units, so painting it onto the map being prepared would put the ring in a cell
+nobody pointed at — the rule the shapes and the walls already follow. The DM misses pings while they
+are preparing the next room, which is the trade preview already makes with every other board-level
+thing on screen.

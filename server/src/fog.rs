@@ -363,6 +363,49 @@ pub fn visible_cells(map: &MapInfo, walls: &[Wall], sources: &[Px]) -> HashSet<C
     seen
 }
 
+/// A cell set with the ring of cells touching it added — the party's memory
+/// widened by one square in every direction.
+///
+/// **What this is for is the masonry.** `snapToCorner` puts a traced wall on the
+/// corner lattice, so it runs *between* cell centres and the last cell a ray
+/// reaches is the floor square inside the room. If the DM traced along the inner
+/// face of the wall — the natural way to trace one — the drawn wall itself is
+/// past that cell and the table is shown floor, then nothing. Rooms read as
+/// holes rather than as rooms. One cell of fringe puts the wall on their board.
+///
+/// **It is a set operation and knows nothing about walls**, so the fringe lands
+/// in every direction and not only across masonry: one cell further down an open
+/// corridor as well, which is `vision_ft` plus a square for terrain. That reads
+/// as the corridor ahead fading rather than cutting, and asking the raycast
+/// which cells it was *blocked* into instead would be a different return type
+/// for a picture nobody would tell apart.
+///
+/// Only `known` is built through this — never `visible`, which gates the
+/// creatures, and never `revealed`, which is memory and is rays only. The set is
+/// a superset of its input **by construction**: the cell itself goes in before
+/// the board is consulted, so `visible ⊆ known` cannot depend on where some other
+/// bound happened to clip. The ring is clipped, because the void off the edge of
+/// the map is not somewhere the party explores and a fringe there is a cell in
+/// the packed rectangle.
+///
+/// Eight neighbours and not four: a four-neighbour ring leaves a notch bitten out
+/// of every room corner, which is more visible than the thing this fixes.
+pub fn with_fringe(map: &MapInfo, cells: &HashSet<Cell>) -> HashSet<Cell> {
+    let mut out: HashSet<Cell> = HashSet::with_capacity(cells.len() * 2);
+    for &(x, y) in cells {
+        out.insert((x, y));
+        for dy in -1..=1 {
+            for dx in -1..=1 {
+                let cell = (x + dx, y + dy);
+                if cell_on_board(map, cell) {
+                    out.insert(cell);
+                }
+            }
+        }
+    }
+    out
+}
+
 /// The play area's four edges as segments, or nothing when the map has none.
 ///
 /// The roadmap calls this the implicit wall, and it is the reason no editor

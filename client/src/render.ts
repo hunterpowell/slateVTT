@@ -5,7 +5,9 @@ import { darkFill, fogRect } from './fog.js';
 import type { Identity } from './identity.js';
 import { ownsToken } from './identity.js';
 import { OVERRIDE_ALPHA, overrideRect, paintColor } from './overrides.js';
-import type { FogPaint, Hp } from './protocol.js';
+import type { Ping } from './pings.js';
+import { colourOf, EDGE_INSET_PX, edgeMarker, nameOf, ringAlpha, ringRadius } from './pings.js';
+import type { FogPaint, Hp, RosterEntry } from './protocol.js';
 import type { Ruler } from './ruler.js';
 import { feetMoved, rulerAlpha, trailCells } from './ruler.js';
 import type { Board, Scene, Token } from './scene.js';
@@ -153,6 +155,16 @@ const SHAPE_EDGE_WIDTH = 2;
 /** The shape the pointer would erase, so a click is never a surprise. */
 const SHAPE_HOVER_ALPHA = 0.4;
 const SHAPE_FONT = '600 12px ui-sans-serif, system-ui, sans-serif';
+/** The ping ring and the arrow that stands in for one off screen. Both drawn in
+ *  the sender's own colour, which is why neither has a colour constant here. */
+const PING_WIDTH = 3;
+const PING_HALO_WIDTH = 6;
+const PING_HALO = 'rgba(0, 0, 0, 0.6)';
+/** Between the ring and the name written under it. */
+const PING_TEXT_GAP = 7;
+const PING_FONT = '600 12px ui-sans-serif, system-ui, sans-serif';
+/** How long the arrow's head is, in screen pixels. */
+const PING_ARROW_PX = 13;
 /** Between a shape's far point and its reading. */
 const SHAPE_TEXT_GAP = 8;
 
@@ -221,6 +233,13 @@ export interface Frame {
   hoveredShapeId: string | null;
   /** Token acting this turn, or null when combat is not running. */
   currentTurn: string | null;
+  /** Every ring on the board, ours and everyone else's, plus the one still
+   *  being held down if there is one. */
+  pings: readonly Ping[];
+  /** The cast list, so a ring can be attributed to a name and a colour. Held
+   *  by every client since `Welcome` and not a secret — it is the same list
+   *  everyone was offered at the identity picker. */
+  roster: readonly RosterEntry[];
   /** The DM's in-progress grid reference box. Null for everyone else. */
   calibration: { box: Box; cells: number } | null;
   /** The wall editor's state: whether it is armed, the run being traced, where
@@ -330,6 +349,19 @@ export function render(ctx: CanvasRenderingContext2D, view: Viewport, frame: Fra
   if (!showingStaged(frame.scene)) drawShapeLabels(ctx, frame, board);
   drawRulers(ctx, frame, board);
   drawTokenChrome(ctx, frame, board);
+
+  // Last, over everything including the names and the hit point bars, and it is
+  // the only thing in this function that earns that. A ping is somebody at the
+  // table saying *look here* — it is worth more for the two seconds it lasts
+  // than anything it covers, and it uncovers it again by itself.
+  //
+  // Nothing while previewing, for the reason the shapes and the walls draw
+  // nothing there: a ping's position is in the live board's grid units, and
+  // painting it onto the map being prepared would put the ring in a cell nobody
+  // pointed at. The DM misses pings while they are preparing the next room,
+  // which is the same trade preview already makes with every other board-level
+  // thing on screen.
+  if (!showingStaged(frame.scene)) drawPings(ctx, view, frame, board);
 }
 
 /**
@@ -1121,6 +1153,123 @@ function drawRulers(ctx: CanvasRenderingContext2D, frame: Frame, board: Board): 
   }
 
   ctx.restore();
+}
+
+/**
+ * Every ring on the board, and an arrow at the edge for each one that is not.
+ *
+ * In screen space and sized in screen pixels, which is the one decision here
+ * that is not obvious: a ring measured in cells vanishes when the camera pulls
+ * back, and pulling back to see the whole dungeon is exactly the moment
+ * somebody needs to point at a corner of it. Only its *anchor* is world-space.
+ *
+ * There is no visibility test anywhere in this function and that is deliberate.
+ * A ping is drawn wherever it landed, over explored ground, over the fog, and
+ * over ground the party has never seen. It carries a position and a name and
+ * nothing else — a ring over black says somebody is gesturing in a direction,
+ * not what is standing there — and the server has already made the same
+ * decision by relaying it unfiltered. See *Ping* in `docs/drawings.md`.
+ */
+function drawPings(
+  ctx: CanvasRenderingContext2D,
+  view: Viewport,
+  frame: Frame,
+  board: Board,
+): void {
+  const { cam, pings, roster, now } = frame;
+  if (pings.length === 0) return;
+
+  ctx.save();
+  ctx.font = PING_FONT;
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'top';
+  ctx.lineJoin = 'round';
+  ctx.lineCap = 'round';
+
+  for (const ping of pings) {
+    const alpha = ringAlpha(ping, now);
+    const radius = ringRadius(ping, now);
+    // A ring still inside its first 150ms, or one that has finished fading and
+    // is about to be dropped from the list. Neither is a thing to draw.
+    if (alpha <= 0 || radius <= 0) continue;
+
+    const world = gridToWorld(board.grid, ping.at.x, ping.at.y);
+    const at = worldToScreen(cam, world.x, world.y);
+    const colour = colourOf(ping.owner, roster);
+    const name = nameOf(ping.owner, roster);
+
+    ctx.globalAlpha = alpha;
+
+    // Off the edge of the view: an arrow rather than a ring, because six people
+    // looking at different parts of the map is the normal case and a ping
+    // nobody sees is worse than no ping at all. Never a camera pan — see
+    // `edgeMarker`.
+    const edge = edgeMarker(at, view, EDGE_INSET_PX);
+    if (edge !== null) {
+      drawPingArrow(ctx, edge.at, edge.angle, colour);
+      label(ctx, name, edge.at.x, edge.at.y + PING_ARROW_PX, colour);
+      continue;
+    }
+
+    ctx.beginPath();
+    ctx.arc(at.x, at.y, radius, 0, TAU);
+    ctx.strokeStyle = PING_HALO;
+    ctx.lineWidth = PING_HALO_WIDTH;
+    ctx.stroke();
+    ctx.strokeStyle = colour;
+    ctx.lineWidth = PING_WIDTH;
+    ctx.stroke();
+
+    // Under the ring rather than inside it. A name in the middle competes with
+    // whatever is being pointed at, which is the one thing the gesture exists
+    // to make legible.
+    label(ctx, name, at.x, at.y + radius + PING_TEXT_GAP, colour);
+  }
+
+  ctx.restore();
+}
+
+/** A filled triangle pointing along `angle`, in the sender's colour with the
+ *  same dark halo the ring gets — an arrow on a light map is otherwise a shape
+ *  the size of a cursor with nothing behind it. */
+function drawPingArrow(
+  ctx: CanvasRenderingContext2D,
+  at: Vec2,
+  angle: number,
+  colour: string,
+): void {
+  ctx.save();
+  ctx.translate(at.x, at.y);
+  ctx.rotate(angle);
+  ctx.beginPath();
+  ctx.moveTo(PING_ARROW_PX, 0);
+  ctx.lineTo(-PING_ARROW_PX * 0.7, PING_ARROW_PX * 0.75);
+  ctx.lineTo(-PING_ARROW_PX * 0.7, -PING_ARROW_PX * 0.75);
+  ctx.closePath();
+  ctx.strokeStyle = PING_HALO;
+  ctx.lineWidth = 3;
+  ctx.stroke();
+  ctx.fillStyle = colour;
+  ctx.fill();
+  ctx.restore();
+}
+
+/** Text with the halo every other label on this canvas gets, so a name is
+ *  legible over a cave floor and over parchment alike. The colour is the
+ *  sender's, because a name and a ring in different colours would be two people
+ *  as far as anybody reading it at speed is concerned. */
+function label(
+  ctx: CanvasRenderingContext2D,
+  text: string,
+  x: number,
+  y: number,
+  colour: string,
+): void {
+  ctx.lineWidth = 3;
+  ctx.strokeStyle = LABEL_HALO;
+  ctx.strokeText(text, x, y);
+  ctx.fillStyle = colour;
+  ctx.fillText(text, x, y);
 }
 
 /**

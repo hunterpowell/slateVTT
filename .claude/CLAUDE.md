@@ -22,7 +22,8 @@ them would load them into every session, which is what moving them out avoided.)
 - Shows tokens on that map; the DM moves any token, players move only their own
 - Tracks initiative order and the current turn
 - Lets the DM prepare the next map out of sight of the table, then promote it
-- Lets anyone measure a distance or draw a spell area on the board
+- Lets anyone measure a distance or draw a spell area on the board, or point at a spot on it so
+  everyone else sees where
 - Lets the DM trace the walls and doors of a map, and limits what the table can see to what their
   own tokens have line of sight on — and lets the DM overrule that by hand, square by square or a
   room at a time
@@ -127,10 +128,11 @@ struct RoomState {
     shapes: Vec<Shape>,
     /// Traced over the map image. DM-only, whole — see `docs/walls.md`.
     walls: Vec<Wall>,
-    /// Everywhere the party's rays have reached, that as the DM's mask leaves it,
-    /// and where they can see now. Grid cells, party-shared rather than
-    /// per-player. Only `revealed` is persisted and only `recompute_sight` reads
-    /// it — everything else reads `known` — see `docs/fog.md`.
+    /// Everywhere the party's rays have reached, that widened a cell and as the
+    /// DM's mask leaves it, and where they can see now. Grid cells, party-shared
+    /// rather than per-player. Only `revealed` is persisted and only
+    /// `recompute_sight` reads it — everything else reads `known` — see
+    /// `docs/fog.md`.
     revealed: HashSet<Cell>, known: HashSet<Cell>, visible: HashSet<Cell>,
     /// What the DM said about particular cells anyway. A mask applied after the
     /// raycast, never a write into the two above. DM-only, whole, like the walls.
@@ -390,8 +392,35 @@ added to the wire. It lingers a couple of seconds after the drop and the line an
 it, on one alpha. **A drag through a wall or a shut door draws the DM's amber**; that is a hint and
 never a refusal, and it cannot leak because a player holds no walls to test against.
 
-→ **`docs/drawings.md`** before touching `shapes.ts`, `drawtool.ts`, `ruler.ts`, `trailCells`,
-`crossesWall`, `SetDiagonals`, or `Shape`/`ShapeKind`/`Sketch` on the server.
+## Ping
+
+Hold the left mouse button with nothing armed and a ring appears where everyone can see it, in the
+sender's colour with their name beside it. **It separates from what the button already does by
+duration rather than by target** — a ~400ms timer that a few pixels of movement cancels and an early
+release cancels, so doors still swing and a click still erases. That is what let it coexist with the
+one place a click's meaning depends on what is under it, without joining that argument. A hold on a
+token pings; a drag only begins on movement, so a stationary hold on a creature is free.
+
+**Ping ignores the draw tool specifically** — the one exception to "an armed tool takes the button
+first". Everybody has that tool, it is used mid-fight, and a player who leaves it armed would lose
+the gesture permanently with no hint why. The ring grows from ~150ms, local until it commits.
+
+**No fog gate, and it is the one message with a position that no filter touches.** A ping lands
+wherever it was pointed, unexplored ground included, and it is safe because there is nothing in it to
+read but a position — a ring over black says somebody is gesturing in a direction, not what is
+standing there. It does not light anything up: `Ping` is not in `moves_sight`, so pointing at a room
+never explores it. Ephemeral whole — not in `persists`, absent from `snapshot_for`, never dirty, and
+`apply`'s one arm with no `&mut self` in it.
+
+`ServerMsg::Pinged` carries an **`Owner`** rather than a `ClientId`, unlike `Sketch`: it replaces no
+previous frame and needs no release, so what a recipient wants is whose ring to draw. Colour is
+**derived** — `colourOf` indexes a palette by roster position, so six clients agree with nothing on
+the wire. The sender is not echoed their own. **A ping off the edge of your view draws an arrow at
+the edge of the screen**, never a camera pan.
+
+→ **`docs/drawings.md`** before touching `shapes.ts`, `drawtool.ts`, `ruler.ts`, `pings.ts`,
+`trailCells`, `crossesWall`, `edgeMarker`, `SetDiagonals`, or `Shape`/`ShapeKind`/`Sketch`/`Ping` on
+the server.
 
 ## Walls and doors
 
@@ -421,10 +450,18 @@ after it is promoted.
 ## Fog of war
 
 Two sets of grid cells, **party-shared rather than per-player**: `revealed` is everywhere the party
-has had line of sight, `visible` is where they have it now. **Terrain gates on `revealed`, creatures
+has had line of sight, `visible` is where they have it now. **Terrain gates on `known`, creatures
 gate on `visible`** — the room they walked through stays on their screen, dimmed, and whatever has
 wandered into it since does not. Vision comes from tokens a player *owns*, so handing one over grants
 sight with no extra rule.
+
+**`known` is `revealed` widened by one cell in every direction** — `with_fringe`, eight neighbours,
+clipped to the board. A traced wall runs *between* cell centres, so the rays stop at the floor inside
+the room and the drawn masonry is past it; without the fringe the table is shown floor, then nothing,
+and a room reads as a hole. **It never touches `visible` and never touches `revealed`**: widening the
+first hands over the ogre standing behind the wall, and writing into the second bakes a cell no ray
+reached into the save file. So it is a mask like the DM's paint is, and `Dark` still wins because the
+overrides are applied after it.
 
 **Raycasting to cell centres, not shadowcasting.** A cell is visible when the straight line from the
 viewer's centre to it crosses no solid wall and no shut door. Shadowcasting wants opacity to be a
@@ -462,11 +499,12 @@ swung to** — the one place a door's state is not read, because it asks what is
 is visible. Swept with the three sets, and persisted whole.
 
 **An unanchored shape gates on `known`**, not on `visible`: a drawing is painted on the floor
-rather than standing on it, so it belongs with the terrain. `shape_covers` on the server is a second
+rather than standing on it, so it belongs with the terrain — fringe included, which is the one
+reader downstream of that widening. `shape_covers` on the server is a second
 copy of `coveredCells`, and the two only have to agree loosely.
 
 → **`docs/fog.md`** before touching `fog.rs`, `fog.ts`, `overrides.ts`, `fogtool.ts`,
-`unseen_by_table`, `shape_seen`, `refresh_fog`, or `moves_sight`.
+`unseen_by_table`, `with_fringe`, `shape_seen`, `refresh_fog`, or `moves_sight`.
 
 ## Frontend
 

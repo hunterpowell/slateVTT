@@ -192,6 +192,14 @@ workshopped after 16 landed, and 19–24 after 18:
     **16b is done too** — the DM's manual override, the flood-fill reveal tool, and the unanchored
     shape filter milestone 14 left for whenever fog existed. See `docs/fog.md`.
 
+    **And one thing after both, which this file never considered: `known` is `revealed` widened by
+    one cell.** A traced wall runs between cell centres, so the rays stop at the floor inside the
+    room and the drawn masonry is past it — fog that stopped at the rays showed the table floor and
+    then nothing, and rooms read as holes. `with_fringe` is eight neighbours clipped to the board,
+    applied on the way into `known` alone: not into `visible`, which would hand over the creature
+    behind the wall, and not into `revealed`, which is rays only. See *One cell of fringe* in
+    `docs/fog.md`.
+
     Both questions this file left open were answered by building it. `ForceRevealed` became **two**
     brushes rather than one: `Explored` hands over the ground and `Lit` hands over what is standing
     on it, because the conservative answer alone made the DM use two controls to say one thing.
@@ -289,46 +297,52 @@ workshopped after 16 landed, and 19–24 after 18:
     itself, so the panel went from 208px to 248px and the name learned to ellipsis. Layout is a
     constraint on what this UI can grow, which milestone 15 already said about the rail.
 
-19. **Ping.** Hold the left mouse button with no tool in hand and a ring appears where everyone can
-    see it. Foundry's gesture, chosen because half the table has already used it.
+19. **Done.** Ping — hold the left mouse button and a ring appears where everyone can see it. See
+    *Ping* in `docs/drawings.md`.
 
-    It separates from what the button already does by **duration rather than by target**, which is
-    what lets it coexist with the one place a click's meaning depends on what is under it. On
-    `pointerdown` with nothing armed, start a ~400ms timer: a few pixels of movement cancels it —
-    that was a pan or a token drag — an early release cancels it and the existing click runs, so
-    **doors still swing**, and the timer firing consumes the gesture so the `pointerup` does nothing.
-    An armed tool takes the button first, exactly as it always has.
+    Everything this file specified held, including the parts that read like guesses: the ~400ms
+    timer, the 150ms growth, the arrow rather than a pan, and the no-fog-gate decision, which is the
+    thing worth reading before anything else is added that the table can see.
 
-    A hold **on a token** pings rather than doing anything else. A drag only begins on movement, so a
-    stationary hold on a creature is free, and pointing at one is most of what pinging is for.
+    Two things this file left open were answered by building it, and both went the way it thought
+    less likely.
 
-    **Watch what "an armed tool takes the button first" does to the draw tool here.** It is pinned to
-    the rail rather than on the strip, everybody has it, and if it stays selected between uses then
-    that player can never ping again and will get no hint as to why — a dead gesture is invisible,
-    and the people least likely to report it are the ones this whole milestone is for. Either the
-    draw tool disarms after it completes a shape, or ping ignores that one tool specifically.
-    Disarming is the better fix if it does not annoy whoever is drawing three circles in a row.
+    **Ping ignores the draw tool** rather than the draw tool disarming. Disarming is the tidier rule
+    and it taxes the wrong tool: the measure line is the one used repeatedly in a fight, and
+    re-arming it after every single measurement is a worse cost than the one thing ignoring it
+    actually breaks — a *slow* click on a shape pings instead of erasing. That trade is only visible
+    once you notice which of the four tools gets used most.
 
-    The ring grows from ~150ms, local-only until it commits. That is not decoration: 400ms of nothing
-    happening is how a long press feels broken, and a ring that has started growing is also how an
-    accidental ping gets noticed before it fires.
+    **The owner's colour had to be invented, and it is derived rather than chosen.** This file said
+    "the owner's colour" as though one existed; nothing in the project had ever needed one.
+    `colourOf` indexes a fixed palette by roster position, which every client resolves identically
+    from the `Welcome` it already holds — nothing on the wire, nothing persisted, nothing to set at
+    the start of a session. Players picking their own is a real feature and was deliberately split
+    out: it needs a command a *player* may send, persisted state keyed to them, and an answer to how
+    a personal colour relates to the draw palette. It replaces the body of one function when it comes.
 
-    **No fog gate — decided.** A ping is relayed to everyone wherever it lands, including ground the
-    party has never explored. A ring over black says the DM is gesturing in a direction and not what
-    is standing there; the DM can see the fog on their own board while they hold; and the alternative
-    is a deliberate 400ms gesture that silently does nothing. It is the one place in this project
-    where something the DM places appears to the table over unexplored ground, and it is safe
-    precisely because it carries no state — there is nothing in a ping for a player to read but its
-    position.
+    Three things cost more than the state model, which was no state model at all.
 
-    Ephemeral, whole: no persistence, absent from `snapshot_for`, does not mark the room dirty. The
-    ring is the owner's colour with their name beside it, because colour alone does not scale to
-    seven people.
+    **`HOLD_SLOP_PX` has to equal `DRAW_CLICK_SLOP_PX` and be checked first.** Larger, and a press can
+    cross into sweeping and *then* fire — killing a sketch that five other screens have already been
+    shown, with no release frame left to take it off them. The two constants look independent and are
+    not, which is exactly the kind of coupling that survives being noticed once and then gets tuned
+    apart later.
 
-    **A ping off the edge of your view draws an arrow at the edge of the screen** for its lifetime,
-    pointing at it. Six players looking at different parts of the map is the normal case, and a ping
-    nobody sees is worse than no ping at all. It is not a camera pan — moving the board under whoever
-    is mid-drag is the same thing the initiative panel refuses to do on a turn change.
+    **Firing has to take back what the press started.** The gesture runs alongside whatever the
+    button also began, which is the whole trick — and it means a hold on a token has already told
+    the ruler where a drag began. Left alone that is a zero-length ruler on the board measuring a
+    move nobody made. The selection is deliberately *not* taken back, which is the same call from the
+    other side: un-selecting a creature somebody just pointed at is the opposite of what they meant.
+
+    **`startedAt` is the button going down, not the moment it fires.** That one line is what makes
+    the growing preview and the landed ring one drawing rather than two with a handoff between them —
+    committing moves the same object between two lists and nothing on screen restarts. The obvious
+    alternative flickers for 150ms at the exact moment everyone is looking at it.
+
+    The negative assertion this project asks for landed in the *opposite* shape from every previous
+    one: `drive-ping.mjs` asserts that a second connection **was** sent something over ground it
+    cannot see, and that the ground under it is exactly as dark afterwards. One gesture, both halves.
 
 20. **Walls and fog overrides on the staged map.** The next dungeon gets traced before the table is
     shown it, rather than in front of them after the promote.
@@ -525,7 +539,7 @@ The anchored arm shipped in milestone 14: `shapes_for` withholds a shape whose a
 cannot see, and as of 16a that question includes line of sight without another line. An anchored
 shape's visibility follows its anchor token's rather than its own footprint.
 
-The unanchored arm shipped in 16b, and it gates on `revealed` rather than on `visible`. A shape is
+The unanchored arm shipped in 16b, and it gates on `known` rather than on `visible`. A shape is
 painted on the floor rather than standing on it, so it belongs with the terrain — a player's own
 marker survives them leaving the room, and nothing on the board flickers as the party moves.
 
@@ -593,6 +607,41 @@ to test against.
 how good a *test* it makes: the leak-proofness is normally the hard thing to assert, and here it is
 one drag photographed from two connections — amber on the DM's screen, blue on the player's, no
 identity check anywhere in the code that produces the difference.
+
+### A hint on the player's screen — unscheduled, and what it would cost
+
+Workshopped 2026-08-11 and deliberately not scheduled: playtest the current arrangement first and
+count how often the DM actually says "there is a wall there." Twice a session is not a feature. This
+note exists so the reasoning is not re-derived, and so it is not re-derived *wrong* — the naive
+version is a dungeon-mapping exploit, and there are two non-naive versions that are not.
+
+The observation both of them turn on is one this file already makes from the other direction:
+**in explored territory the party can already see where the walls are**, because they infer the
+geometry from the edges of the fog. That is the stated reason walls stay out of their snapshot, and
+it cuts the other way too — a hint **gated on both ends of the move being in `revealed`** tells them
+almost nothing they are not already looking at, and the probe stops working the moment they drag
+into the dark.
+
+Its specific leak is worth naming rather than hand-waving: **it outs secret doors.** A shut door in
+an explored corridor reads as a wall in the fog, so a move that fails to amber through one announces
+that it is a door. The mitigation is what the DM would do anyway — trace a secret door as `Solid`
+and convert it once the party finds it.
+
+Two ways to land it, and they are not close in cost:
+
+- **Send the player the walls that bound explored cells.** Straightforward and expensive in the
+  place this project is least willing to spend: it means a `WallView`, a filter that changes shape
+  every time the fog grows, and the end of "walls reach the DM or nobody" — which is currently one
+  of the few rules with no exceptions and therefore nothing to get wrong.
+- **Derive it on the client from the fog it already holds.** Amber when the move crosses the
+  boundary of `known`. Nothing new on the wire, no new filter, and it is leak-proof *by
+  construction* rather than by argument, since it reads only what that client was already sent.
+
+The second is obviously better and has one problem: under `Dynamic` lighting a fog edge is usually
+just the vision radius rather than a wall, so it would amber constantly and mean nothing. **Under
+milestone 21's `Room` lighting the fog edge is a wall almost by definition**, because the fill is
+bounded by them. So this whole question should be reopened after 21 has been played on, not before —
+the same session that answers whether an archway needs a `WallKind` of its own.
 
 Vision range is one DM-set radius per map, stored in feet on `MapInfo` and converted to cells
 where it is used. This asked for a generous `Default`, because the container-level `#[serde(default)]`

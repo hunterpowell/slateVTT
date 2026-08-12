@@ -466,6 +466,138 @@ fn the_fog_survives_the_save_file() {
     );
 }
 
+// --- one cell of fringe past the wall ------------------------------------
+
+/// The dividing wall traced, and then the fog started over: `fog_room` lights
+/// the room before anything is in the way and `revealed` is memory, so without
+/// the reset the party is still holding the far side from before the masonry
+/// existed and every assertion below passes for the wrong reason.
+fn walled_room() -> (RoomState, mpsc::Receiver<ServerMsg>) {
+    let mut state = fog_room(60.0);
+    let dm = join_as_dm(&mut state, ClientId(1));
+    state.handle(ClientId(1), between(false));
+    state.handle(ClientId(1), ClientMsg::ResetFog);
+    (state, dm)
+}
+
+#[test]
+fn the_table_is_shown_one_cell_of_ground_past_the_wall() {
+    // `snapToCorner` puts masonry *between* cell centres, so the last cell a
+    // ray reaches is the floor inside the room and the drawn wall is past it.
+    // Fog stopping there shows the table floor, then nothing, and the room
+    // reads as a hole rather than as a room.
+    let (state, _dm) = walled_room();
+
+    assert!(state.visible.contains(&(3, 1)), "the floor inside the room");
+    assert!(
+        state.known.contains(&(4, 1)),
+        "and the masonry the rays stop at"
+    );
+    assert!(
+        !state.revealed.contains(&(4, 1)),
+        "a mask over the memory, never a write into it"
+    );
+    assert!(
+        !state.visible.contains(&(4, 1)),
+        "and terrain only — explored ground, not sight"
+    );
+}
+
+#[test]
+fn a_creature_standing_in_the_fringe_is_still_not_on_the_tables_board() {
+    // The whole of what the fringe is allowed to do. Terrain gates on `known`
+    // and creatures gate on `visible`; widening the first and not the second is
+    // what keeps an ogre pressed against the far side of a wall a surprise.
+    let (mut state, _dm) = walled_room();
+    let mut rx = join_as_player(&mut state, ClientId(2), "saelyn");
+    drain(&mut rx);
+
+    state.handle(
+        ClientId(1),
+        ClientMsg::MoveToken {
+            id: TokenId::new("m"),
+            x: 4.5,
+            y: 1.5,
+            dragging: false,
+            staged: false,
+        },
+    );
+
+    assert!(state.known.contains(&(4, 1)), "ground the table is shown");
+    assert!(!sees_the_ogre(&state), "and nothing standing on it");
+
+    let frames = drain(&mut rx);
+    let spoke_of_it = frames.iter().any(|msg| match msg {
+        ServerMsg::TokenMoved { id, .. } | ServerMsg::TokenRemoved { id } => id.0 == "m",
+        ServerMsg::TokenChanged { token } => token.id.0 == "m",
+        _ => false,
+    });
+    assert!(
+        !spoke_of_it,
+        "a fringe cell is ground and not news about what is in it, got {frames:?}"
+    );
+}
+
+#[test]
+fn a_blacked_out_cell_is_still_dark_with_explored_ground_beside_it() {
+    // `Dark` is a ceiling and the fringe is a floor, and the mask goes on
+    // afterwards. A DM who paints the far side of a wall dark and finds the
+    // fringe handing it straight back has not painted anything.
+    let (mut state, _dm) = walled_room();
+    assert!(state.known.contains(&(4, 1)), "fringed to begin with");
+
+    state.handle(ClientId(1), paint(&[(4, 1)], Some(Override::Dark)));
+
+    assert!(!state.known.contains(&(4, 1)));
+}
+
+#[test]
+fn the_fringe_stops_at_the_edge_of_the_board() {
+    // The bound the sweep already takes, for the same reason: the void off the
+    // edge is not somewhere the party explores, and one cell out there is a
+    // cell in the packed rectangle from then on.
+    let mut state = fog_room(200.0);
+    let _dm = join_as_dm(&mut state, ClientId(1));
+    state.handle(
+        ClientId(1),
+        ClientMsg::SetMap {
+            url: "/assets/map.png".to_owned(),
+            grid_px: 64.0,
+            offset_x: 0.0,
+            offset_y: 0.0,
+            grid_color: "#ffffff52".to_owned(),
+            play_area: rect(0.0, 0.0, 640.0, 640.0),
+            fog: true,
+            vision_ft: 200.0,
+            staged: false,
+        },
+    );
+
+    assert!(state.known.contains(&(9, 1)), "the last cell on the board");
+    assert!(
+        !state.known.contains(&(10, 1)),
+        "and no fringe past its edge"
+    );
+    assert!(!state.known.contains(&(1, -1)), "in either direction");
+}
+
+#[test]
+fn the_fringe_is_derived_and_never_reaches_the_save_file() {
+    let (state, _dm) = walled_room();
+    assert!(state.known.contains(&(4, 1)));
+
+    let restored = RoomState::restored(state.to_saved(), SECRET.to_owned());
+
+    assert!(
+        !restored.revealed.contains(&(4, 1)),
+        "memory is rays, so a fringe cell cannot bake itself into one"
+    );
+    assert!(
+        restored.revealed.contains(&(3, 1)),
+        "and the ground the rays did reach is still there"
+    );
+}
+
 // --- the DM's manual override -------------------------------------------
 
 #[test]

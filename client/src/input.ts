@@ -5,6 +5,8 @@ import type { DrawTool } from './drawtool.js';
 import type { FogTool } from './fogtool.js';
 import type { Identity } from './identity.js';
 import { canMove } from './identity.js';
+import type { Pings } from './pings.js';
+import { HOLD_MS } from './pings.js';
 import type { ClientMsg, ShapeKind, WireOrigin } from './protocol.js';
 import type { Rulers } from './ruler.js';
 import type { Scene, Token } from './scene.js';
@@ -24,6 +26,19 @@ const DRAG_SEND_INTERVAL_MS = 40;
 /** How far the pointer may wander during a click on a shape before it counts as
  *  a sweep instead. A hand on a mouse is never perfectly still. */
 const DRAW_CLICK_SLOP_PX = 4;
+/**
+ * How far a press may wander and still be a hold that pings.
+ *
+ * Deliberately *the same number* as the slop above rather than a value of its
+ * own, and the equality is load-bearing rather than tidy. A press with a shape
+ * tool in hand is being measured against both at once: past this it is a hold no
+ * longer, and past that it is a sweep that has started sending frames. Were this
+ * the larger of the two, a press could cross into sweeping and then still fire —
+ * killing a sketch that five other screens had already been shown, with no
+ * release frame to take it back off them. Equal, and checked first on every
+ * move, means a ping can never fire after a sketch frame has gone out.
+ */
+const HOLD_SLOP_PX = DRAW_CLICK_SLOP_PX;
 /** How near a wall a click has to land to be about it, in *screen* pixels — so
  *  a segment stays as easy to hit zoomed out as zoomed in. */
 const WALL_HIT_PX = 8;
@@ -181,6 +196,9 @@ export function attachInput(
   /** The DM's fog brush. Null for players, who have no such panel and no
    *  overrides in their scene for one to edit. */
   fogTool: FogTool | null,
+  /** The rings. Everybody has these — where our own hold is timed, previewed
+   *  and fired from. */
+  pings: Pings,
 ): InputState {
   let drag: Drag | null = null;
   let lastDragSentAt = 0;
@@ -372,6 +390,97 @@ export function attachInput(
     sketches.own({ kind: d.tool, at: d.at, to: d.to, color: d.color });
   };
 
+  /**
+   * A press being timed to see whether it is a ping.
+   *
+   * Deliberately not a sixth `Drag`. Every variant of that enum is a thing the
+   * left button is *doing*; this is a question about the button that has not
+   * been answered yet, and it runs *alongside* whichever of them the press also
+   * started. That is the whole trick: ping separates from what the button
+   * already does by **duration rather than by target**, so it never had to be
+   * given a target of its own and doors still swing.
+   */
+  let hold: {
+    pointerId: number;
+    /** Where the button went down, in screen pixels — what the slop is
+     *  measured against, exactly as a sweep measures its own. */
+    fromX: number;
+    fromY: number;
+    timer: number;
+  } | null = null;
+
+  /**
+   * The pointer whose release the ping has already eaten, or null.
+   *
+   * Firing consumes the gesture: the button is still down at that moment, and
+   * the `pointerup` that follows must not also drop a token, erase a shape, or
+   * swing a door. This is how it is told to do nothing — a flag rather than
+   * simply nulling `drag`, because the release still has to release the pointer
+   * capture and put the cursor back.
+   */
+  let consumed: number | null = null;
+
+  /** Puts a press being timed back down without firing it. Whether anything is
+   *  being timed at all is this function's business and no caller's. */
+  const cancelHold = (): void => {
+    if (hold === null) return;
+    window.clearTimeout(hold.timer);
+    hold = null;
+    pings.drop();
+  };
+
+  /**
+   * The press lasted. Ping, and take back whatever else the press had started.
+   *
+   * The taking-back is the part worth reading. A press on a token has already
+   * called `rulers.begin`, and leaving that would put a zero-length ruler on the
+   * board measuring a move nobody made; a press with a shape tool in hand has a
+   * `draw` drag open, which has sent nothing (`moved` is false, or the hold
+   * would have been cancelled — see `HOLD_SLOP_PX`) and so needs no release
+   * frame, only its local preview cleared. A pan has nothing to take back.
+   *
+   * The DM's *selection* is deliberately left alone. It happened on the way
+   * down, it is visible on the board, and un-selecting a creature somebody just
+   * pointed at is the opposite of what they meant.
+   */
+  const firePing = (): void => {
+    if (hold === null) return;
+    consumed = hold.pointerId;
+    window.clearTimeout(hold.timer);
+    hold = null;
+
+    const at = pings.commit();
+    if (at !== null) send({ type: 'ping', at: { x: at.x, y: at.y } });
+
+    if (drag === null || drag.pointerId !== consumed) return;
+    if (drag.kind === 'token') rulers.forget(drag.token.id);
+    if (drag.kind === 'draw') sketches.own(null);
+    drag = null;
+    state.draggingId = null;
+  };
+
+  /**
+   * Start timing a press, if a press here could be a ping at all.
+   *
+   * Nothing while previewing, for the reason a sweep and a trace are nothing
+   * there: the staged map is not the board anyone else is looking at, and a
+   * position in its grid units lands somewhere arbitrary on theirs. The three
+   * modal tools do not reach here — they return out of `pointerdown` above —
+   * and the draw tool deliberately does: it is the one panel everybody has, it
+   * is used in the middle of a fight, and a player who leaves it armed between
+   * uses must not silently lose the gesture this milestone is for.
+   */
+  const beginHold = (e: PointerEvent, p: Vec2, at: Vec2): void => {
+    if (e.button !== 0 || previewing()) return;
+    pings.hold(at, performance.now());
+    hold = {
+      pointerId: e.pointerId,
+      fromX: p.x,
+      fromY: p.y,
+      timer: window.setTimeout(firePing, HOLD_MS),
+    };
+  };
+
   /** What the cursor should be when nothing is being dragged. */
   const restingCursor = (w: Vec2): string => {
     if (calibration !== null && calibration.active) return 'crosshair';
@@ -449,6 +558,13 @@ export function attachInput(
       return;
     }
 
+    // Past the three modal tools, so anything below this line is a press that
+    // could still turn out to be a ping. Started *before* the branches rather
+    // than repeated inside each of them: a hold on a token, on a shape tool, and
+    // on empty map are the same gesture, and the whole point of separating by
+    // duration is that none of them had to learn about it.
+    beginHold(e, p, gridUnder(w));
+
     // And so does a shape tool, for the same reason: a circle has to be able to
     // start on top of a creature, which is exactly where most of them start.
     const tool = drawTool.kind;
@@ -520,6 +636,16 @@ export function attachInput(
     const p = localPoint(e);
     const w = screenToWorld(cam, p.x, p.y);
     state.cursorGrid = gridUnder(w);
+
+    // Before every branch below, which is the ordering `HOLD_SLOP_PX` depends
+    // on: a press that has wandered far enough to be a sweep has already
+    // wandered far enough to stop being a hold, and this is where that is
+    // decided — one move earlier than the branch that would send the first
+    // sketch frame. A few pixels of drift means the hand was on its way
+    // somewhere, which is a pan or a drag and never a ping.
+    if (hold !== null && hold.pointerId === e.pointerId) {
+      if (Math.hypot(p.x - hold.fromX, p.y - hold.fromY) > HOLD_SLOP_PX) cancelHold();
+    }
 
     if (drag === null && tracing() && wallTool !== null) {
       // The rubber band from the last corner, and what a click would erase or
@@ -642,10 +768,26 @@ export function attachInput(
   };
 
   const endDrag = (e: PointerEvent): void => {
-    if (drag === null || drag.pointerId !== e.pointerId) return;
-
     const p = localPoint(e);
     const w = screenToWorld(cam, p.x, p.y);
+
+    // An early release is what makes this gesture cost nothing: the hold is
+    // abandoned and the click underneath it runs exactly as it always did, so a
+    // door still swings, a shape still erases, and a token still drops.
+    if (hold !== null && hold.pointerId === e.pointerId) cancelHold();
+
+    // Unless it already fired, in which case the release means nothing and the
+    // only thing left to do is let the pointer go and put the cursor back.
+    // `drag` was emptied when it fired, so every branch below would be skipped
+    // regardless — this is here to release the capture, which they would not.
+    if (consumed === e.pointerId) {
+      consumed = null;
+      if (canvas.hasPointerCapture(e.pointerId)) canvas.releasePointerCapture(e.pointerId);
+      canvas.style.cursor = restingCursor(w);
+      return;
+    }
+
+    if (drag === null || drag.pointerId !== e.pointerId) return;
 
     if (drag.kind === 'token') {
       // Order matters: a pending trailing frame would otherwise land *after*

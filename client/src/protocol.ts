@@ -304,6 +304,16 @@ export type ServerMsg =
   | { type: 'sketch'; by: number; kind: ShapeKind; at: WirePos; to: WirePos; color: string }
   /** That sweep is over — released, or its client went away. */
   | { type: 'sketch_ended'; by: number }
+  /** Somebody pinged. Draw a ring there for a second or two.
+   *
+   *  Keyed by `Owner` rather than by connection, unlike the two sweeps above:
+   *  a ping replaces no previous frame and needs no release, so what we want
+   *  from it is not which socket sent it but whose ring to draw. Never our own,
+   *  which has been on our board since the hold was 150ms old.
+   *
+   *  The one frame carrying a position that no visibility filter touches — a
+   *  ping lands wherever it was pointed, unexplored ground included. */
+  | { type: 'pinged'; by: Owner; at: WirePos }
   /** Every shape we may see. The whole list, like the initiative panel. */
   | { type: 'shapes_changed'; shapes: WireShape[] }
   /** Every wall the DM has traced. DM connections only — a player is not sent
@@ -409,6 +419,13 @@ export type ClientMsg =
       color: string;
       drawing: boolean;
     }
+  /** Look here. Anyone may send it; it is relayed to everyone else and stored
+   *  by nobody, and there is no `drawing` flag because a ping is one frame
+   *  rather than a stream — the hold is over by the time this goes out.
+   *
+   *  No colour on it either, unlike `sketch`: what a ring looks like is decided
+   *  by who sent it, and every client can work that out from the roster. */
+  | { type: 'ping'; at: WirePos }
   /** Keep the shape just swept. No id — the server invents it, like a token's. */
   | { type: 'add_shape'; kind: ShapeKind; from: WireOrigin; to: WirePos; color: string }
   /** Whoever drew it, or the DM. */

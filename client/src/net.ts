@@ -39,6 +39,10 @@ export interface Handlers {
   /** Somebody else's sweep, keyed by their connection. Never our own. */
   onSketch(sketch: Extract<ServerMsg, { type: 'sketch' }>): void;
   onSketchEnded(by: number): void;
+  /** Somebody pinged. Never called for our own, which is already on our board.
+   *  Called on every connection and never filtered — a ping is relayed wherever
+   *  it lands, unexplored ground included. */
+  onPinged(ping: Extract<ServerMsg, { type: 'pinged' }>): void;
   /** Every shape we may see, replacing whatever we held. */
   onShapesChanged(shapes: WireShape[]): void;
   /** Every wall the DM has traced. Only ever called on a DM connection — a
@@ -118,6 +122,9 @@ export function connect(on: Handlers): Net {
         break;
       case 'sketch_ended':
         on.onSketchEnded(msg.by);
+        break;
+      case 'pinged':
+        on.onPinged(msg);
         break;
       case 'shapes_changed':
         on.onShapesChanged(msg.shapes);

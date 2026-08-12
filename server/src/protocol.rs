@@ -868,6 +868,28 @@ pub enum ClientMsg {
     /// Sweep the board. DM-only: it reaches into five other people's drawings.
     ClearShapes,
 
+    /// Look here. A ring on everyone's board where this lands, for a second or
+    /// two, and then nothing.
+    ///
+    /// `Sketch` with the state turned all the way down, and the comparison is
+    /// worth making because of what is *missing* against it. There is no
+    /// `drawing` flag, because a ping is one frame rather than a stream — the
+    /// gesture is a hold and the hold is over by the time this is sent. There is
+    /// no `kind` and no `color`: what it looks like is decided by who sent it,
+    /// which every client can work out for itself from the roster it already
+    /// holds. And there is no anchor for the reason a sketch has none, one scale
+    /// smaller: a ping outlives nothing.
+    ///
+    /// **It is not gated on the fog**, which makes it the one thing in this
+    /// project the table is shown over ground they have never explored. That is
+    /// safe precisely because there is nothing in it to read but a position — a
+    /// ring over black says somebody is gesturing in a direction, not what is
+    /// standing there — and the alternative is a deliberate 400ms gesture that
+    /// silently does nothing. See *Ping* in `docs/drawings.md`.
+    Ping {
+        at: Pos,
+    },
+
     // Walls and doors. All DM-only, and unlike the drawings above, invisible to
     // everyone else — a player is not told these commands happened at all.
     /// One traced run, in image pixels: `points` are its corners in order, and
@@ -1120,6 +1142,28 @@ pub enum ServerMsg {
     OverridesChanged {
         overrides: OverrideView,
     },
+
+    /// Somebody pinged. Draw a ring there for a second or two.
+    ///
+    /// `by` is an `Owner` and not a `ClientId`, which is the one place this
+    /// differs from `Sketch` above and the difference is deliberate. A sketch is
+    /// keyed by connection because the recipient has to *replace* the previous
+    /// frame from that socket and end it on release; a ping replaces nothing and
+    /// ends by itself, so what the recipient needs is not which socket sent it
+    /// but whose ring to draw. `Owner` is what the roster resolves to a name and
+    /// a colour, and it is the pair a whisper will be attributed with.
+    ///
+    /// Not sent back to the pinger, for `Sketch`'s reason twice over: their ring
+    /// has been on their own screen since the hold was 150ms old, and a copy
+    /// arriving a round trip later would restart it.
+    ///
+    /// **Sent to everyone else regardless of the fog.** The only message in this
+    /// file with a position in it that no visibility filter touches.
+    Pinged {
+        by: Owner,
+        at: Pos,
+    },
+
     Error {
         message: String,
     },

@@ -4,8 +4,8 @@ What the party can see, and what they remember seeing. The walls arrived in mile
 nothing read them; this is what reads them.
 
 `.claude/CLAUDE.md` is loaded into every session; this file is not. **Read it before touching
-`fog.rs`, `fog.ts`, `overrides.ts`, `fogtool.ts`, `unseen_by_table`, `refresh_fog`, or the
-`moves_sight` gate** — four of those seven are the places a leak would go unnoticed, and the
+`fog.rs`, `fog.ts`, `overrides.ts`, `fogtool.ts`, `unseen_by_table`, `with_fringe`, `refresh_fog`, or
+the `moves_sight` gate** — five of those eight are the places a leak would go unnoticed, and the
 coordinate story in the first is the thing that looks like a mistake and is not.
 
 This covers the whole of milestone 16: automatic line of sight in 16a, and the DM's manual override
@@ -15,8 +15,8 @@ in 16b. The two halves are separated in the text below wherever the second one c
 
 ```rust
 revealed:  HashSet<Cell>,             // everywhere the party's rays have ever reached
-known:     HashSet<Cell>,             // that, as the DM's mask leaves it — what the table is shown
-visible:   HashSet<Cell>,             // where they have sight now, likewise masked
+known:     HashSet<Cell>,             // that, widened a cell and masked — what the table is shown
+visible:   HashSet<Cell>,             // where they have sight now, masked
 overrides: HashMap<Cell, Override>,   // what the DM said about it anyway
 ```
 
@@ -30,9 +30,9 @@ hour ago stays on their screen, dimmed — they remember the shape of it — and
 wandered into it since does not. That split is the whole of what makes fog play well rather than
 merely work: a board that forgets the corridor behind you is a board nobody can navigate.
 
-`visible` is a subset of `revealed`, because `recompute_sight` unions in that order. That is not
-incidental — it is what lets one character per cell describe both facts, which is what `FogView`
-does below.
+`visible` is a subset of `known`, because everything that builds the second one only ever adds to
+what the first is made of. That is not incidental — it is what lets one character per cell describe
+both facts, which is what `FogView` does below.
 
 **Fog is party-shared, not per-player.** One pair of sets, the union over every player-owned token.
 Five people narrating to each other on Discord get nothing out of per-player fog but confusion and
@@ -44,6 +44,47 @@ rather than by rule: it is a vision source, so the cell it stands in is lit by i
 
 `vision_sources` asks `Token::unseen` and deliberately not `unseen_by_table` — what the party can
 see cannot be an input to computing what the party can see.
+
+## One cell of fringe, so the wall is on the board
+
+`known` is not `revealed` — it is `revealed` widened by a square in every direction, and that is
+`with_fringe` in `fog.rs`.
+
+**It exists for the masonry.** `snapToCorner` puts a traced wall on the corner lattice, so it runs
+*between* cell centres and the last cell a ray reaches is the floor square inside the room. If the DM
+traced along the inner face of the wall — the natural way to trace one — the drawn wall is past that
+cell, and fog that stopped at the rays would show the table floor, then nothing. Rooms read as holes
+rather than as rooms, and the thing the player is looking at to work out where they are is the one
+thing the board will not draw them. One cell of fringe puts the wall on their screen.
+
+**It is a set operation and knows nothing about walls.** The fringe lands in every direction, not
+only across masonry: one cell further down an open corridor as well, which is `vision_ft` plus a
+square for terrain. That reads as the corridor ahead fading rather than cutting, and it is the whole
+reason this is ten lines. Asking the raycast which cells it was *blocked* into instead means a second
+return value out of `visible_cells` for a picture nobody would tell apart.
+
+Eight neighbours and not four, because a four-neighbour ring leaves a notch bitten out of every room
+corner — more visible than the thing it was fixing. Clipped to the board with `cell_on_board`, the
+same bound the sweep takes and for the same reason: the void off the edge is not somewhere the party
+explores, and a cell out there sits in the packed rectangle from then on.
+
+**Only `known` is built through it**, and the two exclusions are the whole safety argument:
+
+- **Never `visible`.** Creatures gate on `visible`, so a fringe there hands the table an ogre pressed
+  against the far side of a wall. Terrain widens; sight does not. There is a test named for it.
+- **Never `revealed`.** Memory is rays only — see the section below, which is the same argument the
+  overrides make and got wrong once already. A fringe cell written into memory would bake into the
+  save file, survive the wall being retraced around it, and outlive the ray that never cast it.
+
+So it is a mask like `Explored` is, applied on the way into `known` and recomputed from `revealed`
+every time. Two things fall out rather than being decided: **`Dark` still wins**, because the
+override loop runs after the widening, and a recalibration lifts the fringe with the memory it was
+derived from, since there is nothing of it to sweep.
+
+What it hands over is a one-cell strip of map art, terrain-only: the far side of a shut door becomes
+ground, and the party gets the near edge of a room they have not entered. That is the cost, it was
+weighed, and it is smaller than it sounds — the file already concedes below that players read the
+floor plan off the edge of the fog, and this moves that edge out by one square.
 
 ## The DM's override: a mask, never a write
 
@@ -59,14 +100,16 @@ like a bug in the raycast rather than a missing feature. So the override is its 
 `recompute_sight` folds it in every time:
 
 ```
-revealed ∪= rays                                // memory: rays only, and persisted
-visible   = rays ∪ Lit − Dark                   // in sight now
-known     = revealed ∪ Lit ∪ Explored − Dark    // what the table is shown as terrain
+revealed ∪= rays                                        // memory: rays only, and persisted
+visible   = rays ∪ Lit − Dark                           // in sight now
+known     = fringe(revealed) ∪ Lit ∪ Explored − Dark    // shown as terrain
 ```
 
 **`Lit` and `Explored` are floors and `Dark` is a ceiling**, over both derived sets and neither of
-them the stored one. `visible ⊆ known` survives it — `revealed ⊇ rays` and the mask does the same
-thing to both — which is what the one-character packing depends on.
+them the stored one. `visible ⊆ known` survives it — `fringe(revealed) ⊇ revealed ⊇ rays` and the
+mask does the same thing to both — which is what the one-character packing depends on. The first of
+those holds by construction: `with_fringe` puts each cell in before it consults the board, so the
+superset does not depend on where some other bound happened to clip.
 
 `Auto` is the absence of an entry rather than a fourth variant, so "not overridden" has one
 representation and `recompute_sight` has no arm that does nothing.
@@ -421,7 +464,9 @@ both halves — the exploring is the one that surprises.
 
 ## On disk
 
-`revealed` and `overrides` are persisted; `known` and `visible` are not.
+`revealed` and `overrides` are persisted; `known` and `visible` are not. The fringe is not either,
+being part of what makes the first of those two — a save holds the rays and the widening is rebuilt
+on top of them on boot.
 
 An evening of exploring belongs to the map it was done on, and this is the one thing on `Saved` that
 would make the feature feel broken if it were left in memory. Sight is derived from where the tokens
@@ -542,15 +587,21 @@ genuinely different questions:
 - **An anchored shape follows its token's visibility.** An aura on a monster in the dark is that
   monster's position drawn in colour. That arm shipped in milestone 14, because `hidden` predates fog
   and adding shapes without it would have been a leak the day it landed.
-- **An unanchored shape gates on `revealed`** — not on `visible`. A shape is painted on the floor
+- **An unanchored shape gates on `known`** — not on `visible`. A shape is painted on the floor
   rather than standing on it, so it belongs with the terrain: the marker a player dropped in a
   corridor is still theirs after they walk out of it, and gating on current sight would make every
   drawing on the board flicker as the party moved. It is the same split this file already draws
   between terrain and creatures, arriving for a third kind of thing.
 
-The `map.fog` guard in that second arm is load-bearing rather than defensive: `revealed` is empty on
-an unfogged map, so without it every loose shape in the room would vanish from every player's board
-the moment the switch was flipped.
+`known` and not `revealed`, so a shape is treated exactly the way the ground under it is: handed over
+with an `Explored` fill, taken back with a `Dark` one, and — since the fringe is part of what makes
+that set — shown when it sits in the square of masonry past a wall the party is looking at. That last
+is the fringe's one downstream reader, and it is the right answer for the same reason the fringe is:
+the cell is terrain the table has been shown.
+
+The `map.fog` guard in that second arm is load-bearing rather than defensive: `known` is empty on an
+unfogged map, so without it every loose shape in the room would vanish from every player's board the
+moment the switch was flipped.
 
 **The coverage test had to be ported to Rust.** `coveredCells` and `containsPoint` are client-only
 and the filter has to run where the decision is made, so `shape_covers` in `fog.rs` says the same

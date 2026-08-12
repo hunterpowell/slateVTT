@@ -261,6 +261,22 @@ enum Event {
     /// A sweep ended — released, or its client disconnected. `by` is enough to
     /// find it, because there is only ever one per connection.
     SketchEnded { by: ClientId },
+    /// Somebody pinged a spot on the board.
+    ///
+    /// The least stateful event in this enum, which is saying something with the
+    /// two sketch arms directly above it. A sketch at least has a lifetime the
+    /// room participates in — a `Sketching` is replaced by the next one and
+    /// closed by a `SketchEnded`, and a socket dying has to close it too. This
+    /// is one frame that lands, is relayed, and is over; nothing in the room
+    /// knows a ping happened a moment later, and nothing has to.
+    ///
+    /// It carries both `by` and `owner` because they answer different questions
+    /// and only one of them survives to the wire: `by` is the connection, which
+    /// is what the filter compares against to keep the pinger from being echoed
+    /// their own ring, and `owner` is the identity, which is what the recipients
+    /// draw. Resolved here rather than in `message_for` because the filter runs
+    /// per recipient and this is one lookup for all six.
+    Pinged { by: ClientId, owner: Owner, at: Pos },
     /// The drawn shapes changed. Payload-free like `InitiativeChanged`, and for
     /// the same reason twice over: the list is short, and the copy the table may
     /// hold is not the copy the DM may hold.
@@ -681,7 +697,12 @@ fn persists(event: &Event) -> bool {
         // A sketch is not in the room to be saved. It is the one thing here
         // that exists only between two pointer events, which is exactly why a
         // measuring line costs the disk nothing at all.
-        Event::Sketching { .. } | Event::SketchEnded { .. } => false,
+        //
+        // A ping is that argument taken further: a sketch exists between two
+        // pointer events and this exists after one, so there has never been a
+        // moment at which the room held it. Restoring a ping would be restoring
+        // the fact that somebody once pointed at something.
+        Event::Sketching { .. } | Event::SketchEnded { .. } | Event::Pinged { .. } => false,
     }
 }
 
@@ -737,6 +758,10 @@ fn moves_sight(msg: &ClientMsg) -> bool {
         | ClientMsg::AddShape { .. }
         | ClientMsg::RemoveShape { .. }
         | ClientMsg::ClearShapes
+        // Pointing at a room does not light it. This is the arm that would be
+        // tempting to write the other way round — a ping lands on unexplored
+        // ground and stays a ring over black, deliberately.
+        | ClientMsg::Ping { .. }
         | ClientMsg::SetInitiative { .. }
         | ClientMsg::RemoveFromInitiative { .. }
         | ClientMsg::ClearInitiative
@@ -1414,8 +1439,14 @@ impl RoomState {
     /// ```text
     /// revealed ∪= rays                          // memory, persisted, rays only
     /// visible   = rays  ∪ Lit − Dark            // in sight now
-    /// known     = revealed ∪ Lit ∪ Explored − Dark   // what the table is shown
+    /// known     = fringe(revealed) ∪ Lit ∪ Explored − Dark   // shown as terrain
     /// ```
+    ///
+    /// The fringe is one cell of terrain past everywhere the rays reached, and it
+    /// is a mask over `revealed` for the same reason the overrides are: memory is
+    /// rays only, so the widening is recomputed from it every time rather than
+    /// written into it, cannot be baked into a save, and lifts the moment the
+    /// grid moves under it. `with_fringe` in `fog.rs` says what it is for.
     ///
     /// **The order the old version agonised over is gone with the write it was
     /// protecting.** `Dark` had to leave `visible` before the union into
@@ -1429,9 +1460,10 @@ impl RoomState {
     /// permanent, `Dark` really did destroy the memory under it, and the only way
     /// back was to reload the map.
     ///
-    /// `visible ⊆ known` still holds — `revealed ⊇ rays`, and the mask does the
-    /// same thing to both — which is what lets `FogView` pack both facts into one
-    /// character per cell.
+    /// `visible ⊆ known` still holds — `fringe(revealed) ⊇ revealed ⊇ rays`, and
+    /// the mask does the same thing to both — which is what lets `FogView` pack
+    /// both facts into one character per cell. The first of those is by
+    /// construction rather than by argument; see `with_fringe`.
     ///
     /// Nothing downstream asks about an override: `in_sight` reads `visible` and
     /// gets a different answer, which is exactly what the roadmap asked for
@@ -1451,7 +1483,7 @@ impl RoomState {
         let rays = fog::visible_cells(&self.map, &self.walls, &self.vision_sources());
 
         self.revealed.extend(rays.iter().copied());
-        self.known = self.revealed.clone();
+        self.known = fog::with_fringe(&self.map, &self.revealed);
         self.visible = rays;
 
         for (&cell, over) in &self.overrides {
@@ -1691,6 +1723,13 @@ impl RoomState {
                 finite(&[at.x, at.y])?;
                 shape_fields(*to, color)
             }
+
+            // Anyone may ping, and there is nothing else to check. No bound, no
+            // clip to the play area, no fog test: the position is written into
+            // no state, so the only thing it could corrupt is a save file it
+            // never reaches — and `finite` is here anyway, because a NaN would
+            // reach six clients and draw a ring nowhere.
+            ClientMsg::Ping { at } => finite(&[at.x, at.y]),
 
             ClientMsg::AddShape {
                 from, to, color, ..
@@ -2282,6 +2321,28 @@ impl RoomState {
                 vec![Event::ShapesChanged]
             }
 
+            // Nothing is applied. `apply` is a misnomer for exactly one command
+            // and this is it: there is no `&mut self` in the body, because a
+            // ping changes nothing about the room. It goes through the pipeline
+            // regardless rather than being short-circuited somewhere earlier,
+            // because the four steps are where permission and delivery live and
+            // a command with its own path around them is how one of the two gets
+            // forgotten.
+            ClientMsg::Ping { at } => {
+                let owner = match self.clients.get(&origin) {
+                    Some(client) => drawn_by(client),
+                    // Proved to be a client by `check`. `AddShape`'s fallback,
+                    // and harmless here for a reason that one cannot claim —
+                    // this decides a ring's colour rather than who may erase it.
+                    None => Owner::Dm,
+                };
+                vec![Event::Pinged {
+                    by: origin,
+                    owner,
+                    at,
+                }]
+            }
+
             // One run in, one segment per gap between its corners out. The run
             // itself is not stored — it was how the DM drew, not what the map
             // holds — which is what lets one bad segment of a long trace be
@@ -2459,6 +2520,7 @@ impl RoomState {
                 | Event::StagedChanged
                 | Event::Sketching { .. }
                 | Event::SketchEnded { .. }
+                | Event::Pinged { .. }
                 | Event::ShapesChanged
                 | Event::WallsChanged
                 | Event::FogChanged
@@ -2909,6 +2971,27 @@ impl RoomState {
             Event::SketchEnded { by } => {
                 (recipient != *by).then_some(ServerMsg::SketchEnded { by: *by })
             }
+
+            // The sketch rule for the third time — the pinger is drawing their
+            // own ring already — and then it stops resembling anything else in
+            // this function. **Every other arm here either builds something per
+            // recipient or drops the message for somebody**; this one does
+            // neither past the echo. There is no `is_dm`, no `unseen_by_table`,
+            // no `in_sight`, and that is the decision rather than an omission: a
+            // ping is relayed wherever it lands, including onto ground the party
+            // has never explored.
+            //
+            // It is safe because there is nothing in it to read. A ring over
+            // black says the DM is gesturing in a direction, not what is
+            // standing there — and the DM can see their own fog while they hold
+            // the button, so they know what they are pointing over. The
+            // alternative is a deliberate 400ms gesture that sometimes silently
+            // does nothing, which is worse than useless: a gesture you cannot
+            // tell has failed is one you stop trusting.
+            Event::Pinged { by, owner, at } => (recipient != *by).then(|| ServerMsg::Pinged {
+                by: owner.clone(),
+                at: *at,
+            }),
 
             // Built per recipient, like the initiative panel and for the same
             // reason: the DM's board and the table's genuinely differ, and this

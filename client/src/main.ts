@@ -24,7 +24,15 @@ import { overridesFromWire } from './overrides.js';
 import type { Panel } from './panel.js';
 import { createPanel } from './panel.js';
 import { createPicker } from './picker.js';
-import type { ClientMsg, Initiative, TokenMoved, WireToken } from './protocol.js';
+import type { Pings } from './pings.js';
+import { createPings } from './pings.js';
+import type {
+  ClientMsg,
+  Initiative,
+  RosterEntry,
+  TokenMoved,
+  WireToken,
+} from './protocol.js';
 import type { Viewport } from './render.js';
 import { render } from './render.js';
 import type { Rulers } from './ruler.js';
@@ -291,6 +299,9 @@ function boot(): void {
   // The same arrangement for sweeps: ours goes in from input.ts, everyone
   // else's from the frames below.
   const sketches = createSketches();
+  // And a third time for the rings — except that this one cannot be built until
+  // Welcome, because it has to know whose ring ours is.
+  let pings: Pings | null = null;
 
   const picker = createPicker(ui.picker, (playerId) => {
     // Not stored yet — only a Welcome proves the server accepted the claim.
@@ -347,6 +358,15 @@ function boot(): void {
       identity = { isDm: welcome.is_dm, playerId: welcome.player_id };
       if (welcome.player_id !== null) storePlayerId(welcome.player_id);
       showWhoami(ui, identity, welcome.state.tokens);
+
+      // Built here rather than beside the rulers, because it is the first thing
+      // on the client that has to know *who we are* to work at all: every ring
+      // it holds is attributed, ours included.
+      pings = createPings(
+        identity.playerId === null
+          ? { kind: 'dm' }
+          : { kind: 'player', id: identity.playerId },
+      );
 
       // Exactly one Welcome per connection — identity cannot change once set —
       // so this runs once. Assigned synchronously so a delta arriving straight
@@ -480,6 +500,13 @@ function boot(): void {
         wallTool,
         fogTool,
         rail,
+        pings,
+        // The cast list, which every connection is sent and which nothing
+        // changes after this frame — it is what turns anybody's `Owner` into a
+        // name and a colour on their ring. A player holds it too: they have to
+        // be able to read who pinged, and they were offered these same names at
+        // the identity picker.
+        welcome.roster,
       ).then(
         (started) => {
           stage = started;
@@ -617,6 +644,15 @@ function boot(): void {
     // the movement ruler.
     onSketchEnded: (by) => sketches.ended(by),
 
+    // Somebody pointed at something. Never our own, which has been on our board
+    // since the hold was 150ms old and would restart if this echoed it back.
+    //
+    // Nothing is checked here and there is nothing to check: a ping carries a
+    // position and a sender, and the room decided it may land wherever it was
+    // pointed. It is the one frame this client is handed that no filter on
+    // either side of the wire has touched.
+    onPinged: (ping) => pings?.add(ping.by, ping.at, performance.now()),
+
     // The whole list, replacing whatever we held. Nothing is predicted locally:
     // a shape's id is the server's to invent, and an erase is a click rather
     // than a drag, so there is no round trip anybody can feel.
@@ -727,6 +763,8 @@ async function start(
   wallTool: WallTool | null,
   fogTool: FogTool | null,
   rail: Rail | null,
+  pings: Pings,
+  roster: readonly RosterEntry[],
 ): Promise<Stage> {
   const { scene } = room;
   const firstUrl = shownBoard(scene).mapUrl;
@@ -801,6 +839,7 @@ async function start(
     sketches,
     wallTool,
     fogTool,
+    pings,
   );
 
   const stage: Stage = {
@@ -865,6 +904,13 @@ async function start(
       // release frame or on the `sketch_ended` the room sends when a socket
       // closes, so there is no case left for a clock to catch.
       sketches: sketches.all(),
+      // Swept here like the rulers, and for a stricter version of their reason:
+      // a ring's whole life is a clock. Nothing ends one — no release frame, no
+      // socket closing, nothing the room could say — so this is the only thing
+      // that ever takes one off the board. It includes the hold in progress, so
+      // the growing preview and the ring it becomes are one drawing.
+      pings: pings.active(now),
+      roster,
       hoveredShapeId: input.hoveredShapeId,
       selectedId: tokenTool?.selectedId ?? null,
       currentTurn: room.initiative.current,
