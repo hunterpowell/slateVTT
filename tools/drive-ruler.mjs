@@ -405,6 +405,64 @@ check(
   'Ruler Test',
 );
 
+// --- correcting a roll in place ----------------------------------------------
+//
+// The dropdown stops offering a token once it is in the order, which is what
+// makes the row's own field the way back to its value rather than a convenience.
+// It sends `set_initiative`, the same command the form above sends.
+
+check(
+  'a token that has rolled is off the dropdown',
+  await dm.evaluate(`[...document.querySelector('#init-token').options]
+    .some(o => o.textContent === 'Saelyn')`),
+  false,
+);
+
+const values = (page) =>
+  page.evaluate(`[...document.querySelectorAll('.init-row')].map(r => {
+    const el = r.querySelector('.init-value');
+    return { name: r.querySelector('.init-name').textContent, tag: el.tagName, value: el.value ?? el.textContent };
+  })`);
+
+// The number the DM types is not a click on the row, so the camera has to stay
+// where it is — the same rule the × already follows, for the same reason.
+const cellBeforeEdit = await hudCell(dm);
+await dm.evaluate(`[...document.querySelectorAll('.init-row')]
+  .find(r => r.querySelector('.init-name').textContent === 'Saelyn')
+  .querySelector('.init-value').click(); "ok"`);
+await dm.wait(300);
+const cellAfterEdit = await hudCell(dm);
+check(
+  'clicking the number does not also look at the creature',
+  cellBeforeEdit.x === cellAfterEdit.x && cellBeforeEdit.y === cellAfterEdit.y,
+  true,
+);
+
+// 18 down to 7 puts Saelyn under the 12 she was above, so the re-value and the
+// re-sort are one assertion.
+await dm.evaluate(`(() => {
+  const field = [...document.querySelectorAll('.init-row')]
+    .find(r => r.querySelector('.init-name').textContent === 'Saelyn')
+    .querySelector('.init-value');
+  field.value = '7';
+  field.dispatchEvent(new Event('change'));
+  return 'ok';
+})()`);
+await dm.wait(500);
+
+const dmValues = await values(dm);
+const playerValues = await values(player);
+note('DM values:    ', JSON.stringify(dmValues));
+note('player values:', JSON.stringify(playerValues));
+
+check('the corrected value took', dmValues.find((r) => r.name === 'Saelyn')?.value, '7');
+check('and the order re-sorted under it', dmValues[0]?.name, 'Ruler Test');
+// The table is holding the same fight. Their row is a span rather than a field,
+// because re-valuing is the DM's and the panel is not the place to say so twice.
+check('the table was told', playerValues.find((r) => r.name === 'Saelyn')?.value, '7');
+check('and has nothing to type in', playerValues[0]?.tag, 'SPAN');
+check("the DM's is a field", dmValues[0]?.tag, 'INPUT');
+
 // The × must not also move the camera on its way out — a click that deletes
 // something is the last click that should be doing two things.
 const beforeRemove = await hudCell(dm);

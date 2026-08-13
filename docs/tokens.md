@@ -188,6 +188,25 @@ missing from the DM's own panel rather than appearing in everyone's. `hpColour` 
 `render.ts` rather than copied, so the bar in a row and the bar over the token cannot come to
 disagree about which monster is nearly down.
 
+**The dropdown offers only what has not rolled**, and the row's own number is a field the DM can
+type in. Those are one change rather than two: `Initiative::set` re-values a token already in the
+order, so before this the way to correct a misheard roll was to pick the creature out of the
+dropdown a second time — which is precisely the entry the filtered list stops offering. The command
+is the same either way; only where it is typed moved. A list that goes on naming the six creatures
+already in the fight is a list the DM reads past to find the seventh, and finding the seventh is the
+only thing that list is for.
+
+Three details the field needs and the span did not. It commits on `change` rather than on `input`,
+because the order re-sorts on every value the server accepts and a row that moved on the first digit
+would take the caret with it. It stops the click reaching the row, for the reason the `×` does. And
+Escape puts the number back *before* blurring, since a blur commits and abandoning an edit has to be
+possible. The player's row is still a span — re-valuing is the DM's, and their copy of the panel has
+nothing to say about it.
+
+When everything is in the order the picker holds one disabled placeholder and stops taking clicks.
+That is the rail's rule about inert tabs, applied in the one part of this UI that is not a tab: a
+control that looks armed and can do nothing is the same lie either way.
+
 **Clicking a row looks at that creature** — the camera centres on it at whatever zoom is already
 set, since somebody who wants to see something has not asked to be zoomed somewhere else. Everyone
 gets it, not just the DM: the panel already lists only what that client may see. It is deliberately

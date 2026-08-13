@@ -28,6 +28,51 @@ interface PanelUi {
   previous: HTMLButtonElement;
 }
 
+/**
+ * The DM's copy of a row's number: an input that reads as the span it replaces
+ * until it is pointed at.
+ *
+ * Commits on `change` rather than on `input`, which is what makes it usable at
+ * all — the order re-sorts on every value the server accepts, so a keystroke
+ * that committed would move the row out from under the caret while the second
+ * digit was still being typed.
+ */
+function valueField(value: number, name: string, commit: (value: number) => void): HTMLElement {
+  const field = document.createElement('input');
+  field.type = 'number';
+  field.step = '1';
+  field.className = 'init-value init-value-edit';
+  field.value = String(value);
+  field.setAttribute('aria-label', `${name}'s initiative`);
+  field.title = `${name}'s initiative`;
+
+  // The row underneath looks at the creature, and clicking a number to correct
+  // it is not a request to move the camera. Same reason the `×` stops here.
+  field.addEventListener('click', (e) => e.stopPropagation());
+
+  field.addEventListener('change', () => {
+    const next = Number.parseInt(field.value, 10);
+    // Emptied, or otherwise not a number. Put the row's own back rather than
+    // sending something the server would have to guess at.
+    if (Number.isNaN(next)) {
+      field.value = String(value);
+      return;
+    }
+    commit(next);
+  });
+
+  // Abandoning an edit has to be possible, and a blur commits — so this puts
+  // the number back first, which leaves the blur that follows with nothing to
+  // report.
+  field.addEventListener('keydown', (e) => {
+    if (e.key !== 'Escape') return;
+    field.value = String(value);
+    field.blur();
+  });
+
+  return field;
+}
+
 export function createPanel(
   ui: PanelUi,
   identity: Identity,
@@ -71,7 +116,10 @@ export function createPanel(
     });
   }
 
-  let knownTokenIds = '';
+  // Null rather than empty, because empty is a list the dropdown can genuinely
+  // hold — everybody already in the order — and the first build has to happen
+  // even then, to put the placeholder in and take the clicks off it.
+  let knownTokenIds: string | null = null;
 
   return {
     update(initiative, scene) {
@@ -94,9 +142,22 @@ export function createPanel(
           // row is a name only they can read.
           if (token?.hidden === true) row.classList.add('is-unseen');
 
-          const value = document.createElement('span');
-          value.className = 'init-value';
-          value.textContent = String(entry.value);
+          // The number is the DM's to correct in place. A misheard roll used to
+          // be re-entered through the form below, which worked because
+          // `set_initiative` re-values a token already in the order — and that
+          // is exactly the path the dropdown gave up when it stopped listing
+          // one. The command is the same either way; only where it is typed
+          // changed.
+          const value = isDm
+            ? valueField(entry.value, nameOf(entry.token), (next) => {
+                send({ type: 'set_initiative', token: entry.token, value: next });
+              })
+            : (() => {
+                const span = document.createElement('span');
+                span.className = 'init-value';
+                span.textContent = String(entry.value);
+                return span;
+              })();
 
           // The same disc the canvas draws, in DOM: a circle whose grey shows
           // through when there is no art, so a token without a picture degrades
@@ -180,11 +241,20 @@ export function createPanel(
         // A token built on the next map is not in this fight — the server
         // refuses it, and offering it would be offering an error. Combat is the
         // fight happening now; next room's order needs rolls nobody has made.
-        const rollable = scene.tokens.filter((t) => !t.stagedOnly);
+        //
+        // Nor is a token that has already rolled. `set_initiative` would still
+        // re-value one, but that is what the row's own field is for now, and a
+        // list that goes on offering the six creatures already in the order is a
+        // list the DM has to read past to find the seventh.
+        const rolled = new Set(initiative.entries.map((e) => e.token));
+        const rollable = scene.tokens.filter((t) => !t.stagedOnly && !rolled.has(t.id));
 
         // Only rebuild the dropdown when the token list itself changes, so a
         // half-made selection survives every turn advance. Names are part of
-        // that: renaming a token has to reach the option that shows it.
+        // that: renaming a token has to reach the option that shows it. So is
+        // the order, now that entering a roll takes a token out of the list —
+        // the key is built from what is left rather than from every token, so
+        // it moves when either of them does.
         const ids = rollable.map((t) => `${t.id}:${t.name}`).join(',');
         if (ids !== knownTokenIds) {
           knownTokenIds = ids;
@@ -198,6 +268,19 @@ export function createPanel(
                 return option;
               }),
           );
+
+          // Everybody is in the fight. An empty picker beside a live button is a
+          // control that looks armed and can do nothing, which is the rail's
+          // rule about inert tabs in the one place on screen that is not a tab.
+          // The placeholder carries no value, so a submit through it is the
+          // no-op the form already declines.
+          ui.tokenSelect.disabled = rollable.length === 0;
+          if (rollable.length === 0) {
+            const empty = document.createElement('option');
+            empty.value = '';
+            empty.textContent = 'everyone has rolled';
+            ui.tokenSelect.append(empty);
+          }
         }
       }
 
