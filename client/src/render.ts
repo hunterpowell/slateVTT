@@ -220,11 +220,16 @@ export interface Frame {
   now: number;
   /** Token art, keyed by image URL — see `loadArt` in main.ts. */
   tokenImages: Map<string, HTMLImageElement>;
-  draggingId: string | null;
+  /** Every token being dragged right now. More than one is a shift-click group
+   *  moving together. */
+  draggingIds: ReadonlySet<string>;
   /** Movement rulers by token id — ours and everyone else's alike. */
   rulers: ReadonlyMap<string, Ruler>;
   /** The token the DM has selected for editing. Null for everyone else. */
   selectedId: string | null;
+  /** The tokens shift-click has gathered, which drag together. Empty unless a
+   *  group has actually been built — see `selection` in input.ts. */
+  selection: ReadonlySet<string>;
   /** Every sweep in progress — ours and everyone else's. */
   sketches: readonly Sketch[];
   /** The shape the pointer is over and could erase, or null. Only ever set
@@ -744,7 +749,7 @@ function drawShapeLabels(ctx: CanvasRenderingContext2D, frame: Frame, board: Boa
 }
 
 function drawTokens(ctx: CanvasRenderingContext2D, frame: Frame, board: Board): void {
-  const { scene, tokenImages, draggingId, cam, identity, currentTurn, selectedId } = frame;
+  const { scene, tokenImages, draggingIds, cam, identity, currentTurn, selectedId } = frame;
 
   for (const token of scene.tokens) {
     // Null is a token that is not on this board — one built on the map being
@@ -765,7 +770,7 @@ function drawTokens(ctx: CanvasRenderingContext2D, frame: Frame, board: Board): 
 
     ctx.save();
 
-    if (token.id === draggingId) {
+    if (draggingIds.has(token.id)) {
       ctx.shadowColor = 'rgba(0, 0, 0, 0.6)';
       ctx.shadowBlur = radius * 0.5;
     }
@@ -789,7 +794,7 @@ function drawTokens(ctx: CanvasRenderingContext2D, frame: Frame, board: Board): 
     // yours, or none of them. The dash is separate from the colour and says
     // hidden on its own, so a token that is both teal and dashed reads as both
     // rather than as whichever the precedence happened to pick.
-    const dragging = token.id === draggingId;
+    const dragging = draggingIds.has(token.id);
     const mine = ownsToken(identity, token);
 
     ctx.beginPath();
@@ -819,9 +824,16 @@ function drawTokens(ctx: CanvasRenderingContext2D, frame: Frame, board: Board): 
       ctx.stroke();
     }
 
-    // Further out again, and dashed. Only the DM ever has a selection, and it
-    // has to survive being drawn on a token that is also owned and also acting.
-    if (token.id === selectedId) {
+    // Further out again, and dashed. Two things land on this ring: the token the
+    // DM is editing, and every member of a shift-click group. One ring for both
+    // because they are one question — which tokens is this gesture about — and
+    // because they overlap on the token that is both, where two rings at the
+    // same radius would be one ring drawn twice.
+    //
+    // The group is empty until somebody builds one, so a client that never
+    // shift-clicks sees exactly what it saw before: the DM's edit ring, and for
+    // a player no ring at all.
+    if (token.id === selectedId || frame.selection.has(token.id)) {
       ctx.beginPath();
       ctx.arc(centre.x, centre.y, radius + 10 / cam.zoom, 0, TAU);
       ctx.lineWidth = 1.5 / cam.zoom;

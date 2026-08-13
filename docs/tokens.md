@@ -83,6 +83,76 @@ go on are rebuilt whenever a map changes. Uploading the same face by hand each t
 folder can do instead. Listing and picking are DM-only, like every route under `/api` — a player has
 no credential to offer, and would only be reading off the DM's cast list for next week.
 
+## Moving several at once
+
+Shift-click gathers tokens into a **group**, and dragging any member moves all of them. Six goblins
+crossing a corridor is one drag rather than six, which is the whole of what it is for.
+
+**The server does not know this feature exists, and nothing was added to let it.** A group move is N
+ordinary `MoveToken`s from one client — the room has always taken them one at a time, checks
+`can_move` on each, snaps each with `snap_to_cell`, and recomputes sight on each drop. There is no
+batched command and there is no group on `RoomState`. That is not a shortcut taken to save work; a
+batch would have to re-answer permission, snapping and `moves_sight` for a collection, and every one
+of those answers already exists for a single token and is the same answer.
+
+**The permission question answers itself**, which is the reason this stayed small. Membership comes
+from `tokenAt`, and tokens you cannot move are already transparent to the pointer there — so a group
+can only ever hold tokens this client may move, and a player gathering their own two summons needs
+no new rule. It is deliberately not DM-only for that reason: making it so would be a rule where
+there is currently none.
+
+Three rules make it a thing you have to be holding deliberately, so that no ordinary drag acquires a
+second meaning:
+
+- **Empty is the ordinary case.** Only shift-click puts anything in a group, so every gesture that
+  does not use the modifier behaves exactly as it did before this existed.
+- **Grabbing a member takes the group; grabbing anything else puts it down first.** A plain click on
+  a token outside the group clears it, which is what keeps a plain drag a plain drag.
+- **A click on empty map gives it up**, alongside clearing the panel's selection — both are "never
+  mind this token". A pan does not, for the reason a pan has never cleared the panel either.
+- **So does Escape**, which is what that key means to every tool in the rail. A group is a thing
+  being held and the way out of anything held here is the same key; a board with walls traced across
+  every square may not *have* an empty square to click on, which is the case the first rule alone
+  does not cover. A drag already under way is unaffected — it captured its members at pointerdown
+  and is a rigid body from then on, so Escape mid-drag still lands the move, exactly as it always
+  has for one token.
+
+A shift-click is **local and silent**: it commits on the way down, has no drag, and puts nothing on
+the wire. It is checked above the ping timer for that reason and must stay there — a modifier held
+deliberately is not somebody pointing at the board, and letting it reach `beginHold` would make a
+slow gather into a ring on six screens. It sits *below* the three modal tools and behind
+`sweeping()`, because an armed tool takes the button first and ping is the one exception this
+project has agreed to have.
+
+**The group is a rigid body, and each token still lands on its own cell.** Offsets are captured once
+at pointerdown, so the formation that leaves is the formation that arrives; but they are held in
+grid units and the server snaps every token separately, so a group of *mixed sizes* can settle half
+a cell off the spacing it started with. That is `snap_to_cell` depending on how wide a token is, and
+the alternative is a second copy of that rule on the client, which is the thing this project has
+kept the server the sole owner of.
+
+**One ruler for a group, not one per member** — the anchor's, the token the pointer actually went
+down on. A reading is a single creature's question and six lines with six labels is a board nobody
+can read. Be accurate about how far that goes, though: it decides the *dragger's* screen and only
+that. Every other client builds its rulers from the `TokenMoved` frames it receives, and nothing on
+the wire says which token was grabbed, so the table sees one ruler per moving token. Marking the
+anchor on the wire was the alternative, and it is a poor trade — a new field on a hot message, for a
+hint that refuses nothing and persists nothing. See *The trail* in `docs/drawings.md` for why the
+rulers are built that way in the first place.
+
+Members draw the same dashed ring the DM's edited token draws, and share the branch with it: they
+are one question — which tokens is this gesture about — and two rings at one radius on the token
+that is both would be one ring drawn twice. The group does **not** feed the token panel. That panel
+edits one token and this gesture is about several, so building a group leaves the form describing
+whatever was last plain-clicked; wiring them together would be signing up for a multi-edit form, and
+"set size on eight tokens" is a feature nobody asked for.
+
+`tools/drive-select.mjs` is where this is verified, because a pointer gesture over a canvas is
+invisible to every other suite: there is no pure function in it for `npm test`, and the room cannot
+tell one group drag from six separate ones. Its two sharpest checks are on the second connection —
+that a shift-click changes nothing at all on the table's screen, and that a drag of one token moves
+the other one there too.
+
 ## Names on the board
 
 The board writes each token's name under it, and `RoomState::show_names` is the DM's switch for

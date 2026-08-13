@@ -25,7 +25,8 @@ Do not work ahead. Each milestone should run and be usable before starting the n
 6. Map upload and grid calibration UI.
 7. Package for Windows session hosting and deploy behind a Cloudflare Tunnel.
 
-Milestones 1–18 are done. Everything from 8 on was planned after the original seven; 17 and 18 were
+Milestones 1–19 are done, and so is 25, which was never planned and is out of order for the reason
+its own entry gives. Everything from 8 on was planned after the original seven; 17 and 18 were
 workshopped after 16 landed, and 19–24 after 18:
 
 8. **Done.** Map library — list `maps/`, pick one, remember its calibration. The smallest thing
@@ -489,6 +490,50 @@ workshopped after 16 landed, and 19–24 after 18:
 
     The line to hold: **a second document makes it a journal.** No titles, no pages, no sharing, no
     handout button.
+
+25. **Done, and out of order.** Shift-click selection and the group drag — six goblins cross a
+    corridor in one drag rather than six. See *Moving several at once* in `docs/tokens.md`.
+
+    It is numbered last and was built first because it depends on nothing and nothing depends on it.
+    The rule about not working ahead exists to stop a later milestone's design being guessed at
+    early; this one touches no milestone above, so obeying the letter of that rule would have bought
+    nothing.
+
+    The interesting part is how little there was. **The server was not touched at all**, and that
+    was not the plan going in — it fell out of the fact that a group move is N ordinary
+    `MoveToken`s. Permission, snapping and `moves_sight` are each per-command and each already
+    correct; a batched command would have had to re-answer all three for a collection and would have
+    got the same answers. The client change is one widening — the `token` arm of `Drag` holds a list
+    instead of a token — and four call sites that loop.
+
+    **The permission question answered itself**, which is worth remembering the shape of. The
+    intention was DM-only, on the assumption that a player selecting a mixed bag would need
+    filtering. It does not: membership comes from `tokenAt`, which has always been blind to tokens
+    you cannot move, so a group can only ever hold what `can_move` would allow anyway. The feature
+    that needed a new rule needed no rule. **The instinct to gate a new gesture on `is_dm` is worth
+    checking against the hit test before acting on it** — this is the second time the affordance
+    turned out to be the boundary already.
+
+    Two things cost more than the state model, which was a `Set<string>`.
+
+    Escape drops a group, added after the rest of it was working: five tools in the rail already
+    answer that key and a sixth thing you can be holding that ignores it is the odd one out. The
+    case a click on empty map does not cover is a board with no empty square left to click on.
+
+    **Marquee select was the original request and is deliberately not built.** A marquee is a drag
+    on empty ground, which is exactly what pan is, so it needs a modifier or a rail tab and it needs
+    a rubber band drawn — where shift-click needs neither and gets most of the value. If it is ever
+    wanted, the selection set is already there and the only new work is the gesture. What made the
+    smaller version obviously right was noticing that the left button already carries pan, token
+    drag, ping, door swing and shape erase, and that the ping post-mortem two entries up is a record
+    of what it costs to add to that pile.
+
+    **One ruler for a group is only true on the dragger's screen**, and this is the one place the
+    feature is knowingly inconsistent. Watchers build rulers from `TokenMoved` and nothing on the
+    wire says which token was grabbed, so the table sees one per moving token. The fix is a field on
+    the hottest message in the project, for a hint that refuses nothing and persists nothing, and it
+    was declined — but *the conflict was only visible from `docs/drawings.md`*, not from the code,
+    which is the argument for reading the subsystem doc before designing against a subsystem.
 
 ### The right dock
 

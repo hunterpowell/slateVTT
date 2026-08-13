@@ -129,6 +129,7 @@ the machine.
 | `drive-names.mjs`  | The names-under-tokens switch, on both boards at once              | both     |
 | `drive-ruler.mjs`  | The movement trail, the diagonal switch, the initiative panel      | both     |
 | `drive-ping.mjs`   | The hold that pings, and the ring reaching an unexplored corner    | both     |
+| `drive-select.mjs` | Shift-click selection, and the group drag that moves them together | both     |
 
 The ones marked *both* open two browsers at once, and that is the point of them: almost everything
 they assert is a **difference** between what two people are holding, which one client cannot see.

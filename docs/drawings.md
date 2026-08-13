@@ -259,6 +259,14 @@ nothing at all, and silence means "they stopped moving the mouse" far more often
 gone". A ruler that expires while the DM is still holding a token is worse than a line left on
 screen for a few seconds by a browser that closed.
 
+**A group drag draws one ruler on the dragger's screen and one per token on everybody else's**, and
+that asymmetry is deliberate rather than overlooked. The dragger's client knows which token the
+pointer went down on and begins a ruler for that one alone; a watcher knows only that several tokens
+are moving, because the frames it builds rulers from are ordinary `TokenMoved`s and none of them
+says which was grabbed. Putting an anchor flag on that message is what it would cost to make the two
+agree — a new field on the hottest message in the project, spent on a hint that refuses nothing and
+persists nothing. See *Moving several at once* in `docs/tokens.md`.
+
 A ruler belongs to the board its drag is happening on, and only the board on screen draws it —
 `shownBoard` again. The DM planning a move on the staged map measures there, and the table, who
 are sent no such frame, see nothing.

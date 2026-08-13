@@ -48,13 +48,31 @@ type Drag =
   | {
       kind: 'token';
       pointerId: number;
-      token: Token;
-      grabDX: number;
-      grabDY: number;
       /**
-       * This drag writes the token's plan for the staged map rather than its
-       * position. Fixed when the token is picked up rather than read per frame,
-       * so a drag cannot change which of the two it is halfway through.
+       * Every token this drag moves, each with its own offset from the pointer.
+       *
+       * Usually one. A group selected with shift-click moves as a rigid body,
+       * which is the whole of what those offsets are for: they are captured once
+       * at pointerdown, so the formation on the board is the formation that
+       * lands however far the pointer travels.
+       *
+       * Each token still lands on its *own* cell, though — the offsets are held
+       * in grid units and the server snaps every token separately, so a group of
+       * mixed sizes can settle half a cell off the spacing it started with.
+       * `snap_to_cell` depends on how wide a token is and is the server's only
+       * copy of that rule; a group snap here would be a second one.
+       */
+      tokens: readonly Grabbed[];
+      /**
+       * The one the pointer actually went down on. It is the only member with a
+       * ruler — see `rulers.begin` at the grab — and it is what the panel's
+       * selection follows.
+       */
+      anchorId: string;
+      /**
+       * This drag writes the tokens' plans for the staged map rather than their
+       * positions. Fixed when they are picked up rather than read per frame, so
+       * a drag cannot change which of the two it is halfway through.
        */
       staged: boolean;
     }
@@ -113,9 +131,33 @@ type Drag =
       moved: boolean;
     };
 
+/** One token held by a drag, and where it sits relative to the pointer. */
+interface Grabbed {
+  token: Token;
+  grabDX: number;
+  grabDY: number;
+}
+
 export interface InputState {
-  /** Non-null while a token is being dragged. Drives the drag highlight. */
-  readonly draggingId: string | null;
+  /** Every token currently being dragged. Drives the drag highlight — a set
+   *  rather than an id because a shift-click group moves together. Empty when
+   *  nothing is being dragged. */
+  readonly draggingIds: ReadonlySet<string>;
+  /**
+   * The tokens shift-click has gathered into a group, which a drag on any one
+   * of them moves together.
+   *
+   * Empty is the ordinary case and means "no group": a plain click drags
+   * whatever it landed on and nothing else, exactly as it did before this
+   * existed. Only shift-clicking puts anything in here, so every gesture that
+   * does not use the modifier behaves as it always has.
+   *
+   * It can only ever hold tokens this client may move, and that needs no rule of
+   * its own — membership comes from `tokenAt`, which is already blind to
+   * everybody else's tokens. The permission question answers itself, and a
+   * player gathering their own two summons is `can_move` doing its usual job.
+   */
+  readonly selection: ReadonlySet<string>;
   /** Pointer position in grid units, or null when the pointer is off-canvas. */
   readonly cursorGrid: Vec2 | null;
   /** The shape a click would erase, while the draw tool is in hand. */
@@ -204,7 +246,8 @@ export function attachInput(
   let lastDragSentAt = 0;
   let trailingSend: number | null = null;
   const state = {
-    draggingId: null as string | null,
+    draggingIds: new Set<string>(),
+    selection: new Set<string>(),
     cursorGrid: null as Vec2 | null,
     hoveredShapeId: null as string | null,
   };
@@ -292,32 +335,50 @@ export function attachInput(
   const cornerAt = (w: Vec2, free: boolean): Vec2 =>
     free ? w : snapToCorner(shownBoard(scene).grid, w);
 
-  /** Moves a token, or its plan, to a cell — the local prediction half. */
-  const predict = (drag: Extract<Drag, { kind: 'token' }>, x: number, y: number): void => {
-    if (drag.staged) {
-      drag.token.stagedPos = { x, y };
-    } else {
-      drag.token.x = x;
-      drag.token.y = y;
+  /** Moves every held token, or its plan, to where the pointer now puts it —
+   *  the local prediction half. Each keeps the offset it was grabbed at. */
+  const predict = (drag: Extract<Drag, { kind: 'token' }>, g: Vec2): void => {
+    for (const held of drag.tokens) {
+      const x = g.x + held.grabDX;
+      const y = g.y + held.grabDY;
+      if (drag.staged) {
+        held.token.stagedPos = { x, y };
+      } else {
+        held.token.x = x;
+        held.token.y = y;
+      }
     }
   };
 
+  /**
+   * One `move_token` per held token. A group is N ordinary commands rather than
+   * a batched one, which is what makes this feature cost the room nothing: the
+   * server has always taken these one at a time, checks `can_move` on each, and
+   * snaps each to its own cell.
+   *
+   * The throttle above is per *drag*, not per token, so a group of six sends six
+   * frames on a tick rather than six independent streams — the rate the room
+   * sees is the rate one token has always produced, multiplied by the size of
+   * the group and not by anything else.
+   */
   const sendMove = (drag: Extract<Drag, { kind: 'token' }>, dragging: boolean): void => {
-    // Read back off the token rather than passed in, so the trailing frame
-    // below sends where the token is *now* rather than where it was queued.
-    const at = drag.staged ? drag.token.stagedPos : drag.token;
-    // Null is a token in preview that has not actually been dragged anywhere:
-    // clicking one to edit it in the panel must not plan a move it did not
-    // make. There is no command to un-plan, so an accidental plan would stay.
-    if (at === null) return;
-    send({
-      type: 'move_token',
-      id: drag.token.id,
-      x: at.x,
-      y: at.y,
-      dragging,
-      staged: drag.staged,
-    });
+    for (const held of drag.tokens) {
+      // Read back off the token rather than passed in, so the trailing frame
+      // below sends where the token is *now* rather than where it was queued.
+      const at = drag.staged ? held.token.stagedPos : held.token;
+      // Null is a token in preview that has not actually been dragged anywhere:
+      // clicking one to edit it in the panel must not plan a move it did not
+      // make. There is no command to un-plan, so an accidental plan would stay.
+      if (at === null) continue;
+      send({
+        type: 'move_token',
+        id: held.token.id,
+        x: at.x,
+        y: at.y,
+        dragging,
+        staged: drag.staged,
+      });
+    }
   };
 
   const cancelTrailingSend = (): void => {
@@ -453,10 +514,10 @@ export function attachInput(
     if (at !== null) send({ type: 'ping', at: { x: at.x, y: at.y } });
 
     if (drag === null || drag.pointerId !== consumed) return;
-    if (drag.kind === 'token') rulers.forget(drag.token.id);
+    if (drag.kind === 'token') rulers.forget(drag.anchorId);
     if (drag.kind === 'draw') sketches.own(null);
     drag = null;
-    state.draggingId = null;
+    state.draggingIds.clear();
   };
 
   /**
@@ -558,6 +619,26 @@ export function attachInput(
       return;
     }
 
+    // Shift-click gathers a token into the group, or drops it back out of one.
+    //
+    // Above the hold rather than below it because it is not a press that can
+    // become anything else: it commits on the way down, has no drag, and must
+    // not ping — a modifier held deliberately is not somebody pointing at the
+    // board. It is below the three modal tools for the opposite reason, and
+    // `sweeping()` keeps it below the fourth: an armed tool takes the button
+    // first, and ping is the one exception this project has decided to have.
+    //
+    // Nothing here calls `onSelect`. The panel edits one token and this gesture
+    // is about several, so building a group leaves the form showing whatever was
+    // last plain-clicked rather than swapping it out from under an edit.
+    if (e.button === 0 && e.shiftKey && !sweeping()) {
+      const hit = tokenAt(scene, identity, w.x, w.y);
+      if (hit !== null) {
+        if (!state.selection.delete(hit.id)) state.selection.add(hit.id);
+        return;
+      }
+    }
+
     // Past the three modal tools, so anything below this line is a press that
     // could still turn out to be a ping. Started *before* the branches rather
     // than repeated inside each of them: a hold on a token, on a shape tool, and
@@ -604,23 +685,50 @@ export function attachInput(
     const hit = e.button === 0 ? tokenAt(scene, identity, w.x, w.y) : null;
 
     if (hit !== null) {
-      // Grab offset keeps the token from snapping its centre to the cursor, and
-      // is measured from wherever the token is *on this board* — its plan while
-      // previewing, its own cell otherwise.
       const g = gridUnder(w);
+      const staged = previewing();
+
+      // Grabbing a member of the group takes the whole group; grabbing anything
+      // else puts the group down first. That second half is what keeps a plain
+      // click on a plain token exactly the gesture it has always been — the
+      // group is a thing you have to have deliberately built to be holding.
+      const held = state.selection.has(hit.id)
+        ? scene.tokens.filter((t) => state.selection.has(t.id))
+        : [hit];
+      if (!state.selection.has(hit.id)) state.selection.clear();
+
+      // Grab offsets keep the tokens from snapping their centres to the cursor,
+      // and are measured from wherever each token is *on this board* — its plan
+      // while previewing, its own cell otherwise. A member with no position on
+      // this board is not on it to be dragged.
+      const grabbed: Grabbed[] = [];
+      for (const token of held) {
+        const at = shownPos(scene, token);
+        if (at === null) continue;
+        grabbed.push({ token, grabDX: at.x - g.x, grabDY: at.y - g.y });
+      }
+
       const from = shownPos(scene, hit) ?? { x: hit.x, y: hit.y };
       drag = {
         kind: 'token',
         pointerId: e.pointerId,
-        token: hit,
-        grabDX: from.x - g.x,
-        grabDY: from.y - g.y,
-        staged: previewing(),
+        tokens: grabbed,
+        anchorId: hit.id,
+        staged,
       };
-      // The same settled position the grab offset is measured from, and the
-      // last moment it is knowable: the next pointermove overwrites it.
-      rulers.begin(hit.id, from, drag.staged);
-      state.draggingId = hit.id;
+      // The anchor's alone, and the same settled position its grab offset is
+      // measured from — the last moment it is knowable, since the next
+      // pointermove overwrites it.
+      //
+      // One ruler for a group of six, not six: the reading is a single
+      // creature's question and six lines with six labels is a board nobody can
+      // read. It is the dragger's screen that this decides, and only that. Every
+      // other client builds its rulers from the `TokenMoved` frames it receives
+      // and nothing on the wire says which token was grabbed, so the table sees
+      // one ruler per moving token. Marking the anchor on the wire for a hint
+      // that refuses a command and persists nothing is the trade this declines.
+      rulers.begin(hit.id, from, staged);
+      for (const one of grabbed) state.draggingIds.add(one.token.id);
       onSelect?.(hit.id);
       cancelTrailingSend();
       lastDragSentAt = 0; // let the first move through immediately
@@ -729,8 +837,7 @@ export function attachInput(
       return;
     }
 
-    const g = gridUnder(w);
-    predict(drag, g.x + drag.grabDX, g.y + drag.grabDY);
+    predict(drag, gridUnder(w));
     sendDragFrame(drag);
   });
 
@@ -793,13 +900,15 @@ export function attachInput(
       // Order matters: a pending trailing frame would otherwise land *after*
       // the drop and put the token back at an unsnapped position.
       cancelTrailingSend();
-      // Always sent, never throttled: this frame carries the final position and
-      // is what the server snaps to the grid and echoes back.
+      // Always sent, never throttled: these frames carry the final positions and
+      // are what the server snaps to the grid and echoes back. One per held
+      // token, so a group of six drops as six snaps and six sight recomputes —
+      // `moves_sight` is per command and a drop is the one that fires it.
       sendMove(drag, false);
-      // The measuring is over the moment the token is let go, and the line
+      // The measuring is over the moment the tokens are let go, and the line
       // fades from here rather than vanishing. Everyone else starts theirs
-      // fading on the drop frame this just sent.
-      rulers.end(drag.token.id, performance.now());
+      // fading on the drop frames this just sent.
+      rulers.end(drag.anchorId, performance.now());
     } else if (drag.kind === 'calibrate') {
       // Not a commit — the tool keeps the box so the cell count can be tuned
       // against it, and stays in calibrate mode until the DM applies.
@@ -823,11 +932,15 @@ export function attachInput(
         send({ type: 'toggle_door', id: door.id });
       } else {
         onSelect?.(null);
+        // And the group goes with it. A click on empty map is how you put
+        // everything down — the same gesture that clears the panel, since both
+        // are "never mind this token".
+        state.selection.clear();
       }
     }
 
     drag = null;
-    state.draggingId = null;
+    state.draggingIds.clear();
     if (canvas.hasPointerCapture(e.pointerId)) canvas.releasePointerCapture(e.pointerId);
     canvas.style.cursor = restingCursor(w);
   };
@@ -870,6 +983,21 @@ export function attachInput(
     },
     { passive: false },
   );
+
+  // Escape puts the group down, which is what Escape means to every tool in the
+  // rail — a group is a thing being held, and the way out of anything being held
+  // here is the same key. Clicking empty map does it too; this is the way that
+  // does not need somewhere empty to click, on a board where there may not be
+  // one.
+  //
+  // A drag already under way is deliberately unaffected: it captured its
+  // members at pointerdown and is a rigid body from then on, so there is nothing
+  // left for this to take out of it. Escaping mid-drag and letting go still
+  // lands the move — the same as it has always been for one token.
+  window.addEventListener('keydown', (e) => {
+    if (e.key !== 'Escape' || state.selection.size === 0) return;
+    state.selection.clear();
+  });
 
   return state;
 }

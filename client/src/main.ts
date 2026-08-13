@@ -896,7 +896,7 @@ async function start(
       map,
       now,
       tokenImages,
-      draggingId: input.draggingId,
+      draggingIds: input.draggingIds,
       // Swept here rather than in the renderer: a client that vanished mid-drag
       // sends no drop frame, and nothing else in a frame is watching a clock.
       rulers: rulers.active(now),
@@ -913,6 +913,7 @@ async function start(
       roster,
       hoveredShapeId: input.hoveredShapeId,
       selectedId: tokenTool?.selectedId ?? null,
+      selection: input.selection,
       currentTurn: room.initiative.current,
       calibration:
         mapTool !== null && mapTool.box !== null

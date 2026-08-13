@@ -360,8 +360,17 @@ player's copy of the token carries no `hp`, so there is nothing to decline to dr
 invariant 4 the safe way round. Clicking a row centres the camera on that creature; it is not an
 automatic pan on turn change, which would move the board under whoever is mid-drag.
 
+**Shift-click gathers tokens into a group and dragging any member moves all of them.** The server
+does not know this exists: a group move is N ordinary `MoveToken`s, so permission, snapping and
+`moves_sight` are each answered once per token by the code that already answered them. Membership
+comes from `tokenAt`, which is already blind to tokens you cannot move, so **the permission question
+answers itself** and it is not DM-only. Empty is the ordinary case — only shift-click fills a group,
+grabbing a token outside one clears it, and a click on empty map or Escape gives it up — so no
+ordinary drag gained a second meaning. The group does not feed the token panel, and a group draws **one** ruler on
+the dragger's screen and one per token on everyone else's.
+
 → **`docs/tokens.md`** before touching `tokens.ts`, `panel.ts`, `library.ts`, `snap_to_cell`,
-`Token`/`TokenView`, or any `message_for` arm.
+`Token`/`TokenView`, the `selection` set in `input.ts`, or any `message_for` arm.
 
 ## Drawings and distance
 
