@@ -323,13 +323,25 @@ view. This runs **on Windows**, not on the Pi.
 
 # Exposing it
 
+## Installing `cloudflared`
+
+From Cloudflare's apt repository, so `unattended-upgrades` keeps it patched. An always-on box
+should not have a manually-updated network daemon, which is what a downloaded `.deb` is.
+
+```bash
+curl -fsSL https://pkg.cloudflare.com/cloudflare-main.gpg | sudo tee /usr/share/keyrings/cloudflare-main.gpg >/dev/null
+echo "deb [signed-by=/usr/share/keyrings/cloudflare-main.gpg] https://pkg.cloudflare.com/cloudflared any main" | sudo tee /etc/apt/sources.list.d/cloudflared.list
+sudo apt update && sudo apt install -y cloudflared
+```
+
+**The suite is `any`, not `$(lsb_release -cs)`.** Every guide online uses the `lsb_release`
+form, which on this box expands to `trixie` — and Cloudflare publishes `any`, `bookworm`,
+`focal`, `jammy` and `noble` for cloudflared, with no trixie suite. The `lsb_release` form
+404s on every `apt update` from then on.
+
 ## Quick Tunnel rehearsal
 
 ```bash
-curl -fsSL https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-arm64.deb -o /tmp/cloudflared.deb
-sudo apt install -y /tmp/cloudflared.deb
-rm /tmp/cloudflared.deb
-
 cloudflared tunnel --url http://127.0.0.1:3000
 ```
 
@@ -337,7 +349,8 @@ It prints a random `trycloudflare.com` address. That is the player link; append 
 for yours. The URL changes every time `cloudflared` restarts.
 
 **A Quick Tunnel has no authentication at all** — anyone with the URL is in the room. Use it
-for a rehearsal and stop it afterwards.
+for a rehearsal and stop it afterwards. The named tunnel below supersedes it for the box at
+home; this stays useful for a game away from home, where there is no time to arrange DNS.
 
 The rehearsal checklist in [the Windows doc](../windows/README.md) applies unchanged. The
 items that matter most are the ones a tunnel can break: continuous token dragging with two
@@ -345,19 +358,238 @@ browsers open, which exercises the WebSocket upgrade and the drag frame rate ove
 latency; a map upload, which is a large POST on a different path; and refreshing a player
 mid-session to confirm they rejoin as the same character.
 
+---
+
+# The named tunnel
+
+This is what the box runs. The URL stops changing, nothing is port-forwarded, and the home IP
+address never appears in public DNS.
+
+**The hostname is deliberately not written down here.** There are no player accounts and no
+Cloudflare Access in front of Slate, so the unguessable hostname *is* the access control — and
+this file is in a git repository that could be shared or made public. Substitute the real one
+for `<label>` throughout. It lives in `/etc/cloudflared/config.yml` on the Pi and nowhere in
+this repo.
+
+## 1. The domain's DNS moves to Cloudflare
+
+A named tunnel can only route DNS in a zone Cloudflare hosts, so the **nameservers** move.
+The registration stays at the registrar and it stays free.
+
+This is the step with real blast radius if the domain hosts anything else, so it is worth
+doing in the order below rather than switching and watching.
+
+**Check DNSSEC first.** If the registry publishes a DS record, changing nameservers without
+disabling DNSSEC first takes the whole domain offline with SERVFAIL everywhere, for hours. It
+is the most common way this migration breaks hard:
+
+```powershell
+Resolve-DnsName <domain> -Type DS -Server 1.1.1.1
+```
+
+No DS records means DNSSEC is off and there is nothing to do. If there are any, turn DNSSEC
+off at the registrar and wait for the DS record to disappear from the registry before going on.
+
+Then, in order:
+
+1. **Inventory the existing zone** at the registrar and keep a copy. That copy is the rollback.
+2. **Add the domain to Cloudflare** on the Free plan. Cloudflare's scanner is unreliable — it
+   found zero records on a zone that resolves perfectly well — so expect to enter them by hand
+   against the inventory. Adding a zone changes nothing: the registry still points every
+   resolver at the old nameservers, so this state is inert and can be edited or abandoned.
+3. **Grey-cloud every pre-existing record.** Cloudflare imports A and CNAME records as
+   *proxied*, and proxying a site that is not Slate is how this step breaks something. For a
+   GitHub Pages site specifically, Cloudflare's default Flexible SSL mode produces an infinite
+   redirect loop, and GitHub's Let's Encrypt renewal uses an HTTP challenge to the apex that
+   proxying can interfere with — so it works for ninety days and then the certificate quietly
+   fails. Grey cloud makes Cloudflare a pure DNS host and the behaviour byte-for-byte
+   unchanged. Slate's own record is the one exception and `tunnel route dns` sets it up
+   proxied on its own.
+4. **Verify before delegating.** Cloudflare's assigned nameservers answer for a pending zone,
+   so the whole thing can be rehearsed at zero risk by querying them directly and comparing
+   against the registrar's. Do this until every record set matches.
+5. **Then change the nameservers** at the registrar — all of the old ones out, both Cloudflare
+   ones in. A mixed delegation is a broken configuration where resolvers get inconsistent
+   answers depending on which server they hit.
+
+Step 4 is what makes step 5 safe, and it is not optional politeness. The registry publishes
+the delegation with a TTL of roughly a day, so a rollback takes **24–48 hours** to propagate —
+there is no quick undo. Verifying first means there is nothing to undo: both sets of
+nameservers return identical answers, so it does not matter which one any given resolver is
+still using during propagation, and there is no window where the site is down.
+
+Expect resolvers to disagree for a while afterwards, and expect that to be fine. Query the
+registry directly to tell "propagating normally" from "the registrar never pushed it" —
+a resolver holding the old delegation is cache, not a fault.
+
+Last, wait for **SSL/TLS → Edge Certificates** to show a Universal certificate reading
+*Active*. That covers the apex and `*.<domain>`, and the wildcard is what gets Slate's
+subdomain HTTPS.
+
+## 2. Choosing the hostname
+
+```bash
+openssl rand -hex 6
+```
+
+**One label deep — `<label>.<domain>`, never `<label>.slate.<domain>`.** Cloudflare's free
+Universal certificate covers the apex and `*.<domain>`, one level only. A single label is
+therefore served by a wildcard, and the certificate published to Certificate Transparency
+logs names `*.<domain>` and never the label. Go two levels deep and the wildcard no longer
+covers it, so it needs an advanced certificate that names the host explicitly — and **that
+name lands in a public, permanently searchable CT log within minutes**, which is precisely
+what people scrape to find unlisted hosts. It would defeat the whole arrangement on day one.
+
+Do not season it with `slate`, `dnd` or `vtt` either.
+
+## 3. Creating the tunnel
+
+```bash
+cloudflared tunnel login
+```
+
+Prints a URL rather than opening a browser, which is what makes it headless-safe. Open it
+elsewhere and authorise the zone. Writes `~/.cloudflared/cert.pem`. The zone must already be
+**Active** in Cloudflare or it will not be offered.
+
+```bash
+cloudflared tunnel create slate
+cloudflared tunnel list
+```
+
+Writes `~/.cloudflared/<UUID>.json`. That file is a credential — it is what lets anything
+serve traffic on the hostname.
+
+```bash
+sudo mkdir -p /etc/cloudflared
+sudo cp ~/.cloudflared/<UUID>.json /etc/cloudflared/
+sudo chmod 600 /etc/cloudflared/<UUID>.json
+sudo chown root:root /etc/cloudflared/<UUID>.json
+```
+
+## 4. The config, and the paste trap
+
+**Write this with `printf`, not a heredoc.** This cost a debugging cycle and will cost another
+one if it is not respected:
+
+```bash
+SLATE_HOST=<label>.<domain>
+TUNNEL_ID=$(basename ~/.cloudflared/*.json .json)
+
+printf 'tunnel: %s\ncredentials-file: /etc/cloudflared/%s.json\ningress:\n  - hostname: %s\n    service: http://127.0.0.1:3000\n  - service: http_status:404\n' "$TUNNEL_ID" "$TUNNEL_ID" "$SLATE_HOST" | sudo tee /etc/cloudflared/config.yml >/dev/null
+
+sudo cat -A /etc/cloudflared/config.yml
+```
+
+A pasted heredoc arrives with its indentation normalised — leading spaces stripped and, fatally,
+**the space after each `-` removed**. In YAML a dash starts a list item only when a space
+follows it, so `-hostname:` is read as a key named `-hostname` and `ingress:` becomes a mapping
+of three odd keys instead of a list of two rules. The failure is `no ingress rules were defined
+in provided config` and a **503**: the tunnel reaches Cloudflare's edge perfectly well and has
+nothing telling it where to forward traffic. `cloudflared ingress validate` does not catch it,
+because with no rules parsed there is nothing for it to object to.
+
+`printf` emits the spaces itself from a format string on one line, so there is no multi-line
+paste to mangle. Check with `cat -A`, which is the only way to see the problem: it renders tabs
+as `^I` and line ends as `$`, and a plain `cat` shows a broken file looking perfectly fine.
+Two spaces before each `-`, one after it, four before the nested `service:`.
+
+The trailing catch-all is required — cloudflared refuses to start without a final rule matching
+everything — and it earns its keep: anything arriving for a hostname not named here gets a 404
+instead of reaching Slate.
+
+`SLATE_ADDR` stays `127.0.0.1:3000`. Nothing about Slate's own configuration changes.
+
+## 5. The DNS route
+
+```bash
+cloudflared tunnel route dns slate $SLATE_HOST
+```
+
+Creates a **proxied** CNAME to `<UUID>.cfargotunnel.com`. Proxied is load-bearing: it is what
+keeps the home IP address out of public DNS.
+
+## 6. Foreground first, then the service
+
+Prove the path where the logs are visible, before there is a unit in the way:
+
+```bash
+sudo cloudflared --config /etc/cloudflared/config.yml tunnel run slate
+```
+
+`sudo` because the credentials file is root-owned and mode 600. A working start logs
+`Registered tunnel connection` once per edge datacenter. Load `https://<label>.<domain>/` in a
+browser, then Ctrl+C.
+
+```bash
+sudo cp /etc/cloudflared/config.yml /etc/cloudflared/config.yml.bak
+sudo cloudflared --config /etc/cloudflared/config.yml service install
+sudo cat -A /etc/cloudflared/config.yml
+```
+
+**Pass `--config` explicitly.** Under `sudo`, `$HOME` is `/root`, so without it the installer
+looks in `/root/.cloudflared/`, finds nothing, and installs a unit that reports success and
+then fails to start.
+
+The backup is a guard: `service install` copies the config it is given into
+`/etc/cloudflared/config.yml`, which is the same path it was given, and a copy onto itself can
+truncate. Check `cat -A` still shows the `ingress:` block and restore from `.bak` if it does not.
+
+```bash
+systemctl cat cloudflared | grep -E 'ExecStart|User='
+sudo systemctl enable --now cloudflared
+systemctl status cloudflared
+```
+
+## 7. Verifying
+
+Reboot, because a box that needs a human after a power cut is not always-on:
+
+```bash
+sudo reboot
+systemctl is-active slate cloudflared
+```
+
+Both `active`, with nobody logged in. From the Windows machine:
+
+```powershell
+Resolve-DnsName <label>.<domain> -Type A -Server 1.1.1.1
+```
+
+Cloudflare anycast addresses — `104.x` or `172.67.x` — and **not** the home IP. This is the
+inverse of the check on the other records, where seeing the origin's own addresses is what
+proves the grey cloud. Confirm anything else on the domain still serves, too.
+
+Then the rehearsal checklist above, over the tunnel this time.
+
+## What this does and does not protect
+
+The hostname is the access control. There are no accounts, so **anyone holding the link is in
+the room** — the board, the WebSocket and the upload endpoint. For a private game among six
+friends that is the intended trade, and it holds up better than "security through obscurity"
+usually does: the label is unguessable, the wildcard certificate keeps it out of CT logs,
+Cloudflare serves no zone transfers, and `.dev` is HSTS-preloaded so it is HTTPS-only.
+
+The realistic failure is a leaked link rather than an attacker, and **rotating is cheap** —
+`cloudflared tunnel route dns` a fresh label, change the hostname in `config.yml`, restart, and
+delete the old DNS record.
+
+Two things the proxy imposes that loopback did not:
+
+- **Cloudflare's free plan caps request bodies at 100 MB.** A map larger than that gets a 413
+  from Cloudflare before it ever reaches Slate.
+- **Idle proxied WebSockets are closed at around 100 seconds.** Nothing crosses a quiet board,
+  so this would drop a connection mid-session — it is the reason the send task pings every 30
+  seconds, described under *Wire protocol* in `.claude/CLAUDE.md`.
+
 ## Still to do
 
-- **A named tunnel on a real domain**, so the URL stops changing. The domain's DNS must move
-  to Cloudflare (nameservers only — the registration can stay at Porkbun). A subdomain such
-  as `slate.example.com` leaves an apex pointing at GitHub Pages alone; keep those records
-  DNS-only rather than proxied.
 - **Cloudflare Access** with the players' email addresses, so strangers never reach the
-  WebSocket or the upload endpoint. It is per-hostname, so it gates Slate without touching
-  anything else on the domain. Set the session duration long — an Access session lapsing
-  mid-game drops the WebSocket, and Slate's reconnect is a fresh join that would land on a
-  login page.
-- **Switch `cloudflared` to Cloudflare's apt repository** so `unattended-upgrades` picks it
-  up. An always-on box should not have a manually-updated network daemon.
+  WebSocket or the upload endpoint even holding the link. It is per-hostname, so it gates Slate
+  without touching anything else on the domain. Declined for now because it is a login and the
+  group does not want one; the unguessable hostname is the deliberate alternative. If it is ever
+  added, set the session duration long — an Access session lapsing mid-game drops the WebSocket,
+  and Slate's reconnect is a fresh join that would land on a login page.
 
 ---
 
