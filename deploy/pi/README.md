@@ -358,8 +358,104 @@ mid-session to confirm they rejoin as the same character.
   login page.
 - **Switch `cloudflared` to Cloudflare's apt repository** so `unattended-upgrades` picks it
   up. An always-on box should not have a manually-updated network daemon.
-- **Backups of `/var/lib/slate`** to the Windows machine. Nothing else on the Pi is worth
-  keeping, and without this an SD card failure costs the game rather than an evening.
+
+---
+
+# Backups
+
+`/var/lib/slate` is the only thing on this box worth keeping, for the reason *Layout* gives:
+everything else is reproducible from a build, and this is not. Without a copy, an SD card
+failure costs the game rather than an evening.
+
+[`Backup-Slate.ps1`](Backup-Slate.ps1) runs **on the Windows machine** and pulls:
+
+```powershell
+cd c:\Users\Hunter\source\repos\slateVTT
+.\deploy\pi\Backup-Slate.ps1
+```
+
+It writes `slate-<timestamp>.tar.gz` into `%LOCALAPPDATA%\Slate\pi-backups` and keeps the
+newest 30. Both are parameters — `-Destination` at a synced folder or an external drive is
+what makes the copy survive *this* machine as well, which the default does not.
+
+It **pulls rather than pushing**, and that direction is the design. The Pi never holds a
+credential to the Windows box, which matters because the Pi is the half facing the tunnel.
+The key is already here. And the Windows box is the one that is often off, so a push is the
+arrangement whose failures are invisible.
+
+Three things it does that are worth not undoing:
+
+- **It verifies before it rotates.** The archive is downloaded to `.part`, inflated to prove
+  the gzip is whole, and checked for `slate-state.json` before being renamed into place —
+  the same write-then-rename shape `Store::save` uses, so an interrupted run leaves something
+  that cannot be mistaken for a good backup. Old backups are only deleted after a new one has
+  passed all of that.
+- **It excludes `slate-state.json.tmp`.** The save is renamed over atomically, so what lands
+  here is always a whole room; a `.tmp` caught mid-write would restore as a truncated file
+  sitting beside a good one.
+- **It redirects through `cmd`.** PowerShell re-encodes a native command's stdout as text,
+  which silently corrupts a tarball — measured on this data, `ssh ... > file.tar.gz` produced
+  9,527,080 bytes that `gzip -t` rejects outright, against 5,248,529 that it accepts. This is
+  the single most likely way to end up holding backups that are all unrestorable.
+
+## Scheduling it
+
+Task Scheduler, from an **elevated** PowerShell — registering needs admin, though the task
+itself deliberately does not run as one.
+
+```powershell
+$action = New-ScheduledTaskAction -Execute 'powershell.exe' `
+    -Argument '-NoProfile -ExecutionPolicy Bypass -File "c:\Users\Hunter\source\repos\slateVTT\deploy\pi\Backup-Slate.ps1"'
+$trigger = New-ScheduledTaskTrigger -Daily -At 3am
+$settings = New-ScheduledTaskSettingsSet -StartWhenAvailable -ExecutionTimeLimit (New-TimeSpan -Hours 1)
+$principal = New-ScheduledTaskPrincipal -UserId 'hp\hunter' -LogonType Interactive -RunLevel Limited
+Register-ScheduledTask -TaskName 'Slate Pi backup' `
+    -Action $action -Trigger $trigger -Settings $settings -Principal $principal
+```
+
+**The principal is the load-bearing part, and it is not a default worth relying on.** The
+script authenticates with the SSH key in `%USERPROFILE%\.ssh`, and `known_hosts` is per-profile
+as well, so a task running as `SYSTEM` fails with `Permission denied (publickey)` every night
+while looking perfectly registered in the UI. `Interactive` needs no stored password and runs
+when that user is logged on, which is when this machine is awake anyway. `Limited` because
+pulling a tarball over SSH wants no administrator rights.
+
+`-StartWhenAvailable` is the other one that matters. This machine sleeps on idle, so a 03:00
+trigger does not fire at 03:00 — the flag is what makes the missed run happen shortly after the
+machine is next woken, rather than being skipped until the following night. Add `-WakeToRun` to
+the settings set if you would rather it actually woke the box, which for 5MB is hard to justify.
+
+The script exits non-zero when it fails, so a bad night shows up as a red *Last Run Result*
+in Task Scheduler rather than as nothing at all. Check it occasionally — an unverified
+backup is a belief rather than a backup.
+
+Force the first run rather than waiting a day, because this is the step that distinguishes
+*registered* from *working*:
+
+```powershell
+Start-ScheduledTask -TaskName 'Slate Pi backup'
+Get-ScheduledTaskInfo -TaskName 'Slate Pi backup' | Select-Object LastRunTime, LastTaskResult
+Get-ChildItem "$env:LOCALAPPDATA\Slate\pi-backups"
+```
+
+`LastTaskResult` of `0` and a new timestamped archive is the pass. Anything else, run the
+script by hand in a normal terminal — the error it prints is the one the task swallowed.
+
+## Restoring
+
+```bash
+sudo systemctl stop slate
+sudo tar -xzf ~/slate-20260814-030000.tar.gz -C /var/lib/slate
+sudo chown -R slate:slate /var/lib/slate
+sudo systemctl start slate
+```
+
+Extract as root: the archive carries `slate:slate` ownership and the directory's 750 mode, so
+a root extract puts the permissions back on its own. The `chown` is belt and braces for the
+case where it was extracted as somebody else.
+
+Stopping first is not optional. Slate holds the room in memory and writes it on a debounce,
+so a restore under a running server is overwritten by whatever that server saves next.
 
 ---
 

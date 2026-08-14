@@ -64,9 +64,18 @@ than esbuild. If a dependency is proposed, justify it against "could this be 40 
 
 Persistence: `serde_json` snapshot to a file on disk, debounced. No database.
 
-Deployment target: hosted from a Windows PC during game sessions behind a
-Cloudflare Tunnel. Slate runs only while the group is playing; it is not an
-always-on service.
+Deployment target: **self-hosted on hardware in the room**, behind a Cloudflare Tunnel — a
+Raspberry Pi 3B on the home network, which receives a cross-compiled binary from a Windows
+machine and runs it under `systemd`. There is no cloud and no recurring cost, and that is a
+constraint rather than a stage: a VPS was the better answer for uptime and was declined on it.
+
+It is **always on**, so the DM can prepare the next dungeon on a Tuesday without anyone else
+being involved. That is what the staged map and the wall editor are for, and it is why the box
+stopped being a PC somebody starts before a session. Scale expectations are unchanged — seven
+clients on a 1GB board — so this buys availability and not headroom.
+
+The procedure lives in `deploy/pi/README.md`, which also covers backups of `/var/lib/slate`;
+`deploy/windows/` still hosts a session from a PC and is kept for a game away from home.
 
 ## Architecture
 
