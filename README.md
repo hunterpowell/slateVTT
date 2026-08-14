@@ -163,3 +163,14 @@ firewall port.
 
 See [deploy/windows/README.md](deploy/windows/README.md) for the build, local
 run, Quick Tunnel rehearsal, backup, and troubleshooting procedures.
+
+## Hosting always-on from a Raspberry Pi
+
+The other host, and a different proposition: it stays up between sessions so the
+DM can prepare the next map without anyone else being involved. The Pi builds
+nothing — a Windows machine cross-compiles the server and bundles the client, and
+the Pi runs them under `systemd`.
+
+See [deploy/pi/README.md](deploy/pi/README.md) for the card, the layout, the
+service account, the cross-compile, the deploy, and what each failure we hit
+looked like.

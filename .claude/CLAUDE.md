@@ -265,6 +265,13 @@ On join, the server sends `ServerMsg::Welcome { your_id, is_dm, player_id, state
 containing a full filtered snapshot. Everything after that is a delta. Reconnection is just
 another join — there is no diffing or resync protocol.
 
+**The send task pings an idle socket every 30 seconds**, because nothing crosses a quiet board
+and a proxy that sees no traffic for long enough closes the connection — on loopback nothing
+did, which is why this was not needed until Slate was hosted behind a tunnel. It is not a
+message: a browser answers at the protocol level, so the wire format is unchanged and the
+client knows nothing about it. **A keepalive is not a reconnect** — when the socket does close,
+the page still says so and waits for a refresh.
+
 `state` is a `RoomView`, which is the room as that one client may see it — for a player that
 means `staged` is stripped from it, the walls and the fog overrides are empty, tokens they cannot see
 are absent, and what survives is redacted. See `docs/maps.md` and `docs/tokens.md`. `state` is boxed, because growing

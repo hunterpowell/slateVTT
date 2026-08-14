@@ -9,3 +9,7 @@ slate-state.json.tmp
 
 # Maps the DM uploaded at runtime.
 uploads/
+
+# An scp that lost its ":destination" and copied to a local file named
+# after the host instead. See deploy/pi/README.md.
+*@slate.local
