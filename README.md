@@ -118,7 +118,9 @@ drivers' job, below.
 The `tools/drive-*.mjs` scripts open the actual client in headless Chrome and click through it,
 asserting on the DOM and — where only pixels can tell the difference — on the canvas itself. They
 speak the DevTools protocol directly, so there is nothing to install beyond the browser already on
-the machine.
+the machine. Two files sit under them: [tools/cdp.mjs](tools/cdp.mjs) is the protocol and knows
+nothing about Slate, and [tools/board.mjs](tools/board.mjs) is what knows where the grid is on
+screen and which token is standing on a given square.
 
 | Driver             | What it drives                                                    | Browsers |
 | ------------------ | ----------------------------------------------------------------- | -------- |
@@ -149,10 +151,30 @@ node tools/drive-player.mjs http://127.0.0.1:3000
 ```
 
 Point them at a scratch `SLATE_STATE`, never at the room you are about to play in — the first
-thing `drive-ui.mjs` does is erase every wall on the board, and the fog, names, ruler and ping
-drivers each build a token or flip a switch that persists. Run them one at a time: they share debug
-ports (9333 for a DM, 9334 for a player), so two at once attach to each other's browser. Set
-`SLATE_BROWSER` if Chrome or Edge is somewhere unusual.
+thing `drive-ui.mjs` does is erase every wall on the board, `drive-staged.mjs` throws away whatever
+was in the staged slot, and the fog, names, ruler and ping drivers each build a token or flip a
+switch that persists. Run them one at a time: they share debug ports (9333 for a DM, 9334 for a
+player), so two at once attach to each other's browser. Set `SLATE_BROWSER` if Chrome or Edge is
+somewhere unusual.
+
+**A scratch path with no file on it, and not a copy of a real room.** They are written against the
+room a first boot builds — eight tokens on `/assets/map.png`, an empty initiative order, nothing
+traced and nothing staged — and several of them assert against that directly, so a copy of a room
+that has been played in fails checks that have nothing to do with what they drive. Deleting the
+scratch file is what resets them, and because the room lives in memory and is only read at boot,
+that means **restarting the server** rather than just deleting the file.
+
+**They may be run in any order**, and that is worth stating because for a while they could not be.
+`drive-staged.mjs` ends by promoting a different map onto the board, on purpose, and four other
+drivers used to build a token and then click the middle of the canvas to select it — which is where
+a new token lands only if the middle was free and the zoom was the one they were written at. The
+symptom was five failures in `drive-ruler` that looked exactly like a regression in whatever had
+just been changed.
+
+That lives in [tools/board.mjs](tools/board.mjs) now: it measures the grid off the HUD, finds a
+token by looking outward from the middle of the view, and converts a cell to either client's screen
+coordinates. Anything that clicks the board should go through it rather than reaching for pixels —
+**a driver may not assume the map it was written against.**
 
 ## Hosting a remote session from Windows
 

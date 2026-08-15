@@ -20,13 +20,14 @@
 // cannot tell "sent nothing" from "sent something and drew the same thing".
 //
 // Everything here is measured in *grid cells* read off the HUD rather than in
-// screen pixels, and that is not fussiness. A new token lands in the cell
-// containing the centre of the view, so its centre is up to half a cell from
-// where this script would guess; at the zoom a whole dungeon is framed at, half
-// a cell is most of a token's radius and a click meant for it becomes a pan.
-// `screenOfCell` below is the fix, and it makes every check exact.
+// screen pixels, and that is not fussiness — see `board.mjs`, which was pulled
+// out of this file once three other drivers turned out to need it. The short
+// version: **this script inherits a board it did not choose**, and a driver that
+// assumes the map it was written against fails somewhere far away from the
+// assumption.
 
 import { open, checks } from './cdp.mjs';
+import { latticeOrBail, tokenAt, findToken } from './board.mjs';
 
 const [, , base = 'http://127.0.0.1:3000', secret = 'test-secret'] = process.argv;
 
@@ -53,121 +54,20 @@ const tab = (name) =>
   dm.evaluate(`[...document.querySelectorAll('.rail-tab')]
     .find(t => t.textContent.trim().toLowerCase().startsWith('${name}')).click(); "ok"`);
 
-const [cx, cy] = await dm.evaluate(`(() => {
-  const r = document.getElementById('stage').getBoundingClientRect();
-  return [Math.round(r.left + r.width / 2), Math.round(r.top + r.height / 2)];
-})()`);
-
-/** The grid cell under a screen point, read off the HUD. */
-const cellUnder = async (x, y) => {
-  await dm.move(x, y);
-  await dm.wait(50);
-  const text = await dm.evaluate('document.querySelector("#hud").textContent');
-  const m = /cell (-?\d+), (-?\d+)/.exec(text);
-  return m === null ? null : { x: Number(m[1]), y: Number(m[2]) };
-};
-
-// --- zoom in, then learn the lattice -----------------------------------------
+// --- the lattice, and the tokens standing on it ------------------------------
 //
-// Zoomed out to frame a whole dungeon a token is about twenty pixels across, and
-// every check here is a click that has to land on one. Three notches of wheel
-// put it somewhere comfortable; the calibration below then works at whatever
-// zoom this actually produced rather than assuming it worked.
+// `reach` is four because the group travels four cells and both tokens have to
+// stay on the canvas; `halo` is the box the pixel checks read around a token.
+// Between them they decide how far the zoom may go in.
 
-for (let i = 0; i < 3; i++) {
-  await dm.send('Input.dispatchMouseEvent', {
-    type: 'mouseWheel', x: cx, y: cy, deltaX: 0, deltaY: -300,
-  });
-  await dm.wait(120);
-}
-await dm.wait(300);
-note(`zoom is now ${(await dm.evaluate('document.querySelector("#hud").textContent')).trim().split('·')[0].trim()}`);
+const HALO = 100;
+const grid = await latticeOrBail(dm, [dm, player], { reach: 4, halo: HALO });
+note(grid.describe);
 
-/**
- * Screen coordinates of the centre of a grid cell.
- *
- * Two HUD readings a long way apart give the cell size — a division rather than
- * a scan, so it costs two round trips instead of a hundred — and a short scan
- * across one boundary gives the phase. Everything after this is exact.
- */
-const calibrate = async (axis) => {
-  const at = (d) => (axis === 'x' ? cellUnder(cx + d, cy) : cellUnder(cx, cy + d));
-  const near = await at(0);
-  if (near === null) throw new Error('the centre of the view is not over the map');
-
-  // The span shrinks until it lands somewhere the HUD will name a cell for. Off
-  // the edge of the map it names none, and how far the edge is depends on the
-  // map, the zoom and where the rail has pushed the canvas — none of which this
-  // script is entitled to assume.
-  let span = null;
-  let far = null;
-  for (const candidate of [400, 300, 220, 160, 120]) {
-    far = await at(candidate);
-    if (far !== null && far[axis] > near[axis]) {
-      span = candidate;
-      break;
-    }
-  }
-  if (span === null) throw new Error(`could not calibrate ${axis} anywhere along the axis`);
-
-  const cells = far[axis] - near[axis];
-  const size = span / cells;
-
-  // Where the next cell along begins, to within three pixels.
-  let edge = null;
-  for (let d = 0; d <= Math.ceil(size) + 6 && edge === null; d += 3) {
-    const c = await at(d);
-    if (c[axis] === near[axis] + 1) edge = d;
-  }
-  if (edge === null) throw new Error(`could not find the ${axis} boundary`);
-  return { size, index: near[axis] + 1, at: (axis === 'x' ? cx : cy) + edge + size / 2 };
-};
-
-const gx = await calibrate('x');
-const gy = await calibrate('y');
-note(`a cell is ${gx.size.toFixed(1)} × ${gy.size.toFixed(1)} screen pixels`);
-
-const screenOfCell = (i, j) => [
-  Math.round(gx.at + (i - gx.index) * gx.size),
-  Math.round(gy.at + (j - gy.index) * gy.size),
-];
-
-const origin = await cellUnder(cx, cy);
-note(`the centre of the view is cell ${origin.x}, ${origin.y}`);
-
-/** Clicks the centre of a cell and reports the token it selected, or null. */
-const tokenIn = async (i, j) => {
-  // Into creation mode first, so the box is empty unless this click actually
-  // selected something — otherwise the previous token's name answers for it.
-  await dm.evaluate(`(() => {
-    const f = document.getElementById('token-new');
-    if (!f.hidden) f.click();
-    return 'ok';
-  })()`);
-  await dm.wait(120);
-  const [x, y] = screenOfCell(i, j);
-  await dm.click(x, y);
-  await dm.wait(250);
-  const name = await dm.evaluate('document.getElementById("token-name").value');
-  return name === '' ? null : name;
-};
-
-/** Where a freshly built token actually landed. `spaceFor` puts it in the first
- *  free cell out from the centre of the view, so this looks outward from there
- *  rather than assuming the centre was free. */
-const findNear = async (name) => {
-  for (let r = 0; r <= 3; r++) {
-    for (let dx = -r; dx <= r; dx++) {
-      for (let dy = -r; dy <= r; dy++) {
-        if (Math.max(Math.abs(dx), Math.abs(dy)) !== r) continue;
-        if ((await tokenIn(origin.x + dx, origin.y + dy)) === name) {
-          return { x: origin.x + dx, y: origin.y + dy };
-        }
-      }
-    }
-  }
-  return null;
-};
+const origin = grid.origin;
+const screenOfCell = (i, j) => grid.screenOfCell(i, j);
+const tokenIn = (i, j) => tokenAt(dm, grid, { x: i, y: j });
+const findNear = (name) => findToken(dm, grid, name);
 
 // The player's canvas is measured *whole*, and that is not laziness. Their
 // camera is not the DM's — they have no left rail, so their canvas is a
@@ -279,7 +179,9 @@ note(`A is at ${homeA.x},${homeA.y}; B is at ${homeB.x},${homeB.y}`);
 // since both are a press on a token that is not a drag. What separates them here
 // is that one reaches the table and the other never leaves the page.
 
-const HALO = 100; // a box around a token, wide enough to hold its selection ring
+// `HALO` is a box around a token wide enough to hold its selection ring, and it
+// is declared up with the zoom because it is half of what decides how far the
+// board can be zoomed in: a box that runs off the canvas reads no pixels.
 const boxAt = (cell) => {
   const [x, y] = screenOfCell(cell.x, cell.y);
   return [x - HALO / 2, y - HALO / 2, HALO, HALO];

@@ -3,9 +3,16 @@
 //   cd server && SLATE_DM_SECRET=test-secret SLATE_STATE=scratch.json cargo run
 //   node tools/drive-staged.mjs                   # or: ... http://host:port secret
 //
-// It runs against a live room and *changes it*: it stages a map, traces walls on
-// it, paints its fog and then promotes it onto the board. Point it at a scratch
-// `SLATE_STATE`, never at the room you are about to play in.
+// It runs against a live room and *changes it*: it discards whatever was in the
+// staged slot, stages a map, traces walls on it, paints its fog and then
+// promotes it onto the board. Point it at a scratch `SLATE_STATE`, never at the
+// room you are about to play in — this is the one driver that will throw away a
+// dungeon the DM was in the middle of preparing.
+//
+// It leaves a *different map on the board* than it found there, which is the one
+// way it disturbs its neighbours: the drivers that click at fixed screen
+// coordinates are framing whatever map is loaded. Run this one last. See the
+// README's table.
 //
 // Two sessions, and the reason is milestone 20's whole shape rather than a habit
 // picked up from the fog driver. What this feature is *for* is the DM preparing a
@@ -61,6 +68,12 @@ const disabled = (session, sel) => session.evaluate(`document.querySelector("${s
  * fetched it then, honestly, as the map they were playing on, makes a
  * whole-history reading say "they have seen it" about a leak that never
  * happened. The window starts the moment the staging does.
+ *
+ * The mark is half of it and *when this client joins* is the other half, which
+ * is why that happens after the board is set rather than at the top of the
+ * script. A fetch made before the mark is forgotten by this reading, but the
+ * bytes it fetched are still in the cache — and a leak the browser can satisfy
+ * from cache issues no request for either half of this to see.
  */
 const forgetFetches = (session) =>
   session.evaluate('performance.clearResourceTimings(); "ok"');
@@ -122,15 +135,6 @@ async function trace(session, corners) {
   await session.wait(500);
 }
 
-// --- a player, watching the board they are actually on ----------------------
-
-const player = await open(base, { port: 9334 });
-await player.wait(2000);
-await player.evaluate(`[...document.querySelectorAll('.picker-list button')]
-  .find(b => b.textContent.includes('Saelyn')).click(); "ok"`);
-await player.wait(1500);
-check('joined as a player', await player.evaluate('!!document.querySelector("#whoami-name")'), true);
-
 // --- two different maps, so a re-run cannot pass or fail for the wrong reason
 
 /**
@@ -182,11 +186,49 @@ note(`the board reads: ${boardTraced}`);
 check('one segment on the board', boardTraced.startsWith('1 wall'), true);
 await press(dm, 'wall', '#wall-tools'); // put it down before switching slots
 
+// --- a player, watching the board they are actually on ----------------------
+//
+// Joining *here*, after the board has been set, and that ordering is the whole
+// of what makes the network check below repeatable. The room outlives a run, so
+// a second run starts on the map the first one promoted — which is the map this
+// one is about to stage. A player who joined before the board was set would
+// fetch that image honestly, as the board they were dropped onto, and have it
+// in hand before the staging window even opens. The leak this script exists to
+// catch would then produce no request to see, and the check would pass by
+// having nothing to look at.
+
+const player = await open(base, { port: 9334 });
+await player.wait(2000);
+await player.evaluate(`[...document.querySelectorAll('.picker-list button')]
+  .find(b => b.textContent.includes('Saelyn')).click(); "ok"`);
+await player.wait(1500);
+check('joined as a player', await player.evaluate('!!document.querySelector("#whoami-name")'), true);
+
 // --- stage a map ------------------------------------------------------------
 
 await openTab(dm, 'map');
-await dm.evaluate('document.querySelector("#map-slot-next").click(); "ok"');
-await dm.wait(300);
+
+// Whatever was already staged goes first, the way the board's walls were
+// cleared above rather than assumed. The slot is exactly where a DM leaves a
+// dungeon they are preparing, so a long-lived room is *likely* to have one in
+// it — and if it survives, the pick below can land on the same URL, which the
+// room reads as a recalibration rather than a load and which therefore keeps
+// the walls traced on it. Four checks then fail describing someone else's
+// dungeon.
+//
+// The slot is selected twice around that, and the second one is not
+// belt-and-braces: a slot that empties has nothing left to preview, so the
+// panel drops back to the live board on its own. Without the second click every
+// command below this lands on the board the table is looking at.
+const stagedSlot = async () => {
+  await dm.evaluate('document.querySelector("#map-slot-next").click(); "ok"');
+  await dm.wait(300);
+};
+
+await stagedSlot();
+await dm.evaluate('document.querySelector("#map-discard").click(); "ok"');
+await dm.wait(500);
+await stagedSlot();
 check(
   'the panel is on the staged slot with nothing in it',
   await text(dm, '#map-readout'),
@@ -337,9 +379,10 @@ check(
 // over, and it has to come back the other way.
 //
 // Deliberately the canvas and not the resource timeline here, which is the
-// opposite choice from the one made during the preparation above. A second run
-// against the same browser has the promoted image in its cache and issues no
-// request for it at all, so the network reading is one-shot; pixels are not.
+// opposite choice from the one made during the preparation above. This client
+// has been on the board all along and the image arriving may well already be in
+// its cache, which is a request that need never be issued; what the *board* did
+// is not cacheable.
 const playerPromoted = await changed(player);
 note(`the player's board moved ${playerPromoted}% on the promote`);
 check('the table is handed the new dungeon', playerPromoted > 10, true);

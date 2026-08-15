@@ -105,6 +105,22 @@ export async function open(url, { port = 9333, width = 1280, height = 860 } = {}
   await send('Runtime.enable');
   await send('Page.enable');
 
+  // A native dialog deadlocks CDP outright: the click that opens one never
+  // returns, so the driver hangs with no output and the last thing in its log is
+  // whatever passed just before. Several buttons in this client are guarded by a
+  // `confirm`, so every session gets rid of them up front.
+  //
+  // Both halves are needed and they cover different moments. The first runs
+  // before any script in *future* documents, which is the only way to beat a
+  // reload; the second covers the document already open, since attaching can win
+  // the race against the first navigation and leave a driver stubbing
+  // `about:blank`. A driver doing this for itself hits exactly that — it looks
+  // like it works, until one run in ten attaches early and hangs somewhere
+  // unrelated.
+  const noDialogs = 'window.confirm = () => true; window.alert = () => {}; window.prompt = () => null;';
+  await send('Page.addScriptToEvaluateOnNewDocument', { source: noDialogs });
+  await send('Runtime.evaluate', { expression: `${noDialogs} "ok"` });
+
   const session = {
     errors,
     send,

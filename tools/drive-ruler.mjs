@@ -20,6 +20,7 @@
 // copy of the token has none to draw.
 
 import { open, checks } from './cdp.mjs';
+import { latticeOrBail, findToken } from './board.mjs';
 
 const [, , base = 'http://127.0.0.1:3000', secret = 'test-secret'] = process.argv;
 
@@ -69,8 +70,11 @@ const cellUnder = async (session, x, y) => {
  * parallel to the line the script dragged along rather than down it. Three
  * samples on the wrong line miss a trail that is drawn perfectly.
  *
- * Blue is also the one thing this map's art is not — a dungeon floor is grey and
- * brown — so the threshold does not have to be delicate.
+ * A share of the box, not a verdict. Every caller subtracts what the same box
+ * read before anything was drawn on it, because how blue a stretch of board *is*
+ * depends on what the map was painted: one dungeon reads two percent blue bare
+ * and the next reads four, and a fixed threshold across both is measuring the
+ * art rather than the trail.
  */
 const fractionOf = (session, test, x, y, w, h) =>
   session.evaluate(`(() => {
@@ -162,18 +166,26 @@ await dm.evaluate(`(() => {
 await dm.evaluate(`document.getElementById('token-save').click(); "ok"`);
 await dm.wait(800);
 
-// A new token lands at the centre of the view, which is the centre of the
-// canvas. Confirmed rather than assumed, because everything below drags from
-// that point and a drag that misses the token is a pan — which moves the whole
-// board and would fail the pixel checks for an entirely unrelated reason.
-const [cx, cy] = await centre();
-await dm.click(cx, cy);
-await dm.wait(300);
-check(
-  'the new token is under the centre of the view',
-  await dm.evaluate('document.getElementById("token-name").value'),
-  'Ruler Test',
-);
+// Where that token *landed*, which is not a thing this script gets to assume: a
+// new one goes into the first free cell out from the middle of the view, so on a
+// board with something already standing there it is a cell or two over. It used
+// to drag from the middle of the canvas and a drag that misses the token is a
+// pan — which moves the whole board and fails the pixel checks below for an
+// entirely unrelated reason.
+//
+// Neither client is zoomed. `span` and `TRAIL_SHARE` are pixel quantities tuned
+// against the framing the client chooses for itself, and a lattice is only
+// needed here to click the right square and to name the same square on the other
+// screen. See `board.mjs`.
+const framed = { zoom: false };
+const dmGrid = await latticeOrBail(dm, [dm, player], framed);
+const playerGrid = await latticeOrBail(player, [dm, player], framed);
+note(`the DM: ${dmGrid.describe}`);
+note(`the player: ${playerGrid.describe}`);
+
+const built = await findToken(dm, dmGrid, 'Ruler Test');
+check('the token this script built is on the board', built !== null, true);
+const [cx, cy] = dmGrid.screenOfCell(built.x, built.y);
 
 // --- the trail, watched from the other side ----------------------------------
 //
@@ -191,10 +203,52 @@ const steps = Math.max(Math.abs(endCell.x - startCell.x), Math.abs(endCell.y - s
 note(`the drag runs from cell ${startCell.x},${startCell.y} to ${endCell.x},${endCell.y} — ${steps} steps`);
 check('the drag is long enough to have a trail', steps >= 3, true);
 
+/**
+ * The square of board the drag crossed, in one client's own pixels.
+ *
+ * Named by its two *cells* and resolved per screen, because the player's camera
+ * is not the DM's — no left rail, so a different canvas and a different framing
+ * from the first frame. The DM's rectangle handed to the player's canvas reads
+ * an area where nothing was going to happen, and a check written that way passes
+ * by measuring the wrong silence.
+ */
+const boxFor = (grid) => {
+  const [x0, y0] = grid.screenOfCell(startCell.x, startCell.y);
+  const [x1, y1] = grid.screenOfCell(endCell.x, endCell.y);
+  // Inset half a cell at both ends, so the box holds the ground the trail
+  // crossed and not the two token discs sitting at its corners.
+  const half = grid.size / 2;
+  return [x0 + half, y0 + half, x1 - x0 - grid.size, y1 - y0 - grid.size];
+};
+const dmBox = boxFor(dmGrid);
+const playerBox = boxFor(playerGrid);
+const boxOf = (page, test) => fractionOf(page, test, ...(page === dm ? dmBox : playerBox));
+
 // The DM's board as it stands before anything is dragged over it. The trail's
 // colour there depends on whether this room has a wall across this drag, so what
 // is asserted is that a trail is *drawn*; which colour it came out is below.
-await remember(dm, cx, cy, span, span);
+await remember(dm, ...dmBox);
+
+/**
+ * How blue and how amber that square of board already is, with nothing on it.
+ *
+ * Every reading below is a difference from this rather than from zero, and that
+ * is the rule these drivers keep having to relearn: a trail is a *wash* over the
+ * map, so what the map was painted decides what an absolute threshold means. A
+ * dungeon in blues reads four percent blue with nothing drawn on it — enough to
+ * make "the trail faded" fail on one map and pass on the next, having measured
+ * the art both times.
+ */
+const resting = {
+  dmBlue: await boxOf(dm, BLUE),
+  dmAmber: await boxOf(dm, AMBER),
+  playerBlue: await boxOf(player, BLUE),
+  playerAmber: await boxOf(player, AMBER),
+};
+note(
+  `the bare board reads ${(resting.dmBlue * 100).toFixed(1)}% blue and ` +
+    `${(resting.dmAmber * 100).toFixed(1)}% amber on the DM's screen`,
+);
 
 await dm.send('Input.dispatchMouseEvent', {
   type: 'mousePressed', x: from.x, y: from.y, button: 'left', buttons: 1, clickCount: 1,
@@ -214,22 +268,27 @@ await dm.wait(500);
 // A staircase of `steps + 1` cells covers roughly `(steps + 1) / steps²` of the
 // square the drag spans, which is about a fifth of it here. The ruler *line*
 // alone is two pixels wide over a diagonal of the same box — about one percent.
-// Five percent is comfortably between the two and needs no zoom arithmetic.
-const TRAIL_SHARE = 0.05;
-const boxOf = (page, test) => fractionOf(page, test, cx, cy, span, span);
+//
+// The number is *below* that fifth rather than between the two, because what is
+// counted is the pixels the wash pushes over the blue test and not the pixels it
+// covers: over a dungeon already painted in blues a good many were over it
+// already and the tint moves nothing. Six points is what the bluest map to hand
+// gives; three is still triple the line on its own, which is the thing this has
+// to be able to tell it from.
+const TRAIL_SHARE = 0.03;
 
-const playerBlue = await boxOf(player, BLUE);
-note(`${(playerBlue * 100).toFixed(1)}% of the drag's box is blue on the player's screen`);
+const playerBlue = (await boxOf(player, BLUE)) - resting.playerBlue;
+note(`the drag's box gained ${(playerBlue * 100).toFixed(1)} points of blue on the player's screen`);
 check(
   'the player sees the trail under a token they are not dragging',
   playerBlue > TRAIL_SHARE,
   true,
 );
 
-const dmMoved = await movedSince(dm, cx, cy, span, span);
-const dmBlue = await boxOf(dm, BLUE);
-const dmAmber = await boxOf(dm, AMBER);
-note(`the DM's box changed by ${(dmMoved * 100).toFixed(1)}% — ${(dmBlue * 100).toFixed(1)}% blue, ${(dmAmber * 100).toFixed(1)}% amber`);
+const dmMoved = await movedSince(dm, ...dmBox);
+const dmBlue = (await boxOf(dm, BLUE)) - resting.dmBlue;
+const dmAmber = (await boxOf(dm, AMBER)) - resting.dmAmber;
+note(`the DM's box changed by ${(dmMoved * 100).toFixed(1)}% — gaining ${(dmBlue * 100).toFixed(1)} points of blue and ${(dmAmber * 100).toFixed(1)} of amber`);
 check('and so does the DM doing the dragging', dmMoved > TRAIL_SHARE, true);
 
 // The wall hint, and the whole reason it is safe to have one. If this drag did
@@ -238,8 +297,8 @@ check('and so does the DM doing the dragging', dmMoved > TRAIL_SHARE, true);
 // against. Nothing had to ask who they were for that to be true.
 if (dmAmber > 0.03) {
   note('this drag crosses a wall on the DM\'s screen');
-  const playerAmber = await boxOf(player, AMBER);
-  note(`${(playerAmber * 100).toFixed(1)}% amber on the player's`);
+  const playerAmber = (await boxOf(player, AMBER)) - resting.playerAmber;
+  note(`${(playerAmber * 100).toFixed(1)} points of amber on the player's`);
   check('the wall warning is the DM\'s alone', playerAmber < 0.01, true);
   check('and the player still sees an ordinary trail', playerBlue > TRAIL_SHARE, true);
 } else {
@@ -284,16 +343,23 @@ await dm.send('Input.dispatchMouseEvent', {
 });
 await dm.wait(500);
 
-const justAfter = await boxOf(player, BLUE);
-note(`${(justAfter * 100).toFixed(1)}% still blue just after the drop`);
-check('the trail is still up just after the drop', justAfter > TRAIL_SHARE, true);
+const justAfter = (await boxOf(player, BLUE)) - resting.playerBlue;
+note(`${(justAfter * 100).toFixed(1)} points of blue still there just after the drop`);
+// Against what the same box read mid-drag rather than against the threshold: the
+// claim is that the trail this client was already drawing *survives the drop*,
+// and the two readings are the same measurement at two times. The trail has
+// begun fading by now, so it is half of it rather than all.
+check('the trail is still up just after the drop', justAfter > playerBlue / 2, true);
 
 await player.wait(2400); // past LINGER_MS
-const faded = await boxOf(player, BLUE);
-note(`${(faded * 100).toFixed(1)}% blue once it has faded`);
-// Not zero: the token itself is drawn there, and one grey disc in a box this
-// size clears the blue test on a few of its own pixels.
-check('and gone once it has faded', faded < 0.01, true);
+const faded = (await boxOf(player, BLUE)) - resting.playerBlue;
+note(`${(faded * 100).toFixed(1)} points once it has faded, against ${(justAfter * 100).toFixed(1)} before`);
+// Against the reading taken while the trail was up, and not against a number
+// picked out of the air. What is left in the box when the trail goes is the map,
+// and how blue *that* is depends on what the art was painted — the rule these
+// drivers keep relearning. An absolute threshold here is a check that passes on
+// a dungeon floor and fails on a river, having measured neither.
+check('and gone once it has faded', faded < justAfter / 4, true);
 
 await dm.evaluate(`(() => {
   const s = document.querySelector('#token-diagonals');
@@ -331,12 +397,26 @@ const rows = (page) =>
     lookable: r.classList.contains('is-lookable'),
   }))`);
 
+/**
+ * The two rows this script rolled for, out of however many the order holds.
+ *
+ * Counting the whole panel would be asserting that the room's initiative order
+ * was empty when the run started, which is a fact about the room and not about
+ * the panel — a scratch state copied from a game in progress fails five checks
+ * here with nothing wrong. The same reason the token is looked for rather than
+ * assumed to be under the middle of the view.
+ */
+const MINE = ['Saelyn', 'Ruler Test'];
+const ours = (list) => list.filter((row) => MINE.includes(row.name));
+const rowFor = (list, name) => list.find((row) => row.name === name);
+const placeOf = (list, name) => list.findIndex((row) => row.name === name);
+
 const dmRows = await rows(dm);
 const playerRows = await rows(player);
-note('DM rows:   ', JSON.stringify(dmRows));
-note('player rows:', JSON.stringify(playerRows));
+note('DM rows:   ', JSON.stringify(ours(dmRows)));
+note('player rows:', JSON.stringify(ours(playerRows)));
 
-check('the DM sees both rows', dmRows.length, 2);
+check('the DM sees both rows', ours(dmRows).length, 2);
 check('every row has a portrait slot', dmRows.every((r) => r.hasArtSlot), true);
 check('the party portrait is loaded', dmRows.find((r) => r.name === 'Saelyn')?.art, true);
 // The token this script built has no art, and must degrade to the grey disc
@@ -344,7 +424,7 @@ check('the party portrait is loaded', dmRows.find((r) => r.name === 'Saelyn')?.a
 check('a token with no art still gets its disc', dmRows.find((r) => r.name === 'Ruler Test')?.hasArtSlot, true);
 check('and no background image on it', dmRows.find((r) => r.name === 'Ruler Test')?.art, false);
 check('every row can be looked at', dmRows.every((r) => r.lookable), true);
-check('the player sees both rows too', playerRows.length, 2);
+check('the player sees both rows too', ours(playerRows).length, 2);
 
 // --- hit points, and who is not sent them ------------------------------------
 
@@ -455,13 +535,19 @@ const playerValues = await values(player);
 note('DM values:    ', JSON.stringify(dmValues));
 note('player values:', JSON.stringify(playerValues));
 
-check('the corrected value took', dmValues.find((r) => r.name === 'Saelyn')?.value, '7');
-check('and the order re-sorted under it', dmValues[0]?.name, 'Ruler Test');
+check('the corrected value took', rowFor(dmValues, 'Saelyn')?.value, '7');
+// Their order relative to *each other*, since a room mid-fight has rows above
+// and below both of them and 18-down-to-7 says nothing about those.
+check(
+  'and the order re-sorted under it',
+  placeOf(dmValues, 'Ruler Test') < placeOf(dmValues, 'Saelyn'),
+  true,
+);
 // The table is holding the same fight. Their row is a span rather than a field,
 // because re-valuing is the DM's and the panel is not the place to say so twice.
-check('the table was told', playerValues.find((r) => r.name === 'Saelyn')?.value, '7');
-check('and has nothing to type in', playerValues[0]?.tag, 'SPAN');
-check("the DM's is a field", dmValues[0]?.tag, 'INPUT');
+check('the table was told', rowFor(playerValues, 'Saelyn')?.value, '7');
+check('and has nothing to type in', rowFor(playerValues, 'Saelyn')?.tag, 'SPAN');
+check("the DM's is a field", rowFor(dmValues, 'Saelyn')?.tag, 'INPUT');
 
 // The × must not also move the camera on its way out — a click that deletes
 // something is the last click that should be doing two things.
@@ -476,15 +562,16 @@ check(
   beforeRemove.x === afterRemove.x && beforeRemove.y === afterRemove.y,
   true,
 );
-check('and the row is gone', (await rows(dm)).length, 1);
+check('and the row is gone', ours(await rows(dm)).map((row) => row.name), ['Ruler Test']);
 
 // --- put the room back -------------------------------------------------------
 //
 // The token is still selected from the centre-of-view click above, which is why
-// this can delete it without hunting for it again.
+// this can delete it without hunting for it again — and deleting it takes its
+// initiative row with it, which is what makes the row this script rolled its own
+// to clean up. `#init-clear` would do it in one click and would also throw away
+// a fight the room was in the middle of.
 
-await dm.evaluate('document.querySelector("#init-clear").click(); "ok"');
-await dm.wait(300);
 check(
   'the panel is describing the token this script built',
   await dm.evaluate('document.getElementById("token-name").value'),

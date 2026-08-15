@@ -23,6 +23,7 @@
 // nothing in it to read but a position. See *Ping* in `docs/drawings.md`.
 
 import { open, checks } from './cdp.mjs';
+import { latticeOrBail, tokenAt, findToken, emptyCell } from './board.mjs';
 
 const [, , base = 'http://127.0.0.1:3000', secret = 'test-secret'] = process.argv;
 
@@ -46,11 +47,29 @@ const tab = (name) =>
   dm.evaluate(`[...document.querySelectorAll('.rail-tab')]
     .find(t => t.textContent.trim().toLowerCase().startsWith('${name}')).click(); "ok"`);
 
-const centre = (session) =>
-  session.evaluate(`(() => {
-    const r = document.getElementById('stage').getBoundingClientRect();
-    return [Math.round(r.left + r.width / 2), Math.round(r.top + r.height / 2)];
-  })()`);
+/**
+ * Both clients' grids, and the two reasons there are two of them.
+ *
+ * A ring is made at a place on the *board* and has to be found again on someone
+ * else's screen, and the two screens do not agree about where that is: the
+ * player has no left rail, so a different canvas and a different framing from
+ * the very first frame. A box in the DM's pixels aimed at the player's canvas is
+ * the check that passes for the wrong reason — it reads an area where nothing
+ * was going to happen and calls the silence a result. A cell is the only thing
+ * both clients name identically, so it is what crosses between them here.
+ *
+ * **Neither is zoomed**, which is the other half. This script's distances are
+ * deliberate: a spot far enough from the party to still be dark, and a ring
+ * whose size on screen is what `RING_SHARE` was measured against. Zooming in to
+ * make a token easier to click would move both, and the fog check — the sharpest
+ * one here — would go quiet by skipping itself rather than by failing. Clicking
+ * the middle of a *cell* is exact at any zoom, which is all this needs.
+ */
+const framed = { zoom: false };
+const dmGrid = await latticeOrBail(dm, [dm, player], framed);
+const playerGrid = await latticeOrBail(player, [dm, player], framed);
+note(`the DM: ${dmGrid.describe}`);
+note(`the player: ${playerGrid.describe}`);
 
 /** Remembers a rectangle of a canvas so the next call can count what moved.
  *
@@ -114,13 +133,31 @@ const boxAt = (x, y) => [x - BOX / 2, y - BOX / 2, BOX, BOX];
 // reason to turn it off, and one very good reason not to: whether the party can
 // see the cell being pointed at is the question two checks below.
 
-const [cx, cy] = await centre(dm);
-const [px, py] = await centre(player);
+/** Where a cell falls on one client's screen. */
+const at = (grid, cell) => {
+  const [x, y] = grid.screenOfCell(cell.x, cell.y);
+  return { x, y };
+};
 
 // Somewhere with nothing on it, so a hold cannot land on a token and nothing
-// else on the board is animating inside the box being measured.
-const spot = { x: cx - 200, y: cy - 160 };
-const playerSpot = { x: px - 200, y: py - 160 };
+// else on the board is animating inside the box being measured. The offset is
+// still in pixels, because what it wants is a clear patch of *canvas*; what it
+// resolves to is a cell, because that is the part the other browser has to
+// agree with. Searched outward from there rather than trusted, since where the
+// party are standing is a property of whatever room this is pointed at.
+const near = await dmGrid.cellUnder(dmGrid.middle.x - 200, dmGrid.middle.y - 160);
+const bare = near === null ? null : await emptyCell(dm, dmGrid, near);
+if (bare === null) {
+  console.log('\nFAILED: no bare board near the middle of the view to ping at');
+  dm.close();
+  player.close();
+  process.exit(1);
+}
+note(`pinging cell ${bare.x},${bare.y}, which has nothing standing on it`);
+check('the square being pinged is on the other screen too', playerGrid.onScreen(bare.x, bare.y, 60), true);
+
+const spot = at(dmGrid, bare);
+const playerSpot = at(playerGrid, bare);
 
 await remember(dm, ...boxAt(spot.x, spot.y));
 await remember(player, ...boxAt(playerSpot.x, playerSpot.y));
@@ -189,7 +226,9 @@ await dm.wait(300);
 
 // Built rather than found, because where the party happen to be standing is a
 // property of whatever room this is pointed at, and a check that skips itself on
-// most maps is not a check. A new token lands in the middle of the DM's view.
+// most maps is not a check. Where it *lands* is the same kind of fact — the
+// first free cell out from the middle of the view — so it is looked for below
+// rather than assumed to be under the middle of the canvas.
 await tab('token');
 await dm.evaluate(`(() => {
   const fresh = document.getElementById('token-new');
@@ -201,15 +240,11 @@ await dm.evaluate(`document.getElementById('token-name').value = 'Ping Test'; "o
 await dm.evaluate(`document.getElementById('token-save').click(); "ok"`);
 await dm.wait(800);
 
-const [tcx, tcy] = await centre(dm);
-const [tpx, tpy] = await centre(player);
-await dm.click(tcx, tcy);
-await dm.wait(300);
-check(
-  'the new token is under the centre of the view',
-  await dm.evaluate('document.getElementById("token-name").value'),
-  'Ping Test',
-);
+const built = await findToken(dm, dmGrid, 'Ping Test');
+check('the token this script built is on the board', built !== null, true);
+const { x: tcx, y: tcy } = at(dmGrid, built);
+const { x: tpx, y: tpy } = at(playerGrid, built);
+check('and the panel is describing it', await tokenAt(dm, dmGrid, built), 'Ping Test');
 
 // The cell under the pointer, off the HUD. A press that turned into a drag would
 // have panned the board or moved the token, and either shows up here.
@@ -233,13 +268,10 @@ check('a hold on a creature pings rather than dragging it', onToken > RING_SHARE
 // would not be true if the press had turned into a move and a drop.
 await dm.wait(3200);
 check('the pointer is still over the same cell', await cellUnderPointer(), cellBefore);
-await dm.click(tcx, tcy);
-await dm.wait(300);
-check(
-  'and the token is still standing in it',
-  await dm.evaluate('document.getElementById("token-name").value'),
-  'Ping Test',
-);
+// Through `tokenAt`, which empties the panel before it clicks: the box already
+// said `Ping Test` from the selection above, so reading it back without that
+// would be the check answering itself.
+check('and the token is still standing in it', await tokenAt(dm, dmGrid, built), 'Ping Test');
 
 // Selected from the click just above, so it can go without hunting for it.
 await dm.evaluate('document.getElementById("token-delete").click(); "ok"');
@@ -309,25 +341,35 @@ if (!fogOn) {
 await tab('map'); // the fog brush arms the left button; ping must not fight it
 note(`fog was ${fogOn ? 'already on' : 'turned on for this check'}`);
 
-// Far from the party, who are clustered where the hardcoded room put them. Deep
-// enough into the dark that the board there is solid black on the player's
-// screen, which is what makes the ring on top of it worth asserting.
-const dark = { x: cx + 420, y: cy + 300 };
-const playerDark = { x: px + 420, y: py + 300 };
+// Far from the party, who are clustered wherever this room put them. Deep enough
+// into the dark that the board there is solid black on the player's screen,
+// which is what makes the ring on top of it worth asserting. Named in the DM's
+// pixels for the same reason as the bare patch above — the far corner of a
+// canvas is a fact about the canvas — and carried to the other screen as the
+// cell it lands on, which is the only form the two clients agree about.
+const darkCell = await dmGrid.cellUnder(dmGrid.middle.x + 420, dmGrid.middle.y + 300);
+const reaches = darkCell !== null && playerGrid.onScreen(darkCell.x, darkCell.y, 60);
+const dark = darkCell === null ? null : at(dmGrid, darkCell);
+const playerDark = reaches ? at(playerGrid, darkCell) : null;
 
-const darkness = await player.evaluate(`(() => {
-  const c = document.querySelector('#stage');
-  const dpr = c.width / c.clientWidth;
-  const d = c.getContext('2d').getImageData(
-    Math.round(${playerDark.x - 20} * dpr), Math.round(${playerDark.y - 20} * dpr),
-    Math.round(40 * dpr), Math.round(40 * dpr)).data;
-  let lit = 0;
-  for (let i = 0; i < d.length; i += 4) if (d[i] + d[i+1] + d[i+2] > 90) lit++;
-  return lit / (d.length / 4);
-})()`);
-note(`${(darkness * 100).toFixed(1)}% of that patch is lit on the player's screen`);
+const litShare = async (spot) =>
+  player.evaluate(`(() => {
+    const c = document.querySelector('#stage');
+    const dpr = c.width / c.clientWidth;
+    const d = c.getContext('2d').getImageData(
+      Math.round(${spot.x - 20} * dpr), Math.round(${spot.y - 20} * dpr),
+      Math.round(40 * dpr), Math.round(40 * dpr)).data;
+    let lit = 0;
+    for (let i = 0; i < d.length; i += 4) if (d[i] + d[i+1] + d[i+2] > 90) lit++;
+    return lit / (d.length / 4);
+  })()`);
 
-if (darkness > 0.2) {
+const darkness = reaches ? await litShare(playerDark) : null;
+if (reaches) note(`${(darkness * 100).toFixed(1)}% of that patch is lit on the player's screen`);
+
+if (!reaches) {
+  note('that square is off the edge of the player’s canvas — the fog arm is untested on this room');
+} else if (darkness > 0.2) {
   note('that spot is not dark on this map — the fog arm is untested on this room');
 } else {
   await remember(player, ...boxAt(playerDark.x, playerDark.y));

@@ -13,6 +13,7 @@
 // geometry checks below are the ones that would have caught it.
 
 import { open, checks } from './cdp.mjs';
+import { latticeOrBail, findToken } from './board.mjs';
 
 const [, , base = 'http://127.0.0.1:3000', secret = 'test-secret'] = process.argv;
 
@@ -122,22 +123,31 @@ check('the rail holds with the library open too', (await railBottom()) <= 0, tru
 // --- clicking a token opens the tab that edits it ---------------------------
 //
 // The rule that makes "nothing open on connect" liveable: during play the panel
-// the DM wants opens itself. A new token lands at the centre of the view, which
-// is the centre of the canvas, so that is where it is clicked.
+// the DM wants opens itself.
+//
+// Where the token *is* has to be established before the tab is switched away,
+// and both halves of that matter. A new token lands in the first free cell out
+// from the middle of the view, which is the middle only if the middle was free —
+// so it is looked for rather than assumed, and this used to click the middle of
+// the canvas and fail whenever another map put something there. And the looking
+// is done from the token tab, because `tokenAt` opens it: doing it afterwards
+// would be the very tab switch this section is trying to observe.
 
 await press('token');
 await evaluate(`document.getElementById('token-name').value = 'Rail Test'; "ok"`);
 await evaluate(`document.getElementById('token-save').click(); "ok"`);
 await wait(600);
 
+const grid = await latticeOrBail(session, [session]);
+note(grid.describe);
+const built = await findToken(session, grid, 'Rail Test');
+check('the token this script built is on the board', built !== null, true);
+
 await press('map');
 check('a different tab is up before the board is clicked', await openTab(), 'map');
 
-const mid = await evaluate(`(() => {
-  const r = document.getElementById('stage').getBoundingClientRect();
-  return [Math.round(r.left + r.width / 2), Math.round(r.top + r.height / 2)];
-})()`);
-await click(mid[0], mid[1]);
+const [tx, ty] = grid.screenOfCell(built.x, built.y);
+await click(tx, ty);
 check('clicking a token on the board opens the tab that edits it', await openTab(), 'token');
 check(
   'and the panel is describing that token',
