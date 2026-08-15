@@ -7,6 +7,12 @@ target/
 slate-state.json
 slate-state.json.tmp
 
+# The room the browser drivers play with, which the README tells you to make and
+# delete. Deliberately a different name from the one above: the drivers erase
+# every wall on the board and promote maps over it, and the one thing that must
+# never happen is a run pointed at the game.
+scratch.json
+
 # Maps the DM uploaded at runtime.
 uploads/
 

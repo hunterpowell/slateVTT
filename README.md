@@ -176,6 +176,43 @@ token by looking outward from the middle of the view, and converts a cell to eit
 coordinates. Anything that clicks the board should go through it rather than reaching for pixels —
 **a driver may not assume the map it was written against.**
 
+### Running the lot
+
+**All nine take about three minutes**, so run all of them whenever the client changes rather than
+picking the ones that look relevant. Picking is not worth the thought it costs: they all sit on
+`coords.ts`, `render.ts`, `input.ts` and `scene.ts`, and almost every client commit touches one of
+those, so any honest rule about which to skip says "none of them" nearly every time.
+
+| player | names | ui  | rail | staged | fog | ruler | select | ping |
+| ------ | ----- | --- | ---- | ------ | --- | ----- | ------ | ---- |
+| 4s     | 6s    | 9s  | 12s  | 22s    | 23s | 25s   | 30s    | 39s  |
+
+`drive-ping.mjs` is the slowest and stays that way: most of its time is spent waiting for rings to
+expire, which is the feature.
+
+The per-run cost is not the drivers, it is the room — a fresh one means restarting the server, so
+run the suite against **one** server rather than restarting between drivers. Sequentially, because
+of the shared debug ports:
+
+```sh
+cd server
+rm -f scratch.json      # the room is only read at boot, so this is what resets it
+SLATE_DM_SECRET=test-secret SLATE_STATE=scratch.json cargo run &
+until curl -sf http://127.0.0.1:3000/ >/dev/null; do sleep 1; done
+
+cd ..
+for d in player names ui rail staged fog ruler select ping; do node tools/drive-$d.mjs; done
+```
+
+That whole block is 169 seconds on the machine it was written on, and the order in it is the cheap
+drivers first — so a broken client fails `drive-player.mjs` four seconds in rather than two minutes
+in. The order is a convenience and nothing rests on it.
+
+A driver killed part-way leaves two things behind that make the *next* run lie: a Chrome holding the
+debug port, which the next `open()` attaches to and hangs on, and whatever tokens it had not tidied
+away yet. `taskkill //F //IM chrome.exe` and a fresh scratch file put both right. **Never pipe a
+driver through `head`** — it dies on the broken pipe part-way through and leaves exactly that mess.
+
 ## Hosting a remote session from Windows
 
 Slate can run from a Windows PC only while the group is playing. The included
