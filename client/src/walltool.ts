@@ -19,6 +19,7 @@
 import type { Vec2 } from './coords.js';
 import type { ClientMsg } from './protocol.js';
 import type { Scene } from './scene.js';
+import { shownWalls, showingStaged } from './scene.js';
 
 export interface WallToolUi {
   root: HTMLElement;
@@ -51,13 +52,18 @@ export interface WallTool {
   /** Which wall is under the pointer, for the two modes where that means
    *  something. */
   hover(id: string | null): void;
+  /** Which board this tool is currently editing, so input.ts can flag the
+   *  commands it sends of its own — erasing and swinging are its, not this
+   *  module's, and both have to name the same slot the run above would. */
+  readonly staged: boolean;
   /** Ends the run and sends it: double-click, or Enter. */
   finish(): void;
   /** Drops the last corner. What Backspace means mid-trace. */
   undo(): void;
-  /** Called on every `walls_changed`, and once on Welcome. */
+  /** Called on every `walls_changed` and `staged_changed`, once on Welcome, and
+   *  whenever the board on screen changes slot. */
   update(scene: Scene): void;
-  /** Puts the tool away, run and all. Escape, and preview mode. */
+  /** Puts the tool away, run and all. Escape, and closing the tab. */
   stop(): void;
 }
 
@@ -110,6 +116,10 @@ export function createWallTool(
   let hovered: string | null = null;
   /** Kept for the readout alone — the walls themselves live on the scene. */
   let walls: Scene['walls'] = [];
+  /** Which board is on screen, and so which one everything here edits. Read off
+   *  the scene in `update` rather than tracked as a mode of its own: preview is
+   *  the map panel's to decide, and this only has to agree with it. */
+  let staged = false;
 
   const buttons = new Map<WallMode, HTMLButtonElement>();
 
@@ -128,9 +138,16 @@ export function createWallTool(
     // described its own modes would hide it behind arming one. It has to stay
     // about as long as the line it replaced — the rail is tight enough that one
     // extra wrapped line pushes the whole panel off the bottom of the screen.
+    //
+    // Over a preview it says so instead, because that is the one thing on
+    // screen that a traced wall cannot tell the DM: masonry looks identical on
+    // both boards, and tracing the next dungeon onto the one the table is
+    // playing on is the mistake this whole feature makes possible.
     ui.hint.textContent =
       mode === null
-        ? 'Trace walls here. Click any door to swing it.'
+        ? staged
+          ? 'Tracing the map being prepared. Click any door to swing it.'
+          : 'Trace walls here. Click any door to swing it.'
         : (MODES.find((m) => m.mode === mode)?.hint ?? '');
   };
 
@@ -170,8 +187,11 @@ export function createWallTool(
   }
 
   ui.clear.addEventListener('click', () => {
-    if (!window.confirm('Erase every wall and door on this map?')) return;
-    send({ type: 'clear_walls' });
+    // Named, because the two boards are one click apart and this one has no
+    // undo. "This map" was unambiguous when there was only ever one.
+    const which = staged ? 'the map being prepared' : 'the board';
+    if (!window.confirm(`Erase every wall and door on ${which}?`)) return;
+    send({ type: 'clear_walls', staged });
   });
 
   window.addEventListener('keydown', (e) => {
@@ -215,6 +235,9 @@ export function createWallTool(
     get hovered() {
       return hovered;
     },
+    get staged() {
+      return staged;
+    },
 
     place(at) {
       const last = run[run.length - 1];
@@ -240,7 +263,12 @@ export function createWallTool(
       // One corner is a run that was started and never went anywhere. The
       // server refuses it; not sending it is how the DM's own client agrees.
       if (run.length >= 2) {
-        send({ type: 'add_walls', points: run.map((p) => ({ x: p.x, y: p.y })), door: mode === 'door' });
+        send({
+          type: 'add_walls',
+          points: run.map((p) => ({ x: p.x, y: p.y })),
+          door: mode === 'door',
+          staged,
+        });
       }
       cancel();
     },
@@ -250,10 +278,17 @@ export function createWallTool(
     },
 
     update(scene) {
-      walls = scene.walls;
+      const nowStaged = showingStaged(scene);
+      // The board on screen changed slot under a half-traced run, and the
+      // corners already placed are pixels on the *other* image. Same argument
+      // the sweep below makes, arrived at from the other direction.
+      if (nowStaged !== staged) cancel();
+      staged = nowStaged;
+      walls = shownWalls(scene);
       // A run whose segments have just been swept away by a new map is a run
       // about a dungeon that is gone.
       if (walls.length === 0 && run.length > 0) cancel();
+      showMode();
       showReadout();
     },
 

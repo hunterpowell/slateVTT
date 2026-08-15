@@ -11,6 +11,12 @@ fn wall_ids(state: &RoomState) -> Vec<WallId> {
     state.walls.iter().map(|w| w.id.clone()).collect()
 }
 
+/// What is traced on the map the DM is preparing. Empty for an empty slot,
+/// which is what an untraced staged map looks like anyway.
+fn staged_walls(state: &RoomState) -> &[Wall] {
+    state.walls_in(true)
+}
+
 // --- walls and doors ------------------------------------------------------
 
 #[test]
@@ -61,9 +67,9 @@ fn only_the_dm_may_trace_erase_or_open_anything() {
 
     for msg in [
         a_corner(),
-        ClientMsg::RemoveWall { id: door.clone() },
-        ClientMsg::ToggleDoor { id: door },
-        ClientMsg::ClearWalls,
+        erase(door.clone()),
+        swing(door),
+        clear_walls(),
     ] {
         assert!(
             state.check(ClientId(2), &msg).is_err(),
@@ -99,7 +105,7 @@ fn a_player_is_never_sent_a_wall_or_told_one_exists() {
     );
     assert!(
         state
-            .message_for(ClientId(1), dm_client, &Event::WallsChanged)
+            .message_for(ClientId(1), dm_client, &Event::WallsChanged { staged: false })
             .is_some(),
         "the DM is the one recipient it has"
     );
@@ -114,15 +120,15 @@ fn a_door_swings_both_ways_and_masonry_does_not() {
     let door = state.walls.first().expect("the door").id.clone();
     let solid = state.walls.get(1).expect("the masonry").id.clone();
 
-    state.handle(ClientId(1), ClientMsg::ToggleDoor { id: door.clone() });
+    state.handle(ClientId(1), swing(door.clone()));
     assert_eq!(state.walls.first().expect("the door").door(), Some(true));
-    state.handle(ClientId(1), ClientMsg::ToggleDoor { id: door });
+    state.handle(ClientId(1), swing(door));
     assert_eq!(state.walls.first().expect("the door").door(), Some(false));
 
     // Refused rather than ignored: it means the client and the room disagree
     // about what that segment is, and doing nothing quietly hides that.
     let err = state
-        .check(ClientId(1), &ClientMsg::ToggleDoor { id: solid })
+        .check(ClientId(1), &swing(solid))
         .expect_err("masonry does not open");
     assert!(err.contains("not a door"), "{err}");
 }
@@ -134,7 +140,7 @@ fn one_bad_segment_can_be_erased_without_redrawing_the_run() {
     state.handle(ClientId(1), a_corner());
     let [first, second] = wall_ids(&state).try_into().expect("two segments");
 
-    state.handle(ClientId(1), ClientMsg::RemoveWall { id: first });
+    state.handle(ClientId(1), erase(first));
 
     assert_eq!(wall_ids(&state), vec![second]);
 }
@@ -147,9 +153,7 @@ fn erasing_a_wall_that_is_already_gone_is_refused_not_ignored() {
     let err = state
         .check(
             ClientId(1),
-            &ClientMsg::RemoveWall {
-                id: WallId("nothing".to_owned()),
-            },
+            &erase(WallId("nothing".to_owned())),
         )
         .expect_err("refused");
     assert!(err.contains("already gone"), "{err}");
@@ -173,19 +177,148 @@ fn a_new_map_clears_the_walls_and_a_recalibration_does_not() {
 }
 
 #[test]
-fn staging_leaves_the_walls_and_promoting_sweeps_them() {
-    // There are no staged walls — that is the scene concept CLAUDE.md rules
-    // out — so staging a map cannot touch the ones on the board, and a
-    // promote is a load like any other.
+fn staging_leaves_the_walls_alone_and_promoting_replaces_them() {
+    // Staging a map is not touching the board, so the masonry the table is
+    // playing on stays where it is. A promote *is* a load, so the board's own
+    // walls go — and what lands in their place is what was traced on the map
+    // that arrived, which is milestone 20 rather than a sweep.
     let mut state = room();
     let _dm = join_as_dm(&mut state, ClientId(1));
     state.handle(ClientId(1), a_corner());
 
     stage(&mut state, ClientId(1), "/uploads/next.webp");
-    assert_eq!(state.walls.len(), 2);
+    assert_eq!(state.walls.len(), 2, "the board is untouched by staging");
+
+    state.handle(ClientId(1), staged(trace(&[(0.0, 0.0), (64.0, 0.0)], true)));
+    assert_eq!(
+        state.walls.len(),
+        2,
+        "and by anything traced on the staged one"
+    );
 
     state.handle(ClientId(1), ClientMsg::PromoteStaged);
-    assert!(state.walls.is_empty());
+    assert_eq!(
+        state.walls.len(),
+        1,
+        "the board's two are gone and the staged one's arrived"
+    );
+    assert_eq!(
+        state.walls.first().map(|w| w.door()),
+        Some(Some(false)),
+        "as the door it was traced as, not as masonry"
+    );
+    assert!(
+        state.staged.is_none(),
+        "and the slot it came out of is empty"
+    );
+}
+
+#[test]
+fn a_staged_door_promotes_however_the_dm_left_it() {
+    // A door is traced shut on both boards, because a door the DM has to close
+    // after drawing it is one they will forget to close. Swinging a staged one
+    // is not play — nobody is playing on that map yet — it is the DM saying
+    // this room is already ajar when the party walks in.
+    let mut state = room();
+    let _dm = join_as_dm(&mut state, ClientId(1));
+    stage(&mut state, ClientId(1), "/uploads/next.webp");
+    state.handle(ClientId(1), staged(trace(&[(0.0, 0.0), (64.0, 0.0)], true)));
+
+    let door = staged_walls(&state).first().expect("the door").id.clone();
+    assert_eq!(
+        staged_walls(&state).first().map(|w| w.door()),
+        Some(Some(false)),
+        "traced shut, exactly as a live one is"
+    );
+
+    state.handle(ClientId(1), staged(swing(door)));
+    state.handle(ClientId(1), ClientMsg::PromoteStaged);
+
+    assert_eq!(
+        state.walls.first().map(|w| w.door()),
+        Some(Some(true)),
+        "the party finds it open, because that is how it was left"
+    );
+}
+
+#[test]
+fn a_wall_command_names_a_slot_and_reaches_only_that_one() {
+    // The `SetMap` / `MoveToken` / `CreateToken` pattern for the fourth time.
+    // The ids are UUIDs, so a lookup that searched both lists would find this
+    // segment either way — and would erase the wrong dungeon's masonry on a
+    // frame the DM sent while looking at the other board.
+    let mut state = room();
+    let _dm = join_as_dm(&mut state, ClientId(1));
+    state.handle(ClientId(1), a_corner());
+    stage(&mut state, ClientId(1), "/uploads/next.webp");
+    state.handle(ClientId(1), staged(trace(&[(0.0, 0.0), (64.0, 0.0)], false)));
+
+    let live = state.walls.first().expect("live masonry").id.clone();
+    let planned = staged_walls(&state).first().expect("staged").id.clone();
+
+    // Each id is a stranger to the other slot, which is what the flag buys.
+    assert!(
+        state.check(ClientId(1), &erase(planned.clone())).is_err(),
+        "a staged wall is not on the live board"
+    );
+    assert!(
+        state.check(ClientId(1), &staged(erase(live))).is_err(),
+        "and a live wall is not on the staged one"
+    );
+
+    state.handle(ClientId(1), staged(erase(planned)));
+    assert!(staged_walls(&state).is_empty());
+    assert_eq!(state.walls.len(), 2, "the board never heard about any of it");
+}
+
+#[test]
+fn tracing_a_slot_with_no_map_in_it_is_refused() {
+    // The rule `CreateToken` and a staged `MoveToken` already follow, and it is
+    // the slot being empty rather than the server learning about preview.
+    let mut state = room();
+    let _dm = join_as_dm(&mut state, ClientId(1));
+
+    for msg in [
+        staged(trace(&[(0.0, 0.0), (64.0, 0.0)], false)),
+        staged(clear_walls()),
+    ] {
+        let err = state
+            .check(ClientId(1), &msg)
+            .expect_err("nothing is staged to trace on");
+        assert!(err.contains("no map"), "{err}");
+    }
+}
+
+#[test]
+fn a_player_is_never_sent_a_staged_wall_either() {
+    // Staging added no visibility surface, and this is the assertion that says
+    // so: the same one line that withholds a live wall withholds this, and a
+    // player is not told the staged board changed at all.
+    let mut state = room();
+    let dm = ClientId(1);
+    let dm_client = ClientId(1);
+    let mut _dm_rx = join_as_dm(&mut state, dm);
+    let mut saelyn = join_as_player(&mut state, ClientId(2), "saelyn");
+
+    stage(&mut state, dm, "/uploads/next.webp");
+    state.handle(dm, staged(trace(&[(0.0, 0.0), (64.0, 0.0)], false)));
+
+    assert!(
+        state.snapshot_for(&as_player("saelyn")).staged.is_none(),
+        "the whole slot, map and masonry together, leaves by one door"
+    );
+    assert!(
+        state
+            .message_for(ClientId(2), dm_client, &Event::WallsChanged { staged: true })
+            .is_none(),
+        "not even an empty list: the frame itself is news"
+    );
+    // Drain: the two frames above were dispatched to a player who should have
+    // received neither.
+    assert!(
+        saelyn.try_recv().is_err(),
+        "a player was sent something about the next dungeon"
+    );
 }
 
 #[test]
@@ -201,7 +334,7 @@ fn a_map_load_with_nothing_traced_announces_nothing() {
     assert!(
         !events
             .iter()
-            .any(|e| matches!(e, Event::WallsChanged | Event::ShapesChanged)),
+            .any(|e| matches!(e, Event::WallsChanged { .. } | Event::ShapesChanged)),
         "swept a board that was already empty: {events:?}"
     );
 }
@@ -281,7 +414,7 @@ fn a_traced_dungeon_survives_the_save_file() {
     state.handle(ClientId(1), a_corner());
     state.handle(ClientId(1), trace(&[(0.0, 0.0), (0.0, 64.0)], true));
     let door = state.walls.last().expect("the door").id.clone();
-    state.handle(ClientId(1), ClientMsg::ToggleDoor { id: door.clone() });
+    state.handle(ClientId(1), swing(door.clone()));
 
     let json = serde_json::to_vec(&state.to_saved()).expect("encodes");
     let saved: Saved = serde_json::from_slice(&json).expect("decodes");

@@ -12,7 +12,9 @@ use serde::{Deserialize, Serialize};
 use tokio::fs;
 
 use crate::fog::{FogView, OverrideView};
-use crate::protocol::{Calibration, Diagonals, Initiative, MapInfo, Shape, Token, Wall};
+use crate::protocol::{
+    Calibration, Diagonals, Initiative, MapInfo, Shape, StagedView, Token, Wall,
+};
 
 /// What actually goes to disk.
 ///
@@ -24,14 +26,19 @@ use crate::protocol::{Calibration, Diagonals, Initiative, MapInfo, Shape, Token,
 #[serde(default)]
 pub struct Saved {
     pub map: MapInfo,
-    /// The map the DM is preparing. Persisted, but never part of a player's
-    /// view — the second thing here the whole room holds and one client's copy
-    /// of it does not, after `calibrations`.
+    /// The map the DM is preparing, with the walls and overrides they have
+    /// prepared on it. Persisted, but never part of a player's view — the second
+    /// thing here the whole room holds and one client's copy of it does not,
+    /// after `calibrations`.
     ///
     /// It is saved for the reason the calibration table is: Slate runs only
     /// while the group is playing, so a map staged at the end of one evening
-    /// for the next would otherwise be gone before it was ever wanted.
-    pub staged: Option<MapInfo>,
+    /// for the next would otherwise be gone before it was ever wanted — and a
+    /// dungeon traced on a Tuesday for the Saturday is the whole of milestone 20.
+    ///
+    /// The map inside it is flattened, so a file written when this was an
+    /// `Option<MapInfo>` still loads its staged map. See `StagedView`.
+    pub staged: Option<StagedView>,
     /// A list rather than a map keyed by id: the id already lives inside each
     /// token, and the room rebuilds its `HashMap` on load.
     pub tokens: Vec<Token>,
@@ -248,10 +255,21 @@ mod tests {
                 fog: true,
                 vision_ft: 45.0,
             },
-            staged: Some(MapInfo {
-                url: "/uploads/next-week.jpg".to_owned(),
-                grid_px: 96.0,
-                ..MapInfo::default()
+            staged: Some(StagedView {
+                map: MapInfo {
+                    url: "/uploads/next-week.jpg".to_owned(),
+                    grid_px: 96.0,
+                    ..MapInfo::default()
+                },
+                // Traced on the Tuesday for the Saturday, which is the whole of
+                // why the staged slot holds these at all.
+                walls: vec![Wall {
+                    id: WallId("w1".to_owned()),
+                    from: Px { x: 0.0, y: 0.0 },
+                    to: Px { x: 96.0, y: 0.0 },
+                    kind: WallKind::Door(false),
+                }],
+                ..StagedView::default()
             }),
             tokens: vec![Token {
                 id: TokenId::new("t1"),
@@ -367,8 +385,16 @@ mod tests {
         // A map staged on one evening for the next is only useful if it is still
         // staged when the server comes back up.
         let staged = loaded.staged.as_ref().expect("the staged map");
-        assert_eq!(staged.url, "/uploads/next-week.jpg");
-        assert_eq!(staged.grid_px, 96.0);
+        assert_eq!(staged.map.url, "/uploads/next-week.jpg");
+        assert_eq!(staged.map.grid_px, 96.0);
+        // And the dungeon traced on it, which is the half of this slot that has
+        // to survive a restart for the feature to be worth having.
+        assert_eq!(staged.walls.len(), 1);
+        assert_eq!(
+            staged.walls.first().map(|w| w.door()),
+            Some(Some(false)),
+            "a staged door comes back shut, exactly as it was traced"
+        );
 
         let token = loaded.tokens.first().expect("the token");
         // Invariant 1: grid units on the wire, on disk, everywhere but render.

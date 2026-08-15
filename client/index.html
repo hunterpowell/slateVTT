@@ -1194,15 +1194,12 @@
         color: #cfe6ff;
       }
 
-      /* There are no staged walls — a map prepared out of sight has no geometry
-         traced over it yet — so the panel goes inert over a preview, exactly as
-         the draw tool does. The tab goes with it: a way in to a panel that can
-         do nothing is the same lie as the panel looking armed. */
-      body.previewing #walltool,
-      body.previewing .rail-tab[data-tab='walls'] {
-        opacity: 0.45;
-        pointer-events: none;
-      }
+      /* This panel used to go inert over a preview, because there were no staged
+         walls for it to edit. There are now, and tracing the next dungeon before
+         the table is shown it is the whole of milestone 20 — so the rule is gone
+         rather than relaxed, and the panel says which board it is tracing
+         instead. The draw tool above still goes inert: there are still no staged
+         shapes, and that is the difference between the two. */
 
       /* --- fog ------------------------------------------------------------ */
 
@@ -1277,14 +1274,13 @@
         cursor: default;
       }
 
-      /* The bitsets belong to the live board and the staged map has none, so
-         this goes inert over a preview exactly as the wall editor does — panel
-         and tab together, for the same reason. */
-      body.previewing #fogtool,
-      body.previewing .rail-tab[data-tab='fog'] {
-        opacity: 0.45;
-        pointer-events: none;
-      }
+      /* Inert over a preview until milestone 20, and no longer: the staged board
+         carries a mask of its own, and its `fog` switch and radius have ridden
+         on `MapInfo` since fog shipped. The bitsets are still the live board's —
+         nothing raycasts a map the table has not been shown — which is why the
+         *reset* button greys itself in JS rather than the whole panel greying
+         here. Half of a reset is forgetting where the party has explored, and
+         they have not explored the next dungeon. */
     </style>
   </head>
   <body>

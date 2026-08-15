@@ -99,17 +99,57 @@ Walls are **persisted**. Half an hour of tracing belongs to a map that will stil
 next week, and this is the one thing on `Saved` that would make its feature unusable if it were left
 in memory.
 
-## There are no staged walls
+## The staged map has walls of its own
 
-Walls belong to the live board, like the shapes and unlike a token's position. Staging pre-traced
-walls alongside the map they belong to is the full scene concept CLAUDE.md rules out — several maps
-each owning their own geometry — and it is a much larger feature than one slot.
+This section used to say there were none, and that the DM had to promote a map before they could
+wall it. Milestone 20 is that cost being paid off: `StagedBoard` holds a map, its walls and its fog
+overrides together, and the next dungeon is traced on a Tuesday out of sight of the table.
 
-**The cost is real and worth stating: the DM cannot trace the next dungeon in advance.** The map has
-to be promoted first, and only then can it be walled. The editor is inert while previewing, exactly
-as the draw tool is, so the panel does not sit there looking armed over a map it cannot touch. If
-that turns out to hurt at the table, the answer is the scene concept and a much bigger milestone,
-not a `staged_walls` field.
+**It is still one slot, and it is still not the scene concept.** Two boards, not a list of maps each
+owning their own geometry — a promote *moves* one list into the other rather than a list existing
+per map, and `ClearStaged` throws the second one away.
+
+Three things made this the cheapest subsystem in the project to stage, and they are worth reading
+together because the first is the one that generalises:
+
+- **Walls reach the DM or nobody**, so there was no filter to widen. A staged wall added *zero* new
+  visibility surface — contrast `staged_only`, which had to grow `unseen_by_table` a third reason
+  and change the meaning of `was_unseen` at four sites. The section below is unchanged and now
+  covers twice as many walls.
+- **The whole slot leaves by one door.** `ServerMsg::StagedChanged` carries the bundle rather than
+  the map, so `snapshot_for`'s single `None` withholds the masonry and the paint along with the
+  image — and a staged load sweeping its walls, or a staged recalibration dropping its paint, needs
+  no frame of its own. There is therefore none to forget.
+- **Every command names a slot**, which is the `SetMap` / `MoveToken` / `CreateToken` pattern for
+  the fourth time. On `RemoveWall` and `ToggleDoor` the flag is *redundant* — the ids are UUIDs and
+  a lookup could search both lists — and it is there anyway, because a search of both is a search
+  that erases live masonry on a frame sent while the DM was looking at the staged board.
+
+**A staged door is traced shut like any other and promotes however the DM left it.** Swinging one
+before the promote is not play, because nobody is playing on that map yet; it is the DM deciding
+which doors the party finds open when they walk in. Same click, because a door being clickable is
+what makes it a door — see *A door is the one thing here that is not a mode* below, which now
+applies to both boards and means something different on each.
+
+### What sweeps a staged wall
+
+The live board's rules, mirrored, which is the argument for the two slots holding the same three
+things:
+
+| | staged walls | staged overrides |
+| --- | --- | --- |
+| a **load** into the staged slot | swept | swept |
+| a **recalibration** of it | kept | swept |
+| **promote** | move to the live board | move to the live board |
+| **discard** | gone | gone |
+
+The middle row is the one that gets missed, and it is the same split it has always been: a wall is
+image pixels and still traces the same painted line after the grid moves, and an override is a cell
+whose square has just moved out from under it.
+
+**Deliberately out: previewing the staged map's fog.** "Will they see the dragon when the door
+opens" is a real question and it is a second raycast; nothing casts a ray on a map the table has not
+been shown. See *No staged fog* in `docs/fog.md`.
 
 ## The editor
 

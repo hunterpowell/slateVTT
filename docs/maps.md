@@ -78,10 +78,26 @@ names produce.
 
 ## Staged maps
 
-`staged: Option<MapInfo>` is the map the DM is preparing while the table is still looking at the
-current one. Promoting moves it into `map` and empties the slot. There is one slot, not a list: a
-full scene concept — several maps each owning its own walls, fog and token positions — is a much
-larger feature and is not being built.
+`staged: Option<StagedBoard>` is the map the DM is preparing while the table is still looking at the
+current one, **and the walls and fog overrides they have prepared on it**. Promoting moves all three
+onto the live board and empties the slot. There is one slot, not a list: a full scene concept —
+several maps each owning its own geometry — is a much larger feature and is not being built.
+
+The bundle is milestone 20, and it is worth knowing what it bought before adding a fourth thing to
+it. **One `None` withholds the whole slot**: `snapshot_for` has one arm, `Event::StagedChanged`
+carries the whole board so a staged load sweeping its walls needs no frame of its own, and there is
+no second staged field for a later milestone to add and forget to filter. The in-memory type and the
+wire type differ by one field — the overrides are a `HashMap<Cell, Override>` in the room and a
+packed rectangle on the wire, exactly as the live board's are — which is `StagedBoard` and
+`StagedView`, the same split `RoomState`/`RoomView` and `Token`/`TokenView` already make.
+
+**On disk the map is `#[serde(flatten)]`ed inside it**, and that is load-bearing rather than
+stylistic. A save written when this was an `Option<MapInfo>` holds the map's own fields directly
+under `staged`, which is exactly where flatten reads them from — so an older room comes back with
+its staged map intact and two empty lists beside it. Nested under a `map` key, every one of those
+fields would have read as missing, `MapInfo::default()` would have filled in, and the DM's next-map
+tab would have opened on a blank image with nothing on screen saying a map had been lost. There is a
+test named for it.
 
 **This is the first thing the visibility filter genuinely withheld.** It is absent from a
 player's `snapshot_for`, and `Event::StagedChanged` becomes a message for a DM recipient and
@@ -106,7 +122,16 @@ are refused when nothing is staged, the way deleting a token that does not exist
 
 On promote, tokens keep their grid coordinates and the DM repositions them. There is no sensible
 way to carry a cell across to an unrelated image, and pretending otherwise would move tokens for
-reasons nobody asked for. Fog and walls will clear, which is already the rule for a new map.
+reasons nobody asked for. The party's explored cells clear, which is already the rule for a new
+map — **the walls and the overrides no longer do**: `sweep_board` clears the board's and then the
+staged board's land in their place. That is milestone 20 and it is the one thing a promote does
+differently from any other map load.
+
+`SetMap` into the staged slot follows the live slot's rules exactly, which is the argument for both
+slots holding the same three things: a **load** sweeps that slot's walls and paint alongside its
+token plans, and a **recalibration** sweeps only the paint. Walls are image pixels and still trace
+the same painted line after the grid moves; an override is a cell whose square has just moved out
+from under it. `docs/walls.md` has the table.
 
 ### Preview
 
@@ -115,9 +140,14 @@ staged image while the table keeps seeing the live one. There is no separate pre
 the map panel's `Map | Next map` switch decides which slot everything in it is about, and
 selecting a slot that holds a map *is* preview mode.
 
-The client's `Scene` therefore holds two `Board`s — live and staged — and everything that draws
+The client's `Scene` therefore holds two boards — live and staged — and everything that draws
 or hit-tests reads `shownBoard(scene)` rather than reaching for the live one. That indirection is
 the whole client-side feature; without it, a staged calibration preview writes into the grid the
+table is looking at.
+
+**`shownWalls` and `shownOverrides` are its twins**, added in milestone 20 for the two things that
+live beside a board rather than on it. Same argument a third time: without one function answering
+"which of the two", a single missing branch traces the next dungeon's masonry across the board the
 table is looking at.
 
 **Everything on that board is a piece.** Tokens drag, the token panel works, and what a drag

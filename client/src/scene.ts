@@ -6,7 +6,15 @@ import type { Fog } from './fog.js';
 import { fogFromWire } from './fog.js';
 import type { Overrides } from './overrides.js';
 import { overridesFromWire } from './overrides.js';
-import type { Diagonals, Hp, Owner, WireMapInfo, WireRoomView, WireToken } from './protocol.js';
+import type {
+  Diagonals,
+  Hp,
+  Owner,
+  WireMapInfo,
+  WireRoomView,
+  WireStaged,
+  WireToken,
+} from './protocol.js';
 import type { Shape } from './shapes.js';
 import { shapeFromWire } from './shapes.js';
 import type { Wall } from './walls.js';
@@ -56,12 +64,36 @@ export interface Board {
   visionFt: number;
 }
 
+/**
+ * The staged slot: the map the DM is preparing, and what they have prepared on
+ * it.
+ *
+ * `Board`'s superset rather than a second shape, so everything that draws or
+ * hit-tests can go on reading a `Board` through `shownBoard` and only the three
+ * things that fork have to know this exists.
+ *
+ * There is no `fog` here beside the walls and the overrides, and that is the
+ * one deliberate hole: nothing raycasts the staged board. The DM is deciding
+ * what the party will be handed when it lands, not looking at what they will
+ * see — "will they spot the dragon when the door opens" is a second raycast and
+ * is out of scope. See `docs/fog.md`.
+ */
+export interface StagedBoard extends Board {
+  /** Traced on the next dungeon, in image pixels like the live board's. Empty
+   *  until the DM traces something, which is also what a player would hold if
+   *  they were ever sent one of these. They are not. */
+  walls: Wall[];
+  /** Painted on it by hand, and promoted with it. */
+  overrides: Overrides;
+}
+
 export interface Scene {
   /** What the table is looking at. */
   live: Board;
-  /** The map the DM is preparing, or null. Always null for a player: the
-   *  server never sends them one. */
-  staged: Board | null;
+  /** The map the DM is preparing with its walls and its paint, or null. Always
+   *  null for a player: the server never sends them one, and one null withholds
+   *  all three. */
+  staged: StagedBoard | null;
   /** The DM is looking at `staged` instead of `live`. Purely local — no
    *  command, no event, nothing persisted, and nobody else can tell. */
   previewing: boolean;
@@ -76,8 +108,10 @@ export interface Scene {
    *  are anchored to the art, not to a cell. Always empty for a player: the
    *  server sends them none, and empty is also what an untraced map looks like.
    *
-   *  Belongs to the live board like the shapes do. There are no staged walls;
-   *  walls prepared alongside a map is the scene concept Slate does not build. */
+   *  **The live board's.** The staged one carries its own; read `shownWalls`
+   *  rather than this, exactly as everything reads `shownBoard` rather than
+   *  `live`. Still one slot and not the scene concept — a promote moves one
+   *  list into the other rather than a list existing per map. */
   walls: Wall[];
   /** What the party can see, or null on a map with fog turned off.
    *
@@ -93,8 +127,10 @@ export interface Scene {
    *  the walls and this are what the DM authored, and the fog is what the table
    *  gets to see of both.
    *
-   *  Belongs to the live board for the reason they do. There is no fog on a
-   *  staged map, so there is nothing on one to override. */
+   *  **The live board's**, like `walls` above and read through
+   *  `shownOverrides`. The staged board carries its own — there is no fog on it
+   *  to be masked, but what is painted there is what the party is handed the
+   *  moment it is promoted. */
   overrides: Overrides;
   /** Whether the board writes each token's name under it. The DM's to set and
    *  everyone's to hold, so this is the same for every client — a board labelled
@@ -131,6 +167,26 @@ export function shownBoard(scene: Scene): Board {
 }
 
 /**
+ * The walls of the board on screen, and the paint on it.
+ *
+ * `shownBoard`'s twins, for the two things that live beside a board rather than
+ * on it. Everything that draws, hit-tests or sends a wall command reads these
+ * rather than `scene.walls` — the milestone-10 shape for the third time, and
+ * the same argument each time: without one function answering it, a single
+ * missing branch traces the next dungeon's masonry across the board the table
+ * is looking at.
+ *
+ * Empty when nothing is staged, which is what an untraced map looks like too.
+ */
+export function shownWalls(scene: Scene): Wall[] {
+  return scene.previewing && scene.staged !== null ? scene.staged.walls : scene.walls;
+}
+
+export function shownOverrides(scene: Scene): Overrides {
+  return scene.previewing && scene.staged !== null ? scene.staged.overrides : scene.overrides;
+}
+
+/**
  * Where a token draws, given which board is on screen — or null when it is not
  * on that board at all.
  *
@@ -156,7 +212,7 @@ export function shownPos(scene: Scene, token: Token): Vec2 | null {
 export function sceneFromView(view: WireRoomView, isDm: boolean): Scene {
   return {
     live: boardFromWire(view.map),
-    staged: view.staged === null ? null : boardFromWire(view.staged),
+    staged: stagedFromWire(view.staged),
     previewing: false,
     tokens: view.tokens.map(tokenFromWire),
     shapes: view.shapes.map(shapeFromWire),
@@ -165,6 +221,23 @@ export function sceneFromView(view: WireRoomView, isDm: boolean): Scene {
     overrides: overridesFromWire(view.overrides),
     showNames: view.show_names,
     diagonals: view.diagonals,
+  };
+}
+
+/**
+ * The staged slot off the wire, or null for an empty one — which is also what a
+ * player is always sent, indistinguishably.
+ *
+ * The map's fields sit directly on the frame beside `walls` and `overrides`
+ * (that is `#[serde(flatten)]` on the server), so `boardFromWire` reads it
+ * unchanged and this only has to add the two.
+ */
+export function stagedFromWire(wire: WireStaged | null): StagedBoard | null {
+  if (wire === null) return null;
+  return {
+    ...boardFromWire(wire),
+    walls: wire.walls.map(wallFromWire),
+    overrides: overridesFromWire(wire.overrides),
   };
 }
 

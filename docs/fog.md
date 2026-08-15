@@ -10,6 +10,8 @@ coordinate story in the first is the thing that looks like a mistake and is not.
 
 This covers the whole of milestone 16: automatic line of sight in 16a, and the DM's manual override
 in 16b. The two halves are separated in the text below wherever the second one changed the first.
+Milestone 20 then gave the staged board a mask of its own and pointedly no fog — see *The staged
+board has a mask of its own* and *No staged fog*.
 
 ## Two sets of cells, shared by the whole party
 
@@ -175,6 +177,49 @@ that difference is the usability of the whole tool.
 
 Unlike `visible`, the overrides are **persisted whole**. Sight is derived from what the save file
 already holds; what somebody decided is derivable from nothing.
+
+### The staged board has a mask of its own
+
+Milestone 20. `StagedBoard` holds a map, its walls and its overrides together, so the DM blacks out
+the ambush chamber on a Tuesday and the party is handed it already dark on the Saturday — rather
+than the DM racing to paint it while six people watch the map load.
+
+It is the walls' story exactly, and it cost nothing here for the same reason: **the override already
+reached the DM or nobody**, so a staged one added no visibility surface. `SetFogOverride` grew a
+`staged` flag like the four wall commands beside it, `OverridesChanged` grew one so the client knows
+which mask it just received, and `snapshot_for` withholds both boards' with the one `None` that
+already withheld the map.
+
+Three rules ride along, and each is the live board's:
+
+- **A staged load sweeps the paint; a staged recalibration sweeps it too.** Overrides are cells, and
+  both a new image and a moved lattice invalidate them. That is the same pair of arms `sweep_board`
+  and `SetMap`'s `reshaped` branch run for the live board — the staged walls are what differ, being
+  image pixels and surviving the recalibration.
+- **A promote carries it across.** `sweep_board` still clears the live board's, and then the staged
+  board's land in their place. `refresh_fog` runs afterwards, so the mask is applied the instant the
+  map arrives rather than a beat later.
+- **`ResetFog` stays live-only and names no slot**, which is the one asymmetry worth stating. Half
+  of it is forgetting where the *party* explored, and they have not explored a map they have not
+  been shown. Over a preview it would mean "clear the paint", which is the `clear` brush with a
+  bigger blast radius and no undo — so the button greys instead.
+
+### No staged fog
+
+**Nothing raycasts the staged board, deliberately.** There is no staged `revealed`, `known` or
+`visible`, and the DM's screen draws no wash over the map they are preparing — only their own tint,
+over the bare art.
+
+The distinction the whole feature rests on: a staged override is not a *preview* of what the party
+will see, it is what they will be **handed**. "Will they spot the dragon when the door opens" is a
+real question and a genuinely different feature — a second raycast, needing the staged walls, the
+staged token plans and the radius. If it is ever wanted it is **client-only** and costs the room
+nothing, since the DM's client already holds all three; `shape_covers` is the precedent for a
+geometry rule living in two languages. Do not put it in the room.
+
+The visible cost is that the DM paints a staged map with nothing underneath the tint to react
+against — no fog edge, no shadow, just their own colour on the floor. The panel's hint says so in
+words, because the board cannot.
 
 ### The fill runs on the client
 
@@ -519,8 +564,10 @@ The DM sees a **faint** wash rather than the table's view, which is the same bar
 their screen: drawn always, faint until the editor is armed. It is also why they are sent the fog at
 all.
 
-Nothing is drawn while previewing. The bitsets belong to the live board, exactly as the walls and the
-shapes do.
+**No wash while previewing, and the override tint regardless** — which is the one place the two
+layers part company. The bitsets belong to the live board because nothing has cast a ray on the
+other one; the mask does not, and over a preview it is the only thing on screen saying what the DM
+has decided. See *No staged fog* above.
 
 ### One `drawImage`, whatever the dungeon looks like
 
@@ -554,8 +601,14 @@ it would make turning fog on look like it had also invented one. The brushes gre
 for the same reason. `change` rather than `input` on the radius, so typing `1` on the way to `100`
 does not send a radius nobody asked for and recompute the whole board for it.
 
-Inert over a preview, panel and tab together, for the reason the wall editor is: there is no fog on a
-staged map, and a way in to a panel that can do nothing is the same lie as the panel looking armed.
+**Live over a preview since milestone 20**, panel and tab together, for the reason the wall editor
+is: the staged board has a mask of its own to paint. The switch and the radius come with it — they
+are `MapInfo` fields and have staged since 16a, and only the client was refusing them — so the next
+dungeon's lights are set before the table is shown it. Reset is the one control still greyed there,
+and *No staged fog* above says why.
+
+The hint carries the weight the board cannot: over a preview it says what painting there means,
+because there is no wash under the tint to make that obvious.
 
 **16a's note that this was the one tab with no `stop()` is no longer true**, and the reason is worth
 keeping: it arms nothing *because the party's tokens are what move the fog* — and the override is the

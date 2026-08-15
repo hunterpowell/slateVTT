@@ -11,7 +11,7 @@ import type { FogPaint, Hp, RosterEntry } from './protocol.js';
 import type { Ruler } from './ruler.js';
 import { feetMoved, rulerAlpha, trailCells } from './ruler.js';
 import type { Board, Scene, Token } from './scene.js';
-import { shownBoard, shownPos, showingStaged } from './scene.js';
+import { shownBoard, shownOverrides, shownPos, shownWalls, showingStaged } from './scene.js';
 import type { Shape, Sketch } from './shapes.js';
 import { CONE_HALF_ANGLE, coveredCells, isArea, labelFor, shapeEnd, shapeOrigin } from './shapes.js';
 import { crossesWall } from './walls.js';
@@ -308,15 +308,23 @@ export function render(ctx: CanvasRenderingContext2D, view: Viewport, frame: Fra
   // token in the dark to be washed out — every one they hold is a vision source,
   // or is standing where one is looking — so the order costs them nothing.
   //
-  // Nothing while previewing. The staged map has no fog: the bitsets belong to
-  // the board, exactly as the walls and the shapes do.
+  // Nothing while previewing, and this is the one thing here that milestone 20
+  // deliberately did *not* stage. The bitsets are the party's memory and their
+  // line of sight, and neither means anything on a map they have not been shown
+  // — no ray has ever been cast on it. Previewing the staged map's fog is a
+  // second raycast and is out of scope; see `docs/fog.md`.
   if (!showingStaged(frame.scene)) drawFog(ctx, frame, board, area);
 
   // And directly over it, because it is an annotation *on* the fog: which parts
   // of that wash the DM put there by hand rather than the walls casting. A
   // player's scene has none, so this draws nothing for them without needing to
   // ask who they are.
-  if (!showingStaged(frame.scene)) drawOverrides(ctx, frame, board);
+  //
+  // Drawn over either board, unlike the wash it annotates: the staged one
+  // carries a mask of its own. There it is the only thing on screen saying so,
+  // with nothing underneath it — which is why the panel's hint says in words
+  // what the board cannot.
+  drawOverrides(ctx, frame, board);
 
   // Under the tokens, unlike the ruler's line that measures the same move: the
   // squares are terrain being pointed at, and the thing standing on them is what
@@ -340,10 +348,10 @@ export function render(ctx: CanvasRenderingContext2D, view: Viewport, frame: Fra
 
   // Over everything on the board, and for a different reason than the shapes
   // are: a wall is not about what is standing on it, it is the room the tokens
-  // are standing *in*, and it has to be traceable across a crowded board. The
-  // staged map is not this map, so nothing here belongs on it — the same rule
-  // the drawings follow one line up.
-  if (!showingStaged(frame.scene)) drawWalls(ctx, frame);
+  // are standing *in*, and it has to be traceable across a crowded board. Over
+  // either board, since each carries its own — unlike the drawings one line up,
+  // where the staged map genuinely has none.
+  drawWalls(ctx, frame);
 
   if (frame.calibration !== null) drawCalibration(ctx, cam, frame.calibration);
 
@@ -511,7 +519,7 @@ function drawFog(
  * bargain, and it is why this is one `globalAlpha` rather than two canvases.
  */
 function drawOverrides(ctx: CanvasRenderingContext2D, frame: Frame, board: Board): void {
-  const { overrides } = frame.scene;
+  const overrides = shownOverrides(frame.scene);
   const tool = frame.fog;
 
   if (overrides.tint !== null) {
@@ -856,20 +864,23 @@ function drawTokens(ctx: CanvasRenderingContext2D, frame: Frame, board: Board): 
  * three pixels of line whether the DM is tracing a doorway up close or checking
  * a whole floor at once.
  *
- * Nothing here is gated on identity. `scene.walls` is empty for a player because
+ * Nothing here is gated on identity. `shownWalls` is empty for a player because
  * the server sent them none, which is where that decision belongs — invariant 4
- * is about what a client holds, not about what it draws.
+ * is about what a client holds, not about what it draws. It is empty over a
+ * preview for a DM who has not traced the next dungeon yet, which is the same
+ * shape of answer arrived at from the other direction.
  */
 function drawWalls(ctx: CanvasRenderingContext2D, frame: Frame): void {
   const { scene, cam, walls: editor } = frame;
-  if (scene.walls.length === 0 && (editor === null || editor.run.length === 0)) return;
+  const traced = shownWalls(scene);
+  if (traced.length === 0 && (editor === null || editor.run.length === 0)) return;
 
   const scale = 1 / cam.zoom;
   const armed = editor?.armed === true;
   ctx.save();
   ctx.lineCap = 'round';
 
-  for (const wall of scene.walls) {
+  for (const wall of traced) {
     const open = wall.door === true;
 
     // Full strength while the editor is in hand, faint the rest of the time —
@@ -1011,9 +1022,12 @@ function drawCalibration(
  * Whether this move passes through something that stops sight, which is the
  * question only the DM's client can answer — a player holds no walls.
  *
- * False over the staged map without asking: `scene.walls` belongs to the board,
- * exactly as the fog and the shapes do, and testing a plan for the next dungeon
- * against this one's masonry would warn about a wall that is not there.
+ * **Asked of the board on screen**, which is what milestone 20 changed: this
+ * used to return false over a staged map without asking, because there was no
+ * staged masonry to test a plan against and this board's would have warned
+ * about a wall that is not there. Now there is, and the plan is measured
+ * against the dungeon it is a plan for. Deleting that early return is the whole
+ * of the change here.
  *
  * Recomputed per frame per ruler rather than cached on one. It is a couple of
  * hundred segments against one line, the walls can change under it when a door
@@ -1021,10 +1035,11 @@ function drawCalibration(
  * to be the reason the DM is looking.
  */
 function rulerBlocked(scene: Scene, board: Board, ruler: Ruler, at: Vec2): boolean {
-  if (ruler.staged || scene.walls.length === 0) return false;
+  const walls = shownWalls(scene);
+  if (walls.length === 0) return false;
   const from = gridToWorld(board.grid, ruler.from.x, ruler.from.y);
   const to = gridToWorld(board.grid, at.x, at.y);
-  return crossesWall(scene.walls, from, to);
+  return crossesWall(walls, from, to);
 }
 
 /**

@@ -189,12 +189,35 @@ export interface Initiative {
   round: number;
 }
 
+/**
+ * The staged slot: the map the DM is preparing and everything they have
+ * prepared *on* it.
+ *
+ * One bundle rather than three fields, because the three arrive, sweep and
+ * promote together — and because one `null` then withholds all of it. There is
+ * no second staged field for a later milestone to add and forget to filter.
+ *
+ * The map's own fields sit directly on this rather than under a `map` key,
+ * which is `#[serde(flatten)]` on the server and is what keeps a save written
+ * before any of this existed loading its staged map.
+ */
+export interface WireStaged extends WireMapInfo {
+  /** Traced on the next dungeon before the table has ever seen it. Never sent
+   *  to a player — but then neither is anything else here. */
+  walls: WireWall[];
+  /** Painted on it by hand, and handed to the party the moment it is promoted.
+   *  There is no staged *fog* under this: what the DM is deciding is what the
+   *  party will be given, not a preview of what they can see. */
+  overrides: WireOverrides;
+}
+
 export interface WireRoomView {
   map: WireMapInfo;
-  /** The DM's next map. Always null for a player — and null also means nothing
-   *  is staged, so the two are indistinguishable from here. That is deliberate:
-   *  the server withholds it rather than sending it and asking us not to draw. */
-  staged: WireMapInfo | null;
+  /** The DM's next map, its masonry and its paint. Always null for a player —
+   *  and null also means nothing is staged, so the two are indistinguishable
+   *  from here. That is deliberate: the server withholds it rather than sending
+   *  it and asking us not to draw. */
+  staged: WireStaged | null;
   tokens: WireToken[];
   initiative: Initiative;
   /** Draw order, already filtered: a shape anchored to a token we cannot see
@@ -296,8 +319,13 @@ export type ServerMsg =
   /** The ruler charges diagonals differently now. `names_changed`'s neighbour,
    *  and echoed to the DM who set it for the same reason. */
   | { type: 'diagonals_changed'; diagonals: Diagonals }
-  /** The staged slot, or null once there is not one. DM connections only. */
-  | { type: 'staged_changed'; map: WireMapInfo | null }
+  /** The staged slot — map, walls and paint — or null once there is not one. DM
+   *  connections only.
+   *
+   *  It carries the whole board rather than only the map, which is what lets a
+   *  staged load sweeping its walls and a staged recalibration dropping its
+   *  paint arrive with no frames of their own. */
+  | { type: 'staged_changed'; board: WireStaged | null }
   | { type: 'initiative_changed'; initiative: Initiative }
   /** Somebody else's in-progress sweep, keyed by their connection. Never our
    *  own: we are already drawing that one from our own pointer. */
@@ -319,7 +347,7 @@ export type ServerMsg =
   /** Every wall the DM has traced. DM connections only — a player is not sent
    *  this frame at all, not even an empty one, because a frame they cannot use
    *  still tells them the DM just did something. */
-  | { type: 'walls_changed'; walls: WireWall[] }
+  | { type: 'walls_changed'; walls: WireWall[]; staged: boolean }
   /** What the party can see now, and everywhere they have been. Null once the
    *  map is not fogged. Reaches everyone, unlike the walls above it — and only
    *  on a drop, never on a drag frame. */
@@ -327,7 +355,7 @@ export type ServerMsg =
   /** Every cell the DM has overridden. DM connections only — a player is not
    *  sent this frame at all, for the reason they are sent no `walls_changed`.
    *  What they are owed is the `fog_changed` beside it. */
-  | { type: 'overrides_changed'; overrides: WireOverrides }
+  | { type: 'overrides_changed'; overrides: WireOverrides; staged: boolean }
   | { type: 'error'; message: string };
 
 export type ClientMsg =
@@ -438,17 +466,22 @@ export type ClientMsg =
    *
    *  The run is sent whole rather than a segment per click because that is the
    *  milestone: a two-hundred-segment dungeon is otherwise two hundred round
-   *  trips. `door` applies to every segment of it. */
-  | { type: 'add_walls'; points: WirePx[]; door: boolean }
+   *  trips. `door` applies to every segment of it.
+   *
+   *  `staged` names the board, like `move_token` and `set_map` do — intent rides
+   *  on the command because the server does not know we are previewing and must
+   *  not learn. Every wall command below carries it for the same reason. */
+  | { type: 'add_walls'; points: WirePx[]; door: boolean; staged: boolean }
   /** DM-only. One segment — there is no "erase this run", which is what lets a
    *  single bad segment be fixed without redrawing the trace. */
-  | { type: 'remove_wall'; id: string }
-  /** DM-only, and refused on masonry. It changes nothing anyone can see until
-   *  fog exists; it is the command that will open a room to the party. */
-  | { type: 'toggle_door'; id: string }
-  /** DM-only. Every wall on the map — and unlike `clear_shapes` it reaches into
-   *  nobody else's work, since the walls are all the DM's. */
-  | { type: 'clear_walls' }
+  | { type: 'remove_wall'; id: string; staged: boolean }
+  /** DM-only, and refused on masonry. On the board it opens a room to the
+   *  party mid-fight; on the staged one it is authoring — a door left open is
+   *  the door they find open when the map lands. */
+  | { type: 'toggle_door'; id: string; staged: boolean }
+  /** DM-only. Every wall on one board — and unlike `clear_shapes` it reaches
+   *  into nobody else's work, since the walls are all the DM's. */
+  | { type: 'clear_walls'; staged: boolean }
   /** DM-only. What one brush stroke or one fill decided, as the cells it
    *  decided it about.
    *
@@ -457,7 +490,15 @@ export type ClientMsg =
    *  is what makes the preview and the result the same object rather than two
    *  runs of two implementations that would have to agree. `state` of null hands
    *  them back to line of sight. */
-  | { type: 'set_fog_override'; cells: [number, number][]; state: FogPaint | null }
+  | {
+      type: 'set_fog_override';
+      cells: [number, number][];
+      state: FogPaint | null;
+      /** Which board's mask. Painting the staged one is not previewing what the
+       *  party will see there — it is deciding what they are handed when the map
+       *  lands, which is why there is no staged fog under it. */
+      staged: boolean;
+    }
   /** DM-only. The whole map back to dark: every override cleared and everywhere
    *  the party has explored forgotten, then line of sight recomputed from where
    *  the tokens are standing. One command because it is one gesture — "this map

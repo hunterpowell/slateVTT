@@ -321,7 +321,7 @@ fn the_dm_sees_the_staged_map_in_their_snapshot() {
     stage(&mut state, ClientId(1), "/uploads/next.png");
 
     let view = state.snapshot_for(&Identity::Dm);
-    assert_eq!(view.staged.map(|m| m.url), Some("/uploads/next.png".into()));
+    assert_eq!(view.staged.map(|b| b.map.url), Some("/uploads/next.png".into()));
 }
 
 #[test]
@@ -337,7 +337,7 @@ fn a_staged_map_never_reaches_a_player_as_a_delta() {
     stage(&mut state, dm, "/uploads/next.png");
 
     assert!(
-        matches!(dm_rx.try_recv(), Ok(ServerMsg::StagedChanged { map: Some(m) }) if m.url == "/uploads/next.png")
+        matches!(dm_rx.try_recv(), Ok(ServerMsg::StagedChanged { board: Some(b) }) if b.map.url == "/uploads/next.png")
     );
     assert!(
         player_rx.try_recv().is_err(),
@@ -355,7 +355,7 @@ fn staging_a_map_leaves_the_board_alone() {
 
     assert_eq!(state.map.url, before, "the table is still on the old map");
     assert_eq!(
-        state.staged.as_ref().map(|m| m.grid_px),
+        state.staged.as_ref().map(|b| b.map.grid_px),
         Some(80.0),
         "and the staged slot holds what was sent"
     );
@@ -417,7 +417,7 @@ fn promoting_reaches_the_table_but_the_empty_slot_reaches_only_the_dm() {
     assert!(matches!(dm_rx.try_recv(), Ok(ServerMsg::MapChanged { .. })));
     assert!(matches!(
         dm_rx.try_recv(),
-        Ok(ServerMsg::StagedChanged { map: None })
+        Ok(ServerMsg::StagedChanged { board: None })
     ));
 }
 
@@ -508,7 +508,7 @@ fn staging_a_map_calibrated_earlier_comes_back_calibrated() {
     );
 
     assert_eq!(
-        state.staged.as_ref().map(|m| m.grid_px),
+        state.staged.as_ref().map(|b| b.map.grid_px),
         Some(82.0),
         "the client's opening bid should have lost to the remembered value"
     );
@@ -530,7 +530,7 @@ fn the_staged_map_can_still_be_recalibrated() {
         staged(calibrate("/uploads/next.png", 96.0, 3.0, "#aabbccdd")),
     );
 
-    assert_eq!(state.staged.as_ref().map(|m| m.grid_px), Some(96.0));
+    assert_eq!(state.staged.as_ref().map(|b| b.map.grid_px), Some(96.0));
     assert_eq!(
         state
             .calibrations
@@ -560,10 +560,10 @@ fn a_staged_map_is_worth_saving_and_survives_the_trip() {
     let restored = RoomState::restored(saved, SECRET.to_owned());
 
     assert_eq!(
-        restored.staged.as_ref().map(|m| m.url.as_str()),
+        restored.staged.as_ref().map(|b| b.map.url.as_str()),
         Some("/uploads/next.png")
     );
-    assert_eq!(restored.staged.as_ref().map(|m| m.grid_px), Some(80.0));
+    assert_eq!(restored.staged.as_ref().map(|b| b.map.grid_px), Some(80.0));
 }
 
 #[test]

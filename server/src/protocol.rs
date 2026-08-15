@@ -621,17 +621,59 @@ impl Default for Initiative {
     }
 }
 
+/// The staged slot as it is written down: the map the DM is preparing, and the
+/// walls and overrides they have prepared *on* it.
+///
+/// One bundle rather than three fields side by side, because the three are one
+/// thing and they arrive, sweep and promote together. `RoomState` holds the live
+/// board's three flat and this for the staged one — the asymmetry is honest, the
+/// live board is the room's own and this is a parcel waiting to be delivered.
+///
+/// **The map is `#[serde(flatten)]`ed, which is what keeps an older save
+/// loading.** A file written before this existed holds `"staged": {"url": …,
+/// "grid_px": …}` — the map's fields at exactly the level flatten reads them
+/// from — so the map comes back and the two new lists default to empty, which is
+/// what a staged map with nothing traced on it is anyway. Nesting it under a
+/// `map` key instead would have deserialized every one of those fields as
+/// missing and handed the DM a staged slot holding a blank image.
+///
+/// The same type on the wire and on disk, the way `MapInfo` already is: what the
+/// DM may hold of the staged slot and what the file must hold of it are the same
+/// thing, because a player holds none of it either way.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(default)]
+pub struct StagedView {
+    #[serde(flatten)]
+    pub map: MapInfo,
+    /// Traced over the staged image, and swept with it. There is no filtered
+    /// form for the reason the live board's have none: walls reach the DM or
+    /// nobody, and a staged wall adds no visibility surface a live one did not.
+    pub walls: Vec<Wall>,
+    /// Painted over the staged board by hand. Packed like the live board's, and
+    /// withheld like them.
+    ///
+    /// There is no staged *fog* to sit under this, deliberately — see
+    /// `docs/fog.md`. What the DM is painting is what the party will be handed
+    /// the moment the map is promoted, not a preview of what they can see now.
+    pub overrides: OverrideView,
+}
+
 /// A room as one particular client is allowed to see it. Produced only by
 /// `RoomState::snapshot_for` — there is no unfiltered `snapshot()`.
 #[derive(Debug, Clone, Serialize)]
 pub struct RoomView {
     pub map: MapInfo,
-    /// The map the DM is preparing, if there is one — and only if this view
-    /// belongs to the DM. A player's copy is always `None`, which is also what
-    /// "nothing is staged" looks like, so the two are indistinguishable from the
-    /// client side. That is the point: invariant 4 wants the next dungeon
-    /// genuinely absent from a player's snapshot, not merely undrawn.
-    pub staged: Option<MapInfo>,
+    /// The map the DM is preparing with its own walls and overrides, if there is
+    /// one — and only if this view belongs to the DM. A player's copy is always
+    /// `None`, which is also what "nothing is staged" looks like, so the two are
+    /// indistinguishable from the client side. That is the point: invariant 4
+    /// wants the next dungeon genuinely absent from a player's snapshot, not
+    /// merely undrawn.
+    ///
+    /// One `None` now withholds three things rather than one, which is the whole
+    /// reason the bundle is worth having: there is no second staged field to
+    /// forget to filter.
+    pub staged: Option<StagedView>,
     /// Already filtered *and* redacted: a token the table cannot see — hidden,
     /// or built on the next map and not here yet — is absent rather than
     /// flagged, and what survives carries only the fields this client may hold.
@@ -892,6 +934,15 @@ pub enum ClientMsg {
 
     // Walls and doors. All DM-only, and unlike the drawings above, invisible to
     // everyone else — a player is not told these commands happened at all.
+    //
+    // **Every one of them names a slot**, which is the `SetMap` / `MoveToken` /
+    // `CreateToken` pattern for the fourth time and for the same reason: preview
+    // is client-only and the server must not learn the DM is in it, so the
+    // intent rides on the command rather than on a mode. On the two that carry
+    // an id the flag is strictly redundant — ids are UUIDs and could be looked
+    // up in both lists — and it is here anyway, because a lookup that searches
+    // both is a lookup that can erase a live wall while the DM is looking at the
+    // staged board.
     /// One traced run, in image pixels: `points` are its corners in order, and
     /// the segments between them become that many walls.
     ///
@@ -907,24 +958,31 @@ pub enum ClientMsg {
     AddWalls {
         points: Vec<Px>,
         door: bool,
+        staged: bool,
     },
     /// One segment. There is no "erase this run" — the run stopped existing the
     /// moment it was stored, which is what makes fixing one bad segment of a
     /// long trace possible without redrawing it.
     RemoveWall {
         id: WallId,
+        staged: bool,
     },
     /// Open or shut a door. Refused on masonry, the way a command naming a token
     /// that does not exist is refused.
     ///
-    /// It changes nothing anyone can see yet. Once fog exists this is the
-    /// command that opens a room up to the party, and it stays DM-only.
+    /// On the live board this is a play-time action — the party opens a door
+    /// mid-fight. On the staged board it is authoring: a door left open is the
+    /// door the party finds open when the map lands, which is how the DM says
+    /// "this one is already ajar" in advance.
     ToggleDoor {
         id: WallId,
+        staged: bool,
     },
-    /// Every wall on the map. DM-only like the rest, and unlike `ClearShapes`
+    /// Every wall on one board. DM-only like the rest, and unlike `ClearShapes`
     /// it reaches into nobody else's work — it is all the DM's.
-    ClearWalls,
+    ClearWalls {
+        staged: bool,
+    },
 
     // The manual fog override. DM-only, like the walls it is stored beside.
     /// Says one thing about a set of cells: force them explored, force them lit,
@@ -940,12 +998,18 @@ pub enum ClientMsg {
     ///
     /// A brush and a fill send the same frame; the only difference is which cells
     /// end up in it.
+    ///
+    /// `staged` names the board, like the wall commands above. Painting the
+    /// staged one is not previewing what the party will see there — there is no
+    /// staged fog to preview — it is deciding in advance what they are handed
+    /// the moment the map is promoted.
     SetFogOverride {
         cells: Vec<Cell>,
         /// `None` hands the cells back to line of sight. Null rather than a
         /// fourth variant, because "no override" is the absence of one — the same
         /// thing the room stores by removing the entry.
         state: Option<Override>,
+        staged: bool,
     },
     /// The fog back to the start of the evening: every override cleared *and*
     /// everywhere the party has explored forgotten, then line of sight recomputed
@@ -1058,16 +1122,22 @@ pub enum ServerMsg {
     DiagonalsChanged {
         diagonals: Diagonals,
     },
-    /// The staged map, or `None` once there is not one. Reaches the DM and
-    /// nobody else — this is the first message that exists for one identity
-    /// rather than for one action.
+    /// The staged board — its map, its walls and its paint — or `None` once
+    /// there is not one. Reaches the DM and nobody else; this is the first
+    /// message that exists for one identity rather than for one action.
     ///
     /// One message covers staging, recalibrating, discarding, and the slot
     /// emptying on a promote, for the same reason `TokenChanged` covers both
     /// creation and editing: two messages would have to be kept in step, and
     /// the client's answer to all four is the same — this is the staged slot now.
+    ///
+    /// **Carrying the whole board rather than the map is what keeps that true
+    /// now that the slot holds three things.** A staged load sweeps its walls
+    /// and a staged recalibration drops its paint; both are already described
+    /// here, so neither needs a `WallsChanged` or an `OverridesChanged` of its
+    /// own — and there is therefore none to forget.
     StagedChanged {
-        map: Option<MapInfo>,
+        board: Option<StagedView>,
     },
     /// The whole panel, not a per-entry delta. It is a handful of rows and only
     /// changes on a deliberate DM action, so a diff would cost more than it saves.
@@ -1117,8 +1187,15 @@ pub enum ServerMsg {
     /// frame they cannot use still tells them the DM just did something, and
     /// invariant 4 is about what a client may know. That is `TokenPlanChanged`'s
     /// rule, arriving for the second time.
+    ///
+    /// `staged` says which board's list this is, because there are two now and
+    /// the whole frame is a replacement rather than a delta. It is the same word
+    /// the command carried, handed back — the DM's client does not infer which
+    /// list it just changed from which one it is looking at, because a promote
+    /// can move the board out from under a frame in flight.
     WallsChanged {
         walls: Vec<Wall>,
+        staged: bool,
     },
     /// What the party can see now, and everywhere they have been. `None` once the
     /// map is not fogged, which is also what a map that never was looks like.
@@ -1139,8 +1216,11 @@ pub enum ServerMsg {
     /// **It reaches the DM or nobody**, and it is the third message to have that
     /// rule. What the table is owed arrives in the `FogChanged` above it, which is
     /// the difference this made rather than the decision behind it.
+    ///
+    /// `staged` names the board for the reason `WallsChanged` above carries one.
     OverridesChanged {
         overrides: OverrideView,
+        staged: bool,
     },
 
     /// Somebody pinged. Draw a ring there for a second or two.

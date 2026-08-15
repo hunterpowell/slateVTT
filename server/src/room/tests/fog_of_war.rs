@@ -52,7 +52,7 @@ fn a_wall_between_them_blocks_sight_and_a_door_in_it_opens_again() {
     let door = state.walls.first().map_or(door, |w| w.id.clone());
     assert!(!sees_the_ogre(&state), "a door is traced shut");
 
-    state.handle(ClientId(1), ClientMsg::ToggleDoor { id: door });
+    state.handle(ClientId(1), swing(door));
     assert!(sees_the_ogre(&state), "and an open one is a way through");
 }
 
@@ -944,5 +944,207 @@ fn the_overrides_survive_the_save_file() {
     assert!(
         !sees_the_ogre(&restored),
         "and they are applied again on boot, not merely stored"
+    );
+}
+
+// --- the staged board's paint ---------------------------------------------
+
+/// A fogged map in the staged slot, with the live board left as it was.
+fn stage_fogged(state: &mut RoomState, dm: ClientId) {
+    state.handle(
+        dm,
+        staged(fogged(set_map("/uploads/crypt.png", 64.0, 0.0, 0.0), 60.0)),
+    );
+}
+
+#[test]
+fn paint_on_the_staged_board_does_not_touch_the_live_one() {
+    // Two boards, two masks, and the flag on the command is the only thing
+    // telling them apart — exactly as it is for a token's position and its plan.
+    let mut state = fog_room(60.0);
+    let _dm = join_as_dm(&mut state, ClientId(1));
+    stage_fogged(&mut state, ClientId(1));
+
+    state.handle(ClientId(1), staged(paint(&[OGRE_CELL], Some(Override::Dark))));
+
+    assert!(
+        state.overrides.is_empty(),
+        "the board the table is playing on was never painted"
+    );
+    assert!(
+        sees_the_ogre(&state),
+        "and nothing about what they can see changed"
+    );
+    assert_eq!(
+        state.staged.as_ref().map(|b| b.overrides.len()),
+        Some(1),
+        "the paint landed on the map being prepared"
+    );
+}
+
+#[test]
+fn painting_the_staged_board_moves_no_fog_at_all() {
+    // The live board's paint is never the whole news — `refresh_fog` reports the
+    // shadow it cast beside it. The staged board's *is* the whole news, and
+    // correctly: no ray has ever been cast on a map the table has not been shown.
+    let mut state = fog_room(60.0);
+    let mut dm_rx = join_as_dm(&mut state, ClientId(1));
+    stage_fogged(&mut state, ClientId(1));
+    drain(&mut dm_rx);
+
+    state.handle(ClientId(1), staged(paint(&[(2, 2)], Some(Override::Lit))));
+
+    let frames = drain(&mut dm_rx);
+    assert!(
+        frames
+            .iter()
+            .any(|m| matches!(m, ServerMsg::OverridesChanged { staged: true, .. })),
+        "the DM is told what they painted: {frames:?}"
+    );
+    assert!(
+        !frames.iter().any(|m| matches!(m, ServerMsg::FogChanged { .. })),
+        "and nothing claims the table's view moved: {frames:?}"
+    );
+}
+
+#[test]
+fn the_staged_fog_switch_is_what_a_staged_paint_is_checked_against() {
+    // The whole of what staging changed in this refusal: a fogged staged map
+    // may be painted while the unfogged live board under it may not, which is
+    // the DM preparing a dungeon from inside a meadow.
+    let mut state = room();
+    let _dm = join_as_dm(&mut state, ClientId(1));
+    assert!(!state.map.fog, "the live board is a meadow");
+
+    stage_fogged(&mut state, ClientId(1));
+
+    assert!(
+        state
+            .check(ClientId(1), &paint(&[(1, 1)], Some(Override::Dark)))
+            .is_err(),
+        "there is no fog on the board to override"
+    );
+    assert!(
+        state
+            .check(ClientId(1), &staged(paint(&[(1, 1)], Some(Override::Dark))))
+            .is_ok(),
+        "and there is on the map being prepared"
+    );
+}
+
+#[test]
+fn promoting_hands_the_party_the_paint_prepared_for_them() {
+    // The reason a staged override is worth having: the room is blacked out
+    // before anybody has seen the map, rather than the DM racing to paint it
+    // over while the table watches.
+    let mut state = fog_room(60.0);
+    let _dm = join_as_dm(&mut state, ClientId(1));
+    stage_fogged(&mut state, ClientId(1));
+    // The ogre's cell, blacked out in advance. On the live board the party can
+    // see it right now.
+    state.handle(ClientId(1), staged(paint(&[OGRE_CELL], Some(Override::Dark))));
+    assert!(sees_the_ogre(&state), "still true on the board they are on");
+
+    state.handle(ClientId(1), ClientMsg::PromoteStaged);
+
+    assert_eq!(
+        state.overrides.get(&OGRE_CELL),
+        Some(&Override::Dark),
+        "the paint came across with the map"
+    );
+    assert!(
+        !sees_the_ogre(&state),
+        "and it is applied the moment the map lands, not a beat later"
+    );
+    assert!(state.staged.is_none());
+}
+
+#[test]
+fn a_staged_recalibration_drops_the_paint_and_keeps_the_walls() {
+    // The live board's rule, mirrored — which is the argument for the two slots
+    // holding the same three things. A wall is image pixels and still traces the
+    // same painted line; an override is a cell whose square has just moved.
+    let mut state = room();
+    let _dm = join_as_dm(&mut state, ClientId(1));
+    stage_fogged(&mut state, ClientId(1));
+    state.handle(ClientId(1), staged(trace(&[(0.0, 0.0), (64.0, 0.0)], false)));
+    state.handle(ClientId(1), staged(paint(&[(1, 1)], Some(Override::Dark))));
+
+    // Same URL, different grid: a recalibration.
+    state.handle(
+        ClientId(1),
+        staged(fogged(set_map("/uploads/crypt.png", 96.0, 0.0, 0.0), 60.0)),
+    );
+
+    let board = state.staged.as_ref().expect("still staged");
+    assert_eq!(board.map.grid_px, 96.0, "the correction was applied");
+    assert_eq!(board.walls.len(), 1, "the tracing survived it");
+    assert!(
+        board.overrides.is_empty(),
+        "and the paint did not: those cells are not where they were"
+    );
+}
+
+#[test]
+fn a_staged_load_sweeps_what_was_prepared_for_the_last_one() {
+    // `clear_staged_tokens`' rule, reaching the other two things the slot now
+    // holds. A different map is a different next room, and none of the tracing
+    // done for the last one means anything on it.
+    let mut state = room();
+    let _dm = join_as_dm(&mut state, ClientId(1));
+    stage_fogged(&mut state, ClientId(1));
+    state.handle(ClientId(1), staged(trace(&[(0.0, 0.0), (64.0, 0.0)], false)));
+    state.handle(ClientId(1), staged(paint(&[(1, 1)], Some(Override::Dark))));
+
+    state.handle(
+        ClientId(1),
+        staged(fogged(set_map("/uploads/other.png", 64.0, 0.0, 0.0), 60.0)),
+    );
+
+    let board = state.staged.as_ref().expect("the new map is staged");
+    assert_eq!(board.map.url, "/uploads/other.png");
+    assert!(board.walls.is_empty(), "a different dungeon");
+    assert!(board.overrides.is_empty());
+}
+
+#[test]
+fn discarding_the_staged_map_takes_its_walls_and_its_paint_with_it() {
+    let mut state = room();
+    let _dm = join_as_dm(&mut state, ClientId(1));
+    stage_fogged(&mut state, ClientId(1));
+    state.handle(ClientId(1), staged(trace(&[(0.0, 0.0), (64.0, 0.0)], false)));
+    state.handle(ClientId(1), staged(paint(&[(1, 1)], Some(Override::Dark))));
+
+    state.handle(ClientId(1), ClientMsg::ClearStaged);
+
+    assert!(state.staged.is_none());
+    assert!(state.walls.is_empty(), "and none of it fell onto the board");
+    assert!(state.overrides.is_empty());
+}
+
+#[test]
+fn a_player_is_never_sent_the_staged_boards_paint() {
+    // The override travels like the walls rather than like the fog, and staging
+    // did not change that — it is what the DM authored, on a map the table has
+    // not been shown, which is the same rule twice over.
+    let mut state = fog_room(60.0);
+    let dm = ClientId(1);
+    let mut _dm_rx = join_as_dm(&mut state, dm);
+    let mut saelyn = join_as_player(&mut state, ClientId(2), "saelyn");
+    stage_fogged(&mut state, dm);
+    state.handle(dm, staged(paint(&[(1, 1)], Some(Override::Dark))));
+
+    assert!(
+        state.snapshot_for(&as_player("saelyn")).staged.is_none(),
+        "invariant 3: the whole slot is absent, paint included"
+    );
+    assert!(
+        state
+            .message_for(ClientId(2), dm, &Event::OverridesChanged { staged: true })
+            .is_none()
+    );
+    assert!(
+        drain(&mut saelyn).is_empty(),
+        "a player was told something about the next dungeon"
     );
 }

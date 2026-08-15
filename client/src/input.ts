@@ -10,7 +10,7 @@ import { HOLD_MS } from './pings.js';
 import type { ClientMsg, ShapeKind, WireOrigin } from './protocol.js';
 import type { Rulers } from './ruler.js';
 import type { Scene, Token } from './scene.js';
-import { shownBoard, shownPos, showingStaged } from './scene.js';
+import { shownBoard, shownPos, shownWalls, showingStaged } from './scene.js';
 import type { Sketches } from './shapes.js';
 import { anchorable, clampExtent, erasableAt, originCell } from './shapes.js';
 import type { WallTool } from './walltool.js';
@@ -273,29 +273,33 @@ export function attachInput(
   /**
    * Whether the left button belongs to the wall editor right now.
    *
-   * Never over a staged map, for the reason a sweep is not: walls belong to the
-   * board, the map being prepared has none, and tracing one that landed on a
-   * board nobody is looking at is worse than the pointer simply staying a
-   * pointer. It is the same rule, and this is the second feature to want it.
+   * **Armed over either board**, unlike the sweep above it, and that is
+   * milestone 20 in one line: the staged map has walls of its own now, so
+   * tracing one there lands somewhere real rather than nowhere. The rule that
+   * remains is a shape's — a sweep still belongs to the board alone, because
+   * there are still no staged shapes.
    */
-  const tracing = (): boolean => wallTool !== null && wallTool.mode !== null && !previewing();
+  const tracing = (): boolean => wallTool !== null && wallTool.mode !== null;
 
   /**
    * Whether the left button belongs to the fog brush right now.
    *
-   * Never over a staged map, for the reason tracing is not: there is no fog on
-   * the map being prepared, so there is nothing on it to override. The tool
-   * disarms itself in that case anyway; this is the same belt-and-braces the
-   * two above it have.
+   * Armed over either board, like the wall editor and for the same reason: the
+   * staged map has a mask of its own. What it does *not* have is fog, so what
+   * the DM is painting there is what the party will be handed rather than a
+   * preview of what they will see.
    */
-  const painting = (): boolean => fogTool !== null && fogTool.brush !== null && !previewing();
+  const painting = (): boolean => fogTool !== null && fogTool.brush !== null;
 
   /** How near a wall counts as on it, in world units at this zoom. */
   const wallSlack = (): number => WALL_HIT_PX / cam.zoom;
 
   /** The wall under a world point, or null. Walls are in image pixels, which is
-   *  world space, so there is no conversion here at all. */
-  const wallUnder = (w: Vec2) => wallAt(scene.walls, w, wallSlack());
+   *  world space, so there is no conversion here at all.
+   *
+   *  Through `shownWalls`, so a click hit-tests the masonry of the board it
+   *  landed on rather than the board the room happens to call live. */
+  const wallUnder = (w: Vec2) => wallAt(shownWalls(scene), w, wallSlack());
 
   /**
    * A door the DM could swing right now, with no tool in hand at all.
@@ -311,12 +315,17 @@ export function attachInput(
    * calibrating, a shape tool, the wall editor — each mean something specific by
    * a click, and none of them should quietly also mean "and swing that door".
    *
-   * Only the DM, and only doors: masonry is not interactive, and `scene.walls`
+   * Only the DM, and only doors: masonry is not interactive, and `shownWalls`
    * is empty on a player's client anyway, so this is an affordance rather than
    * the permission boundary. The server refuses it from anyone else regardless.
+   *
+   * **Available over the staged board too**, where the same gesture means
+   * something different: on the board a swing is play, and there it is
+   * authoring — the DM deciding which doors the party finds open. Same click,
+   * because a door being clickable is what makes it a door.
    */
   const swingableDoorUnder = (w: Vec2) => {
-    if (!identity.isDm || previewing()) return null;
+    if (!identity.isDm) return null;
     if (tracing() || sweeping()) return null;
     if (calibration !== null && calibration.active) return null;
     const wall = wallUnder(w);
@@ -588,10 +597,14 @@ export function attachInput(
       const swinging =
         mode === 'door' && wallTool.run.length === 0 && hit !== null && hit.door !== null;
 
+      // Both name the slot the editor is on, which is the slot `wallUnder` just
+      // hit-tested. Taking it off the tool rather than asking `previewing()`
+      // again is what keeps the hit test and the command from ever disagreeing.
+      const staged = wallTool.staged;
       if (mode === 'erase') {
-        if (hit !== null) send({ type: 'remove_wall', id: hit.id });
+        if (hit !== null) send({ type: 'remove_wall', id: hit.id, staged });
       } else if (swinging && hit !== null) {
-        send({ type: 'toggle_door', id: hit.id });
+        send({ type: 'toggle_door', id: hit.id, staged });
       } else {
         wallTool.place(cornerAt(w, e.altKey));
       }
@@ -929,7 +942,10 @@ export function attachInput(
       // this branch is never reached.
       const door = swingableDoorUnder(w);
       if (door !== null) {
-        send({ type: 'toggle_door', id: door.id });
+        // The board it was found on, which is the board on screen. On the live
+        // one this is the party opening a door; over a preview it is the DM
+        // deciding they will find it open.
+        send({ type: 'toggle_door', id: door.id, staged: previewing() });
       } else {
         onSelect?.(null);
         // And the group goes with it. A click on empty map is how you put

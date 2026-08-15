@@ -25,7 +25,7 @@ Do not work ahead. Each milestone should run and be usable before starting the n
 6. Map upload and grid calibration UI.
 7. Package for Windows session hosting and deploy behind a Cloudflare Tunnel.
 
-Milestones 1–19 are done, and so is 25, which was never planned and is out of order for the reason
+Milestones 1–20 are done, and so is 25, which was never planned and is out of order for the reason
 its own entry gives. Everything from 8 on was planned after the original seven; 17 and 18 were
 workshopped after 16 landed, and 19–24 after 18:
 
@@ -345,30 +345,63 @@ workshopped after 16 landed, and 19–24 after 18:
     one: `drive-ping.mjs` asserts that a second connection **was** sent something over ground it
     cannot see, and that the ground under it is exactly as dark afterwards. One gesture, both halves.
 
-20. **Walls and fog overrides on the staged map.** The next dungeon gets traced before the table is
-    shown it, rather than in front of them after the promote.
+20. **Done.** Walls and fog overrides on the staged map — the next dungeon traced before the table
+    is shown it, rather than in front of them after the promote. See *The staged map has walls of
+    its own* in `docs/walls.md` and *The staged board has a mask of its own* in `docs/fog.md`.
 
-    Note first what already stages: `fog` and `vision_ft` are on `MapInfo`, so they have ridden along
-    since 16a. What does not is `walls` and `overrides`, which sit on `RoomState` beside the live
-    board.
+    This file's prediction held almost exactly, which is the first time that has happened at this
+    scale. The cheapness argument was right and worth restating because it *generalises*: **a
+    subsystem that already reaches the DM or nobody is nearly free to stage**, because there is no
+    filter to widen. `snapshot_for` grew no arm, `message_for` grew no arm, `unseen_by_table` was not
+    touched, and no `was_unseen` changed meaning — set against milestone 12, where staging two token
+    fields cost all four of those.
 
-    This is the cheapest subsystem in the project to stage, and the reason is worth stating because
-    every previous staging feature was the opposite: **walls reach the DM or nobody.** There is no
-    `WallView` and no filtered form, so a staged wall adds *zero* new visibility surface — unlike
-    `staged_only`, which had to grow `unseen_by_table` a third reason. The work is a `staged: bool`
-    on each wall and override command, which is the `SetMap` / `MoveToken` / `CreateToken` pattern
-    for the fourth time; a bundle holding the staged map with its own walls and overrides; and a
-    promote that moves them across instead of `sweep_board` clearing them.
+    Three things cost more than the state model, which was one struct.
 
-    The client half should be the milestone-10 shape a third time, since everything that draws or
-    hit-tests already reads `shownBoard(scene)`. `rulerBlocked` is the marker: it returns false over
-    the staged board on purpose today, and that early return is exactly what this milestone deletes.
+    **The bundle had to flatten its map, and that is a save-file fact rather than a style choice.**
+    `staged` was an `Option<MapInfo>` on disk, so an existing save holds the map's own fields
+    directly under that key. Nesting them under `map` inside a new struct deserializes every one of
+    them as *missing* — and because invariant 2 puts `#[serde(default)]` on the container, that is
+    not an error. It is a staged slot holding a blank image with an empty URL, silently, with the
+    DM's next-map tab opening onto nothing. `#[serde(flatten)]` reads them where they already are.
+    **The general trap: invariant 2 protects a field being added, and does nothing for a field
+    changing shape** — there, the default that makes an old file load is the same default that eats
+    what it was holding. A test asserting the old JSON by hand is the only thing that catches it.
 
-    **Deliberately out: previewing the staged map's fog.** "Will they see the dragon when the door
-    opens" is a real question and it is a second raycast. The DM's client will hold the staged walls,
-    the staged token positions and the radius, so if it is ever wanted it is client-only and costs
-    the room nothing — `shape_covers` is the precedent for a geometry rule living in two languages.
-    Do not put it in the room.
+    **`StagedChanged` carrying the whole board is what kept the event count flat.** The obvious
+    shape is a `WallsChanged { staged: true }` beside every staged sweep — and then a staged load, a
+    staged recalibration, a promote and a discard each have to remember to emit one, which is four
+    places to forget. Carrying the bundle means the frame the DM was already being sent describes
+    all of it, and the two staged-slot events that *do* exist are only for editing.
+
+    **The negative assertion landed in two places rather than one, and the browser half needed the
+    network trick.** The server suite says a player is sent no staged wall and no staged paint; the
+    driver had to say it about a real second browser, and the pixel reading could not — the board
+    they were on was fully fogged and so was the one arriving, so black replacing black reads as
+    nothing having happened. `drive-staged.mjs` asks the *resource timeline* whether they ever
+    fetched the next dungeon's image, which is `drive-fog.mjs`'s trick on token art applied to a
+    map. It also has to clear the timings first: the room lives in memory across runs, so a map
+    staged this time was very likely the live board last time, and a whole-history reading reports
+    an honest old fetch as a leak.
+
+    Two smaller things, both predicted and both true. `rulerBlocked`'s early return was exactly the
+    marker this file said it was — deleting it is the whole of that change, and a plan is now
+    measured against the dungeon it is a plan for. And the client half was the milestone-10 shape a
+    third time: `shownWalls` and `shownOverrides` beside `shownBoard`.
+
+    One thing this file did not consider: **the rail's inertness rule ran backwards.** Milestone 15
+    established that a panel which can do nothing must grey its tab; here the staged board gained
+    something for both panels to do, so the work was *deleting* two CSS rules. The fog switch and
+    radius came with them — they have been on `MapInfo` since 16a and only the client was refusing
+    them — so the next dungeon's lights are set before the promote. `ResetFog` is the one control
+    still live-only, because half of it forgets where the *party* explored and they have not
+    explored a map they have not been shown.
+
+    **Deliberately out, as planned: previewing the staged map's fog.** Nothing raycasts a board
+    nobody has been shown. The visible cost is that the DM paints a staged map with no wash under
+    the tint to react against, and the panel's hint says so in words because the board cannot. If it
+    is ever wanted it is client-only and costs the room nothing — `shape_covers` is the precedent
+    for a geometry rule living in two languages. Do not put it in the room.
 
 21. **Room lighting.** `lighting: Dynamic | Room` on `MapInfo`, beside `fog` and `vision_ft` and
     remembered per URL with them, so the outdoor map keeps line of sight and the dungeon reveals a
@@ -394,8 +427,10 @@ workshopped after 16 landed, and 19–24 after 18:
     Two things this mode buys past the reveal itself. **A shut door genuinely seals a room**, which
     makes doors load-bearing rather than decorative. And a bad trace fails *loudly* — one gap merges
     two rooms in front of everybody — instead of leaking a sliver of sight nobody notices. That
-    second one is why **20 comes first**: it is an argument for tracing carefully out of sight, and
-    it is a dependency of quality rather than of code.
+    second one is why **20 came first**: it is an argument for tracing carefully out of sight, and
+    it is a dependency of quality rather than of code. That dependency is now satisfied — the DM can
+    trace and check a whole dungeon before anybody is looking at it, which is exactly the working
+    habit this mode needs.
 
 22. **Undo, for the DM.** One stack, roughly ten deep, no redo.
 

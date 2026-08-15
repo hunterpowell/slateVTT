@@ -10,6 +10,7 @@ import type {
   WireMapInfo,
   WireOverrides,
   WireShape,
+  WireStaged,
   WireToken,
   WireWall,
 } from './protocol.js';
@@ -32,9 +33,10 @@ export interface Handlers {
   /** The ruler charges diagonals differently now. Called on every connection,
    *  for the reason above: the DM sets it, everyone holds it. */
   onDiagonalsChanged(diagonals: Diagonals): void;
-  /** Only ever called on a DM connection; the server sends no such frame to a
-   *  player. Null means the slot is now empty. */
-  onStagedChanged(map: WireMapInfo | null): void;
+  /** The staged slot whole — map, walls and paint. Only ever called on a DM
+   *  connection; the server sends no such frame to a player. Null means the slot
+   *  is now empty, indistinguishably from not being the DM. */
+  onStagedChanged(board: WireStaged | null): void;
   onInitiativeChanged(initiative: Initiative): void;
   /** Somebody else's sweep, keyed by their connection. Never our own. */
   onSketch(sketch: Extract<ServerMsg, { type: 'sketch' }>): void;
@@ -45,9 +47,9 @@ export interface Handlers {
   onPinged(ping: Extract<ServerMsg, { type: 'pinged' }>): void;
   /** Every shape we may see, replacing whatever we held. */
   onShapesChanged(shapes: WireShape[]): void;
-  /** Every wall the DM has traced. Only ever called on a DM connection — a
-   *  player is sent no such frame, empty or otherwise. */
-  onWallsChanged(walls: WireWall[]): void;
+  /** Every wall on one board, and which board that is. Only ever called on a DM
+   *  connection — a player is sent no such frame, empty or otherwise. */
+  onWallsChanged(walls: WireWall[], staged: boolean): void;
   /** What the party can see, or null on an unfogged map. Called on every
    *  connection, unlike the walls above — fog is party-shared, so the DM and the
    *  table are sent the same frame. */
@@ -55,7 +57,7 @@ export interface Handlers {
   /** The cells the DM has overridden by hand. Only ever called on a DM
    *  connection — the walls' rule, not the fog's, because this is what the DM
    *  decided rather than what the table gets to see of it. */
-  onOverridesChanged(overrides: WireOverrides): void;
+  onOverridesChanged(overrides: WireOverrides, staged: boolean): void;
   onError(message: string): void;
   onClose(): void;
 }
@@ -112,7 +114,7 @@ export function connect(on: Handlers): Net {
         on.onDiagonalsChanged(msg.diagonals);
         break;
       case 'staged_changed':
-        on.onStagedChanged(msg.map);
+        on.onStagedChanged(msg.board);
         break;
       case 'initiative_changed':
         on.onInitiativeChanged(msg.initiative);
@@ -130,13 +132,13 @@ export function connect(on: Handlers): Net {
         on.onShapesChanged(msg.shapes);
         break;
       case 'walls_changed':
-        on.onWallsChanged(msg.walls);
+        on.onWallsChanged(msg.walls, msg.staged);
         break;
       case 'fog_changed':
         on.onFogChanged(msg.fog);
         break;
       case 'overrides_changed':
-        on.onOverridesChanged(msg.overrides);
+        on.onOverridesChanged(msg.overrides, msg.staged);
         break;
       case 'error':
         on.onError(msg.message);

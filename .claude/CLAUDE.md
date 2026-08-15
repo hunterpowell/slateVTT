@@ -122,8 +122,11 @@ struct RoomState {
     dm_secret: String,
     roster: Vec<RosterEntry>,
     map: MapInfo,
-    /// The map the DM is preparing. DM-only — see `docs/maps.md`.
-    staged: Option<MapInfo>,
+    /// The map the DM is preparing, with the walls and fog overrides prepared
+    /// on it. One bundle, so one `None` withholds all three — DM-only, see
+    /// `docs/maps.md`. The map is `#[serde(flatten)]`ed on disk, which is what
+    /// keeps a save written before this loading.
+    staged: Option<StagedBoard>,
     tokens: HashMap<TokenId, Token>,
     /// Whether the board writes each token's name under it. Room-wide, the DM's
     /// to set and everyone's to hold — see `docs/tokens.md`. Defaults on.
@@ -135,7 +138,7 @@ struct RoomState {
     initiative: Initiative,
     /// Drawn on the board, in draw order — see `docs/drawings.md`.
     shapes: Vec<Shape>,
-    /// Traced over the map image. DM-only, whole — see `docs/walls.md`.
+    /// Traced over the live map image. DM-only, whole — see `docs/walls.md`.
     walls: Vec<Wall>,
     /// Everywhere the party's rays have reached, that widened a cell and as the
     /// DM's mask leaves it, and where they can see now. Grid cells, party-shared
@@ -143,8 +146,9 @@ struct RoomState {
     /// `recompute_sight` reads it — everything else reads `known` — see
     /// `docs/fog.md`.
     revealed: HashSet<Cell>, known: HashSet<Cell>, visible: HashSet<Cell>,
-    /// What the DM said about particular cells anyway. A mask applied after the
-    /// raycast, never a write into the two above. DM-only, whole, like the walls.
+    /// What the DM said about particular cells of the live board anyway. A mask
+    /// applied after the raycast, never a write into the two above. DM-only,
+    /// whole, like the walls — and staged like them.
     overrides: HashMap<Cell, Override>,
     /// How each map URL was last calibrated. Server-side only — it never enters a
     /// snapshot or a message, because the finished `MapInfo` already says
@@ -282,8 +286,9 @@ client knows nothing about it. **A keepalive is not a reconnect** — when the s
 the page still says so and waits for a refresh.
 
 `state` is a `RoomView`, which is the room as that one client may see it — for a player that
-means `staged` is stripped from it, the walls and the fog overrides are empty, tokens they cannot see
-are absent, and what survives is redacted. See `docs/maps.md` and `docs/tokens.md`. `state` is boxed, because growing
+means `staged` is stripped from it *whole*, taking the next dungeon's walls and paint with the
+image; the live board's walls and fog overrides are empty; tokens they cannot see are absent; and
+what survives is redacted. See `docs/maps.md` and `docs/tokens.md`. `state` is boxed, because growing
 `RoomView` by one field pushed `Welcome` past clippy's large-variant threshold — every message in
 every client's 256-slot mailbox is sized at the largest variant. Serde sees straight through the box
 and the frame on the wire is unchanged.
@@ -466,8 +471,14 @@ wins, a click that moved was a pan, and any armed tool takes the button first.
 `snapshot_for` carries an empty list, indistinguishable from an untraced map, and
 `Event::WallsChanged` produces *no message at all* for them — a frame they cannot use still says the
 DM did something. A load into the live slot sweeps the walls and a recalibration must not; that is
-`sweep_board`, shared with the shapes. There are no staged walls, so the next dungeon is traced
-after it is promoted.
+`sweep_board`, shared with the shapes.
+
+**The staged map has walls of its own, and fog overrides beside them.** The next dungeon is traced
+before the table is shown it — every wall and override command carries a `staged` flag, the
+`SetMap`/`MoveToken`/`CreateToken` pattern a fourth time, and a promote *moves* the staged pair onto
+the board rather than `sweep_board` clearing it. It cost almost nothing because walls already
+reached the DM or nobody: there was no filter to widen. A staged door promotes however the DM left
+it swung, which is how they say a room is already ajar. Still one slot, still not the scene concept.
 
 → **`docs/walls.md`** before touching `walls.ts`, `walltool.ts`, `sweep_board`, or
 `Wall`/`WallKind`/`Px` on the server.
@@ -523,6 +534,14 @@ same array. That fill is bounded by **every traced segment, doors included and w
 swung to** — the one place a door's state is not read, because it asks what is connected and not what
 is visible. Swept with the three sets, and persisted whole.
 
+**The staged map has a mask of its own and pointedly no fog.** `SetFogOverride` names a slot like
+the wall commands do, and a promote carries the paint across with the walls — so the ambush chamber
+is blacked out before the table has ever seen the map. What is *not* staged is the raycast: nothing
+casts a ray on a board nobody has been shown, so there is no staged `revealed`, no wash under the
+DM's tint, and `ResetFog` stays live-only because half of it is forgetting where the party explored.
+Previewing the staged map's fog is a second raycast and would be client-only if ever wanted — do not
+put it in the room.
+
 **An unanchored shape gates on `known`**, not on `visible`: a drawing is painted on the floor
 rather than standing on it, so it belongs with the terrain — fringe included, which is the one
 reader downstream of that widening. `shape_covers` on the server is a second
@@ -548,7 +567,9 @@ come with it. Closing a tab must put down whatever that panel armed, via the pan
 calibration box and the wall editor both take the left mouse button, and a tool still holding it
 under a hidden panel is a click doing something with nothing on screen saying why. And a panel that
 goes inert in some state must make its **tab** inert too — a way in to a panel that can do nothing
-is the same lie as the panel sitting there looking armed.
+is the same lie as the panel sitting there looking armed. That rule cuts both ways and milestone 20
+is the proof: once the staged map grew walls and a mask, the wall and fog panels stopped being inert
+over a preview, and the rules deleted were the CSS that greyed their tabs.
 
 The draw tool is deliberately *not* on the strip. It is the one panel everybody has and it is used
 in the middle of a fight, so it stays pinned to the bottom of the rail — the same reason a door
@@ -556,15 +577,18 @@ swings with no tool in hand. `rail.ts` is short and holds the rest of the reason
 
 ## Maps
 
-Two slots: `map`, and `staged: Option<MapInfo>` — the map the DM is preparing while the table is
-still looking at the current one. One slot, not a list. `staged` is absent from a player's
-`snapshot_for` and `Event::StagedChanged` becomes `None` for everyone but the DM; `None` is both
-"nothing is staged" and "you are not the DM", indistinguishable from the client side.
+Two slots: `map`, and `staged: Option<StagedBoard>` — the map the DM is preparing while the table is
+still looking at the current one, **with its own walls and fog overrides**. One slot, not a list.
+`staged` is absent from a player's `snapshot_for` and `Event::StagedChanged` becomes `None` for
+everyone but the DM; `None` is both "nothing is staged" and "you are not the DM", indistinguishable
+from the client side — and because the three travel as one bundle, that single `None` withholds the
+next dungeon's masonry and paint along with its image. There is no second staged field to forget.
 
 **A `SetMap`'s URL alone decides whether it is loading a map or recalibrating one**, against
-whichever slot its `staged` flag names. That distinction is load-bearing three times over — the
-remembered calibration table, the staged token plans, and the board's shapes each branch on it,
-and a recalibration must sweep away none of them.
+whichever slot its `staged` flag names. That distinction is load-bearing four times over — the
+remembered calibration table, the staged token plans, the board's shapes and each slot's traced
+walls all branch on it, and a recalibration must sweep away none of them. The fog overrides are the
+exception that proves it: they are cells, so a recalibration *does* clear them, on both boards.
 
 The DM picks maps out of the repository's `maps/` folder rather than re-uploading; **a pick is a
 copy into the uploads directory, not a second way to serve files.** Listing and picking are
@@ -574,9 +598,10 @@ over token art** and shares every line of it; the folder, the size cap, the noun
 and what a copy's name is fingerprinted over are the whole of what a library differs by.
 
 **Preview is client-only: the server does not know the DM is previewing and must not learn.**
-That is why intent rides on the command — `SetMap`, `MoveToken` and `CreateToken` each carry
-`staged` — rather than on a mode. Everything that draws or hit-tests reads `shownBoard(scene)`,
-never the live board directly.
+That is why intent rides on the command — `SetMap`, `MoveToken`, `CreateToken`, all four wall
+commands and `SetFogOverride` each carry `staged` — rather than on a mode. Everything that draws or
+hit-tests reads `shownBoard(scene)`, or its twins `shownWalls` and `shownOverrides`, never the live
+board directly.
 
 → **`docs/maps.md`** before touching `maptool.ts`, `calibrate.ts`, `library.rs`, `library.ts`, or
 `SetMap`/`MapInfo` on the server.

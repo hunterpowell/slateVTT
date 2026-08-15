@@ -38,7 +38,8 @@ import type { Rect, Vec2 } from './coords.js';
 import { playRect } from './coords.js';
 import { fillFrom } from './overrides.js';
 import type { ClientMsg, FogPaint } from './protocol.js';
-import type { Scene } from './scene.js';
+import type { Board, Scene } from './scene.js';
+import { shownBoard, shownWalls, showingStaged } from './scene.js';
 
 /** Matches `MIN_VISION_FT` and `MAX_VISION_FT` on the server, which re-checks. */
 const MIN_VISION_FT = 5;
@@ -146,9 +147,15 @@ export function createFogTool(
 
   const buttons = new Map<FogBrush, HTMLButtonElement>();
 
-  const previewing = (): boolean => scene?.previewing ?? false;
-  /** Whether the brush can do anything at all: fogged live board, not previewing. */
-  const usable = (): boolean => (scene?.live.fog ?? false) && !previewing();
+  /** Which board this panel is editing — the one on screen, like everything
+   *  else that draws or hit-tests. */
+  const staged = (): boolean => (scene === null ? false : showingStaged(scene));
+  /** The board on screen, or null before the first Welcome. */
+  const editing = (): Board | null => (scene === null ? null : shownBoard(scene));
+  /** Whether the brush can do anything at all, which is one question now rather
+   *  than two: is the board on screen fogged. It used to also ask "and are we
+   *  not previewing", because there was no mask on a staged map to paint. */
+  const usable = (): boolean => editing()?.fog ?? false;
 
   const clamp = (ft: number): number => {
     if (!Number.isFinite(ft)) return MIN_VISION_FT;
@@ -158,10 +165,10 @@ export function createFogTool(
   /** The playable region in image pixels, which is what a fill is clipped to —
    *  the same bound the server checks every cell against. */
   const board = (): Rect | null => {
-    const live = scene?.live;
+    const on = editing();
     const size = mapSize();
-    if (live === undefined || size === null) return null;
-    return playRect(live.playArea, size.w, size.h);
+    if (on === null || size === null) return null;
+    return playRect(on.playArea, size.w, size.h);
   };
 
   const clearPreview = (): void => {
@@ -170,18 +177,28 @@ export function createFogTool(
   };
 
   const paint = (): void => {
-    const live = scene?.live ?? null;
+    const on = editing();
+    const previewing = staged();
 
-    ui.on.checked = live?.fog ?? false;
-    ui.on.disabled = previewing();
-    ui.vision.value = String(live?.visionFt ?? 60);
+    // The board on screen, not the live one — the switch and the radius are
+    // fields of `MapInfo` and have always staged with it, so the next dungeon's
+    // lights are the DM's to set before the table is shown it.
+    ui.on.checked = on?.fog ?? false;
+    ui.on.disabled = on === null;
+    ui.vision.value = String(on?.visionFt ?? 60);
     // Read-only rather than hidden when fog is off: the radius is still the
     // map's, and hiding it would make turning fog on look like it had also
     // invented a number. The brushes go the same way for the same reason.
     const locked = !usable();
-    for (const control of [ui.vision, ui.visionDown, ui.visionUp, ui.gesture, ui.clear]) {
+    for (const control of [ui.vision, ui.visionDown, ui.visionUp, ui.gesture]) {
       control.disabled = locked;
     }
+    // Reset is the one control that stays live-only, and the reason is that
+    // half of it is not the DM's: it forgets everywhere the *party* has
+    // explored, and no ray has ever been cast on a map they have not been
+    // shown. What it would mean over a preview is "clear the paint", which is
+    // the `clear` brush with a bigger blast radius and no undo.
+    ui.clear.disabled = locked || previewing;
     for (const [b, button] of buttons) {
       button.disabled = locked;
       button.classList.toggle('is-on', b === brush);
@@ -192,12 +209,19 @@ export function createFogTool(
     // for, exactly as the wall editor's `tracing` does.
     document.body.classList.toggle('painting-fog', brush !== null);
 
-    ui.hint.textContent = previewing()
-      ? 'The map being prepared has no fog of its own — promote it first.'
-      : live?.fog !== true
-        ? 'The table sees the whole board.'
+    ui.hint.textContent =
+      on?.fog !== true
+        ? previewing
+          ? 'The map being prepared is unfogged; the table will see all of it.'
+          : 'The table sees the whole board.'
         : brush === null
-          ? `Player tokens light ${ui.vision.value} ft, and walls and shut doors stop it.`
+          ? previewing
+            ? // Says what it is rather than what it looks like, because what it
+              // looks like is nothing: there is no wash under the tint on a map
+              // nobody has cast a ray on. Without this line the DM is painting
+              // a dungeon that appears to be fully lit.
+              'Painting the map being prepared. This is what the party gets when it lands.'
+            : `Player tokens light ${ui.vision.value} ft, and walls and shut doors stop it.`
           : gesture === 'fill'
             ? 'Click a room to fill it — every wall and door bounds it, open or shut. Escape puts the brush down.'
             : 'Drag over the squares to paint them.';
@@ -211,12 +235,15 @@ export function createFogTool(
     if (id === previewCell) return;
     previewCell = id;
 
-    const live = scene?.live;
+    const on = editing();
     const area = board();
+    // The walls of the board being painted, which is what makes a fill on the
+    // staged map bound itself with the dungeon traced on it rather than with
+    // the one the table is standing in.
     preview =
-      live === undefined || area === null
+      on === null || area === null
         ? []
-        : fillFrom(cell, scene?.walls ?? [], live.grid, area, MAX_FILL_CELLS);
+        : fillFrom(cell, scene === null ? [] : shownWalls(scene), on.grid, area, MAX_FILL_CELLS);
   };
 
   const sendCells = (cells: number[], state: FogBrush): void => {
@@ -230,6 +257,7 @@ export function createFogTool(
       cells: pairs,
       // `clear` is an absence rather than a state, on the wire as in the room.
       state: state === 'clear' ? null : state,
+      staged: staged(),
     });
   };
 
@@ -275,8 +303,9 @@ export function createFogTool(
   });
 
   const sendMap = (): void => {
-    const live = scene?.live;
-    if (live === undefined || previewing()) return;
+    // The map tool owns which slot this lands in, and it is the same slot this
+    // panel is showing — both are "the board on screen".
+    if (editing() === null) return;
     setFog(ui.on.checked, clamp(Number(ui.vision.value)));
   };
 
@@ -344,11 +373,20 @@ export function createFogTool(
     },
 
     update(next) {
+      const wasStaged = staged();
       scene = next;
-      // A brush left in hand over a map that has just lost its fog, or over a
-      // preview, is a tool that can do nothing — the same argument the tab
-      // itself goes inert on.
+      // A brush left in hand over a map that has just lost its fog is a tool
+      // that can do nothing — the same argument the tab itself goes inert on.
+      // Previewing is no longer one of those cases: the staged board has a mask
+      // of its own to paint now.
       if (brush !== null && !usable()) brush = null;
+      // A stroke half-drawn when the board changed slot under it is a set of
+      // cells about the other map. Dropped rather than sent, which is the same
+      // call the wall editor makes about a half-traced run.
+      if (staged() !== wasStaged) {
+        stroke = [];
+        painted = new Set();
+      }
       clearPreview();
       paint();
     },

@@ -40,6 +40,7 @@ import { createRulers } from './ruler.js';
 import type { Scene, Token } from './scene.js';
 import {
   boardFromWire,
+  stagedFromWire,
   removeToken,
   sceneFromView,
   shownBoard,
@@ -411,16 +412,20 @@ function boot(): void {
             // panel describing something not on screen is a panel lying.
             document.body.classList.toggle('previewing', previewing);
             tokenTool?.select(null);
-            // The staged map has no shapes, so a tool left armed over it would
-            // sit there looking like it could do something. Put it away for the
-            // same reason the token selection goes — and the wall editor with
-            // it, which has even less to work on: there are no staged walls.
+            // The staged map still has no shapes, so a tool left armed over it
+            // would sit there looking like it could do something. Put it away
+            // for the same reason the token selection goes.
             drawTool?.stop();
-            wallTool?.stop();
-            // And the fog brush, which since 16b is a tool like the two above
-            // it. `update` is what puts it down — a brush over a preview can do
-            // nothing, and the panel says so rather than sitting there armed.
-            if (room !== null) fogTool?.update(room.scene);
+            // **The wall editor and the fog brush no longer go with it**, which
+            // is milestone 20 on this side of the wire: both boards carry their
+            // own masonry and their own paint now, so a tool armed here goes on
+            // meaning something. They are told instead of stopped — each drops
+            // the half-finished gesture it was holding, because a run of corners
+            // or a stroke of cells is about the map it was started on.
+            if (room !== null) {
+              wallTool?.update(room.scene);
+              fogTool?.update(room.scene);
+            }
             // No prompt to size the grid — a staged map was offered one when it
             // was staged, and the live map when it arrived.
             stage?.reloadMap();
@@ -609,16 +614,24 @@ function boot(): void {
     },
 
     // Never reaches a player: the server sends this frame to the DM alone.
-    onStagedChanged: (map) => {
+    onStagedChanged: (board) => {
       if (room === null) return;
       const scene = room.scene;
       const wasShowing = shownBoard(scene).mapUrl;
-      const newImage = map !== null && scene.staged?.mapUrl !== map.url;
+      const newImage = board !== null && scene.staged?.mapUrl !== board.url;
 
-      scene.staged = map === null ? null : boardFromWire(map);
+      // The whole slot at once, masonry and paint included. That is what makes
+      // a staged load sweeping its walls and a staged recalibration dropping
+      // its paint arrive with no frames of their own — there is one frame
+      // describing the slot, so there is one place to apply it.
+      scene.staged = stagedFromWire(board);
       // Leaves preview mode when the slot has emptied — promoted or discarded —
       // and reports it, which is what puts the token panel back.
       mapTool?.update(scene);
+      // Both read the board on screen, and the slot they are reading may have
+      // just been swept out from under them.
+      wallTool?.update(scene);
+      fogTool?.update(scene);
       afterBoardChanged(wasShowing, newImage);
     },
 
@@ -665,13 +678,23 @@ function boot(): void {
     // whole list, replacing whatever we held — nothing here is predicted
     // locally, because a segment's id is the server's to invent and a run is
     // finished with a click rather than dragged.
-    onWallsChanged: (walls) => {
+    onWallsChanged: (walls, staged) => {
       if (room === null) return;
-      room.scene.walls = walls.map(wallFromWire);
-      wallTool?.update(room.scene);
+      const scene = room.scene;
+      const traced = walls.map(wallFromWire);
+      // The frame names its own slot rather than this inferring one from what
+      // is on screen. A promote can move the board out from under a frame in
+      // flight, and inferring would then write the next dungeon's masonry onto
+      // the one the table is looking at.
+      if (staged) {
+        if (scene.staged !== null) scene.staged.walls = traced;
+      } else {
+        scene.walls = traced;
+      }
+      wallTool?.update(scene);
       // The fill floods against these, so a segment traced or erased changes
       // what the next preview would take.
-      fogTool?.update(room.scene);
+      fogTool?.update(scene);
     },
 
     // Reaches everyone, unlike the walls above — fog is party-shared, so the DM
@@ -692,9 +715,15 @@ function boot(): void {
     // this is what the DM *decided* and the frame above is what the table gets
     // to see of it. Rebuilt into its own little canvas here for the reason the
     // fog is — a filled dungeon room is a few thousand cells.
-    onOverridesChanged: (overrides) => {
+    onOverridesChanged: (overrides, staged) => {
       if (room === null) return;
-      room.scene.overrides = overridesFromWire(overrides);
+      const painted = overridesFromWire(overrides);
+      // Named by the frame, for the reason the walls above are.
+      if (staged) {
+        if (room.scene.staged !== null) room.scene.staged.overrides = painted;
+      } else {
+        room.scene.overrides = painted;
+      }
     },
 
     onError: (message) => {

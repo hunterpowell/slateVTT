@@ -240,9 +240,15 @@ fn fogged(msg: ClientMsg, vision_ft: f32) -> ClientMsg {
     }
 }
 
-/// The same command aimed at the staged slot. Every map helper here builds a
-/// live `set_map`; this is how a test asks for the staged one, so the two
-/// slots are always exercised with identical commands.
+/// The same command aimed at the staged slot. Every helper here builds a live
+/// command; this is how a test asks for the staged one, so the two slots are
+/// always exercised with *identical* commands rather than with two builders
+/// that could drift apart.
+///
+/// Every arm is a command that names a slot, which is the point: milestone 20
+/// added four to the list and this is the one place a test has to learn about
+/// them. A command that grows a `staged` flag later and is not added here goes
+/// on silently testing the live board.
 fn staged(msg: ClientMsg) -> ClientMsg {
     match msg {
         ClientMsg::SetMap {
@@ -266,6 +272,19 @@ fn staged(msg: ClientMsg) -> ClientMsg {
             vision_ft,
             staged: true,
         },
+        ClientMsg::AddWalls { points, door, .. } => ClientMsg::AddWalls {
+            points,
+            door,
+            staged: true,
+        },
+        ClientMsg::RemoveWall { id, .. } => ClientMsg::RemoveWall { id, staged: true },
+        ClientMsg::ToggleDoor { id, .. } => ClientMsg::ToggleDoor { id, staged: true },
+        ClientMsg::ClearWalls { .. } => ClientMsg::ClearWalls { staged: true },
+        ClientMsg::SetFogOverride { cells, state, .. } => ClientMsg::SetFogOverride {
+            cells,
+            state,
+            staged: true,
+        },
         other => other,
     }
 }
@@ -287,7 +306,27 @@ fn trace(points: &[(f32, f32)], door: bool) -> ClientMsg {
     ClientMsg::AddWalls {
         points: points.iter().map(|&(x, y)| Px { x, y }).collect(),
         door,
+        staged: false,
     }
+}
+
+/// A point in image pixels, for the tests that build a run by hand.
+fn px(x: f32, y: f32) -> Px {
+    Px { x, y }
+}
+
+/// The three single-segment wall commands, live by default like `trace` above
+/// and aimed at the other slot by wrapping them in `staged`.
+fn erase(id: WallId) -> ClientMsg {
+    ClientMsg::RemoveWall { id, staged: false }
+}
+
+fn swing(id: WallId) -> ClientMsg {
+    ClientMsg::ToggleDoor { id, staged: false }
+}
+
+fn clear_walls() -> ClientMsg {
+    ClientMsg::ClearWalls { staged: false }
 }
 
 /// A room with the lights out: one player token at cell (1,1), one monster
@@ -332,8 +371,9 @@ fn fog_room(vision_ft: f32) -> RoomState {
 /// A single traced segment, as the DM's editor would send it.
 fn wall(x1: f32, y1: f32, x2: f32, y2: f32, door: bool) -> ClientMsg {
     ClientMsg::AddWalls {
-        points: vec![Px { x: x1, y: y1 }, Px { x: x2, y: y2 }],
+        points: vec![px(x1, y1), px(x2, y2)],
         door,
+        staged: false,
     }
 }
 
@@ -363,6 +403,7 @@ fn paint(cells: &[Cell], state: Option<Override>) -> ClientMsg {
     ClientMsg::SetFogOverride {
         cells: cells.to_vec(),
         state,
+        staged: false,
     }
 }
 

@@ -19,7 +19,7 @@ use crate::fog::{self, Cell, FogView, Override, OverrideView};
 use crate::protocol::{
     Calibration, ClientId, ClientMsg, Diagonals, Hp, Initiative, InitiativeEntry, MapInfo, Origin,
     Owner, PlayerId, Pos, Px, RoomView, RosterEntry, RosterSlot, ServerMsg, Shape, ShapeId,
-    ShapeKind, Token, TokenId, TokenView, Wall, WallId, WallKind,
+    ShapeKind, StagedView, Token, TokenId, TokenView, Wall, WallId, WallKind,
 };
 use crate::store::{Saved, Store};
 
@@ -293,7 +293,13 @@ enum Event {
     /// than by what anyone did, like `StagedChanged` and `TokenPlanChanged`, and
     /// it is the strongest case of that shape yet — a player is not told a wall
     /// exists, was erased, or was ever traced.
-    WallsChanged,
+    ///
+    /// **Not payload-free about *which* board**, which is the one thing it must
+    /// carry: the message rebuilt from it is a whole list, and the DM holds two.
+    /// Reading the slot off `&self` at filter time instead would answer with
+    /// whichever board the room is holding by then, and a promote in between
+    /// makes that the wrong one.
+    WallsChanged { staged: bool },
     /// What the party can see changed — somebody moved, a door swung, a wall was
     /// traced, or the DM changed how far a torch reaches.
     ///
@@ -315,10 +321,14 @@ enum Event {
     /// cannot use still says the DM just did something, and here it would say
     /// *when*, on the one board they cannot see through.
     ///
-    /// It is never the whole of the news. Painting a cell also moves the fog, so
-    /// `refresh_fog` produces a `FogChanged` beside this one whenever anything the
-    /// table can see actually changed.
-    OverridesChanged,
+    /// It is never the whole of the news on the live board. Painting a cell there
+    /// also moves the fog, so `refresh_fog` produces a `FogChanged` beside this
+    /// one whenever anything the table can see actually changed. **Painting the
+    /// staged board it is the whole of it**, and correctly so: there is no fog on
+    /// a map the table has not been shown, so nothing casts a shadow yet.
+    ///
+    /// Carries its slot for the reason `WallsChanged` does.
+    OverridesChanged { staged: bool },
 }
 
 impl Initiative {
@@ -451,14 +461,60 @@ struct Sight {
     shapes: HashSet<ShapeId>,
 }
 
+/// The staged slot as the room holds it: the map the DM is preparing, and the
+/// walls and overrides they have prepared on it.
+///
+/// `StagedView`'s twin, and the split is the one this project makes three times
+/// already — that type is what crosses the wire and goes to disk, this is what
+/// the room computes with. The difference is one field: the overrides are a
+/// packed rectangle out there and a map of cells in here, exactly as the live
+/// board's are.
+///
+/// A bundle rather than three fields beside `staged`, because the three arrive,
+/// sweep and promote as one thing. The live board's stay flat on `RoomState`
+/// below, and that asymmetry is honest rather than an unfinished refactor: the
+/// live board is the room, and this is a parcel waiting to be delivered into it.
+#[derive(Debug, Clone, Default)]
+struct StagedBoard {
+    map: MapInfo,
+    /// Traced over the staged image before the table has ever seen it, which is
+    /// the whole of milestone 20. **They add no visibility surface at all**: a
+    /// wall reaches the DM or nobody, so there was no filter here to widen —
+    /// unlike `staged_only`, which had to grow `unseen_by_table` a third reason.
+    walls: Vec<Wall>,
+    /// Painted over the staged board by hand, and promoted with it.
+    ///
+    /// There is deliberately no staged `revealed`, `known` or `visible` to sit
+    /// under these. A staged override is not a preview of what the party will
+    /// see — it is what the DM is handing them the moment the map lands. See
+    /// *No staged fog* in `docs/fog.md`.
+    overrides: HashMap<Cell, Override>,
+}
+
+impl StagedBoard {
+    /// The wire and disk form of this slot. One function, because what the DM
+    /// may hold of the staged board and what the file must hold of it are the
+    /// same thing — a player holds none of it either way, so there is nothing
+    /// here for a `view_for` to redact and no second caller to disagree.
+    fn view(&self) -> StagedView {
+        StagedView {
+            map: self.map.clone(),
+            walls: self.walls.clone(),
+            overrides: fog::pack_overrides(&self.overrides),
+        }
+    }
+}
+
 pub struct RoomState {
     dm_secret: String,
     roster: Vec<RosterEntry>,
     map: MapInfo,
-    /// The map the DM is preparing for later, which the table cannot see. It is
-    /// stripped in `snapshot_for` and filtered out in `message_for`; walls will
-    /// leave by the same two doors.
-    staged: Option<MapInfo>,
+    /// The map the DM is preparing for later, which the table cannot see, and
+    /// everything they have prepared on it. It is stripped in `snapshot_for` and
+    /// filtered out in `message_for` — and because the three are one bundle,
+    /// that is still one `None` rather than three fields each able to be
+    /// forgotten.
+    staged: Option<StagedBoard>,
     tokens: HashMap<TokenId, Token>,
     initiative: Initiative,
     /// Everything drawn on the board, in draw order.
@@ -473,9 +529,9 @@ pub struct RoomState {
     ///
     /// A `Vec` for the reason the shapes are one, except that order here is not
     /// z-order and means nothing at all — it is simply the order they were
-    /// traced in. They belong to the live board like the shapes do: the staged
-    /// map has none, because walls staged alongside a map are the scene concept
-    /// CLAUDE.md rules out.
+    /// traced in. **These are the live board's**; the staged board has its own
+    /// list on `StagedBoard`, and a promote is what carries one into the other.
+    /// That is still one slot rather than the scene concept CLAUDE.md rules out.
     walls: Vec<Wall>,
     /// Everywhere the party's own torches have ever reached, in grid cells.
     ///
@@ -521,7 +577,9 @@ pub struct RoomState {
     /// the room can derive what somebody decided.
     ///
     /// Cleared by `sweep_board` with `revealed`, and for the same reason: these
-    /// are cells, so a new lattice invalidates them.
+    /// are cells, so a new lattice invalidates them. **The live board's**; the
+    /// staged board paints into its own map on `StagedBoard`, and a promote is
+    /// what replaces these with those.
     overrides: HashMap<Cell, Override>,
     /// Whether the board writes each token's name under it.
     ///
@@ -685,7 +743,7 @@ fn persists(event: &Event) -> bool {
         // Half an hour of tracing. The one thing in the room where losing the
         // last two seconds of work would mean losing the segment the DM was
         // most likely to be in the middle of.
-        | Event::WallsChanged
+        | Event::WallsChanged { .. }
         // Only `revealed` is on disk, and only it can have grown here. Riding
         // along with the drop that caused it costs nothing — that frame already
         // marked the room dirty — and a session's exploration surviving a
@@ -693,7 +751,7 @@ fn persists(event: &Event) -> bool {
         | Event::FogChanged
         // The walls' argument again: this is somebody's work, and nothing in the
         // room could reconstruct it from anything else if the file lost it.
-        | Event::OverridesChanged => true,
+        | Event::OverridesChanged { .. } => true,
         // A sketch is not in the room to be saved. It is the one thing here
         // that exists only between two pointer events, which is exactly why a
         // measuring line costs the disk nothing at all.
@@ -727,24 +785,35 @@ fn moves_sight(msg: &ClientMsg) -> bool {
         ClientMsg::MoveToken {
             dragging, staged, ..
         } => !dragging && !staged,
+        // Geometry and paint each name a board, exactly as a token move does, and
+        // for the identical reason: **nothing on the staged board casts a shadow
+        // on this one.** There is no staged fog for a staged wall to block or a
+        // staged override to mask, so tracing the next dungeon must not recompute
+        // this one's sight — which would be a raycast per click of a two-hundred
+        // segment trace, all of it to find nothing had changed.
+        ClientMsg::AddWalls { staged, .. }
+        | ClientMsg::RemoveWall { staged, .. }
+        | ClientMsg::ToggleDoor { staged, .. }
+        | ClientMsg::ClearWalls { staged }
+        | ClientMsg::SetFogOverride { staged, .. } => !staged,
         // Any of these can add, remove or re-own a vision source — handing a
         // token to a player is how somebody gains one — or move the lattice the
         // cells are counted on, or change what blocks a ray.
+        //
+        // `SetMap` is on this list whichever slot it names, unlike the five
+        // above: filling the staged slot sweeps that board's tokens, and a
+        // promote is the moment everything staged becomes what the party is
+        // looking at.
         ClientMsg::CreateToken { .. }
         | ClientMsg::UpdateToken { .. }
         | ClientMsg::DeleteToken { .. }
         | ClientMsg::SetMap { .. }
         | ClientMsg::PromoteStaged
         | ClientMsg::ClearStaged
-        | ClientMsg::AddWalls { .. }
-        | ClientMsg::RemoveWall { .. }
-        | ClientMsg::ToggleDoor { .. }
-        | ClientMsg::ClearWalls
-        // These two are the only commands here that change what the party can see
-        // without changing anything about the room they are looking at. The mask
-        // is applied inside `recompute_sight`, so they need no arm of their own
-        // anywhere else.
-        | ClientMsg::SetFogOverride { .. }
+        // The one command here that changes what the party can see without
+        // changing anything about the room they are looking at. The mask is
+        // applied inside `recompute_sight`, so it needs no arm of its own
+        // anywhere else. It names no slot: there is no staged fog to reset.
         | ClientMsg::ResetFog => true,
         // Nothing drawn on the board occludes anything, a sketch is not in the
         // room at all, the turn order is a panel, and a label is written over
@@ -922,7 +991,14 @@ impl RoomState {
             dm_secret,
             roster: default_roster(),
             map: saved.map,
-            staged: saved.staged,
+            // The one field on the file whose shape changed rather than gaining
+            // a sibling, which is why `StagedView` flattens its map — see the
+            // test named for an older save.
+            staged: saved.staged.map(|staged| StagedBoard {
+                map: staged.map,
+                walls: staged.walls,
+                overrides: fog::unpack_overrides(&staged.overrides),
+            }),
             tokens: saved
                 .tokens
                 .into_iter()
@@ -958,7 +1034,7 @@ impl RoomState {
 
         Saved {
             map: self.map.clone(),
-            staged: self.staged.clone(),
+            staged: self.staged.as_ref().map(StagedBoard::view),
             tokens,
             initiative: self.initiative.clone(),
             shapes: self.shapes.clone(),
@@ -1225,8 +1301,12 @@ impl RoomState {
 
         RoomView {
             map: self.map.clone(),
+            // One `None` withholding three things rather than one, which is what
+            // the bundle bought: the next dungeon's map, its masonry and its
+            // paint leave by a single door, and there is no second staged field
+            // for a later milestone to add and forget to filter here.
             staged: match identity {
-                Identity::Dm => self.staged.clone(),
+                Identity::Dm => self.staged.as_ref().map(StagedBoard::view),
                 Identity::Player(_) => None,
             },
             tokens,
@@ -1251,7 +1331,7 @@ impl RoomState {
             // decided, and the line above is what the table gets to see of it.
             // Empty is both "nothing painted" and "you are not the DM".
             overrides: if is_dm {
-                fog::pack_overrides(&self.overrides)
+                self.overrides_for(false)
             } else {
                 OverrideView::default()
             },
@@ -1555,6 +1635,64 @@ impl RoomState {
         }
     }
 
+    /// The board a command named, or `None` when it named the staged slot and
+    /// nothing is staged.
+    ///
+    /// `shownBoard`'s server-side counterpart, and it exists for the same reason:
+    /// without one function answering "which of the two", every arm below grows
+    /// an `if staged` and the one that forgets writes the next dungeon's masonry
+    /// across the board the table is looking at.
+    ///
+    /// Three accessors rather than one returning a struct, because the borrow
+    /// checker cares which of them is mutable and the callers each want one.
+    fn map_in(&self, staged: bool) -> Option<&MapInfo> {
+        if staged {
+            self.staged.as_ref().map(|s| &s.map)
+        } else {
+            Some(&self.map)
+        }
+    }
+
+    fn walls_in(&self, staged: bool) -> &[Wall] {
+        if staged {
+            // Empty for an empty slot, which is what an untraced map looks like
+            // anyway — the same indistinguishability a player's copy relies on.
+            self.staged.as_ref().map_or(&[], |s| s.walls.as_slice())
+        } else {
+            &self.walls
+        }
+    }
+
+    /// The mutable halves, which `apply` uses and `check` does not. `None` only
+    /// ever means an empty staged slot, which `check` has already refused.
+    fn walls_mut(&mut self, staged: bool) -> Option<&mut Vec<Wall>> {
+        if staged {
+            self.staged.as_mut().map(|s| &mut s.walls)
+        } else {
+            Some(&mut self.walls)
+        }
+    }
+
+    fn overrides_mut(&mut self, staged: bool) -> Option<&mut HashMap<Cell, Override>> {
+        if staged {
+            self.staged.as_mut().map(|s| &mut s.overrides)
+        } else {
+            Some(&mut self.overrides)
+        }
+    }
+
+    /// One board's overrides packed for the wire, which is what both
+    /// `snapshot_for` and `message_for` hand the DM.
+    fn overrides_for(&self, staged: bool) -> OverrideView {
+        if staged {
+            self.staged
+                .as_ref()
+                .map_or_else(OverrideView::default, |s| fog::pack_overrides(&s.overrides))
+        } else {
+            fog::pack_overrides(&self.overrides)
+        }
+    }
+
     /// Step 2. An unidentified connection can do nothing at all.
     fn check(&self, origin: ClientId, msg: &ClientMsg) -> Result<(), String> {
         let Some(client) = self.clients.get(&origin) else {
@@ -1784,8 +1922,16 @@ impl RoomState {
             // per-item permission underneath: the walls are all the DM's, so
             // "may this client touch a wall" and "is this client the DM" are the
             // same question.
-            ClientMsg::AddWalls { points, .. } => {
+            ClientMsg::AddWalls { points, staged, .. } => {
                 require_dm(client, "trace walls")?;
+                // The staged slot's own rule, before any of the geometry: a run
+                // traced onto a slot holding no map has nothing to be traced
+                // over. Same refusal `CreateToken` and a staged `MoveToken`
+                // already make, and it is not the server learning about preview
+                // — it is the slot being empty.
+                if *staged {
+                    self.staged_slot("trace walls on")?;
+                }
                 // Two points make one segment. One is a click that started a run
                 // and never finished it, which the client does not send — so
                 // reaching here is a frame that would store nothing.
@@ -1798,8 +1944,10 @@ impl RoomState {
                     ));
                 }
                 // The run becomes one segment per gap between corners, so this
-                // is what the room is actually being asked to grow by.
-                if self.walls.len() + points.len() - 1 > MAX_WALLS {
+                // is what the room is actually being asked to grow by. Counted
+                // against the board it is being traced on: the cap is what one
+                // map's worth of masonry costs, and the two slots each hold one.
+                if self.walls_in(*staged).len() + points.len() - 1 > MAX_WALLS {
                     return Err(format!("this map already holds {MAX_WALLS} wall segments"));
                 }
                 for point in points {
@@ -1821,18 +1969,23 @@ impl RoomState {
             // far — but the DM's client can race itself with two tabs open, and
             // a refusal that describes the outcome is more use than one that
             // describes the lookup.
-            ClientMsg::RemoveWall { id } => {
+            // Looked up in the slot the command named rather than in both. The
+            // ids are UUIDs, so searching both would find it either way — and
+            // would erase a live segment on a frame the DM sent while looking at
+            // the staged board, which is the bug the flag exists to make
+            // impossible rather than unlikely.
+            ClientMsg::RemoveWall { id, staged } => {
                 require_dm(client, "erase walls")?;
-                if self.walls.iter().any(|w| &w.id == id) {
+                if self.walls_in(*staged).iter().any(|w| &w.id == id) {
                     Ok(())
                 } else {
                     Err("that wall is already gone".to_owned())
                 }
             }
 
-            ClientMsg::ToggleDoor { id } => {
+            ClientMsg::ToggleDoor { id, staged } => {
                 require_dm(client, "open and close doors")?;
-                match self.walls.iter().find(|w| &w.id == id) {
+                match self.walls_in(*staged).iter().find(|w| &w.id == id) {
                     Some(wall) if wall.door().is_some() => Ok(()),
                     // Refused rather than ignored: a toggle that lands on
                     // masonry means the client and the room disagree about what
@@ -1842,15 +1995,32 @@ impl RoomState {
                 }
             }
 
-            ClientMsg::ClearWalls => require_dm(client, "clear the walls"),
+            ClientMsg::ClearWalls { staged } => {
+                require_dm(client, "clear the walls")?;
+                if *staged {
+                    self.staged_slot("clear the walls of")?;
+                }
+                Ok(())
+            }
 
-            ClientMsg::SetFogOverride { cells, .. } => {
+            ClientMsg::SetFogOverride { cells, staged, .. } => {
                 require_dm(client, "override the fog")?;
+                if *staged {
+                    self.staged_slot("paint")?;
+                }
                 // Refused rather than stored-and-ignored. An override on a map
                 // with no fog can have no effect at all, and a command that
                 // silently does nothing is worse than one that says why — the
                 // panel greys itself for the same reason.
-                if !self.map.fog {
+                //
+                // Asked of the board the paint is for, which is the whole of
+                // what staging changed here: a fogged staged map may be painted
+                // while the unfogged live one below it may not, and the DM is
+                // preparing the first of those.
+                let Some(map) = self.map_in(*staged) else {
+                    return Err("there is no map to paint".to_owned());
+                };
+                if !map.fog {
                     return Err("there is no fog on this map to override".to_owned());
                 }
                 if cells.is_empty() {
@@ -1868,8 +2038,10 @@ impl RoomState {
                 // Clipped for the reason the sweep in `fog.rs` clips itself: a
                 // cell a million squares out lands in the bounding box of the
                 // packed rectangle, and the box spanning it and the dungeon is
-                // the whole map's worth of characters on every send.
-                if cells.iter().any(|&c| !fog::cell_on_board(&self.map, c)) {
+                // the whole map's worth of characters on every send. Against the
+                // named board's own play area, since the two are different
+                // images and one of them is usually a different size.
+                if cells.iter().any(|&c| !fog::cell_on_board(map, c)) {
                     return Err("that is not on the board".to_owned());
                 }
                 Ok(())
@@ -2136,7 +2308,7 @@ impl RoomState {
                 // load — which is what makes a map come back calibrated the
                 // moment it is staged rather than only once it is promoted.
                 let showing = if staged {
-                    self.staged.as_ref().map(|map| &map.url)
+                    self.staged.as_ref().map(|board| &board.map.url)
                 } else {
                     Some(&self.map.url)
                 };
@@ -2167,7 +2339,53 @@ impl RoomState {
                     } else {
                         Vec::new()
                     };
-                    self.staged = Some(finished);
+
+                    // The staged board's own geometry, swept by exactly the rule
+                    // the live board's is swept by one branch down — which is the
+                    // whole argument for the two slots holding the same three
+                    // things. A *load* is a different image and nothing traced on
+                    // the last one means anything on it. A **recalibration keeps
+                    // the walls and drops the paint**: a wall is image pixels and
+                    // still traces the same painted line, and an override is a
+                    // cell whose square has just moved out from under it.
+                    let reshaped = self.staged.as_ref().is_some_and(|board| {
+                        (
+                            board.map.grid_px,
+                            board.map.offset_x,
+                            board.map.offset_y,
+                            board.map.play_area,
+                        ) != (
+                            finished.grid_px,
+                            finished.offset_x,
+                            finished.offset_y,
+                            finished.play_area,
+                        )
+                    });
+                    let carried = match self.staged.take() {
+                        Some(board) if !loading => StagedBoard {
+                            map: finished,
+                            walls: board.walls,
+                            overrides: if reshaped {
+                                HashMap::new()
+                            } else {
+                                board.overrides
+                            },
+                        },
+                        // A load, or the first map into an empty slot. Either way
+                        // there is nothing to carry.
+                        _ => StagedBoard {
+                            map: finished,
+                            ..StagedBoard::default()
+                        },
+                    };
+                    self.staged = Some(carried);
+
+                    // One event still, and that is the bundle earning its keep:
+                    // `StagedChanged` carries the whole slot, so a load that
+                    // swept its walls and a recalibration that dropped its paint
+                    // are both already described by the frame the DM was getting
+                    // anyway. There is no staged `WallsChanged` to remember to
+                    // emit beside it, and so none to forget.
                     events.push(Event::StagedChanged);
                     events
                 } else {
@@ -2211,7 +2429,7 @@ impl RoomState {
                         // drawing a mask the room no longer holds.
                         if !self.overrides.is_empty() {
                             self.overrides.clear();
-                            events.push(Event::OverridesChanged);
+                            events.push(Event::OverridesChanged { staged: false });
                         }
                     }
                     // The drawings and the walls are the opposite case, and turn
@@ -2232,20 +2450,42 @@ impl RoomState {
             // keeps its coordinates and the DM repositions it. A plan is how the
             // DM says otherwise in advance, and this is where it comes true.
             ClientMsg::PromoteStaged => {
-                let Some(map) = self.staged.take() else {
+                let Some(board) = self.staged.take() else {
                     return Vec::new(); // proved to exist by `check`
                 };
-                self.map = map;
 
                 // Tokens first, so that by the time a client is told the slot
                 // has emptied — which is what ends the DM's preview — every
-                // token already holds the position it landed on.
+                // token already holds the position it landed on. It reads the
+                // fog before the sweep below, which is why the order here has
+                // never been free to change.
                 let mut events = self.promote_staged_tokens();
                 // A promote is a new map arriving on the board, so the drawings
-                // and the walls go the way they go for any other load. Nothing
-                // carries over: there are no staged shapes or staged walls to
-                // adopt, because the staged map has neither.
+                // go the way they go for any other load, and so does everywhere
+                // the party had explored: this is a different dungeon and they
+                // have not been in it.
+                //
+                // **The walls and the paint are what milestone 20 changed.** The
+                // sweep still clears the board's, and then the staged board's
+                // land in their place rather than nothing landing — which is the
+                // whole feature, and the reason `sweep_board` is called before
+                // the assignment rather than after it.
                 events.append(&mut self.sweep_board());
+                self.map = board.map;
+                self.walls = board.walls;
+                self.overrides = board.overrides;
+                // Gated the way the sweep's own halves are, and against what
+                // *arrived* rather than what left: an empty staged board
+                // promoting onto an empty live one is a `WallsChanged` saying
+                // nothing happened. `sweep_board` may have emitted one already
+                // for the clear, and a second frame naming the new list is the
+                // correct order — the DM ends up holding what is actually there.
+                if !self.walls.is_empty() {
+                    events.push(Event::WallsChanged { staged: false });
+                }
+                if !self.overrides.is_empty() {
+                    events.push(Event::OverridesChanged { staged: false });
+                }
                 // Then the two that were always here, because two things
                 // happened: the board changed for everyone, and the slot emptied
                 // for the DM.
@@ -2347,18 +2587,27 @@ impl RoomState {
             // itself is not stored — it was how the DM drew, not what the map
             // holds — which is what lets one bad segment of a long trace be
             // erased without redrawing the rest of it.
-            ClientMsg::AddWalls { points, door } => {
+            ClientMsg::AddWalls {
+                points,
+                door,
+                staged,
+            } => {
                 let kind = if door {
                     // Traced shut. A door the DM has to close after drawing it is
                     // a door they will forget to close, and a dungeon's doors are
-                    // shut until somebody opens them.
+                    // shut until somebody opens them. That holds on both boards:
+                    // a staged door is traced shut too, and swinging it before
+                    // the promote is how the DM says otherwise.
                     WallKind::Door(false)
                 } else {
                     WallKind::Solid
                 };
+                let Some(walls) = self.walls_mut(staged) else {
+                    return Vec::new(); // proved to exist by `check`
+                };
                 for pair in points.windows(2) {
                     let [from, to] = pair else { continue };
-                    self.walls.push(Wall {
+                    walls.push(Wall {
                         // The server's to invent, like a shape's or a token's.
                         id: WallId(Uuid::new_v4().simple().to_string()),
                         from: *from,
@@ -2366,16 +2615,21 @@ impl RoomState {
                         kind,
                     });
                 }
-                vec![Event::WallsChanged]
+                vec![Event::WallsChanged { staged }]
             }
 
-            ClientMsg::RemoveWall { id } => {
-                self.walls.retain(|w| w.id != id);
-                vec![Event::WallsChanged]
+            ClientMsg::RemoveWall { id, staged } => {
+                if let Some(walls) = self.walls_mut(staged) {
+                    walls.retain(|w| w.id != id);
+                }
+                vec![Event::WallsChanged { staged }]
             }
 
-            ClientMsg::ToggleDoor { id } => {
-                for wall in &mut self.walls {
+            // On the live board this is the party opening a door mid-fight. On
+            // the staged one it is authoring — whatever it is left as is what
+            // promotes, which is how the DM prepares a room that is already ajar.
+            ClientMsg::ToggleDoor { id, staged } => {
+                for wall in self.walls_mut(staged).into_iter().flatten() {
                     if wall.id == id {
                         // Proved to be a door by `check`; masonry is left alone
                         // rather than turned into one.
@@ -2384,15 +2638,24 @@ impl RoomState {
                         }
                     }
                 }
-                vec![Event::WallsChanged]
+                vec![Event::WallsChanged { staged }]
             }
 
-            ClientMsg::ClearWalls => {
-                self.walls.clear();
-                vec![Event::WallsChanged]
+            ClientMsg::ClearWalls { staged } => {
+                if let Some(walls) = self.walls_mut(staged) {
+                    walls.clear();
+                }
+                vec![Event::WallsChanged { staged }]
             }
 
-            ClientMsg::SetFogOverride { cells, state } => {
+            ClientMsg::SetFogOverride {
+                cells,
+                state,
+                staged,
+            } => {
+                let Some(overrides) = self.overrides_mut(staged) else {
+                    return Vec::new(); // proved to exist by `check`
+                };
                 match state {
                     // `Auto` is the absence of an entry rather than a fourth
                     // variant, so handing cells back to the rays is a removal.
@@ -2400,12 +2663,12 @@ impl RoomState {
                     // `recompute_sight` from having a case that does nothing.
                     None => {
                         for cell in cells {
-                            self.overrides.remove(&cell);
+                            overrides.remove(&cell);
                         }
                     }
                     Some(state) => {
                         for cell in cells {
-                            self.overrides.insert(cell, state);
+                            overrides.insert(cell, state);
                         }
                     }
                 }
@@ -2414,7 +2677,11 @@ impl RoomState {
                 // mask did to the two sets is already in the difference — and if
                 // the DM painted `Dark` over cells nobody could see anyway, there
                 // is correctly no `FogChanged` at all.
-                vec![Event::OverridesChanged]
+                //
+                // Painting the staged board there is nothing for it to report at
+                // all: `moves_sight` says so, and it is right — no ray has ever
+                // been cast on a map the table has not been shown.
+                vec![Event::OverridesChanged { staged }]
             }
 
             // The whole map back to dark, and then whatever the party can see
@@ -2424,7 +2691,7 @@ impl RoomState {
             ClientMsg::ResetFog => {
                 self.forget_fog();
                 self.overrides.clear();
-                vec![Event::OverridesChanged]
+                vec![Event::OverridesChanged { staged: false }]
             }
 
             ClientMsg::SetInitiative { token, value } => {
@@ -2522,9 +2789,9 @@ impl RoomState {
                 | Event::SketchEnded { .. }
                 | Event::Pinged { .. }
                 | Event::ShapesChanged
-                | Event::WallsChanged
+                | Event::WallsChanged { .. }
                 | Event::FogChanged
-                | Event::OverridesChanged => None,
+                | Event::OverridesChanged { .. } => None,
             })
             .collect();
 
@@ -2576,6 +2843,11 @@ impl RoomState {
     /// on this board and the walls trace this art, and correcting the grid
     /// changes neither of those facts.
     ///
+    /// **A promote clears with this and then puts the staged board's walls and
+    /// paint in their place.** That is not this function's business — it clears,
+    /// and its caller decides whether anything arrives — and keeping it that way
+    /// is what lets a map load and a promote go on sharing it.
+    ///
     /// Both halves are gated on being non-empty, and that is not tidiness. An
     /// unconditional `ShapesChanged` on every map load tells the table something
     /// happened to a board that had nothing on it — the same gate the initiative
@@ -2593,7 +2865,7 @@ impl RoomState {
         // a line across the middle of this one.
         if !self.walls.is_empty() {
             self.walls.clear();
-            events.push(Event::WallsChanged);
+            events.push(Event::WallsChanged { staged: false });
         }
         // And the explored terrain, which is where the fog differs from the walls
         // it was just cleared beside. A wall survives a recalibration because it
@@ -2612,7 +2884,7 @@ impl RoomState {
         // no longer holds. Gated like the two above, for the reason those are.
         if !self.overrides.is_empty() {
             self.overrides.clear();
-            events.push(Event::OverridesChanged);
+            events.push(Event::OverridesChanged { staged: false });
         }
         events
     }
@@ -2942,8 +3214,12 @@ impl RoomState {
             // recipient is, which is the shape hidden tokens and fog need. A
             // player is not sent a staged map and told not to draw it — the
             // frame does not exist for them at all.
+            //
+            // It carries the whole staged board rather than only its map, which
+            // is what lets a staged load sweeping its walls and a staged
+            // recalibration dropping its paint need no frames of their own.
             Event::StagedChanged => self.is_dm(recipient).then(|| ServerMsg::StagedChanged {
-                map: self.staged.clone(),
+                board: self.staged.as_ref().map(StagedBoard::view),
             }),
 
             // Keyed on `by` rather than on `origin`, which are the same client
@@ -3005,9 +3281,17 @@ impl RoomState {
             // Not an empty list either — a frame carrying nothing still says the
             // DM just did something, and by the time fog exists it would say
             // *when* a door opened, on the one board they cannot see through.
-            Event::WallsChanged => self.is_dm(recipient).then(|| ServerMsg::WallsChanged {
-                walls: self.walls.clone(),
-            }),
+            //
+            // Staging changed nothing here, which is the reason this was the
+            // cheapest subsystem in the project to stage: there was no filter to
+            // widen because there was never a filtered form. A staged wall is
+            // withheld by the line that already withheld a live one.
+            Event::WallsChanged { staged } => {
+                self.is_dm(recipient).then(|| ServerMsg::WallsChanged {
+                    walls: self.walls_in(*staged).to_vec(),
+                    staged: *staged,
+                })
+            }
 
             // The one arm here that builds the same thing for everybody. Fog is
             // party-shared, so there is one answer and no filtering left to do —
@@ -3020,9 +3304,12 @@ impl RoomState {
             // that does not filter. The pair is the whole design in two lines:
             // what the DM decided reaches the DM, and the difference it made
             // reaches the table.
-            Event::OverridesChanged => self.is_dm(recipient).then(|| ServerMsg::OverridesChanged {
-                overrides: fog::pack_overrides(&self.overrides),
-            }),
+            Event::OverridesChanged { staged } => {
+                self.is_dm(recipient).then(|| ServerMsg::OverridesChanged {
+                    overrides: self.overrides_for(*staged),
+                    staged: *staged,
+                })
+            }
         }
     }
 

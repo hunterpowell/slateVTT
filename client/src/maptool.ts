@@ -84,8 +84,10 @@ export interface MapTool extends Calibration {
    * the grid colour is sent from `sendColor` rather than read off the board. A
    * fiddle with the fog must not commit an unapplied grid preview.
    *
-   * The live slot only. There is no fog on a staged map, so the panel that calls
-   * this is inert while previewing.
+   * Whichever slot the panel is on, which is whichever board is on screen. A
+   * staged map carries `fog` and `vision_ft` like any other — they have ridden
+   * on `MapInfo` since fog shipped — so the next dungeon's lights are set
+   * before the table is ever shown it.
    */
   setFog(on: boolean, visionFt: number): void;
 }
@@ -523,11 +525,16 @@ export function createMapTool(
     },
 
     setFog(on, visionFt) {
-      // `confirmed` rather than what is on screen, and `scene.live` rather than
-      // `target()`: the fog panel is only usable over the board, so this must
-      // not follow the map panel into the staged slot if it happens to be there.
-      const board = scene?.live;
-      if (board === undefined || mode !== 'live' || confirmed === null) return;
+      // `confirmed` rather than what is on screen: an unapplied grid preview
+      // must not be committed by a fiddle with the fog.
+      //
+      // `target()` rather than `scene.live`, which is what milestone 20 changed
+      // here — the fog panel edits the board on screen now, and the map panel's
+      // own mode is exactly what decides which board that is. The two cannot
+      // disagree because there is only one answer, which is the argument for
+      // routing this through here in the first place.
+      const board = target();
+      if (board === null || confirmed === null) return;
       sendMap(confirmed.grid, board.gridColor, confirmed.area, undefined, { on, visionFt });
     },
 

@@ -299,6 +299,77 @@ fn a_restored_room_is_the_room_that_was_saved() {
 }
 
 #[test]
+fn a_save_written_before_the_staged_slot_held_walls_still_loads_its_map() {
+    // Invariant 2, asked of the one field on this file whose *shape* changed
+    // rather than gaining a sibling. A save from before milestone 20 wrote the
+    // staged map's own fields directly under `staged`; `StagedView` flattens the
+    // map so they land exactly where they always did, and the two lists beside
+    // it default to what an untraced staged map has anyway.
+    //
+    // The failure this pins is silent rather than loud: nested under a `map`
+    // key, every one of these fields would read as missing, `MapInfo::default()`
+    // would fill in, and the DM's next-map tab would open on a blank image with
+    // a URL of "" — a staged map lost with nothing on screen saying so.
+    let old = r#"{
+        "map": {"url": "/uploads/cave.png", "grid_px": 70.0},
+        "staged": {"url": "/uploads/crypt.png", "grid_px": 48.0, "offset_x": 12.0, "fog": true}
+    }"#;
+
+    let saved: Saved = serde_json::from_str(old).expect("an older save still parses");
+    let staged = saved.staged.as_ref().expect("the staged slot survived");
+    assert_eq!(staged.map.url, "/uploads/crypt.png", "flattened, not nested");
+    assert_eq!((staged.map.grid_px, staged.map.offset_x), (48.0, 12.0));
+    assert!(staged.map.fog, "every map field comes through, not just the url");
+    assert!(staged.walls.is_empty(), "nothing was traced on it yet");
+
+    // And through the room, which is what actually has to hold up.
+    let restored = RoomState::restored(saved, SECRET.to_owned());
+    assert_eq!(restored.map.url, "/uploads/cave.png");
+    let staged = restored.staged.as_ref().expect("the staged slot survived");
+    assert_eq!(staged.map.url, "/uploads/crypt.png");
+    assert!(staged.walls.is_empty());
+    assert!(staged.overrides.is_empty());
+}
+
+#[test]
+fn a_staged_dungeon_survives_a_restart_with_its_walls_and_its_paint() {
+    // The other direction, and the reason the milestone exists: a dungeon traced
+    // on a Tuesday is still traced on the Saturday.
+    let mut state = room();
+    let _dm = join_as_dm(&mut state, ClientId(1));
+
+    // Fogged, because the paint below is refused on a map with no fog to
+    // override — asked of the staged board's own switch now, which is the whole
+    // of what "prepare the next dungeon" means.
+    state.handle(
+        ClientId(1),
+        staged(fogged(set_map("/uploads/crypt.png", 64.0, 0.0, 0.0), 60.0)),
+    );
+    state.handle(
+        ClientId(1),
+        staged(trace(&[(0.0, 0.0), (100.0, 0.0), (100.0, 100.0)], false)),
+    );
+    state.handle(
+        ClientId(1),
+        staged(paint(&[(3, 4)], Some(Override::Dark))),
+    );
+
+    // Through JSON, because the file is the contract.
+    let json = serde_json::to_vec(&state.to_saved()).expect("encodes");
+    let saved: Saved = serde_json::from_slice(&json).expect("decodes");
+    let restored = RoomState::restored(saved, SECRET.to_owned());
+
+    let staged = restored.staged.as_ref().expect("still staged");
+    assert_eq!(staged.map.url, "/uploads/crypt.png");
+    assert_eq!(staged.walls.len(), 2, "one segment per gap between corners");
+    assert_eq!(staged.overrides.get(&(3, 4)), Some(&Override::Dark));
+    assert!(
+        restored.walls.is_empty(),
+        "the live board's own walls are untouched by any of it"
+    );
+}
+
+#[test]
 fn a_restored_room_still_enforces_ownership() {
     // The point of persisting `owner`: a player who reconnects after a
     // restart gets their token back and no one else's.
