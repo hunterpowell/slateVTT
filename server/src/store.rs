@@ -205,8 +205,8 @@ mod tests {
     use super::*;
     use crate::fog::Override;
     use crate::protocol::{
-        Hp, InitiativeEntry, Origin, Owner, PlayerId, Pos, Px, Rect, ShapeId, ShapeKind, TokenId,
-        WallId, WallKind,
+        Hp, InitiativeEntry, Lighting, Origin, Owner, PlayerId, Pos, Px, Rect, ShapeId, ShapeKind,
+        TokenId, WallId, WallKind,
     };
 
     static NEXT: AtomicU32 = AtomicU32::new(0);
@@ -254,6 +254,10 @@ mod tests {
                 }),
                 fog: true,
                 vision_ft: 45.0,
+                // Room, which is not the default, for the reason `show_names`
+                // below is off: a field that only ever round-trips its own
+                // default proves nothing about the round trip.
+                lighting: Lighting::Room,
             },
             staged: Some(StagedView {
                 map: MapInfo {
@@ -356,6 +360,7 @@ mod tests {
                     play_area: None,
                     fog: true,
                     vision_ft: 30.0,
+                    lighting: Lighting::Room,
                 },
             )]),
         }

@@ -9,10 +9,15 @@
 // room you are about to play in — this is the one driver that will throw away a
 // dungeon the DM was in the middle of preparing.
 //
-// It leaves a *different map on the board* than it found there, which is the one
-// way it disturbs its neighbours: the drivers that click at fixed screen
-// coordinates are framing whatever map is loaded. Run this one last. See the
-// README's table.
+// It leaves a *different map on the board* than it found there, and that is the
+// whole of what it leaves behind — everything else it did is put back at the
+// bottom of this file. The map is deliberate: two distinct images are what stop a
+// re-run passing for the wrong reason, and nothing else here depends on which one
+// is loaded, because `board.mjs` measures the grid rather than assuming it.
+//
+// This used to say "run this one last", and that was true when the paint it
+// promotes was left on the board. It is not any more, and the tidy-up at the
+// bottom says what it costs to keep that true.
 //
 // Two sessions, and the reason is milestone 20's whole shape rather than a habit
 // picked up from the fog driver. What this feature is *for* is the DM preparing a
@@ -399,6 +404,45 @@ check(
   await text(dm, '#wall-hint'),
   'Trace walls here. Click any door to swing it.',
 );
+
+// --- put the room back --------------------------------------------------------
+//
+// The promoted map stays. It is the point of this script and the README says so:
+// two distinct maps are what stop a re-run passing for the wrong reason.
+//
+// The blackout does not stay. The `Dark` fill above was painted on the map being
+// prepared, and a promote carries the paint across with the walls — which is the
+// feature working exactly as milestone 20 intended, and is also a board the next
+// driver cannot read. A fill that darkens ground already dark moves no pixels, so
+// `drive-fog.mjs` measures 0% where it wants 70-odd and fails two checks that
+// have nothing to do with what it drives. That is what "may be run in any order"
+// costs if nobody pays it here.
+//
+// Reset is live-only and locked while the lights are off, so the switch goes on,
+// the paint comes off, and the switch goes back.
+
+await openTab(dm, 'fog');
+await dm.evaluate(`(() => {
+  const box = document.querySelector('#fog-on');
+  if (!box.checked) box.click();
+  return box.checked;
+})()`);
+await dm.wait(900);
+
+await mark(dm);
+await dm.evaluate('document.querySelector("#fog-clear").click(); "ok"');
+await dm.wait(1000);
+const unpainted = await changed(dm);
+note(`the promoted paint came off — the DM's board moved ${unpainted}%`);
+check('the blackout is cleared off the board it was promoted onto', unpainted > 2, true);
+
+await dm.evaluate(`(() => {
+  const box = document.querySelector('#fog-on');
+  if (box.checked) box.click();
+  return box.checked;
+})()`);
+await dm.wait(700);
+check('and the lights are left on', await dm.evaluate('document.querySelector("#fog-on").checked'), false);
 
 const code = verdict(dm) + verdict(player);
 dm.close();

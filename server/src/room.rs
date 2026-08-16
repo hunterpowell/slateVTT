@@ -1511,10 +1511,16 @@ impl RoomState {
         sources
     }
 
-    /// Recomputes line of sight and applies the DM's overrides over the top.
+    /// Recomputes what the party can see and applies the DM's overrides over the
+    /// top.
     ///
-    /// Three sets come out of one raycast. **Only the rays reach `revealed`**, and
-    /// the mask makes the other two:
+    /// Three sets come out of one reading. Which question that reading asks is the
+    /// map's — `fog::sight_cells` casts rays on a `Dynamic` map and floods rooms on
+    /// a `Room` one — and **nothing below this line knows which**: the mode changes
+    /// what the party can see and not what any of that means, which is why it
+    /// bought no arm here, no arm in `message_for` and no third derived set.
+    ///
+    /// **Only the rays reach `revealed`**, and the mask makes the other two:
     ///
     /// ```text
     /// revealed ∪= rays                          // memory, persisted, rays only
@@ -1560,7 +1566,7 @@ impl RoomState {
             self.known.clear();
             return;
         }
-        let rays = fog::visible_cells(&self.map, &self.walls, &self.vision_sources());
+        let rays = fog::sight_cells(&self.map, &self.walls, &self.vision_sources());
 
         self.revealed.extend(rays.iter().copied());
         self.known = fog::with_fringe(&self.map, &self.revealed);
@@ -1794,6 +1800,10 @@ impl RoomState {
                 play_area,
                 fog: _,
                 vision_ft,
+                // Nothing to bound: serde has already refused anything that is
+                // not one of the two variants, and either is a legitimate thing
+                // for the DM to ask for — what is said of `fog` below.
+                lighting: _,
                 staged: _,
             } => {
                 require_dm(client, "change the map")?;
@@ -1815,7 +1825,9 @@ impl RoomState {
                 //
                 // The radius does. The sweep in `fog.rs` is quadratic in it, and
                 // on a map with no play area to clip against this bound is the
-                // only thing that stops the loop being unbounded.
+                // only thing that stops the loop being unbounded — in both
+                // lighting modes, since the room fill is bounded by the radius
+                // as well as by the walls.
                 finite(&[*vision_ft])?;
                 if !(fog::MIN_VISION_FT..=fog::MAX_VISION_FT).contains(vision_ft) {
                     return Err(format!(
@@ -2280,6 +2292,7 @@ impl RoomState {
                 play_area,
                 fog,
                 vision_ft,
+                lighting,
                 staged,
             } => {
                 let given = Calibration {
@@ -2290,6 +2303,7 @@ impl RoomState {
                     play_area,
                     fog,
                     vision_ft,
+                    lighting,
                 };
 
                 // The URL alone says which of the two things this is. A URL the

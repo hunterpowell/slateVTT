@@ -18,7 +18,7 @@ use std::collections::{HashMap, HashSet};
 
 use serde::{Deserialize, Serialize};
 
-use crate::protocol::{MapInfo, Pos, Px, Rect, ShapeKind, Wall};
+use crate::protocol::{Lighting, MapInfo, Pos, Px, Rect, ShapeKind, Wall};
 use crate::room::{MAX_MAP_PX, MAX_SHAPE_CELLS};
 
 /// A cell of the grid, by its integer coordinates. The cell a token at
@@ -276,7 +276,8 @@ fn bounds(cells: impl Iterator<Item = Cell>) -> Option<(i32, i32, i32, i32)> {
     Some((x0, y0, x1, y1))
 }
 
-/// Every cell at least one of `sources` can see.
+/// Every cell at least one of `sources` has line of sight on — `Lighting::Dynamic`,
+/// and what every map did before there were two modes.
 ///
 /// **Raycasting to cell centres, not shadowcasting.** The roadmap asked for
 /// symmetric shadowcasting and that turned out not to fit: shadowcasting wants
@@ -361,6 +362,161 @@ pub fn visible_cells(map: &MapInfo, walls: &[Wall], sources: &[Px]) -> HashSet<C
     }
 
     seen
+}
+
+/// Every cell the party can see, by whichever question this map asks.
+///
+/// The one place the mode is read, so `recompute_sight` stays a single call and
+/// neither implementation has to know the other exists.
+///
+/// ```text
+/// Dynamic   rays
+/// Room      flood ∪ rays
+/// ```
+///
+/// **`Room` is a union and not a replacement**, which is the correction milestone
+/// 21 needed after a session on a real dungeon. One sentence for the DM: *you see
+/// the whole room you are standing in, plus whatever you have a straight line to.*
+/// It can never show less than `Dynamic` would, and it is what makes a doorway
+/// carry **sight** rather than light — see `lit_cells`, which stops at every
+/// segment the DM traced, open or shut.
+pub fn sight_cells(map: &MapInfo, walls: &[Wall], sources: &[Px]) -> HashSet<Cell> {
+    match map.lighting {
+        Lighting::Dynamic => visible_cells(map, walls, sources),
+        Lighting::Room => {
+            let mut lit = lit_cells(map, walls, sources);
+            lit.extend(visible_cells(map, walls, sources));
+            lit
+        }
+    }
+}
+
+/// Every cell reachable on foot from one of `sources` without crossing anything
+/// the DM traced, out to the radius — half of `Lighting::Room`, the other half
+/// being the rays `sight_cells` unions in.
+///
+/// **Connectivity rather than the raycast written twice.** A cell is lit when a
+/// four-neighbour walk reaches it, which is what makes a room light as a room:
+/// the party steps into a chamber and it arrives whole rather than in the wedge
+/// their torches happen to point at.
+///
+/// **Every traced segment bounds it, open or shut, and that is `fillFrom`'s rule
+/// in `overrides.ts` rather than the raycast's.** It shipped the other way round
+/// and one session put it right: reading `blocks()` here makes an open door a hole
+/// in the room boundary, so a one-cell hallway hands over the whole chamber past
+/// it and the only marker that bounds a room is a shut door the DM has to swing by
+/// hand. So an archway is traced as a door left open — the idiom the DM already
+/// holds for the reveal tool, arriving where it was missing.
+///
+/// What an open door does instead is pass **sight**: the rays run alongside this
+/// and stop at `blocks()`, so the party gets the wedge they can see through the
+/// doorway rather than the room behind it. Only sight reads a door's state now,
+/// which is one rule fewer than the two this file used to carry.
+///
+/// It is therefore the same *question* `fillFrom` asks, in a second language, and
+/// the duplication stays deliberate for `shape_covers`'s reason: that one previews
+/// what the DM is about to paint, this one decides what the party is handed, and a
+/// disagreement at the fringe changes a preview rather than a permission.
+///
+/// **The radius bounds it as well as the walls**, and that is not a detail. A pure
+/// fill does not respect corners: walk into a winding corridor and the whole of it
+/// lights to its far end, around every bend. Euclidean from the source, like the
+/// raycast's — so the number means the same thing in both modes rather than dying
+/// in one, and a hall bigger than the radius is a map whose radius should be
+/// raised rather than a reason for a second number.
+///
+/// One fill per source, unioned, **and deliberately not one sweep sharing a
+/// visited set**. The raycast may short-circuit on a cell another torch already
+/// lit because its rays are independent; here skipping such a cell would stop this
+/// source expanding *through* it, and a fill that never enters the corridor never
+/// reaches the room past it.
+pub fn lit_cells(map: &MapInfo, walls: &[Wall], sources: &[Px]) -> HashSet<Cell> {
+    let mut lit: HashSet<Cell> = HashSet::new();
+    if sources.is_empty() || map.grid_px <= 0.0 {
+        return lit;
+    }
+
+    let radius = (map.vision_ft / FEET_PER_CELL).max(0.0) * map.grid_px;
+
+    // Every segment, unlike the raycast's list one function up: a door bounds a
+    // room whatever it is swung to, and what an open one passes is sight.
+    let blockers: Vec<(Px, Px)> = walls
+        .iter()
+        .map(|wall| (wall.from, wall.to))
+        .chain(boundary(map.play_area))
+        .collect();
+
+    for &source in sources {
+        // Once per source, as the raycast does it. The margin is the half cell
+        // between a token's position and the centre of the square it stands in:
+        // every step this fill tests runs between two centres within the radius,
+        // except the first, which starts from wherever the token happens to be.
+        let near: Vec<&(Px, Px)> = blockers
+            .iter()
+            .filter(|(a, b)| distance_to_segment(source, *a, *b) <= radius + map.grid_px)
+            .collect();
+
+        let start = cell_of(map, source);
+        if !cell_on_board(map, start) {
+            continue;
+        }
+
+        let mut seen: HashSet<Cell> = HashSet::from([start]);
+        let mut queue: Vec<Cell> = vec![start];
+        while let Some(cell) = queue.pop() {
+            lit.insert(cell);
+            let from = cell_centre(map, cell);
+            // A cell a wall runs *through* is taken by whichever fill reached it
+            // and expanded out of by none — `cutByWall` in `overrides.ts`, whose
+            // rule this now matches segment for segment. Corner-snapped masonry
+            // cannot produce such a cell, but a wall at 45 degrees hits a centre
+            // every other cell and a chamfered room corner is made of exactly
+            // those: without this the fill walks in one side and out of the
+            // other, and one such cell hands the table the whole map.
+            //
+            // The seed is not special-cased, for the same reason it is not there:
+            // letting it expand would put both sides of the wall in one fill. A
+            // token standing inside masonry lights the square it is standing in,
+            // which is visibly wrong in a way the DM will go and fix.
+            if cut_by_wall(&near, from) {
+                continue;
+            }
+            for (dx, dy) in [(1, 0), (-1, 0), (0, 1), (0, -1)] {
+                let to = (cell.0 + dx, cell.1 + dy);
+                if seen.contains(&to) {
+                    continue;
+                }
+                let at = cell_centre(map, to);
+                if hypot(at.x - source.x, at.y - source.y) > radius {
+                    continue;
+                }
+                // The same two bounds the raycast takes, and for the same
+                // reasons: the void off the edge is not somewhere the party
+                // explores, and a cell out there sits in the packed rectangle
+                // from then on.
+                if !on_board(map.play_area, at) {
+                    continue;
+                }
+                if near.iter().any(|(a, b)| crosses(from, at, *a, *b)) {
+                    continue;
+                }
+                seen.insert(to);
+                queue.push(to);
+            }
+        }
+    }
+
+    lit
+}
+
+/// Whether a traced segment runs straight through a cell's centre.
+///
+/// Asked of everything in `near`, doors included and whatever they are swung to —
+/// the same list the steps are tested against, so a cell the fill may not leave is
+/// decided by the same geometry that decided it may not step across.
+fn cut_by_wall(near: &[&(Px, Px)], centre: Px) -> bool {
+    near.iter()
+        .any(|(a, b)| cross(*a, *b, centre) == 0.0 && within(*a, *b, centre))
 }
 
 /// A cell set with the ring of cells touching it added — the party's memory
@@ -955,6 +1111,209 @@ mod tests {
             ..Wall::default()
         });
         assert_eq!(escaped(&room(shut)), 0, "a shut door closes it again");
+    }
+
+    // --- room lighting ------------------------------------------------------
+
+    /// The same map with the lights worked out a room at a time.
+    fn lit_map(vision_ft: f32) -> MapInfo {
+        MapInfo {
+            lighting: Lighting::Room,
+            ..map(vision_ft)
+        }
+    }
+
+    /// A room five cells on a side, from cell (2,2) to (6,6), traced along the
+    /// corner lattice the way the client's snap produces.
+    ///
+    /// `door` hangs one in the middle of the south wall; `None` walls that wall
+    /// solid instead. Every test below says which it wants, because which of the
+    /// two it is is the whole subject of half of them.
+    fn chamber(door: Option<bool>) -> Vec<Wall> {
+        let mut walls = vec![
+            masonry(128.0, 128.0, 448.0, 128.0),
+            masonry(448.0, 128.0, 448.0, 448.0),
+            masonry(128.0, 448.0, 128.0, 128.0),
+        ];
+        match door {
+            None => walls.push(masonry(448.0, 448.0, 128.0, 448.0)),
+            Some(open) => {
+                walls.push(masonry(448.0, 448.0, 320.0, 448.0));
+                walls.push(masonry(256.0, 448.0, 128.0, 448.0));
+                walls.push(Wall {
+                    from: Px { x: 256.0, y: 448.0 },
+                    to: Px { x: 320.0, y: 448.0 },
+                    kind: WallKind::Door(open),
+                    ..Wall::default()
+                });
+            }
+        }
+        walls
+    }
+
+    #[test]
+    fn a_room_lights_whole_and_a_shut_door_seals_it() {
+        // The mode in one test. The viewer stands in a corner of the chamber
+        // with a shut door in its south wall: every square of the room arrives
+        // whether or not a straight line reaches it, and nothing past the door
+        // does.
+        let lit = lit_cells(&lit_map(100.0), &chamber(Some(false)), &[at((2, 2))]);
+        for cell in [(2, 2), (6, 6), (2, 6), (6, 2)] {
+            assert!(lit.contains(&cell), "the whole room, including {cell:?}");
+        }
+        assert!(!lit.contains(&(4, 7)), "and a shut door seals it");
+        assert_eq!(lit.len(), 25, "five by five and nothing else");
+    }
+
+    #[test]
+    fn an_open_door_bounds_the_flood_like_everything_else_traced() {
+        // The DM's fill's rule, arriving where it was missing. Reading `blocks()`
+        // here made an open door a hole in the room boundary, so a one-cell
+        // hallway handed over the whole chamber past it — and the only marker
+        // that bounded a room was a shut door somebody had to swing by hand.
+        //
+        // The source stands in the doorway's own column, which is the case that
+        // used to leak hardest.
+        let lit = lit_cells(&lit_map(100.0), &chamber(Some(true)), &[at((4, 4))]);
+        assert!(lit.contains(&(4, 6)), "the room, up to its south wall");
+        assert!(!lit.contains(&(4, 7)), "and not a step through the doorway");
+        assert!(!lit.contains(&(4, 8)), "nor the ground past it");
+    }
+
+    #[test]
+    fn what_an_open_door_passes_is_sight() {
+        // The other half of the union, and the reason the flood could give the
+        // doorway up: the party gets the wedge they can see through it rather
+        // than the room behind it. Straight down the door's own column reaches;
+        // a cell whose ray hits the masonry beside it does not.
+        let seen = sight_cells(&lit_map(100.0), &chamber(Some(true)), &[at((4, 4))]);
+        assert!(seen.contains(&(4, 8)), "straight through the doorway");
+        assert!(
+            !seen.contains(&(2, 8)),
+            "and nothing the doorway does not show"
+        );
+    }
+
+    #[test]
+    fn a_shut_door_passes_neither() {
+        // Both halves stop, which is what "a shut door seals a room" now means:
+        // the flood bounds on it like any segment, and the rays stop because it
+        // blocks.
+        let seen = sight_cells(&lit_map(100.0), &chamber(Some(false)), &[at((4, 4))]);
+        assert!(seen.contains(&(4, 6)), "the room");
+        assert!(!seen.contains(&(4, 7)), "and not one square past the door");
+    }
+
+    #[test]
+    fn the_fill_is_bounded_by_the_radius_as_well_as_by_the_walls() {
+        // Without this a pure fill does not respect corners: one step into a
+        // winding corridor lights the whole of it, around every bend. The
+        // radius is Euclidean like the raycast's, so the number means the same
+        // thing in both modes.
+        let lit = lit_cells(&lit_map(30.0), &[], &[at((0, 0))]);
+        assert!(lit.contains(&(6, 0)), "six cells due east is thirty feet");
+        assert!(!lit.contains(&(7, 0)), "and seven is not");
+        assert!(
+            !lit.contains(&(6, 6)),
+            "a radius of light is a circle here too"
+        );
+    }
+
+    #[test]
+    fn a_wall_the_fill_cannot_cross_is_not_one_it_can_walk_along() {
+        // The other half of the previous test's bound: what stops the fill
+        // inside the radius is the masonry, and a room bigger than the radius
+        // is a map whose radius should be raised rather than a second number.
+        let lit = lit_cells(&lit_map(100.0), &chamber(None), &[at((2, 2))]);
+        assert!(
+            lit.iter()
+                .all(|(x, y)| (2..=6).contains(x) && (2..=6).contains(y)),
+            "nothing outside the chamber, in any direction"
+        );
+    }
+
+    #[test]
+    fn a_cell_a_wall_runs_through_is_a_dead_end() {
+        // A chamfered corner: a wall at 45 degrees hits a cell centre every
+        // other cell, and every step touching such a cell ties at one end or
+        // the other — so without the dead-end rule the fill walks in one side
+        // and straight out of the other, and one such cell is the whole map.
+        //
+        // The chamfer is taken by the fill that reached it, which is what keeps
+        // a room's own corner from coming back ragged.
+        let mut walls = chamber(None);
+        walls.push(masonry(128.0, 128.0, 448.0, 448.0));
+
+        let lit = lit_cells(&lit_map(100.0), &walls, &[at((5, 2))]);
+        assert!(lit.contains(&(5, 2)), "its own square");
+        assert!(lit.contains(&(3, 3)), "up to the diagonal");
+        assert!(
+            !lit.contains(&(2, 5)),
+            "and not out through it to the far side"
+        );
+    }
+
+    #[test]
+    fn two_torches_light_two_rooms_and_neither_lights_the_others() {
+        // One fill per source, unioned — deliberately not one sweep sharing a
+        // visited set, which would stop the second source expanding through a
+        // cell the first had already taken.
+        let walls = chamber(Some(false));
+        let map = lit_map(30.0);
+
+        let outside = lit_cells(&map, &walls, &[at((4, 10))]);
+        assert!(
+            !outside.contains(&(4, 4)),
+            "the chamber is sealed from out here"
+        );
+
+        let two = lit_cells(&map, &walls, &[at((3, 3)), at((4, 10))]);
+        assert!(two.contains(&(6, 6)), "and the union holds the chamber");
+        assert!(
+            two.contains(&(4, 15)),
+            "and ground five cells from the second torch and twelve from the first"
+        );
+    }
+
+    #[test]
+    fn the_mode_is_the_maps_and_a_room_is_never_less_than_sight() {
+        // `sight_cells` is the one place the mode is read, which is what keeps
+        // `recompute_sight` a single call — and `Room` is a *union*, so it can
+        // never hand the table less than line of sight already would.
+        // A spur inside the chamber, so there is somewhere the rays cannot reach
+        // and the flood can. In a bare room the two agree exactly, which is true
+        // and proves nothing.
+        let mut walls = chamber(None);
+        walls.push(masonry(320.0, 128.0, 320.0, 384.0));
+        let seed = [at((2, 2))];
+        let rays = visible_cells(&map(100.0), &walls, &seed);
+
+        assert_eq!(
+            sight_cells(&map(100.0), &walls, &seed),
+            rays,
+            "a map that says nothing is a map that casts rays"
+        );
+
+        let room = sight_cells(&lit_map(100.0), &walls, &seed);
+        assert!(rays.iter().all(|cell| room.contains(cell)));
+        assert!(
+            room.len() > rays.len(),
+            "and adds the ground behind the spur, which no ray reaches"
+        );
+    }
+
+    #[test]
+    fn a_room_lit_map_reaches_a_corner_the_rays_cannot() {
+        // The thing the mode is for, stated as a difference rather than as a
+        // count: an L-shaped alcove off the chamber arrives whole under `Room`
+        // and only in the wedge the torch points at under `Dynamic`.
+        let mut walls = chamber(None);
+        walls.push(masonry(320.0, 128.0, 320.0, 384.0));
+
+        let rays = visible_cells(&map(100.0), &walls, &[at((2, 2))]);
+        let filled = lit_cells(&lit_map(100.0), &walls, &[at((2, 2))]);
+        assert!(!rays.contains(&(5, 2)), "behind the spur, out of sight");
+        assert!(filled.contains(&(5, 2)), "and in the same room");
     }
 
     // --- the DM's overrides -------------------------------------------------

@@ -411,6 +411,7 @@ fn the_play_area_bounds_what_the_party_can_explore() {
             play_area: rect(0.0, 0.0, 640.0, 640.0),
             fog: true,
             vision_ft: 200.0,
+            lighting: Lighting::Dynamic,
             staged: false,
         },
     );
@@ -463,6 +464,155 @@ fn the_fog_survives_the_save_file() {
     assert!(
         restored.visible.is_empty(),
         "and sight is not — it is derived on boot, from the tokens the same file holds"
+    );
+}
+
+// --- room lighting ---------------------------------------------------------
+
+/// The live map recalibrated to itself with the lights worked out a room at a
+/// time. The URL and the grid are the ones `fog_room` is already on, so this is
+/// a recalibration rather than a load and it sweeps nothing — which is the point
+/// of one of the tests below.
+fn light_rooms(state: &mut RoomState, dm: ClientId, vision_ft: f32) {
+    state.handle(
+        dm,
+        room_lit(fogged(
+            set_map("/assets/map.png", 64.0, 0.0, 0.0),
+            vision_ft,
+        )),
+    );
+}
+
+/// A spur of masonry between the viewer and the ogre in `fog_room`, blocking the
+/// straight line along row 1 and leaving the way round it open at row 2.
+fn spur() -> ClientMsg {
+    wall(256.0, 0.0, 256.0, 128.0, false)
+}
+
+/// The same dividing line carried past anywhere a fill could reach, with a door
+/// hung in it on **row 1** — the row both tokens stand on.
+///
+/// It has to run that far because this map has no play area: a fill walks, so a
+/// wall it can go round the end of is a wall it goes round. That is the mode
+/// failing *loudly*, which is the property milestone 21 is named for.
+///
+/// The door is on the sight line on purpose, and it moved there when the flood
+/// stopped passing open doors. What an open door hands over now is the ray
+/// through it, so a door hung anywhere else is a door that changes nothing —
+/// which is the whole difference this test exists to photograph.
+fn barrier() -> [ClientMsg; 3] {
+    [
+        wall(256.0, -1280.0, 256.0, 64.0, false),
+        wall(256.0, 64.0, 256.0, 128.0, true),
+        wall(256.0, 128.0, 256.0, 1280.0, false),
+    ]
+}
+
+#[test]
+fn the_mode_is_the_maps_and_switching_it_forgets_nothing() {
+    // A lighting change is not a reason for the party to forget the dungeon,
+    // exactly as turning the radius up is not: `sweep_board` asks about the
+    // board's *shape*, and this changes none of it.
+    let mut state = fog_room(60.0);
+    let dm = join_as_dm(&mut state, ClientId(1));
+    let explored = state.revealed.clone();
+    assert!(!explored.is_empty());
+
+    light_rooms(&mut state, ClientId(1), 60.0);
+    assert_eq!(state.map.lighting, Lighting::Room);
+    assert!(
+        explored.iter().all(|cell| state.revealed.contains(cell)),
+        "everywhere the party had been is still theirs"
+    );
+    drop(dm);
+}
+
+#[test]
+fn the_room_reaches_a_creature_the_rays_cannot() {
+    // The milestone in one test, asked of the room rather than of the geometry:
+    // the same wall, the same two tokens, and the mode is the only difference
+    // between the table holding the ogre and not.
+    let mut state = fog_room(60.0);
+    let _dm = join_as_dm(&mut state, ClientId(1));
+    state.handle(ClientId(1), spur());
+    assert!(!sees_the_ogre(&state), "no straight line reaches it");
+
+    light_rooms(&mut state, ClientId(1), 60.0);
+    assert!(
+        sees_the_ogre(&state),
+        "and a walk round the end of the spur does"
+    );
+}
+
+#[test]
+fn a_shut_door_seals_the_room_and_the_table_is_told_when_it_swings() {
+    // What the mode buys past the reveal itself: a door is load-bearing rather
+    // than decorative. Both halves are asserted from the table's side — the
+    // creature that never arrived, and the frames that carry it when it does.
+    let mut state = fog_room(60.0);
+    let _dm = join_as_dm(&mut state, ClientId(1));
+    light_rooms(&mut state, ClientId(1), 60.0);
+
+    for segment in barrier() {
+        state.handle(ClientId(1), segment);
+    }
+    let door = state
+        .walls
+        .iter()
+        .find(|w| matches!(w.kind, WallKind::Door(_)))
+        .expect("a door")
+        .id
+        .clone();
+
+    let mut player = join_as_player(&mut state, ClientId(2), "saelyn");
+    assert!(!sees_the_ogre(&state), "a shut door genuinely seals a room");
+    drain(&mut player);
+
+    state.handle(ClientId(1), swing(door));
+    let frames = drain(&mut player);
+    assert!(
+        sees_the_ogre(&state),
+        "and opening it lets the sight through"
+    );
+    // The half that says which of the two it let through. The flood bounds on
+    // the door whatever it is swung to, so what arrives is the ray along row 1
+    // and not the room around it — a creature standing three squares off that
+    // line is still in the dark.
+    assert!(
+        !state.visible.contains(&(4, 4)),
+        "an opened door is a doorway, not the room behind it"
+    );
+    assert!(
+        frames
+            .iter()
+            .any(|msg| matches!(msg, ServerMsg::TokenChanged { token } if token.name == "Ogre")),
+        "the table is sent the creature the room just handed them, got {frames:?}"
+    );
+    assert!(
+        frames
+            .iter()
+            .all(|msg| !matches!(msg, ServerMsg::WallsChanged { .. })),
+        "and never the door that did it, got {frames:?}"
+    );
+}
+
+#[test]
+fn a_room_bigger_than_the_radius_stops_at_the_radius() {
+    // The bound that keeps `vision_ft` meaningful in both modes rather than
+    // dead in one — and the answer to a hall that lights short, which is a map
+    // whose radius should be raised rather than a second number.
+    let mut state = fog_room(15.0);
+    let _dm = join_as_dm(&mut state, ClientId(1));
+    state.handle(ClientId(1), ClientMsg::ResetFog);
+    light_rooms(&mut state, ClientId(1), 15.0);
+
+    assert!(
+        state.visible.contains(&(4, 1)),
+        "three cells is fifteen feet"
+    );
+    assert!(
+        !state.visible.contains(&(5, 1)),
+        "and an unwalled board does not light to the horizon"
     );
 }
 
@@ -569,6 +719,7 @@ fn the_fringe_stops_at_the_edge_of_the_board() {
             play_area: rect(0.0, 0.0, 640.0, 640.0),
             fog: true,
             vision_ft: 200.0,
+            lighting: Lighting::Dynamic,
             staged: false,
         },
     );
@@ -965,7 +1116,10 @@ fn paint_on_the_staged_board_does_not_touch_the_live_one() {
     let _dm = join_as_dm(&mut state, ClientId(1));
     stage_fogged(&mut state, ClientId(1));
 
-    state.handle(ClientId(1), staged(paint(&[OGRE_CELL], Some(Override::Dark))));
+    state.handle(
+        ClientId(1),
+        staged(paint(&[OGRE_CELL], Some(Override::Dark))),
+    );
 
     assert!(
         state.overrides.is_empty(),
@@ -1002,7 +1156,9 @@ fn painting_the_staged_board_moves_no_fog_at_all() {
         "the DM is told what they painted: {frames:?}"
     );
     assert!(
-        !frames.iter().any(|m| matches!(m, ServerMsg::FogChanged { .. })),
+        !frames
+            .iter()
+            .any(|m| matches!(m, ServerMsg::FogChanged { .. })),
         "and nothing claims the table's view moved: {frames:?}"
     );
 }
@@ -1042,7 +1198,10 @@ fn promoting_hands_the_party_the_paint_prepared_for_them() {
     stage_fogged(&mut state, ClientId(1));
     // The ogre's cell, blacked out in advance. On the live board the party can
     // see it right now.
-    state.handle(ClientId(1), staged(paint(&[OGRE_CELL], Some(Override::Dark))));
+    state.handle(
+        ClientId(1),
+        staged(paint(&[OGRE_CELL], Some(Override::Dark))),
+    );
     assert!(sees_the_ogre(&state), "still true on the board they are on");
 
     state.handle(ClientId(1), ClientMsg::PromoteStaged);
@@ -1067,7 +1226,10 @@ fn a_staged_recalibration_drops_the_paint_and_keeps_the_walls() {
     let mut state = room();
     let _dm = join_as_dm(&mut state, ClientId(1));
     stage_fogged(&mut state, ClientId(1));
-    state.handle(ClientId(1), staged(trace(&[(0.0, 0.0), (64.0, 0.0)], false)));
+    state.handle(
+        ClientId(1),
+        staged(trace(&[(0.0, 0.0), (64.0, 0.0)], false)),
+    );
     state.handle(ClientId(1), staged(paint(&[(1, 1)], Some(Override::Dark))));
 
     // Same URL, different grid: a recalibration.
@@ -1093,7 +1255,10 @@ fn a_staged_load_sweeps_what_was_prepared_for_the_last_one() {
     let mut state = room();
     let _dm = join_as_dm(&mut state, ClientId(1));
     stage_fogged(&mut state, ClientId(1));
-    state.handle(ClientId(1), staged(trace(&[(0.0, 0.0), (64.0, 0.0)], false)));
+    state.handle(
+        ClientId(1),
+        staged(trace(&[(0.0, 0.0), (64.0, 0.0)], false)),
+    );
     state.handle(ClientId(1), staged(paint(&[(1, 1)], Some(Override::Dark))));
 
     state.handle(
@@ -1112,7 +1277,10 @@ fn discarding_the_staged_map_takes_its_walls_and_its_paint_with_it() {
     let mut state = room();
     let _dm = join_as_dm(&mut state, ClientId(1));
     stage_fogged(&mut state, ClientId(1));
-    state.handle(ClientId(1), staged(trace(&[(0.0, 0.0), (64.0, 0.0)], false)));
+    state.handle(
+        ClientId(1),
+        staged(trace(&[(0.0, 0.0), (64.0, 0.0)], false)),
+    );
     state.handle(ClientId(1), staged(paint(&[(1, 1)], Some(Override::Dark))));
 
     state.handle(ClientId(1), ClientMsg::ClearStaged);

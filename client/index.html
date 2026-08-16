@@ -1209,8 +1209,21 @@
         cursor: pointer;
       }
 
+      .fog-lighting,
       .fog-vision {
         margin-top: 10px;
+      }
+
+      .fog-modes {
+        display: flex;
+        gap: 4px;
+      }
+
+      /* Narrower than a brush: two words that sit on one row with their label,
+         rather than a bar of four across the panel. */
+      .fog-mode {
+        padding: 2px 8px;
+        font-size: 11px;
       }
 
       #fog-vision {
@@ -1232,8 +1245,10 @@
 
       /* Greyed rather than hidden while fog is off: the radius is still the
          map's, and hiding it would make turning fog on look like it had also
-         invented a number. The brushes go the same way for the same reason. */
-      .fog-vision:has(input:disabled) {
+         invented a number. The mode and the brushes go the same way for the
+         same reason — an unfogged map is still lit one way or the other. */
+      .fog-vision:has(input:disabled),
+      .fog-lighting:has(button:disabled) {
         opacity: 0.5;
       }
 
@@ -1479,6 +1494,14 @@
           <input id="fog-on" type="checkbox" />
           <span>limit what the table can see</span>
         </label>
+        <!-- Both named, rather than one checkbox naming one of them: this is a
+             choice between two ways of working out what the party can see, and
+             a map that says "light whole rooms: off" says nothing about what it
+             does instead. -->
+        <div class="map-cells-label fog-lighting">
+          <span>lighting</span>
+          <span id="fog-lighting" class="fog-modes"></span>
+        </div>
         <div class="map-cells-label fog-vision">
           <span>vision</span>
           <span class="map-stepper">

@@ -23,7 +23,22 @@ export interface WireMapInfo {
   /** How far a player-owned token sees, in feet. One radius for the map —
    *  nothing here knows the word "darkvision". Only read when `fog` is on. */
   vision_ft: number;
+  /** How this map's sight is worked out: line of sight from each token, or the
+   *  room each token is standing in. Remembered per URL with the two above, so
+   *  the outdoor map keeps line of sight and the dungeon reveals a room at a
+   *  time. */
+  lighting: Lighting;
 }
+
+/**
+ * Which question a fogged map asks — `Lighting` on the server.
+ *
+ * The client never answers it. It sets it, it shows it in the panel, and what
+ * comes back is the same `WireFog` either way: the mode changes what the party
+ * can see and not what any of it means, which is why nothing that draws the
+ * board reads this.
+ */
+export type Lighting = 'dynamic' | 'room';
 
 /**
  * What the party can see and what they have explored, packed one character per
@@ -386,6 +401,7 @@ export type ClientMsg =
        *  are fields of the map, remembered per URL with the rest of it. */
       fog: boolean;
       vision_ft: number;
+      lighting: Lighting;
       staged: boolean;
     }
   /** DM-only. The staged map becomes the board; tokens keep their cells. */

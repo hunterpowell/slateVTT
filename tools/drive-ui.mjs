@@ -202,5 +202,17 @@ check(
   ['walltool'],
 );
 
+// --- put the room back --------------------------------------------------------
+//
+// After the readout check above, which is the last thing that reads the trace.
+// This script clears on the way in as well, so it does not depend on the tidy-up
+// having happened — but the drivers are documented as runnable in any order, and
+// masonry left on the board is sight stopping in a room the next one is
+// measuring.
+
+await evaluate('document.querySelector("#wall-clear").click(); "ok"');
+await wait(400);
+check('and the board is left untraced', await readout(), 'nothing traced');
+
 session.close();
 process.exit(verdict(session));

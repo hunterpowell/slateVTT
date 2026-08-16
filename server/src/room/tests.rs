@@ -14,7 +14,7 @@
 use super::*;
 // Only the tests name these; `check` and `apply` reach a `Rect` through the
 // `Option` on the message, and a `Px` through the `Vec` on a traced run.
-use crate::protocol::{Px, Rect};
+use crate::protocol::{Lighting, Px, Rect};
 
 const SECRET: &str = "test-secret";
 
@@ -216,6 +216,7 @@ fn set_map(url: &str, grid_px: f32, offset_x: f32, offset_y: f32) -> ClientMsg {
         play_area: None,
         fog: UNFOGGED.0,
         vision_ft: UNFOGGED.1,
+        lighting: Lighting::Dynamic,
         staged: false,
     }
 }
@@ -234,7 +235,40 @@ fn fogged(msg: ClientMsg, vision_ft: f32) -> ClientMsg {
             play_area: None,
             fog: true,
             vision_ft,
+            lighting: Lighting::Dynamic,
             staged: false,
+        },
+        other => other,
+    }
+}
+
+/// The same command with the map lit a room at a time. `fogged`'s neighbour, and
+/// wrapped around it the way `staged` is wrapped around either — so a lighting
+/// test and a line-of-sight test differ by exactly this call and nothing else.
+fn room_lit(msg: ClientMsg) -> ClientMsg {
+    match msg {
+        ClientMsg::SetMap {
+            url,
+            grid_px,
+            offset_x,
+            offset_y,
+            grid_color,
+            play_area,
+            fog,
+            vision_ft,
+            lighting: _,
+            staged,
+        } => ClientMsg::SetMap {
+            url,
+            grid_px,
+            offset_x,
+            offset_y,
+            grid_color,
+            play_area,
+            fog,
+            vision_ft,
+            lighting: Lighting::Room,
+            staged,
         },
         other => other,
     }
@@ -260,6 +294,7 @@ fn staged(msg: ClientMsg) -> ClientMsg {
             play_area,
             fog,
             vision_ft,
+            lighting,
             staged: _,
         } => ClientMsg::SetMap {
             url,
@@ -270,6 +305,7 @@ fn staged(msg: ClientMsg) -> ClientMsg {
             play_area,
             fog,
             vision_ft,
+            lighting,
             staged: true,
         },
         ClientMsg::AddWalls { points, door, .. } => ClientMsg::AddWalls {

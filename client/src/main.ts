@@ -124,6 +124,7 @@ interface Ui {
   fogtool: {
     root: HTMLElement;
     on: HTMLInputElement;
+    lighting: HTMLElement;
     vision: HTMLInputElement;
     visionDown: HTMLButtonElement;
     visionUp: HTMLButtonElement;
@@ -237,6 +238,7 @@ function findUi(): Ui {
     fogtool: {
       root: need('#fogtool'),
       on: need<HTMLInputElement>('#fog-on'),
+      lighting: need('#fog-lighting'),
       vision: need<HTMLInputElement>('#fog-vision'),
       visionDown: need<HTMLButtonElement>('#fog-vision-down'),
       visionUp: need<HTMLButtonElement>('#fog-vision-up'),
@@ -456,7 +458,7 @@ function boot(): void {
         // disagree. The brush is not the map's and sends its own command.
         fogTool = createFogTool(
           ui.fogtool,
-          (on, visionFt) => mapTool?.setFog(on, visionFt),
+          (on, visionFt, lighting) => mapTool?.setFog(on, visionFt, lighting),
           (msg) => net.send(msg),
           // Lazily, like the map tool's: a fill is clipped to the play area, and
           // "the whole image" is a size only the decoded image knows.

@@ -25,7 +25,7 @@ Do not work ahead. Each milestone should run and be usable before starting the n
 6. Map upload and grid calibration UI.
 7. Package for Windows session hosting and deploy behind a Cloudflare Tunnel.
 
-Milestones 1–20 are done, and so is 25, which was never planned and is out of order for the reason
+Milestones 1–21 are done, and so is 25, which was never planned and is out of order for the reason
 its own entry gives. Everything from 8 on was planned after the original seven; 17 and 18 were
 workshopped after 16 landed, and 19–24 after 18:
 
@@ -403,15 +403,106 @@ workshopped after 16 landed, and 19–24 after 18:
     is ever wanted it is client-only and costs the room nothing — `shape_covers` is the precedent
     for a geometry rule living in two languages. Do not put it in the room.
 
-21. **Room lighting.** `lighting: Dynamic | Room` on `MapInfo`, beside `fog` and `vision_ft` and
+21. **Done.** Room lighting. See *Two lighting modes, and one question underneath* in `docs/fog.md`.
+
+    This file's design held in full, including the parts written as warnings: the door rule, the
+    radius bound and the four-neighbour instinct all shipped as specified, and the paragraph below
+    about `fillFrom` is the one that saved the most time — the temptation to reuse it is real and it
+    would have been wrong in exactly the way predicted.
+
+    The state model was one enum and one field, and **the mode cost no arm anywhere**. `sight_cells`
+    picks between the two implementations and nothing downstream reads `lighting` at all:
+    `recompute_sight` is unchanged past that one call, `message_for` grew nothing, `unseen_by_table`
+    was not touched, no `was_unseen` changed meaning, and the wire carries one more `MapInfo` field
+    and no new message. Milestone 20's generalisation has a twin here: **a feature that changes what
+    a filter is given, rather than what it decides, is nearly free.**
+
+    Three things cost more than the state model.
+
+    **`fillFrom`'s dead-end rule had to come across, and only that rule.** The two fills disagree
+    about doors and agree about a cell a wall runs *through* — a chamfered corner is a hole in a fill
+    whatever it is filling, and here a hole hands the table a room they have not reached. So
+    `cut_by_wall` in `fog.rs` is a second copy of the client's, asked only of the walls that block,
+    while `crosses` beside it stays permissive for the raycast that has tests named after its ties.
+    Two files, one lattice fact, three different right answers to it.
+
+    **The union had to be per source.** The raycast short-circuits on a cell another torch already
+    lit, and copying that here is a real bug rather than a slow path: skipping such a cell stops
+    *this* source expanding through it, so a party member standing one square behind another lights
+    nothing past them. Six fills over a radius each is nothing at this scale, and the sharing that
+    looks like an optimisation is the thing that breaks it.
+
+    **The driver had to build its own dungeon and its own torch**, which is the part worth reading
+    before writing another one. Room lighting has no shape without a wall, so `drive-fog.mjs` traces
+    one — and a driver may neither assume the board it was written against nor erase the DM's work to
+    make room for its own, so it runs only on an untraced board, erases what it traced, and skips
+    with a note otherwise. Finding a party token to stand beside turned out to be the harder half:
+    where six of them are standing is a fact about whatever room this is, a ring search wide enough
+    to find one costs a click per square, and both clients frame the board for themselves. Building a
+    token and handing it to a player puts a vision source in the first free cell out from the middle
+    of the view, which is the one place both browsers are certainly looking.
+
+    **Revised the same day, by playing on it.** The design above said an open door is how light
+    reaches the next room, and the flood read `blocks()` to make that true. On a real dungeon that
+    makes an open door **a hole in the room boundary**: a one-cell hallway hands the table the whole
+    chamber past it, and the only marker that bounds a room is a shut door the DM has to swing by
+    hand as the party moves. The obvious fix is the `WallKind::Archway` this file wondered about
+    below, and it is not needed:
+
+    - **The flood now bounds on every traced segment, open or shut** — `fillFrom`'s rule, which
+      `docs/fog.md` has taught since 16b as *an archway is a door left open*. Room lighting was the
+      one place in the project that disagreed with it, and the disagreement is what leaked. One
+      deleted `.filter(|w| w.blocks())`.
+    - **`Room` became a union with the raycast**, which is what lets the flood give the doorway up:
+      *you see the whole room you are standing in, plus whatever you have a straight line to.* An
+      open door hands over the wedge visible through it rather than the room behind it, which is what
+      opening a door does at a table, and the mode can never show less than `Dynamic` would. Three
+      lines — both algorithms already existed and were already radius-bounded.
+
+    So **only sight reads a door's state**, which is one rule fewer than the two the entry above was
+    proud of, and the answer to this file's own open question is that an archway does *not* want a
+    `WallKind` of its own. A third variant in a closed set costs the editor's mode strip, the
+    renderer, `AddWalls` and the client's two-state `Wall.door`; an open door is already exactly it.
+
+    The general lesson is about where a rule is allowed to be new. Milestone 21 invented a door rule
+    rather than adopting the one the project already had, and it read as a *decision* in the roadmap
+    and the docs right up until a dungeon was traced against it. **When a subsystem next door already
+    answers the question, the burden is on diverging, not on matching** — and the tell was there in
+    writing: `docs/fog.md` described a fill bounded by everything traced, one section away from a
+    fill that was not.
+
+    One thing this file did not consider, and it is a property of the memory rather than of the mode:
+    **switching back to `Dynamic` does not take the room away.** `revealed` is rays only and
+    cumulative, so ground the flood handed over stays on the table's board as explored terrain. That
+    is right — it is the same rule that keeps the corridor behind them — but it means the driver's
+    reading has to be taken after a reset, and it means the DM's way to un-light a room they lit by
+    accident is `reset all` rather than the mode button.
+
+    The original design, kept because none of it had to change:
+
+    `lighting: Dynamic | Room` on `MapInfo`, beside `fog` and `vision_ft` and
     remembered per URL with them, so the outdoor map keeps line of sight and the dungeon reveals a
     room at a time.
 
     Under `Room`, `recompute_sight` stops raycasting and becomes a flood fill from each party token's
-    cell, bounded by traced segments and shut doors, unioned over the party. It is the connectivity
-    question 16b's reveal tool already asks — the same walls read a different way, not the raycast
-    written twice — so it is a second copy in a second language like `shape_covers`, and the two only
-    have to agree loosely.
+    cell, bounded by traced segments and shut doors, unioned over the party. It is connectivity
+    rather than the raycast written twice — the same walls read a different way.
+
+    **It is not `fillFrom` ported to Rust, and the difference is doors.** 16b's reveal tool bounds on
+    every traced segment *whatever it is swung to*, and that is deliberate: which cells make up a room
+    must not change when somebody opens its door, or the region a click selects depends on play-time
+    state. The argument is written out above `fillFrom` in `client/src/overrides.ts` and is worth
+    reading before starting, because room lighting asks the opposite question — an open door is how
+    light reaches the next room, and a shut one sealing a room is the whole point of the mode. So this
+    fill reads `Wall::blocks()`, exactly as `visible_cells` beside it already does. Two fills, two door
+    rules, and neither is a copy of the other.
+
+    What they do share is four-neighbour stepping and the instinct behind it: a fill that stops short
+    is a smaller failure than one that escapes. Here that is sharper than it is for the DM's paint —
+    an escaped fill hands the table a room they have not reached.
+
+    And unlike `shape_covers` this one has **no client twin**: the table is sent a `FogView` and asks
+    nothing. There is no second copy to keep loosely in step with.
 
     **The fill is bounded by the radius as well as by the walls**, and that is not a detail. A pure
     fill does not respect corners: walk into a winding corridor and the whole of it lights to its far
@@ -431,6 +522,14 @@ workshopped after 16 landed, and 19–24 after 18:
     it is a dependency of quality rather than of code. That dependency is now satisfied — the DM can
     trace and check a whole dungeon before anybody is looking at it, which is exactly the working
     habit this mode needs.
+
+    **And the question this unblocks, which is now worth reopening**: the player-side wall hint under
+    *A hint on the player's screen* further down. Its cheap version ambers when a move crosses the
+    boundary of `known`, which meant nothing under `Dynamic` because a fog edge there is usually just
+    the vision radius. Under `Room` a fog edge is a wall almost by definition — more so now that the
+    flood stops at every traced segment. Play on it first. (The other half of that sentence, whether
+    an archway wants a `WallKind` of its own, was answered by the revision recorded above: it does
+    not.)
 
 22. **Undo, for the DM.** One stack, roughly ten deep, no redo.
 

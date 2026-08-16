@@ -18,6 +18,7 @@ fn set_color(color: &str) -> ClientMsg {
         play_area: None,
         fog: UNFOGGED.0,
         vision_ft: UNFOGGED.1,
+        lighting: Lighting::Dynamic,
         staged: false,
     }
 }
@@ -32,6 +33,7 @@ fn set_area(area: Option<Rect>) -> ClientMsg {
         play_area: area,
         fog: UNFOGGED.0,
         vision_ft: UNFOGGED.1,
+        lighting: Lighting::Dynamic,
         staged: false,
     }
 }
@@ -48,6 +50,7 @@ fn calibrate(url: &str, grid_px: f32, offset: f32, color: &str) -> ClientMsg {
         play_area: rect(offset, offset, grid_px * 10.0, grid_px * 8.0),
         fog: UNFOGGED.0,
         vision_ft: UNFOGGED.1,
+        lighting: Lighting::Dynamic,
         staged: false,
     }
 }
@@ -157,6 +160,28 @@ fn re_picking_a_map_comes_back_calibrated() {
     assert_eq!((map.offset_x, map.offset_y), (7.0, -7.0));
     assert_eq!(map.grid_color, "#11223344");
     assert_eq!(map.play_area, rect(7.0, 7.0, 820.0, 656.0));
+}
+
+#[test]
+fn how_a_map_is_lit_comes_back_with_its_grid() {
+    // The dungeon reveals a room at a time and the meadow outside it keeps line
+    // of sight, and the DM should not have to remember which is which when they
+    // swap between them. Same table, same rule as the fog switch beside it.
+    let mut state = room();
+    let _dm = join_as_dm(&mut state, ClientId(1));
+
+    state.handle(
+        ClientId(1),
+        room_lit(fogged(set_map("/uploads/cave.png", 64.0, 0.0, 0.0), 40.0)),
+    );
+    state.handle(ClientId(1), set_map("/uploads/meadow.png", 64.0, 0.0, 0.0));
+    assert_eq!(state.map.lighting, Lighting::Dynamic, "the meadow's own");
+
+    // Back to the cave, with whatever the client happened to send.
+    state.handle(ClientId(1), set_map("/uploads/cave.png", 64.0, 0.0, 0.0));
+    assert_eq!(state.map.lighting, Lighting::Room);
+    assert!(state.map.fog, "and the switch it was remembered beside");
+    assert_eq!(state.map.vision_ft, 40.0);
 }
 
 #[test]
@@ -321,7 +346,10 @@ fn the_dm_sees_the_staged_map_in_their_snapshot() {
     stage(&mut state, ClientId(1), "/uploads/next.png");
 
     let view = state.snapshot_for(&Identity::Dm);
-    assert_eq!(view.staged.map(|b| b.map.url), Some("/uploads/next.png".into()));
+    assert_eq!(
+        view.staged.map(|b| b.map.url),
+        Some("/uploads/next.png".into())
+    );
 }
 
 #[test]

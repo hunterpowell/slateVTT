@@ -26,7 +26,7 @@ import type { Box, Calibration } from './calibrate.js';
 import { gridFromBox, MAX_CELLS, MIN_GRID_PX, playAreaFromBox } from './calibrate.js';
 import type { GridSpec, Rect } from './coords.js';
 import { createLibraryList, urlFrom } from './library.js';
-import type { ClientMsg } from './protocol.js';
+import type { ClientMsg, Lighting } from './protocol.js';
 import type { Board, Scene } from './scene.js';
 
 export interface MapToolUi {
@@ -77,7 +77,7 @@ export interface MapTool extends Calibration {
    */
   stop(): void;
   /**
-   * The fog panel's two fields, sent as part of a whole `set_map`.
+   * The fog panel's three fields, sent as part of a whole `set_map`.
    *
    * It goes through here rather than the fog panel building its own frame,
    * because this is where the *confirmed* calibration lives — the same reason
@@ -85,11 +85,11 @@ export interface MapTool extends Calibration {
    * fiddle with the fog must not commit an unapplied grid preview.
    *
    * Whichever slot the panel is on, which is whichever board is on screen. A
-   * staged map carries `fog` and `vision_ft` like any other — they have ridden
-   * on `MapInfo` since fog shipped — so the next dungeon's lights are set
-   * before the table is ever shown it.
+   * staged map carries `fog`, `vision_ft` and `lighting` like any other — they
+   * have ridden on `MapInfo` since fog shipped — so the next dungeon's lights
+   * are set before the table is ever shown it.
    */
-  setFog(on: boolean, visionFt: number): void;
+  setFog(on: boolean, visionFt: number, lighting: Lighting): void;
 }
 
 const DEFAULT_ALPHA_PCT = 32;
@@ -199,9 +199,9 @@ export function createMapTool(
     color: string,
     area: Rect | null,
     url?: string,
-    /** The fog panel's two fields. Carried through unchanged otherwise, so
+    /** The fog panel's three fields. Carried through unchanged otherwise, so
      *  calibrating a map never quietly turns its lights on or off. */
-    fog?: { on: boolean; visionFt: number },
+    fog?: { on: boolean; visionFt: number; lighting: Lighting },
   ): void => {
     const board = target();
     const to = url ?? board?.mapUrl;
@@ -216,6 +216,7 @@ export function createMapTool(
       play_area: area,
       fog: fog?.on ?? board?.fog ?? false,
       vision_ft: fog?.visionFt ?? board?.visionFt ?? DEFAULT_VISION_FT,
+      lighting: fog?.lighting ?? board?.lighting ?? 'dynamic',
       staged: mode === 'staged',
     });
   };
@@ -524,7 +525,7 @@ export function createMapTool(
       library.close();
     },
 
-    setFog(on, visionFt) {
+    setFog(on, visionFt, lighting) {
       // `confirmed` rather than what is on screen: an unapplied grid preview
       // must not be committed by a fiddle with the fog.
       //
@@ -535,7 +536,11 @@ export function createMapTool(
       // routing this through here in the first place.
       const board = target();
       if (board === null || confirmed === null) return;
-      sendMap(confirmed.grid, board.gridColor, confirmed.area, undefined, { on, visionFt });
+      sendMap(confirmed.grid, board.gridColor, confirmed.area, undefined, {
+        on,
+        visionFt,
+        lighting,
+      });
     },
 
     update(next) {

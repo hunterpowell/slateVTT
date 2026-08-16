@@ -19,6 +19,8 @@ replaces Foundry for one group that only needs a shared map, tokens, and turn or
 - Walls and doors the DM traces over the map, which block line of sight and never movement
 - Fog of war: the table sees what their own tokens can see, and remembers where they have
   been — with a DM override to reveal or black out a room by hand
+- Two ways for a map to be lit: line of sight from each token, or the whole room a token is
+  standing in, where an open door lets the light through and a shut one seals it
 - State is saved to a JSON file on disk and restored on restart
 
 See [CLAUDE.md](.claude/CLAUDE.md) for the architecture, invariants, and non-goals, and [docs/](docs/)
@@ -87,7 +89,7 @@ character is a change to the name alone and their tokens follow them.
 client/   TypeScript source, canvas rendering, esbuild config
 server/   axum server: room actor, wire protocol, JSON persistence
 tools/    gen-assets.mjs — placeholder map/token art for local dev
-          cdp.mjs, drive-*.mjs — drive the real client in a headless browser
+          cdp.mjs, board.mjs, drive-*.mjs — drive the real client in a headless browser
 maps/     the map library — the DM picks from these in-app during play
 portraits/ the token-art library — the same, for faces rather than floors
 ```
@@ -127,7 +129,7 @@ screen and which token is standing on a given square.
 | `drive-ui.mjs`     | The wall and door editor, as the DM                               | DM       |
 | `drive-player.mjs` | A player's connection — that the DM's half is *absent*, not hidden | player   |
 | `drive-rail.mjs`   | The left rail's tab strip, and the layout failures it fixed        | DM       |
-| `drive-fog.mjs`    | Fog of war, including what a player's client never fetched         | both     |
+| `drive-fog.mjs`    | Fog of war, room lighting, and what a player's client never fetched | both     |
 | `drive-names.mjs`  | The names-under-tokens switch, on both boards at once              | both     |
 | `drive-ruler.mjs`  | The movement trail, the diagonal switch, the initiative panel      | both     |
 | `drive-ping.mjs`   | The hold that pings, and the ring reaching an unexplored corner    | both     |

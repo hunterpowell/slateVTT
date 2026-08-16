@@ -11,7 +11,9 @@ coordinate story in the first is the thing that looks like a mistake and is not.
 This covers the whole of milestone 16: automatic line of sight in 16a, and the DM's manual override
 in 16b. The two halves are separated in the text below wherever the second one changed the first.
 Milestone 20 then gave the staged board a mask of its own and pointedly no fog — see *The staged
-board has a mask of its own* and *No staged fog*.
+board has a mask of its own* and *No staged fog*. Milestone 21 gave the map a second way of being lit
+— see *Two lighting modes, and one question underneath*, which is where to start if the question is
+why a room came on all at once.
 
 ## Two sets of cells, shared by the whole party
 
@@ -106,6 +108,10 @@ revealed ∪= rays                                        // memory: rays only, 
 visible   = rays ∪ Lit − Dark                           // in sight now
 known     = fringe(revealed) ∪ Lit ∪ Explored − Dark    // shown as terrain
 ```
+
+`rays` is whatever `sight_cells` answered — the raycast on a `Dynamic` map, the flood unioned with it
+on a `Room` one. Nothing below this line asks which, and *Two lighting modes* below is the only
+section that does.
 
 **`Lit` and `Explored` are floors and `Dark` is a ceiling**, over both derived sets and neither of
 them the stored one. `visible ⊆ known` survives it — `fringe(revealed) ⊇ revealed ⊇ rays` and the
@@ -286,7 +292,95 @@ one. The two are allowed to disagree; that is the paragraph above this one. What
 that the same lattice fact reaches sight from the other side: a token standing on a 45-degree wall
 sees through it, because that is the tie at `p` working as designed on a case it was not designed for.
 
+## Two lighting modes, and one question underneath
+
+Milestone 21. `lighting: Dynamic | Room` on `MapInfo`, beside `fog` and `vision_ft` and remembered
+per URL with them, so the outdoor map keeps line of sight and the dungeon reveals a room at a time.
+
+```
+Dynamic   rays                 a cell is lit when a straight line reaches it
+Room      flood ∪ rays         …or when a walk does
+```
+
+`fog::sight_cells` is the one place the mode is read, so `recompute_sight` is a single call and
+**nothing downstream knows there are two.** The mode changes what the party can see and not what any
+of it means: `revealed`, `known` and `visible` are built from the answer exactly as before, the
+fringe still widens `known`, the DM's mask is still applied after, and `unseen_by_table` is
+untouched. It bought no arm in `message_for`, no field on the wire past `MapInfo`, and no second
+derived set.
+
+### The doorway carries sight, not light
+
+**`Room` is a union**, and that is the correction one session on a real dungeon forced. One sentence
+for the DM: *you see the whole room you are standing in, plus whatever you have a straight line to.*
+It can never hand the table less than `Dynamic` would.
+
+The flood shipped reading `blocks()` — an open door was a way through, on the argument that an open
+door is how light reaches the next room. In play that makes an open door **a hole in the room
+boundary**: a one-cell hallway hands over the whole chamber past it, and the only marker that bounds
+a room is a shut door somebody has to swing by hand as the party moves.
+
+So the flood bounds on **every traced segment, open or shut**, which is `fillFrom`'s rule in
+`overrides.ts` — the one this file already taught the DM under *The fill runs on the client*: **an
+archway is a door left open.** It was the established idiom everywhere except here.
+
+| segment    | bounds the flood | stops a ray |
+| ---------- | ---------------- | ----------- |
+| masonry    | yes              | yes         |
+| shut door  | yes              | yes         |
+| open door  | yes — the archway | no         |
+
+What an open door hands over is therefore the **wedge visible through it** rather than the room
+behind it, which is what opening a door does at a table. Only sight reads a door's state now, which
+is one rule fewer than the two this file used to carry — and `lit_cells` is openly the same
+*question* `fillFrom` asks, in a second language, kept separate for `shape_covers`'s reason: that one
+previews what the DM is about to paint, this one decides what the party is handed, and a
+disagreement at the fringe changes a preview rather than a permission.
+
+**A shut door still genuinely seals a room** — both halves stop at it — which is what makes doors
+load-bearing rather than decorative.
+
+Considered and not built: a `WallKind::Archway` of its own. It would bound light and nothing else,
+which is exactly what an open door now does, and a third variant in a closed set costs the editor's
+mode strip, the renderer, `AddWalls`, and the client's two-state `Wall.door`. `ROADMAP.md` asked
+whether an archway needed its own kind; the answer is no. If a permanent opening ever needs to be
+un-swingable, it is still available.
+
+**It is bounded by the radius as well as by the walls**, Euclidean from the source like the
+raycast's. A pure fill does not respect corners — walk into a winding corridor and the whole of it
+lights to its far end, around every bend — and bounding it keeps `vision_ft` meaningful in both
+modes rather than dead in one. A hall bigger than the radius is a map whose radius should be raised;
+there is no second number.
+
+**A cell a traced segment runs through is a dead end**, `cutByWall`'s rule matched segment for
+segment — see *A tie is contact* below, which is the same lattice fact from the other side.
+Corner-snapped masonry never produces such a cell; a wall at 45 degrees produces one every other
+cell, and a chamfered room corner is made of them. Taken by whichever fill reached it and expanded
+out of by none. The seed is not special-cased either, so a token standing inside masonry lights the
+one square it is standing in — visibly wrong in a way the DM goes and fixes, which is the direction
+this has to fail.
+
+**One fill per source, unioned, and deliberately not one sweep sharing a visited set.** The raycast
+may short-circuit on a cell another torch already lit because rays are independent; here skipping
+such a cell would stop that source expanding *through* it, and a fill that never enters the corridor
+never reaches the room past it.
+
+Leaving a room un-lights it, and no new rule was needed for that: terrain gates on `known` and
+creatures on `visible`, so the room stays dimmed and whatever wandered in while the party was away
+does not show.
+
+**A bad trace fails loudly** — one gap merges two rooms in front of everybody, instead of leaking a
+sliver of sight nobody notices. That is the mode's best property and its sharpest cost: what the DM
+has to hold in their head is *every wall and door I trace bounds a room*, and the panel's hint says
+exactly that, because a room that lit further than they meant looks like fog and not like a gap.
+
+Unlike `shape_covers` there is **no client twin**: the table is sent a `FogView` and asks nothing,
+so there is no second copy to keep loosely in step. The whole of the client's half is two buttons in
+the panel and the sentence under them.
+
 ## Raycasting, not shadowcasting
+
+How `Dynamic` answers it, which is what every map did before there were two modes.
 
 `ROADMAP.md` specified symmetric shadowcasting. It does not fit, and the reason is worth keeping:
 **shadowcasting wants opacity to be a property of a cell, and a wall here is an arbitrary segment in
@@ -527,21 +621,27 @@ derived at all. No amount of walls and tokens would give back what somebody deci
 whole and applied again on boot — which is a load-bearing difference and not a symmetry worth tidying
 into one rule.
 
-## Two fields on the map, and no command of their own
+## Three fields on the map, and no command of their own
 
 ```rust
-fog: bool,          // is this map fogged
-vision_ft: f32,     // how far a player-owned token sees
+fog: bool,             // is this map fogged
+vision_ft: f32,        // how far a player-owned token sees
+lighting: Lighting,    // and how that reach is worked out
 ```
 
 Per map rather than per room, and remembered per URL in `Calibration` with the grid: a dungeon wants
-fog and the meadow outside it does not, and the DM should not have to remember which is which when
-they swap between them.
+fog, room lighting and a short radius while the meadow outside it wants none of the three, and the
+DM should not have to remember which is which when they swap between them.
 
 Both go out on `SetMap`. There is no `SetFog`, for the reason there is no `SetHp` — it would be a
 second way to write one record, and two writers is how they come to disagree. The client sends them
 through `MapTool.setFog`, which owns the *confirmed* calibration, so a fiddle with the fog cannot
 commit an unapplied grid preview.
+
+**`lighting` defaults to `Dynamic`** for the reason `fog` defaults to off: it is what every map did
+before the field existed, so a save that predates it describes the same dungeon after loading. That
+is invariant 2 doing its job in the one direction it can — see milestone 20's note that it protects
+a field being *added* and does nothing for one changing shape.
 
 **`fog` defaults to off**, and that is the whole of the roadmap's warning about a radius defaulting
 to zero and every restored room going pitch black. A switch that defaults to off cannot make that
@@ -592,9 +692,15 @@ a number instead of rebuilding a canvas.
 
 ## The panel
 
-A switch, a radius, and a brush. The first two are the map's and go out as part of a `set_map`
-through the map tool, which owns the confirmed calibration; the third is not the map's and sends its
-own command.
+A switch, a mode, a radius, and a brush. The first three are the map's and go out as part of a
+`set_map` through the map tool, which owns the confirmed calibration; the fourth is not the map's
+and sends its own command.
+
+The mode is two buttons rather than a "light whole rooms" checkbox, because it is a choice between
+two ways of working out what the party can see and a checkbox names only one of them. They arm
+nothing — clicking one sends a `set_map` and the board that comes back is the answer — so `.is-on`
+there means "this is what the map says" rather than "the left button is spoken for", which is the
+one place that class does not mean a tool is in hand.
 
 The radius is greyed rather than hidden while fog is off — it is still the map's number, and hiding
 it would make turning fog on look like it had also invented one. The brushes grey the same way and
@@ -615,6 +721,10 @@ keeping: it arms nothing *because the party's tokens are what move the fog* — 
 one part of it the DM places by hand, so it is a tool holding the left mouse button like any other.
 One left armed under a hidden panel is a click doing something with nothing on screen saying why,
 which is the rail's rule and now applies here too.
+
+The hint says what a torch does, and it says it differently in the two modes: the `Room` wording
+names the door, because a door is what that mode makes load-bearing and because a room that lit
+further than the DM expected is nearly always a wall with a gap in it.
 
 Four brushes and two gestures:
 
@@ -707,3 +817,19 @@ Its own network check is a latecomer: a third browser joins *after* a forced-lit
 wraith. That is invariant 3 asked of the override — filtering every delta correctly and then handing
 over the whole world on connect is the most common way this goes wrong, and it is the one thing no
 amount of driving the two existing clients would catch.
+
+Milestone 21's half is the only part of this driver that is not self-contained, and what it cost is
+worth knowing before writing another one like it. Room lighting has no shape at all without a wall,
+so the driver has to **trace one** — and a driver may neither assume the board it was written against
+nor erase the DM's dungeon to make room for its own, so it runs only on a board with nothing traced,
+erases what it traced, and says so and skips otherwise. It also builds its **own torch** rather than
+hunting the board for one of the party: where six party tokens are standing is a fact about whatever
+room this is, a ring search wide enough to find one costs a click per square, and a token the DM
+creates lands in the first free cell out from the middle of the view — which is the one place both
+clients are certainly looking. It is handed to a player, because a monster the DM keeps lights
+nothing.
+
+The reading itself is the fog switch's, one step on: mark the player's board under `Dynamic`, switch
+to `Room`, and the ground the spur was hiding arrives. **The reverse is deliberately not asserted** —
+`revealed` is memory, so switching back leaves that ground on their board dimmed rather than taking
+it away. Forgetting is what `reset all` is for, which is why the run resets before it measures.

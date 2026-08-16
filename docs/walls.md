@@ -55,6 +55,15 @@ about what the segment even is. "A solid wall that is open" is unrepresentable.
 an open door would quietly stop blocking anything the moment fog arrived. `Wall::door()` returns
 `Option<bool>` and is the only thing outside the editor that asks.
 
+**Milestone 21 made a door load-bearing rather than decorative.** On a map lit a room at a time, a
+shut door seals a room and an open one is what the party sees *through* — so a swing is the
+difference between the table being handed the next chamber and being handed a doorway's worth of it.
+
+Three readers now, and the rule is one line: **only sight reads `blocks()`.** Both fills — the DM's
+reveal fill and room lighting's — bound on every traced segment whatever it is swung to, which is
+what makes an archway *a door left open*, on a map being painted and on a map being played alike.
+Room lighting shipped disagreeing with that and was corrected; `docs/fog.md` has the story.
+
 Doors are traced **shut**. A door the DM has to close after drawing it is a door they will forget to
 close. `ToggleDoor` is refused on masonry rather than ignored — a toggle landing on a wall means the
 client and the room disagree about what that segment is, and doing nothing quietly hides it.

@@ -9,6 +9,7 @@ import { overridesFromWire } from './overrides.js';
 import type {
   Diagonals,
   Hp,
+  Lighting,
   Owner,
   WireMapInfo,
   WireRoomView,
@@ -62,6 +63,9 @@ export interface Board {
   fog: boolean;
   /** How far a player-owned token sees, in feet. Only read when `fog` is on. */
   visionFt: number;
+  /** Line of sight, or the room a token is standing in. Read by the fog panel
+   *  and by nothing that draws: what arrives is a `Fog` either way. */
+  lighting: Lighting;
 }
 
 /**
@@ -249,6 +253,7 @@ export function boardFromWire(map: WireMapInfo): Board {
     playArea: map.play_area,
     fog: map.fog,
     visionFt: map.vision_ft,
+    lighting: map.lighting,
   };
 }
 

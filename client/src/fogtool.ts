@@ -1,10 +1,21 @@
 /**
- * The DM's fog panel: a switch, a radius, and — since 16b — a brush.
+ * The DM's fog panel: a switch, a mode, a radius, and — since 16b — a brush.
  *
- * The first two are the map's and go out as part of a `set_map` through the map
- * tool, which owns the confirmed calibration. There is no `set_fog`, for the
+ * The first three are the map's and go out as part of a `set_map` through the
+ * map tool, which owns the confirmed calibration. There is no `set_fog`, for the
  * reason there is no `set_hp`: it would be a second way to write one record, and
  * two writers for one record is how they come to disagree.
+ *
+ * The mode is milestone 21 and is a third field on that one command rather than
+ * anything of its own. **Nothing on this side computes with it** — what arrives
+ * is a packed rectangle either way — so the whole of the client's half of room
+ * lighting is these two buttons and the sentence under them.
+ *
+ * That sentence carries more than it looks like it does. Under `room` a wall the
+ * DM did not trace is a room that lights into the next one, and the board cannot
+ * say so: the fog just arrives wider than they meant. So the hint names the rule
+ * rather than the effect — every wall and door bounds a room, and an archway is a
+ * door left open, which is the same thing the reveal fill has always done.
  *
  * The brush is not the map's. It says something about particular cells, it is
  * sent as its own command, and it is what turned this panel into a tool — which
@@ -37,7 +48,7 @@
 import type { Rect, Vec2 } from './coords.js';
 import { playRect } from './coords.js';
 import { fillFrom } from './overrides.js';
-import type { ClientMsg, FogPaint } from './protocol.js';
+import type { ClientMsg, FogPaint, Lighting } from './protocol.js';
 import type { Board, Scene } from './scene.js';
 import { shownBoard, shownWalls, showingStaged } from './scene.js';
 
@@ -61,6 +72,9 @@ export type FogGesture = 'fill' | 'paint';
 export interface FogToolUi {
   root: HTMLElement;
   on: HTMLInputElement;
+  /** The two mode buttons are built here rather than in the document, like the
+   *  brushes below and for the same reason: the list lives in one place. */
+  lighting: HTMLElement;
   vision: HTMLInputElement;
   visionDown: HTMLButtonElement;
   visionUp: HTMLButtonElement;
@@ -121,10 +135,27 @@ const BRUSHES: readonly { brush: FogBrush; label: string; title: string }[] = [
   },
 ];
 
+/** The two ways a fogged map works out what the party can see, in the words the
+ *  DM picks between. Neither is a modifier of the other, so both are named. */
+const MODES: readonly { mode: Lighting; label: string; title: string }[] = [
+  {
+    mode: 'dynamic',
+    label: 'sight',
+    title: 'A token sees what it has a straight line to, out to its radius.',
+  },
+  {
+    mode: 'room',
+    label: 'room',
+    title:
+      'A token lights the whole room it is standing in, out to its radius, and sees through open doors into the next one. Every wall and door you traced bounds a room — an archway is a door left open.',
+  },
+];
+
 export function createFogTool(
   ui: FogToolUi,
-  /** Sends the two map fields as part of a whole `set_map` for the live slot. */
-  setFog: (on: boolean, visionFt: number) => void,
+  /** Sends the three map fields as part of a whole `set_map` for the slot on
+   *  screen. */
+  setFog: (on: boolean, visionFt: number, lighting: Lighting) => void,
   send: (msg: ClientMsg) => void,
   /** The map image's size, for a board with no play area — the same lazy read
    *  the map tool makes, because the image changes under this. */
@@ -146,6 +177,7 @@ export function createFogTool(
   let painted: Set<string> = new Set();
 
   const buttons = new Map<FogBrush, HTMLButtonElement>();
+  const modes = new Map<Lighting, HTMLButtonElement>();
 
   /** Which board this panel is editing — the one on screen, like everything
    *  else that draws or hit-tests. */
@@ -193,6 +225,15 @@ export function createFogTool(
     for (const control of [ui.vision, ui.visionDown, ui.visionUp, ui.gesture]) {
       control.disabled = locked;
     }
+    // The mode is the map's like the switch above it, so the buttons read off
+    // the board rather than holding a state of their own — which is what makes
+    // switching to the staged slot show that map's answer and not this one's.
+    const lighting = on?.lighting ?? 'dynamic';
+    for (const [m, button] of modes) {
+      button.disabled = locked;
+      button.classList.toggle('is-on', m === lighting);
+      button.setAttribute('aria-pressed', String(m === lighting));
+    }
     // Reset is the one control that stays live-only, and the reason is that
     // half of it is not the DM's: it forgets everywhere the *party* has
     // explored, and no ray has ever been cast on a map they have not been
@@ -221,7 +262,13 @@ export function createFogTool(
               // nobody has cast a ray on. Without this line the DM is painting
               // a dungeon that appears to be fully lit.
               'Painting the map being prepared. This is what the party gets when it lands.'
-            : `Player tokens light ${ui.vision.value} ft, and walls and shut doors stop it.`
+            : lighting === 'room'
+              ? // Names the boundary rather than the door, because that is the
+                // rule a DM has to hold to trace a dungeon that lights the way
+                // they meant: a room that lit further than expected is a wall
+                // with a gap in it, and the fix is a segment across the gap.
+                `Player tokens light the room they are in, out to ${ui.vision.value} ft, and see through open doors. Every wall and door you trace bounds a room.`
+              : `Player tokens light ${ui.vision.value} ft, and walls and shut doors stop it.`
           : gesture === 'fill'
             ? 'Click a room to fill it — every wall and door bounds it, open or shut. Escape puts the brush down.'
             : 'Drag over the squares to paint them.';
@@ -302,18 +349,38 @@ export function createFogTool(
     send({ type: 'reset_fog' });
   });
 
-  const sendMap = (): void => {
+  const sendMap = (lighting?: Lighting): void => {
     // The map tool owns which slot this lands in, and it is the same slot this
     // panel is showing — both are "the board on screen".
-    if (editing() === null) return;
-    setFog(ui.on.checked, clamp(Number(ui.vision.value)));
+    const on = editing();
+    if (on === null) return;
+    setFog(ui.on.checked, clamp(Number(ui.vision.value)), lighting ?? on.lighting);
   };
 
-  ui.on.addEventListener('change', sendMap);
+  for (const entry of MODES) {
+    const button = document.createElement('button');
+    button.type = 'button';
+    // The brushes' control, narrower: `.is-on` means the same thing on both,
+    // which is "this is what the panel is set to" rather than anything about
+    // the mouse — a mode arms nothing.
+    button.className = 'draw-tool fog-mode';
+    button.textContent = entry.label;
+    button.title = entry.title;
+    // Straight out as a `set_map` rather than through a local variable. There
+    // is nothing to confirm and nothing to preview: the room recomputes and the
+    // board that comes back is the answer.
+    button.addEventListener('click', () => sendMap(entry.mode));
+    modes.set(entry.mode, button);
+    ui.lighting.append(button);
+  }
+
+  // Wrapped, because `sendMap` takes an argument now and an event listener
+  // would hand it the event.
+  ui.on.addEventListener('change', () => sendMap());
   // `change` rather than `input`: typing 1 on the way to 100 would otherwise
   // send a radius nobody asked for and recompute the whole board for it. Same
   // split the grid colour slider makes, and for the same reason.
-  ui.vision.addEventListener('change', sendMap);
+  ui.vision.addEventListener('change', () => sendMap());
 
   const nudge = (by: number): void => {
     ui.vision.value = String(clamp(Number(ui.vision.value) + by));

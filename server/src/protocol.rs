@@ -105,8 +105,39 @@ pub struct MapInfo {
     /// than one per token — nothing here knows the word "darkvision".
     ///
     /// Read only when `fog` is on, so its default is a playable number rather
-    /// than a defensive one.
+    /// than a defensive one. Both modes below read it, which is the whole reason
+    /// the room fill is bounded by it as well as by the walls.
     pub vision_ft: f32,
+    /// How this map's sight is worked out. Per map like the two above and
+    /// remembered per URL with them: the outdoor map keeps line of sight and the
+    /// dungeon reveals a room at a time.
+    pub lighting: Lighting,
+}
+
+/// What "can the party see this cell" means on a given map.
+///
+/// Two questions read out of the same walls rather than two answers to one:
+/// `Dynamic` asks whether a straight line reaches the cell, `Room` asks whether a
+/// walk does. Neither is the other written twice — see `visible_cells` and
+/// `lit_cells` in `fog.rs`, which sit beside each other for that reason.
+///
+/// Per map rather than per room, unlike `Diagonals`: a dungeon of sealed chambers
+/// and the meadow outside it want different answers, and the DM should not have
+/// to remember which is which when they swap between them.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Lighting {
+    /// Line of sight: a cell is lit when nothing stands between the viewer's
+    /// centre and it. The default, which is what keeps a save written before this
+    /// field existed reading exactly as it did — invariant 2 protects the field
+    /// being added, and this is what makes the default the old behaviour.
+    #[default]
+    Dynamic,
+    /// The room a token is standing in, out to the radius: a cell is lit when a
+    /// walk reaches it without crossing masonry or a shut door. **An open door is
+    /// how light reaches the next room, and a shut one seals this one** — which
+    /// is what makes a door load-bearing rather than decorative.
+    Room,
 }
 
 impl Default for MapInfo {
@@ -130,6 +161,9 @@ impl Default for MapInfo {
             // a guard against the zero that `#[serde(default)]` would otherwise
             // supply — the flag above is what guards that.
             vision_ft: 60.0,
+            // The mode every map had before there were two, so a save that
+            // predates the field describes the same dungeon after loading it.
+            lighting: Lighting::Dynamic,
         }
     }
 }
@@ -150,10 +184,12 @@ pub struct Calibration {
     pub grid_color: String,
     pub play_area: Option<Rect>,
     /// Remembered with the grid rather than kept beside it. Whether a map is
-    /// fogged and how far its torches reach is a fact about that dungeon, and
-    /// re-picking it out of the library should bring both back with the rest.
+    /// fogged, how far its torches reach and how sight is worked out on it are
+    /// facts about that dungeon, and re-picking it out of the library should
+    /// bring all three back with the rest.
     pub fog: bool,
     pub vision_ft: f32,
+    pub lighting: Lighting,
 }
 
 impl Default for Calibration {
@@ -174,6 +210,7 @@ impl From<MapInfo> for Calibration {
             play_area: map.play_area,
             fog: map.fog,
             vision_ft: map.vision_ft,
+            lighting: map.lighting,
         }
     }
 }
@@ -190,6 +227,7 @@ impl Calibration {
             play_area: self.play_area,
             fog: self.fog,
             vision_ft: self.vision_ft,
+            lighting: self.lighting,
         }
     }
 }
@@ -843,7 +881,8 @@ pub enum ClientMsg {
         offset_y: f32,
         grid_color: String,
         play_area: Option<Rect>,
-        /// Whether this map is fogged, and how far a token sees on it.
+        /// Whether this map is fogged, how far a token sees on it, and how that
+        /// sight is worked out.
         ///
         /// Here rather than on a command of their own for the reason the grid
         /// colour is here: they are fields of `MapInfo`, they are remembered per
@@ -851,6 +890,7 @@ pub enum ClientMsg {
         /// way to write one map that could arrive out of order with this one.
         fog: bool,
         vision_ft: f32,
+        lighting: Lighting,
         /// Which slot this is about: the board the table is looking at, or the
         /// one the DM is preparing.
         ///

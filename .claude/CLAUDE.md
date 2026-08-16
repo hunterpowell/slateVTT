@@ -25,8 +25,8 @@ them would load them into every session, which is what moving them out avoided.)
 - Lets anyone measure a distance or draw a spell area on the board, or point at a spot on it so
   everyone else sees where
 - Lets the DM trace the walls and doors of a map, and limits what the table can see to what their
-  own tokens have line of sight on — and lets the DM overrule that by hand, square by square or a
-  room at a time
+  own tokens have line of sight on — or, on a map set that way, to the whole room each token is
+  standing in — and lets the DM overrule either by hand, square by square or a room at a time
 
 ## Non-goals
 
@@ -168,6 +168,11 @@ enum Override { Explored, Lit, Dark }
 /// ruler did before the switch existed — see *Distance* in `docs/drawings.md`.
 enum Diagonals { Equal, Alternating }
 
+/// Which question a fogged map asks: does a straight line reach the cell, or
+/// does a walk. `Dynamic` is the default and is what every map did before there
+/// were two — see `docs/fog.md`.
+enum Lighting { Dynamic, Room }
+
 /// A cell of the grid. A tuple, not a struct: it indexes a lattice rather than
 /// naming a position, and it never reaches the wire as itself — `FogView` packs
 /// a whole rectangle of them into one string.
@@ -187,9 +192,10 @@ enum WallKind { Solid, Door(bool) }
 struct MapInfo {
     url: String, grid_px: f32, offset_x: f32, offset_y: f32,
     grid_color: String, play_area: Option<Rect>,
-    /// Whether this map is fogged and how far a token sees on it. Per map and
-    /// remembered per URL with the rest — see `docs/fog.md`. `fog` defaults off.
-    fog: bool, vision_ft: f32,
+    /// Whether this map is fogged, how far a token sees on it, and how that
+    /// reach is worked out. Per map and remembered per URL with the rest — see
+    /// `docs/fog.md`. `fog` defaults off and `lighting` defaults to `Dynamic`.
+    fog: bool, vision_ft: f32, lighting: Lighting,
 }
 
 struct Token {
@@ -499,8 +505,19 @@ first hands over the ogre standing behind the wall, and writing into the second 
 reached into the save file. So it is a mask like the DM's paint is, and `Dark` still wins because the
 overrides are applied after it.
 
-**Raycasting to cell centres, not shadowcasting.** A cell is visible when the straight line from the
-viewer's centre to it crosses no solid wall and no shut door. Shadowcasting wants opacity to be a
+**Two modes, one question underneath.** `lighting` on `MapInfo` picks between them and
+`fog::sight_cells` is the only place that reads it: `Dynamic` is the raycast, and **`Room` is a flood
+unioned with it** — *you see the whole room you are standing in, plus whatever you have a straight
+line to*, so it can never show less than `Dynamic` would. The flood runs from each token's cell,
+four-neighbour, bounded by the radius and by **every traced segment, open or shut** — `fillFrom`'s
+rule, which is what makes *an archway a door left open* and what stops a one-cell hallway handing
+over the room past it. **Only sight reads `blocks()`**, so what an open door passes is the wedge
+seen through it rather than the room behind it, and a shut one stops both halves. A cell a traced
+segment runs through is a dead end, and each source floods separately — sharing a visited set would
+stop the second torch expanding through ground the first already lit.
+
+**Raycasting to cell centres, not shadowcasting** is how `Dynamic` answers it. A cell is visible when
+the straight line from the viewer's centre to it crosses no solid wall and no shut door. Shadowcasting wants opacity to be a
 property of a cell and a wall here is an arbitrary segment in image pixels; rasterising one into
 blocking cells would blind both sides of every wall traced along a cell boundary, which is most of
 them. The radius is Euclidean — a circle, agreeing with a drawn circle and not with the ruler.
@@ -511,9 +528,9 @@ not one. **It is the one message that is identical for every recipient**, the DM
 is the exact opposite of `WallsChanged` beside it: the geometry is the secret and the shadow it casts
 is what the table plays with. `None` means the map is not fogged, indistinguishable from having none.
 
-`fog: bool` and `vision_ft` live on `MapInfo`, remembered per URL like the grid, and go out on
-`SetMap` — there is no `SetFog`. **`fog` defaults off**, which is what keeps an older save from
-going dark. Nothing here knows the word "darkvision": one radius per map.
+`fog: bool`, `vision_ft` and `lighting` live on `MapInfo`, remembered per URL like the grid, and go
+out on `SetMap` — there is no `SetFog`. **`fog` defaults off and `lighting` defaults to `Dynamic`**,
+which is what keeps an older save from going dark or changing shape. Nothing here knows the word "darkvision": one radius per map.
 
 **Recompute on the drop, never on a drag frame** — `moves_sight` is `persists`'s twin and is
 enumerated the same way. `refresh_fog` reads before `apply`, recomputes after, and reports the
@@ -548,7 +565,8 @@ reader downstream of that widening. `shape_covers` on the server is a second
 copy of `coveredCells`, and the two only have to agree loosely.
 
 → **`docs/fog.md`** before touching `fog.rs`, `fog.ts`, `overrides.ts`, `fogtool.ts`,
-`unseen_by_table`, `with_fringe`, `shape_seen`, `refresh_fog`, or `moves_sight`.
+`unseen_by_table`, `with_fringe`, `shape_seen`, `refresh_fog`, `sight_cells`/`lit_cells`, or
+`moves_sight`.
 
 ## Frontend
 
@@ -629,7 +647,11 @@ needs a canvas or a socket can be tested here. `npm run check` is this plus the 
 a canvas, a layout failure, or a **difference between two connections**. Much of what this project
 guarantees is what a *second* client is not holding, and one browser cannot see it; the drivers that
 matter most open two. They mutate the room they connect to, so point `SLATE_STATE` at a scratch file
-every time. The README lists them and what each drives.
+every time, and each one puts back what it changed. Two files sit under them: `cdp.mjs` is the
+protocol and knows nothing about this project, and `board.mjs` knows where the grid falls on screen
+and which token is standing on a square — anything that clicks the board goes through it rather than
+reaching for pixels, because **a driver may not assume the map it was written against.** The README
+lists them and what each drives.
 
 ## Working agreement
 
