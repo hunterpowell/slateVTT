@@ -9,7 +9,8 @@ deliberately, and neither is loaded for you:
 
 - **`ROADMAP.md`** — design for what is not built yet, and the milestone order. Read it when
   starting a milestone.
-- **`docs/maps.md`, `docs/tokens.md`, `docs/drawings.md`, `docs/walls.md`, `docs/fog.md`** — why each
+- **`docs/maps.md`, `docs/tokens.md`, `docs/drawings.md`, `docs/walls.md`, `docs/fog.md`,
+  `docs/undo.md`** — why each
   built feature is the shape it is. Every section below that summarises a feature ends with a pointer
   to its file and the code that file covers.
 
@@ -27,6 +28,7 @@ them would load them into every session, which is what moving them out avoided.)
 - Lets the DM trace the walls and doors of a map, and limits what the table can see to what their
   own tokens have line of sight on — or, on a map set that way, to the whole room each token is
   standing in — and lets the DM overrule either by hand, square by square or a room at a time
+- Lets the DM take back the last handful of things that changed the room
 
 ## Non-goals
 
@@ -154,11 +156,19 @@ struct RoomState {
     /// snapshot or a message, because the finished `MapInfo` already says
     /// everything a client needs — see `docs/maps.md`.
     calibrations: HashMap<String, Calibration>,
+    /// The last ten states of the room, for the DM's undo. Post-state, so the
+    /// back of it is the present and an undo pops it — see `docs/undo.md`.
+    /// A snapshot is `Saved`, which is what keeps the two client tables below
+    /// out of it by construction. Memory only; never on disk.
+    undo: VecDeque<Snapshot>,
     /// Identified clients, who are the only ones any event reaches, and the
     /// sockets that are connected but have not said who they are yet.
     clients: HashMap<ClientId, Client>,
     pending: HashMap<ClientId, mpsc::Sender<ServerMsg>>,
 }
+
+/// One entry in the undo ring: a whole room, and what was done to arrive at it.
+struct Snapshot { did: String, state: Saved }
 
 /// `Auto` is the absence of an entry rather than a fourth variant. `Explored`
 /// and `Lit` are floors, `Dark` is a ceiling — see `docs/fog.md`.
@@ -251,6 +261,12 @@ underneath, because they are all the DM's. A player is not merely stopped from e
 are never sent one, and never told one changed. **The fog override is the second thing with exactly
 that rule**, and for the same reason: it is what the DM authored, and the fog is the shadow it casts.
 
+**Undo is DM-only and is the one command that can take back somebody else's work** — a player's
+drawing is on the ring like everything else persisted, because a restore restores the room whole and
+skipping their shape would take it *and* the DM's last command together. The rule that decides what
+may go on the ring is **state the undoing hand wrote**; milestone 24's scratchpads are the case that
+will fail it. See `docs/undo.md`.
+
 Token creation, deletion, map changes, initiative edits, and whether the board writes token names
 under them are DM-only. That last one is the one whose *result* everybody is sent — see the wire
 protocol below. So is reassigning a token's `owner`, which is how a player is handed a token the DM
@@ -313,6 +329,13 @@ is the third layer of the same idea as `Event` vs `ServerMsg` and `RoomState` vs
 it exists to make the failure fail the safe way round: a secret added to `Token` and forgotten
 here is *absent from the wire*, which shows up as the DM's own client missing a field, rather
 than shipped to everyone, which shows up as nothing at all until somebody opens devtools.
+
+**`ServerMsg::Restored` is the second frame that carries a whole `RoomView`, and it goes through the
+same `snapshot_for`** — invariant 3 on the one message that would otherwise be a second place to get
+it wrong. It is deliberately *not* a second `Welcome`: on the client that handler **builds** the
+panels, the tools and the board once per socket, so a restore hands over state and nothing else — no
+identity, no roster. `UndoChanged` beside it reaches the DM or nobody, which is `WallsChanged`'s rule
+a fourth time and the first where what is withheld is a label rather than a secret. See `docs/undo.md`.
 
 `roster` is the cast list, not who is connected. The DM never sees the identity picker, so this
 is the only way their token panel learns the names a token can be handed to; a player is sent it
@@ -623,6 +646,25 @@ board directly.
 
 → **`docs/maps.md`** before touching `maptool.ts`, `calibrate.ts`, `library.rs`, `library.ts`, or
 `SetMap`/`MapInfo` on the server.
+
+## Undo
+
+One ring, ten deep, no redo, the DM's alone. **A snapshot is `Saved`** — the save file kept in memory
+rather than written — so `clients` and `pending` stay out by construction and `adopt` is the one
+inverse of `to_saved` that both booting and undoing go through. **Post-state**: the back of the ring
+is the present, an undo pops it and adopts what is behind, and both constructors seed a floor so the
+first command of a session is undoable.
+
+**A step is a command that `undid` names and `persists` agrees with.** Sharing `persists` is what
+keeps drag frames out for free; `undid` adds the two exclusions it cannot express, and the
+load-bearing one is that **`Undo` itself is never a step**. One step per command, so a long wall
+trace fills the ring — `ClearWalls` is the way out of a bad one, and depth is the cheap thing to tune.
+
+Restoring re-sends the world rather than a diff, because the case undo exists for is `sweep_board`.
+The button names what it would take, since with no redo an unpredictable press is unrecoverable.
+
+→ **`docs/undo.md`** before touching `RoomState::undo`, `remember`, `adopt`, `undid`,
+`Event::Restored`, `undo.ts`, or `adoptView` in `scene.ts`.
 
 ## Testing
 

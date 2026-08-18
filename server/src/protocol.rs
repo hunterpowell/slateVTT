@@ -776,6 +776,20 @@ pub struct RoomView {
     /// is a counting convention the table shares, so a client holding a different
     /// one from its neighbour is the only way this can be wrong.
     pub diagonals: Diagonals,
+    /// What the DM's undo would take back, or `None` when there is nothing to
+    /// take back — and **`None` for a player, always**, which is the walls' rule
+    /// arriving for the fourth time.
+    ///
+    /// It is a label rather than a depth because that is the whole of what the
+    /// button needs to say: with no redo, a press the DM cannot predict is
+    /// unrecoverable, so the control names its next victim instead of counting
+    /// them. `None` is therefore both "the ring holds only where you started"
+    /// and "you are not the DM", indistinguishable from the client side.
+    ///
+    /// The ring itself never leaves the room. A client cannot undo twice without
+    /// being told what the second press would do, and it is told by the
+    /// `UndoChanged` that rides on the first.
+    pub undo: Option<String>,
 }
 
 /// Inbound. Not `#[serde(default)]`: a malformed frame from a client should be
@@ -1075,6 +1089,17 @@ pub enum ClientMsg {
     ClearInitiative,
     NextTurn,
     PreviousTurn,
+
+    /// Put the room back the way it was before the last thing that changed it.
+    /// DM-only, and the one command here that names no subsystem — it is about
+    /// the room's recent history rather than about any part of it.
+    ///
+    /// Carries nothing at all, not even how far back to go. The ring lives in
+    /// the room and only its top is undoable, so a depth on the wire would be a
+    /// number the server had to check against a stack the client cannot see —
+    /// and a client that undoes twice does so by sending this twice, which is
+    /// also what keeps each step's label honest.
+    Undo,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -1282,6 +1307,45 @@ pub enum ServerMsg {
     Pinged {
         by: Owner,
         at: Pos,
+    },
+
+    /// The room was put back to an earlier state — take this as the truth for
+    /// all of it.
+    ///
+    /// **The whole world rather than a diff, and that is the feature working
+    /// rather than giving up.** An undo restores a snapshot, and the one thing
+    /// the room genuinely cannot describe as a delta is `sweep_board`: a map
+    /// load destroys the walls, the shapes and the fog together, so the inverse
+    /// of it is most of a second state model. Re-sending everything costs one
+    /// frame on a deliberate DM action and no machinery at all.
+    ///
+    /// A `RoomView` like `Welcome`'s and built by the same `snapshot_for`, so a
+    /// restore is filtered exactly as a join is — invariant 3, on the one
+    /// message that would otherwise be a second place to get it wrong. Boxed for
+    /// `Welcome`'s reason: every message in every client's mailbox is sized at
+    /// the largest variant.
+    ///
+    /// It is a separate message from `Welcome` rather than a second one of
+    /// those, and the reason is on the client: `onWelcome` *builds* the panels,
+    /// the tools and the board, once, on the assumption there is exactly one per
+    /// connection. This one only hands over state. No `your_id`, no `is_dm`, no
+    /// roster — identity is settled by the socket and cannot change under it,
+    /// and an undo cannot edit the cast list.
+    Restored {
+        state: Box<RoomView>,
+    },
+    /// What the DM's undo would take back now, or `None` for nothing.
+    ///
+    /// **It reaches the DM or nobody**, the fourth message with that rule — and
+    /// the first one where the reason is not secrecy but relevance: a player has
+    /// no undo button for this to label. `RoomView::undo` is the same value on
+    /// join, and this is how it changes afterwards.
+    ///
+    /// Rides alongside every command that adds a step and every undo that takes
+    /// one away, which is the same pairing `OverridesChanged` and `FogChanged`
+    /// have — the state changed, and so did what the DM could say about it next.
+    UndoChanged {
+        label: Option<String>,
     },
 
     Error {

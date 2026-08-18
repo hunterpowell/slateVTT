@@ -430,7 +430,10 @@ fn promoting_reaches_the_table_but_the_empty_slot_reaches_only_the_dm() {
     let mut dm_rx = join_as_dm(&mut state, dm);
     let mut player_rx = join_as_player(&mut state, player, "saelyn");
     stage(&mut state, dm, "/uploads/next.png");
-    let _staged_echo = dm_rx.try_recv().expect("the staging echo");
+    // Everything staging told the DM, so what follows reads their queue from
+    // empty. Drained rather than taken one frame at a time: staging is a
+    // command like any other and rides an undo label along with its echo.
+    assert!(!drain(&mut dm_rx).is_empty(), "the staging echo");
 
     state.handle(dm, ClientMsg::PromoteStaged);
 

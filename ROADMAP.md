@@ -25,7 +25,7 @@ Do not work ahead. Each milestone should run and be usable before starting the n
 6. Map upload and grid calibration UI.
 7. Package for Windows session hosting and deploy behind a Cloudflare Tunnel.
 
-Milestones 1–21 are done, and so is 25, which was never planned and is out of order for the reason
+Milestones 1–22 are done, and so is 25, which was never planned and is out of order for the reason
 its own entry gives. Everything from 8 on was planned after the original seven; 17 and 18 were
 workshopped after 16 landed, and 19–24 after 18:
 
@@ -531,7 +531,55 @@ workshopped after 16 landed, and 19–24 after 18:
     an archway wants a `WallKind` of its own, was answered by the revision recorded above: it does
     not.)
 
-22. **Undo, for the DM.** One stack, roughly ten deep, no redo.
+22. **Done.** Undo, for the DM. See `docs/undo.md`.
+
+    Every claim this file made about the server held, and the milestone was small there for exactly
+    the reasons given: `persists` was already the trigger list, a snapshot really is the persisted
+    subset, and defining it that way really does keep `clients` and `pending` out without a rule.
+    Two additions the design did not have, both small and both load-bearing.
+
+    **`undid` had to exist beside `persists`.** The trigger needs a label — the button names what it
+    would take, because with no redo an unpredictable press is unrecoverable — and the same list
+    turned out to be where `Undo` excludes *itself*. Without that the ring grows a new top every time
+    the DM walks down it and the second press returns to where the first started. So it is
+    `persists`'s and `moves_sight`'s third sibling, enumerated the same way, and a step is a command
+    both of them agree about.
+
+    **The ring is post-state and the constructors seed a floor.** Snapshotting *before* each command
+    is the obvious shape and cannot consult `persists`, which answers about the events a command
+    produced — so it would clone the whole room thirty times a second during a drag and discard all
+    but one. Pushing afterwards costs one clone per step. The floor goes in `hardcoded` and
+    `restored` rather than in `spawn`, which is where `recompute_sight` lives: sight is derived from
+    state, but a floor is part of *being* a room, and every test in the crate builds one by hand.
+
+    **The one thing this file got wrong was on the other side of the wire.** "Restoring re-sends
+    `Welcome` to everyone" is true of the server and false of the client: `onWelcome` *builds* the
+    pings, the panels, the four tools, the rail and the board, once, on the stated assumption of one
+    Welcome per socket — and `start()` captures `room.scene` by reference. A second one would
+    construct a second of everything, register another `window` keydown listener per tool, and hand
+    the DM a fresh camera at the moment they are looking at what they just undid. So `Restored` is
+    its own message carrying state alone, and `adoptView` mutates the scene **in place**, sharing its
+    field list with `sceneFromView` through a `fromView` typed `Omit<Scene, 'previewing'>` — the one
+    field a restore must not touch, excluded by the type rather than by remembering.
+
+    That was the whole cost of the milestone, and it is worth stating as a general shape:
+    **"reconnection is already a full resync" was a claim about the protocol, and the protocol was
+    not the part that had to be true.** The client had never actually been asked to resync.
+
+    Two smaller things. `rulers.forgetExcept` is the one thing a restore needed that no other frame
+    did — a restore removes several tokens at once and there is no per-token frame to hang a `forget`
+    on. And `UndoChanged` rides beside every persisting command, which put a trailing frame in every
+    DM-side assertion in the server suite; `drain` filters it and `drain_all` does not, so those
+    tests stay about what they are about and `undo.rs` asserts the pairing directly.
+
+    **One step per command, as chosen.** A long wall trace fills the ring and cannot be taken back as
+    a unit; `ClearWalls` is the way out of a bad one and is itself one step. Coalescing a run was the
+    alternative and was declined because it is a rule `persists` does not already contain — depth is
+    the cheap thing to tune after a session, and the trigger is not.
+
+    The original design, kept because the server half of it needed no changes:
+
+    One stack, roughly ten deep, no redo.
 
     Nearly all of it falls out of things that already exist.
 

@@ -11,6 +11,7 @@ import type {
   WireOverrides,
   WireShape,
   WireStaged,
+  WireRoomView,
   WireToken,
   WireWall,
 } from './protocol.js';
@@ -58,6 +59,16 @@ export interface Handlers {
    *  connection — the walls' rule, not the fog's, because this is what the DM
    *  decided rather than what the table gets to see of it. */
   onOverridesChanged(overrides: WireOverrides, staged: boolean): void;
+  /** The DM undid something — take this view as the truth for the whole room.
+   *
+   *  Called on every connection, and it is the one delta that replaces
+   *  everything rather than a part. Deliberately *not* routed to `onWelcome`:
+   *  that one builds the panels and the board and runs exactly once per socket.
+   */
+  onRestored(state: WireRoomView): void;
+  /** What the DM's next undo would take back, or null for nothing. Only ever
+   *  called on a DM connection. */
+  onUndoChanged(label: string | null): void;
   onError(message: string): void;
   onClose(): void;
 }
@@ -136,6 +147,12 @@ export function connect(on: Handlers): Net {
         break;
       case 'fog_changed':
         on.onFogChanged(msg.fog);
+        break;
+      case 'restored':
+        on.onRestored(msg.state);
+        break;
+      case 'undo_changed':
+        on.onUndoChanged(msg.label);
         break;
       case 'overrides_changed':
         on.onOverridesChanged(msg.overrides, msg.staged);

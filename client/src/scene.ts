@@ -210,14 +210,21 @@ export function shownPos(scene: Scene, token: Token): Vec2 | null {
 }
 
 /**
+ * Everything about a scene that comes off the wire — which is every field but
+ * `previewing`, and the `Omit` is what says so.
+ *
+ * It exists so `sceneFromView` and `adoptView` share one field list. Two lists
+ * would rot in the direction that fails silently: a field added to `Scene` and
+ * built here but forgotten in the adopt path is a restore that quietly keeps
+ * the stale value, which looks like a server bug rather than a missing line.
+ *
  * The server sends tokens in a stable order, and that order is z-order, so it
- * is preserved verbatim here.
+ * is preserved verbatim.
  */
-export function sceneFromView(view: WireRoomView, isDm: boolean): Scene {
+function fromView(view: WireRoomView, isDm: boolean): Omit<Scene, 'previewing'> {
   return {
     live: boardFromWire(view.map),
     staged: stagedFromWire(view.staged),
-    previewing: false,
     tokens: view.tokens.map(tokenFromWire),
     shapes: view.shapes.map(shapeFromWire),
     walls: view.walls.map(wallFromWire),
@@ -226,6 +233,30 @@ export function sceneFromView(view: WireRoomView, isDm: boolean): Scene {
     showNames: view.show_names,
     diagonals: view.diagonals,
   };
+}
+
+export function sceneFromView(view: WireRoomView, isDm: boolean): Scene {
+  return { ...fromView(view, isDm), previewing: false };
+}
+
+/**
+ * Takes a whole `RoomView` as the truth for a scene that already exists —
+ * `sceneFromView` for the second and later ones.
+ *
+ * **In place, and that is the entire point.** The board captured this object
+ * when it started and draws from it every frame; the panels were handed it
+ * once. Assigning a *new* scene over `room.scene` would leave the renderer
+ * drawing the old one forever, which is why a restore cannot simply rebuild
+ * what `Welcome` built.
+ *
+ * `previewing` survives, which the type enforces rather than the author
+ * remembering: it is local state about where the DM is looking, and a frame
+ * from the room has no opinion about that. If the restore empties the staged
+ * slot, `shownBoard` falls back to the live board on its own and the map tool
+ * reports the mode change, exactly as a discard already does.
+ */
+export function adoptView(scene: Scene, view: WireRoomView, isDm: boolean): void {
+  Object.assign(scene, fromView(view, isDm));
 }
 
 /**

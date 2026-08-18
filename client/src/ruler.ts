@@ -86,6 +86,11 @@ export interface Rulers {
    *  this takes the ruler with it, since a trail left behind by a token that
    *  just vanished is a line pointing at where it went. */
   forget(id: string): void;
+  /** `forget` for everything not in `keep`, which is what an undo needs: a
+   *  restore can take several tokens off the board at once and there is no
+   *  per-token frame to hang a `forget` on. Same argument as that one — a trail
+   *  left by a token that just vanished points at where it went. */
+  forgetExcept(keep: ReadonlySet<string>): void;
   /** Every live ruler, having dropped the ones that have finished fading and the
    *  ones nothing has moved for a while. */
   active(now: number): ReadonlyMap<string, Ruler>;
@@ -121,6 +126,12 @@ export function createRulers(): Rulers {
 
     forget(id) {
       live.delete(id);
+    },
+
+    forgetExcept(keep) {
+      for (const id of [...live.keys()]) {
+        if (!keep.has(id)) live.delete(id);
+      }
     },
 
     active(now) {

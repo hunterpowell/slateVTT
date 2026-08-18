@@ -500,6 +500,43 @@
         pointer-events: auto;
       }
 
+      /* Above the strip, and its own row. The label is a whole phrase — "undo:
+         tracing walls" — because with no redo the DM has to know what a press
+         takes before taking it, so this is the one control on the rail that is
+         allowed to wrap onto a second line rather than ellipsis away the part
+         that matters. */
+      #undo {
+        flex: 0 0 auto;
+      }
+
+      #undo-button {
+        display: block;
+        width: 100%;
+        box-sizing: border-box;
+        padding: 6px 8px;
+        border: 1px solid #3a4048;
+        border-radius: 4px;
+        background: rgba(12, 14, 18, 0.88);
+        color: #d8d2c4;
+        font: inherit;
+        font-size: 11px;
+        text-align: left;
+        cursor: pointer;
+      }
+
+      #undo-button:hover:not(:disabled) {
+        color: #e8e6e1;
+        border-color: #4a515b;
+      }
+
+      /* Inert rather than hidden, which is the rail's rule: a control that can
+         do nothing must not look armed, and removing it entirely would make the
+         rail's height jump the first time anybody changed anything. */
+      #undo-button:disabled {
+        opacity: 0.4;
+        cursor: default;
+      }
+
       /* One row, equal columns, however many tabs there are. Four short labels
          fit across 190px at this size, which is what settled the strip being
          horizontal: it costs the rail one row of height once, rather than
@@ -1329,6 +1366,12 @@
       <button id="init-clear" type="button" hidden>clear order</button>
     </aside>
     <div id="left-rail">
+      <!-- DM only, and above the strip rather than on it: undo is not an editing
+           panel, it is reached in the middle of using one. Same argument that
+           keeps the draw tool pinned at the other end of the rail. -->
+      <div id="undo" hidden>
+        <button id="undo-button" type="button"></button>
+      </div>
       <!-- DM only. The three panels below it are editing panels and only one is
            open at a time; see `rail.ts` for why they are the ones behind a tab
            and the draw tool is not. Empty here — the tabs are built in that

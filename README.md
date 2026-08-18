@@ -135,6 +135,7 @@ screen and which token is standing on a given square.
 | `drive-ping.mjs`   | The hold that pings, and the ring reaching an unexplored corner    | both     |
 | `drive-select.mjs` | Shift-click selection, and the group drag that moves them together | both     |
 | `drive-staged.mjs` | Tracing and painting the next dungeon, and the table not being told | both     |
+| `drive-undo.mjs`   | The DM's undo reaching the table, and not rebuilding their page    | both     |
 
 The ones marked *both* open two browsers at once, and that is the point of them: almost everything
 they assert is a **difference** between what two people are holding, which one client cannot see.
@@ -180,14 +181,14 @@ coordinates. Anything that clicks the board should go through it rather than rea
 
 ### Running the lot
 
-**All nine take about three minutes**, so run all of them whenever the client changes rather than
+**All ten take about three minutes**, so run all of them whenever the client changes rather than
 picking the ones that look relevant. Picking is not worth the thought it costs: they all sit on
 `coords.ts`, `render.ts`, `input.ts` and `scene.ts`, and almost every client commit touches one of
 those, so any honest rule about which to skip says "none of them" nearly every time.
 
-| player | names | ui  | rail | staged | fog | ruler | select | ping |
-| ------ | ----- | --- | ---- | ------ | --- | ----- | ------ | ---- |
-| 4s     | 6s    | 9s  | 12s  | 22s    | 23s | 25s   | 30s    | 39s  |
+| player | names | ui  | rail | undo | staged | fog | ruler | select | ping |
+| ------ | ----- | --- | ---- | ---- | ------ | --- | ----- | ------ | ---- |
+| 4s     | 6s    | 9s  | 12s  | 14s  | 22s    | 23s | 25s   | 30s    | 39s  |
 
 `drive-ping.mjs` is the slowest and stays that way: most of its time is spent waiting for rings to
 expire, which is the feature.
@@ -203,7 +204,7 @@ SLATE_DM_SECRET=test-secret SLATE_STATE=scratch.json cargo run &
 until curl -sf http://127.0.0.1:3000/ >/dev/null; do sleep 1; done
 
 cd ..
-for d in player names ui rail staged fog ruler select ping; do node tools/drive-$d.mjs; done
+for d in player names ui rail undo staged fog ruler select ping; do node tools/drive-$d.mjs; done
 ```
 
 That whole block is 169 seconds on the machine it was written on, and the order in it is the cheap

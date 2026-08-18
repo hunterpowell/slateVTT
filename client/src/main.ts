@@ -39,6 +39,7 @@ import type { Rulers } from './ruler.js';
 import { createRulers } from './ruler.js';
 import type { Scene, Token } from './scene.js';
 import {
+  adoptView,
   boardFromWire,
   stagedFromWire,
   removeToken,
@@ -51,6 +52,8 @@ import type { Sketches } from './shapes.js';
 import { createSketches, shapeFromWire } from './shapes.js';
 import type { TokenTool } from './tokens.js';
 import { createTokenTool } from './tokens.js';
+import type { Undo } from './undo.js';
+import { createUndo } from './undo.js';
 import { wallFromWire } from './walls.js';
 import type { WallTool } from './walltool.js';
 import { createWallTool } from './walltool.js';
@@ -78,6 +81,10 @@ interface Ui {
   };
   rail: {
     tabs: HTMLElement;
+  };
+  undo: {
+    root: HTMLElement;
+    button: HTMLButtonElement;
   };
   maptool: {
     root: HTMLElement;
@@ -193,6 +200,10 @@ function findUi(): Ui {
     rail: {
       tabs: need('#rail-tabs'),
     },
+    undo: {
+      root: need('#undo'),
+      button: need<HTMLButtonElement>('#undo-button'),
+    },
     maptool: {
       root: need('#maptool'),
       head: need('#map-head'),
@@ -295,6 +306,9 @@ function boot(): void {
   // DM-only, like the three panels it shows. Null on a player connection, which
   // is why every use of it is optional-chained rather than guarded.
   let rail: Rail | null = null;
+  // DM-only for the same reason and optional-chained the same way: a player has
+  // no undo ring to be told about, so the server sends them no label.
+  let undo: Undo | null = null;
   let identity: Identity = ANONYMOUS;
   // Outlives any one drag and is fed from both directions — our own pointer in
   // input.ts, and everyone else's drag frames below.
@@ -395,6 +409,14 @@ function boot(): void {
       drawTool = createDrawTool(ui.drawtool, identity.isDm, (msg) => net.send(msg), () =>
         wallTool?.stop(),
       );
+
+      // Built for the DM alone and before the rail, because it sits above the
+      // strip rather than on it — undo is not an editing panel, it is what you
+      // reach for in the middle of using one.
+      if (identity.isDm) {
+        undo = createUndo(ui.undo, (msg) => net.send(msg));
+        undo.update(welcome.state.undo);
+      }
 
       // `isDm` is only ever true because we sent a secret that the server
       // accepted, so it is in hand — but uploads need it, so prove it here.
@@ -727,6 +749,50 @@ function boot(): void {
         room.scene.overrides = painted;
       }
     },
+
+    // The DM undid something. The whole room, replacing everything we hold.
+    //
+    // **This is `onWelcome`'s second half and deliberately not `onWelcome`.**
+    // That one *builds* the panels, the tools and the board, once, on the
+    // assumption there is exactly one Welcome per socket — running it again
+    // would construct a second of each, register a second keydown listener for
+    // every tool, and hand the DM a fresh camera at the moment they are looking
+    // at what they just undid. So the state is adopted in place instead, and
+    // everything that was built on connect is told to re-read it.
+    onRestored: (view) => {
+      if (room === null) return;
+      const scene = room.scene;
+      const wasShowing = shownBoard(scene).mapUrl;
+
+      // In place: the board captured this object when it started and draws from
+      // it every frame, so assigning a new one over `room.scene` would leave the
+      // renderer on the old world. `previewing` survives, which the type of
+      // `adoptView` enforces rather than this remembering.
+      adoptView(scene, view, identity.isDm);
+      room.initiative = view.initiative;
+
+      // A ruler measuring to a token the restore removed is a line pointing at
+      // where something went, which is the argument `onTokenRemoved` already
+      // makes. Sketches and pings are left alone: both are somebody's hand on a
+      // mouse right now and neither is in the room to be restored.
+      rulers.forgetExcept(new Set(scene.tokens.map((t) => t.id)));
+
+      panel?.update(room.initiative, scene);
+      tokenTool?.update(scene);
+      // Leaves preview mode if the slot it was previewing has just gone.
+      mapTool?.update(scene);
+      wallTool?.update(scene);
+      fogTool?.update(scene);
+      undo?.update(view.undo);
+      stage?.loadArt();
+      // `false`, so the DM is not asked to size a grid: whatever map this
+      // restored to was calibrated when it was first loaded, and the answer came
+      // back in this very frame.
+      afterBoardChanged(wasShowing, false);
+    },
+
+    // Only ever called on a DM connection.
+    onUndoChanged: (label) => undo?.update(label),
 
     onError: (message) => {
       console.warn('server rejected a command:', message);

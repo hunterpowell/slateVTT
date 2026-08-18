@@ -179,9 +179,29 @@ fn as_player(slot: &str) -> Identity {
     Identity::Player(PlayerId::new(slot))
 }
 
-/// Every frame waiting on a connection. `try_recv` one at a time makes a
-/// test that says "and nothing else" hard to write and easy to get wrong.
+/// Every frame waiting on a connection, **except the undo label**. `try_recv`
+/// one at a time makes a test that says "and nothing else" hard to write and
+/// easy to get wrong.
+///
+/// `UndoChanged` is filtered out because it rides beside *every* command that
+/// changes the room, and only ever to the DM. Leaving it in would put a trailing
+/// frame in the expectation of every DM-side test in this suite — which would
+/// make each of them partly a test of undo, and would mean a future feature
+/// touching the ring broke fifty assertions that have nothing to say about it.
+///
+/// So "and nothing else" here means "nothing else about the thing under test".
+/// The tests that *are* about the ring use `drain_all`, and one of them asserts
+/// the pairing this hides — see `undo.rs`.
 fn drain(rx: &mut mpsc::Receiver<ServerMsg>) -> Vec<ServerMsg> {
+    drain_all(rx)
+        .into_iter()
+        .filter(|msg| !matches!(msg, ServerMsg::UndoChanged { .. }))
+        .collect()
+}
+
+/// Every frame, bookkeeping included. What `drain` filters, and the only way to
+/// assert what the undo ring told somebody.
+fn drain_all(rx: &mut mpsc::Receiver<ServerMsg>) -> Vec<ServerMsg> {
     let mut frames = Vec::new();
     while let Ok(msg) = rx.try_recv() {
         frames.push(msg);
@@ -451,4 +471,5 @@ mod maps;
 mod movement;
 mod persistence;
 mod tokens;
+mod undo;
 mod walls;

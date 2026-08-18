@@ -268,6 +268,14 @@ export interface WireRoomView {
    *  the same value for every client. A counting convention only half the table
    *  holds is worse than either convention. */
   diagonals: Diagonals;
+  /** What the DM's undo would take back, or null for nothing to take.
+   *
+   *  **Null on every player connection**, which is the walls' rule rather than
+   *  the fog's — and it is also what an untouched room says, so the two are
+   *  indistinguishable from here. A label rather than a depth because that is
+   *  all the button needs: with no redo, a press has to name its victim before
+   *  it takes it. */
+  undo: string | null;
 }
 
 /**
@@ -371,10 +379,36 @@ export type ServerMsg =
    *  sent this frame at all, for the reason they are sent no `walls_changed`.
    *  What they are owed is the `fog_changed` beside it. */
   | { type: 'overrides_changed'; overrides: WireOverrides; staged: boolean }
+  /** The DM undid something and the room is an earlier state — take this as the
+   *  truth for all of it.
+   *
+   *  The whole world rather than a diff, which is the feature working rather
+   *  than giving up: the case undo exists for is a map load, which sweeps the
+   *  walls, the drawings and the fog in one command. Filtered by the same
+   *  `snapshot_for` a join goes through, so a player is sent one of these with
+   *  no walls and no staged map in it, exactly as they are on connect.
+   *
+   *  **Not a second `welcome`**, and the difference is on this side of the
+   *  wire: `onWelcome` builds the panels, the tools and the board once per
+   *  connection. This only hands over state — no identity, no roster, neither
+   *  of which an undo can change. */
+  | { type: 'restored'; state: WireRoomView }
+  /** What the DM's next undo would take back. DM connections only, for the
+   *  reason they alone are sent `walls_changed` — except that here what is
+   *  withheld is not a secret but a label for a button a player does not have.
+   *
+   *  Arrives beside every change to the room, which is how the button stays
+   *  right when the DM's other tab, or a player's drawing, adds a step. */
+  | { type: 'undo_changed'; label: string | null }
   | { type: 'error'; message: string };
 
 export type ClientMsg =
   | { type: 'hello'; dm_secret: string | null; player_id: string | null }
+  /** Put the room back the way it was before the last thing that changed it.
+   *  DM-only, and carries nothing — only the top of the room's ring can be
+   *  undone, so there is no depth for this to name. Undoing twice is sending
+   *  it twice. */
+  | { type: 'undo' }
   /** `staged` names which of the token's two positions this writes. Intent
    *  rides on the command because the server does not know we are previewing
    *  and must not learn — preview is ours alone. DM-only when true. */

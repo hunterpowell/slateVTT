@@ -169,9 +169,12 @@ export async function open(url, { port = 9333, width = 1280, height = 860 } = {}
       await wait(250);
     },
 
-    async key(key, code, windowsVirtualKeyCode) {
-      await send('Input.dispatchKeyEvent', { type: 'keyDown', key, code, windowsVirtualKeyCode });
-      await send('Input.dispatchKeyEvent', { type: 'keyUp', key, code, windowsVirtualKeyCode });
+    // `modifiers` is CDP's bitfield: 1 alt, 2 ctrl, 4 meta, 8 shift. Zero by
+    // default, so every caller written before undo needed Ctrl+Z is unchanged.
+    async key(key, code, windowsVirtualKeyCode, modifiers = 0) {
+      const frame = { key, code, windowsVirtualKeyCode, modifiers };
+      await send('Input.dispatchKeyEvent', { type: 'keyDown', ...frame });
+      await send('Input.dispatchKeyEvent', { type: 'keyUp', ...frame });
       await wait(60);
     },
 

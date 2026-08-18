@@ -7,7 +7,7 @@
 //! different clients to receive different messages for one event.
 
 use std::cmp::Ordering;
-use std::collections::{HashMap, HashSet};
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::time::Duration;
 
 use tokio::sync::{mpsc, oneshot};
@@ -32,6 +32,16 @@ const ROOM_MAILBOX: usize = 128;
 /// monsters writes the file once instead of six times; short enough that a
 /// power cut costs a move, not an evening.
 const SAVE_DEBOUNCE: Duration = Duration::from_secs(2);
+
+/// How many undos the DM can take. The ring holds one more than this — the
+/// state they are in now, plus this many to go back to.
+///
+/// Ten because a snapshot is the whole persisted room and this is memory rather
+/// than disk, and because undo is for the mistake you just noticed rather than
+/// for the one you made before dinner. One step per command means a long wall
+/// trace fills it, which is deliberate and not a defect to design around: the
+/// way out of a bad trace is `ClearWalls`, which is itself one undoable step.
+const MAX_UNDO: usize = 10;
 
 /// Bounds on a calibrated grid. The floor is not fussiness: the client draws one
 /// overlay line per cell, so a two-pixel grid on a large map is hundreds of
@@ -329,6 +339,33 @@ enum Event {
     ///
     /// Carries its slot for the reason `WallsChanged` does.
     OverridesChanged { staged: bool },
+
+    /// The DM undid something, and the room is now a state it held earlier.
+    ///
+    /// **The only event that describes the whole room rather than a part of
+    /// it**, and the one place this project gives up on deltas — deliberately,
+    /// because the case that makes undo worth having is `sweep_board`, where one
+    /// map load destroys the walls, the shapes and the fog together. Writing the
+    /// inverse of that is most of a second state model; re-sending everything is
+    /// a function that already exists.
+    ///
+    /// Payload-free like its neighbours, and rebuilt per recipient through
+    /// `snapshot_for` — so a restore is filtered by the same code a join is.
+    /// That is invariant 3 arriving somewhere new: the most common way to leak
+    /// is to filter every delta correctly and then hand over the whole world,
+    /// and this is the second message that hands over the whole world.
+    Restored,
+    /// What the DM's undo would take back has changed.
+    ///
+    /// Reaches the DM or nobody, like `WallsChanged` and `OverridesChanged`, and
+    /// it is the first of those three where the reason is not that a player must
+    /// not know: it is that a player has no undo button for this to label.
+    ///
+    /// Payload-free for the reason the rest are — `message_for` reads the ring
+    /// off `&self`. It rides beside every step added and every step taken back,
+    /// which is the `OverridesChanged` / `FogChanged` pairing again: the room
+    /// changed, and so did what the DM can say about it next.
+    UndoChanged,
 }
 
 impl Initiative {
@@ -601,10 +638,51 @@ pub struct RoomState {
     /// a snapshot or a message, because the finished `MapInfo` already says
     /// everything a client needs.
     calibrations: HashMap<String, Calibration>,
+    /// The last few states of the room, oldest first, for the DM's undo.
+    ///
+    /// **Post-state, so the back of it is always the room as it is now.** An
+    /// undo pops that and adopts whatever is behind it, which is why the ring is
+    /// never empty: it is seeded on boot with the room as it was loaded, and
+    /// that entry is the floor rather than a step.
+    ///
+    /// **A snapshot is `Saved` and not a hand-picked subset**, which is the
+    /// whole reason this is affordable. The disk serializer already answers
+    /// "what is this room, without the parts that die with the process", so
+    /// `clients` and `pending` stay out by construction — restoring a live
+    /// socket table from ten commands ago is the one way this feature could hard
+    /// fail, and it cannot, because the definition of state was not made twice.
+    ///
+    /// In memory only. It is not on `Saved` itself — a ring inside a ring is a
+    /// file that doubles every save — and an evening's undo history is not
+    /// something anybody reaches for after a restart.
+    ///
+    /// **What may go in it is state the undoing hand wrote.** Everything
+    /// persisted today qualifies: the shapes a player drew are the room's and
+    /// the DM can already erase any of them. Milestone 24's scratchpads will
+    /// not — one box of text per person, private to its author — and restoring
+    /// those from ten commands ago would silently eat somebody's paragraph with
+    /// nothing on screen to say so. When they land, they come out of here.
+    undo: VecDeque<Snapshot>,
     /// Identified clients. Only these receive events.
     clients: HashMap<ClientId, Client>,
     /// Connected but not yet identified. They hold a sender and nothing else.
     pending: HashMap<ClientId, mpsc::Sender<ServerMsg>>,
+}
+
+/// One entry in the undo ring: a whole room, and what the command that produced
+/// it did.
+///
+/// The label describes how this state was *arrived at*, so undoing to the entry
+/// behind it is undoing the thing this one is named after. That is why the
+/// button reads the label off the back of the ring rather than the one before
+/// it — with no redo, the DM has to be told what a press takes before they take
+/// it.
+struct Snapshot {
+    /// Never read on the seed entry, which nothing arrived at. It is a real
+    /// sentence anyway rather than an empty string, so a bug that shows it reads
+    /// as something rather than as a blank button.
+    did: String,
+    state: Saved,
 }
 
 pub fn spawn(dm_secret: String, saved: Option<Saved>, store: Store) -> RoomHandle {
@@ -751,7 +829,12 @@ fn persists(event: &Event) -> bool {
         | Event::FogChanged
         // The walls' argument again: this is somebody's work, and nothing in the
         // room could reconstruct it from anything else if the file lost it.
-        | Event::OverridesChanged { .. } => true,
+        | Event::OverridesChanged { .. }
+        // An undo moves the room to a state it held before, which is as much a
+        // change to what is on disk as the command it took back was. Leaving it
+        // out would let the file keep the undone version until something else
+        // happened to be saved.
+        | Event::Restored => true,
         // A sketch is not in the room to be saved. It is the one thing here
         // that exists only between two pointer events, which is exactly why a
         // measuring line costs the disk nothing at all.
@@ -760,7 +843,79 @@ fn persists(event: &Event) -> bool {
         // pointer events and this exists after one, so there has never been a
         // moment at which the room held it. Restoring a ping would be restoring
         // the fact that somebody once pointed at something.
-        Event::Sketching { .. } | Event::SketchEnded { .. } | Event::Pinged { .. } => false,
+        //
+        // `UndoChanged` is the same argument from a different direction: the
+        // ring lives in memory and is not on `Saved` at all, so there is nothing
+        // here for a write to capture. It rides beside events that do persist,
+        // which is why this arm never suppresses a save that was wanted.
+        Event::Sketching { .. }
+        | Event::SketchEnded { .. }
+        | Event::Pinged { .. }
+        | Event::UndoChanged => false,
+    }
+}
+
+/// What this command should be called on the undo button, or `None` for one
+/// that is never a step to go back to.
+///
+/// **`persists`'s and `moves_sight`'s third sibling**, enumerated the same way
+/// and for the same reason: a command added later and forgotten here silently
+/// stops being undoable, which reads as the ring being shallow rather than as a
+/// missing arm.
+///
+/// The two lists are asked together — a step exists when a command has a label
+/// *and* produced something worth writing to disk — so this one does not have to
+/// re-derive which commands change the room. What it adds is the two exclusions
+/// `persists` cannot express, and they are the interesting part:
+///
+/// - **`Undo` itself.** Undoing pushes nothing, or the ring would grow a new top
+///   every time the DM walked back down it and the second press would return to
+///   where the first one started.
+/// - **Commands nobody authored a change with**, which is `Hello` and the three
+///   ephemeral ones. They persist nothing either, so this is belt and braces
+///   rather than the only guard.
+///
+/// The labels complete "undo …" and are written the way the DM would say what
+/// they did, not the way the protocol spells it. They are `&'static str` rather
+/// than built from the room: a name looked up here would be the name *after* the
+/// change, so undoing a rename would offer to undo the new name.
+fn undid(msg: &ClientMsg) -> Option<&'static str> {
+    match msg {
+        // A drag frame is not a step of its own — `persists` already says so,
+        // and the drop that follows carries the position that was chosen.
+        ClientMsg::MoveToken { staged, .. } => Some(if *staged {
+            "planning a move"
+        } else {
+            "moving a token"
+        }),
+        ClientMsg::CreateToken { .. } => Some("building a token"),
+        ClientMsg::UpdateToken { .. } => Some("editing a token"),
+        ClientMsg::DeleteToken { .. } => Some("deleting a token"),
+        ClientMsg::SetShowNames { .. } => Some("the name switch"),
+        ClientMsg::SetDiagonals { .. } => Some("the diagonal rule"),
+        // Loading and recalibrating are one command, so this label has to cover
+        // both without claiming which — "the map" is true either way.
+        ClientMsg::SetMap { .. } => Some("the map"),
+        ClientMsg::PromoteStaged => Some("promoting the next map"),
+        ClientMsg::ClearStaged => Some("discarding the next map"),
+        ClientMsg::AddShape { .. } => Some("a drawing"),
+        ClientMsg::RemoveShape { .. } => Some("erasing a drawing"),
+        ClientMsg::ClearShapes => Some("erasing every drawing"),
+        ClientMsg::AddWalls { .. } => Some("tracing walls"),
+        ClientMsg::RemoveWall { .. } => Some("erasing a wall"),
+        ClientMsg::ToggleDoor { .. } => Some("a door"),
+        ClientMsg::ClearWalls { .. } => Some("erasing every wall"),
+        ClientMsg::SetFogOverride { .. } => Some("painting the fog"),
+        ClientMsg::ResetFog => Some("resetting the fog"),
+        ClientMsg::SetInitiative { .. } => Some("an initiative row"),
+        ClientMsg::RemoveFromInitiative { .. } => Some("removing an initiative row"),
+        ClientMsg::ClearInitiative => Some("clearing the order"),
+        ClientMsg::NextTurn | ClientMsg::PreviousTurn => Some("the turn"),
+        // See above: the two exclusions, and the first is the load-bearing one.
+        ClientMsg::Undo => None,
+        ClientMsg::Hello { .. }
+        | ClientMsg::Sketch { .. }
+        | ClientMsg::Ping { .. } => None,
     }
 }
 
@@ -835,7 +990,14 @@ fn moves_sight(msg: &ClientMsg) -> bool {
         | ClientMsg::RemoveFromInitiative { .. }
         | ClientMsg::ClearInitiative
         | ClientMsg::NextTurn
-        | ClientMsg::PreviousTurn => false,
+        | ClientMsg::PreviousTurn
+        // **The one arm here that is false because it does its own.** An undo
+        // moves the walls, the tokens and the party's memory at once, so sight
+        // certainly changes — but the frame it produces carries a whole
+        // `RoomView` with the fog already in it, and `refresh_fog` on top would
+        // send everyone a second, redundant description of the same board.
+        // `apply` recomputes there instead. See `ClientMsg::Undo`.
+        | ClientMsg::Undo => false,
     }
 }
 
@@ -986,44 +1148,105 @@ fn default_roster() -> Vec<RosterEntry> {
 impl RoomState {
     /// A room off disk. Everything the file does not carry — the DM secret, the
     /// roster, who is connected — comes from the environment or starts empty.
-    fn restored(saved: Saved, dm_secret: String) -> Self {
+    /// A room holding nothing, and the base both ways of getting one build on.
+    ///
+    /// The fields here are exactly those a `Saved` does not describe: who the DM
+    /// is, the cast list, the undo ring and the two client tables. Everything
+    /// else is placeholder, and `adopt` writes over all of it.
+    fn empty(dm_secret: String) -> Self {
         Self {
             dm_secret,
             roster: default_roster(),
-            map: saved.map,
-            // The one field on the file whose shape changed rather than gaining
-            // a sibling, which is why `StagedView` flattens its map — see the
-            // test named for an older save.
-            staged: saved.staged.map(|staged| StagedBoard {
-                map: staged.map,
-                walls: staged.walls,
-                overrides: fog::unpack_overrides(&staged.overrides),
-            }),
-            tokens: saved
-                .tokens
-                .into_iter()
-                .map(|t| (t.id.clone(), t))
-                .collect(),
-            initiative: saved.initiative,
-            shapes: saved.shapes,
-            walls: saved.walls,
-            revealed: fog::unpack(&saved.revealed),
-            // Both derived from where the tokens are standing and what the DM
-            // painted, all of which this same file holds — so they are recomputed
-            // on boot rather than restored. That is what stops a save written
-            // before a door was shut from describing sight through it.
+            map: MapInfo::default(),
+            staged: None,
+            tokens: HashMap::new(),
+            initiative: Initiative::default(),
+            shapes: Vec::new(),
+            walls: Vec::new(),
+            revealed: HashSet::new(),
             known: HashSet::new(),
             visible: HashSet::new(),
-            // Restored whole, unlike the line above it. Sight is derived from
-            // what this file already holds; what the DM decided is not derivable
-            // from anything, so losing it would lose the work.
-            overrides: fog::unpack_overrides(&saved.overrides),
-            show_names: saved.show_names,
-            diagonals: saved.diagonals,
-            calibrations: saved.calibrations,
+            overrides: HashMap::new(),
+            show_names: true,
+            diagonals: Diagonals::Equal,
+            calibrations: HashMap::new(),
+            undo: VecDeque::new(),
             clients: HashMap::new(),
             pending: HashMap::new(),
         }
+    }
+
+    fn restored(saved: Saved, dm_secret: String) -> Self {
+        let mut state = Self::empty(dm_secret);
+        state.adopt(saved);
+        state.floor();
+        state
+    }
+
+    /// Puts the room as it stands on the undo ring as the entry nothing goes
+    /// back past.
+    ///
+    /// **Both constructors end with this, and it is not `spawn`'s job** — unlike
+    /// `recompute_sight`, which is derived from state and so is done once where
+    /// the room is started. A ring with no floor is not a room that needs
+    /// recomputing, it is a room whose *first* command cannot be undone: the
+    /// step it pushes becomes the bottom of the ring, and `undo_label` correctly
+    /// reports there is nowhere to go. Putting it here is what makes a
+    /// `RoomState` built by hand — which is every test in this crate — obey the
+    /// same rule the server does.
+    fn floor(&mut self) {
+        self.remember("loaded the room");
+    }
+
+    /// Takes a `Saved` as the truth for everything it describes, leaving
+    /// everything it does not alone.
+    ///
+    /// **`to_saved`'s inverse, and the only one** — booting from disk and
+    /// undoing are the same operation against the same definition of state, so
+    /// they share this rather than each listing the fields. Two lists here is
+    /// the milestone-20 trap in a new place: a field added to `Saved` and read
+    /// in only one of them loads correctly and undoes to a stale value, or the
+    /// reverse.
+    ///
+    /// What it deliberately does not touch is what a `Saved` has no opinion
+    /// about: `dm_secret`, `roster`, `clients`, `pending`, and the ring itself.
+    /// **That last one is what makes undo safe** — restoring the socket table
+    /// from ten commands ago would hand the room a list of clients that have
+    /// since disconnected, and restoring the ring would make the second undo
+    /// walk back into a history that had already been rewound.
+    fn adopt(&mut self, saved: Saved) {
+        self.map = saved.map;
+        // The one field on the file whose shape changed rather than gaining a
+        // sibling, which is why `StagedView` flattens its map — see the test
+        // named for an older save.
+        self.staged = saved.staged.map(|staged| StagedBoard {
+            map: staged.map,
+            walls: staged.walls,
+            overrides: fog::unpack_overrides(&staged.overrides),
+        });
+        self.tokens = saved
+            .tokens
+            .into_iter()
+            .map(|t| (t.id.clone(), t))
+            .collect();
+        self.initiative = saved.initiative;
+        self.shapes = saved.shapes;
+        self.walls = saved.walls;
+        self.revealed = fog::unpack(&saved.revealed);
+        // Both derived from where the tokens are standing and what the DM
+        // painted, all of which the same `Saved` holds — so they are recomputed
+        // rather than restored. That is what stops a save written before a door
+        // was shut from describing sight through it, and it is why every caller
+        // of this is followed by `recompute_sight`.
+        self.known = HashSet::new();
+        self.visible = HashSet::new();
+        // Restored whole, unlike the two above. Sight is derived from what the
+        // file already holds; what the DM decided is not derivable from
+        // anything, so losing it would lose the work.
+        self.overrides = fog::unpack_overrides(&saved.overrides);
+        self.show_names = saved.show_names;
+        self.diagonals = saved.diagonals;
+        self.calibrations = saved.calibrations;
     }
 
     fn to_saved(&self) -> Saved {
@@ -1051,6 +1274,35 @@ impl RoomState {
         }
     }
 
+    /// Puts the room as it stands now on the undo ring, labelled with what was
+    /// just done to it.
+    ///
+    /// Called *after* the change, which is what makes the back of the ring the
+    /// present. The alternative — snapshotting before every command and throwing
+    /// it away when nothing came of it — costs a clone of the whole room on
+    /// every drag frame, thirty times a second from each of six people, to
+    /// discard all but one of them.
+    fn remember(&mut self, did: &str) {
+        self.undo.push_back(Snapshot {
+            did: did.to_owned(),
+            state: self.to_saved(),
+        });
+        // One more than the number of undos, because the back of the ring is
+        // where the DM already is rather than somewhere to go back to.
+        while self.undo.len() > MAX_UNDO + 1 {
+            self.undo.pop_front();
+        }
+    }
+
+    /// What the DM's undo would take back, or `None` when the ring holds only
+    /// the state they are in.
+    fn undo_label(&self) -> Option<String> {
+        if self.undo.len() < 2 {
+            return None;
+        }
+        self.undo.back().map(|snapshot| snapshot.did.clone())
+    }
+
     /// The room a first boot starts from, with no save on disk yet. Milestone 6
     /// replaces the map from the browser.
     fn hardcoded(dm_secret: String) -> Self {
@@ -1059,6 +1311,8 @@ impl RoomState {
         // `bronzebeard.png`, and these are stand-ins anyway — the real portraits
         // are picked out of the library onto whichever tokens end up being used.
         let party = |id: &'static str| Owner::Player(PlayerId::new(id));
+        // Built below, then floored at the end — see `restored`, which does the
+        // same thing one line later for the same reason.
         let specs: [(&str, &str, &str, f32, f32, Owner); 8] = [
             ("t1", "Cleodara", "cleodara", 3.5, 3.5, party("cleodara")),
             ("t2", "Saelyn", "saelyn", 4.5, 2.5, party("saelyn")),
@@ -1087,7 +1341,7 @@ impl RoomState {
             ("t7", "Wraith", "wraith", 21.5, 4.5, Owner::Dm),
         ];
 
-        Self {
+        let mut state = Self {
             dm_secret,
             roster: default_roster(),
             map: MapInfo {
@@ -1128,9 +1382,12 @@ impl RoomState {
             // rule the line above follows to the opposite value.
             diagonals: Diagonals::Equal,
             calibrations: HashMap::new(),
+            undo: VecDeque::new(),
             clients: HashMap::new(),
             pending: HashMap::new(),
-        }
+        };
+        state.floor();
+        state
     }
 
     /// Returns whether the room now holds a change worth writing to disk.
@@ -1163,14 +1420,33 @@ impl RoomState {
         // Only for some commands, because this costs a set and a packed string,
         // and a drag frame arrives thirty times a second from each of six people.
         let before = moves_sight(&msg).then(|| self.sight_now());
+        // Read before `apply` for the same reason as the line above, and a
+        // sharper one: this describes the command, and `apply` consumes it.
+        let did = undid(&msg);
 
         let mut events = self.apply(origin, msg);
         if let Some(before) = before {
             let more = self.refresh_fog(before, &events);
             events.extend(more);
         }
+
+        let dirty = events.iter().any(persists);
+        // **A step is a command with a label that actually changed something.**
+        // Both halves matter: `persists` alone would record an undo as a step to
+        // undo, and a label alone would record a `SetMap` that was refused
+        // deeper in `apply` than `check` could see.
+        //
+        // After the fog, because the snapshot is the room as it now stands and
+        // `refresh_fog` may have grown `revealed` — which is on disk, so a
+        // snapshot taken before it would restore the party's memory to one drop
+        // earlier every time.
+        if let Some(did) = did.filter(|_| dirty) {
+            self.remember(did);
+            events.push(Event::UndoChanged);
+        }
+
         self.dispatch(origin, &events);
-        events.iter().any(persists)
+        dirty
     }
 
     /// Resolve a connection's identity. A DM secret wins; otherwise a
@@ -1342,6 +1618,11 @@ impl RoomState {
             // And the same again, for the same reason. A counting convention
             // half the table holds is worse than either convention.
             diagonals: self.diagonals,
+            // And back to the walls' rule to finish, which is where this list
+            // started: the DM's next undo, and `None` for everybody else. A
+            // player has no button for it to label, and `None` is also what an
+            // untouched room says — indistinguishable, like an empty wall list.
+            undo: if is_dm { self.undo_label() } else { None },
         }
     }
 
@@ -2079,6 +2360,19 @@ impl RoomState {
             | ClientMsg::ClearInitiative
             | ClientMsg::NextTurn
             | ClientMsg::PreviousTurn => require_dm(client, "change initiative"),
+
+            ClientMsg::Undo => {
+                require_dm(client, "undo")?;
+                // The DM's own button is inert with an empty ring, so reaching
+                // here means their client and the room disagree about what is
+                // on it — a second DM tab that undid the same step first, most
+                // likely. Refused rather than ignored, for `ToggleDoor`'s
+                // reason: doing nothing quietly hides the disagreement.
+                if self.undo_label().is_none() {
+                    return Err("there is nothing to undo".to_owned());
+                }
+                Ok(())
+            }
         }
     }
 
@@ -2728,6 +3022,30 @@ impl RoomState {
                 self.initiative.previous_turn();
                 vec![Event::InitiativeChanged]
             }
+
+            ClientMsg::Undo => {
+                // Pop the state the DM is in, then adopt whatever is behind it.
+                // `check` proved there is one, and the `if let` is what keeps
+                // that proof from being a `expect` — a ring emptied between the
+                // two would leave the room untouched rather than panic.
+                self.undo.pop_back();
+                let Some(back) = self.undo.back() else {
+                    return Vec::new();
+                };
+                // Cloned rather than popped: the state being restored *is* the
+                // new top of the ring, because the back of it is always where
+                // the DM now stands. Taking it off would make the next undo skip
+                // a step.
+                let back = back.state.clone();
+                self.adopt(back);
+                // `adopt` empties both derived sets — a `Saved` holds the party's
+                // memory and not their sight. Done here rather than through
+                // `moves_sight` and `refresh_fog`, because `Restored` already
+                // describes the whole board including its fog and the difference
+                // those would report is a second copy of the same news.
+                self.recompute_sight();
+                vec![Event::Restored, Event::UndoChanged]
+            }
         }
     }
 
@@ -2805,7 +3123,14 @@ impl RoomState {
                 | Event::ShapesChanged
                 | Event::WallsChanged { .. }
                 | Event::FogChanged
-                | Event::OverridesChanged { .. } => None,
+                | Event::OverridesChanged { .. }
+                // Neither can reach here: `moves_sight` is false for `Undo`, so
+                // `refresh_fog` does not run on the command that produces them.
+                // Listed rather than caught by a wildcard, because the whole
+                // point of this match being exhaustive is that a later event
+                // naming a token cannot be forgotten.
+                | Event::Restored
+                | Event::UndoChanged => None,
             })
             .collect();
 
@@ -3324,6 +3649,31 @@ impl RoomState {
                     staged: *staged,
                 })
             }
+
+            // **Everyone, and through `snapshot_for`** — which is invariant 3
+            // doing exactly its job on the second message that hands over the
+            // whole world. Filtering every delta correctly and then sending an
+            // unfiltered snapshot is the most common way this project could
+            // leak, and an undo is a snapshot; routing it through the same
+            // function a join uses is what means there is no second filter to
+            // keep in step.
+            //
+            // A player is sent one too, and has to be: the room they are looking
+            // at just changed underneath them, and the DM's walls and staged map
+            // leave through the same door here as on any join.
+            Event::Restored => {
+                let identity = self.clients.get(&recipient)?.identity.clone();
+                Some(ServerMsg::Restored {
+                    state: Box::new(self.snapshot_for(&identity)),
+                })
+            }
+
+            // The walls' rule for the fourth time, and the mildest instance of
+            // it: what is withheld is not a secret but a label for a button a
+            // player does not have.
+            Event::UndoChanged => self.is_dm(recipient).then(|| ServerMsg::UndoChanged {
+                label: self.undo_label(),
+            }),
         }
     }
 
