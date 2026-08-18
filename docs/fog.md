@@ -4,9 +4,9 @@ What the party can see, and what they remember seeing. The walls arrived in mile
 nothing read them; this is what reads them.
 
 `.claude/CLAUDE.md` is loaded into every session; this file is not. **Read it before touching
-`fog.rs`, `fog.ts`, `overrides.ts`, `fogtool.ts`, `unseen_by_table`, `with_fringe`, `refresh_fog`, or
-the `moves_sight` gate** — five of those eight are the places a leak would go unnoticed, and the
-coordinate story in the first is the thing that looks like a mistake and is not.
+`fog.rs`, `fog.ts`, `solo.ts`, `overrides.ts`, `fogtool.ts`, `unseen_by_table`, `with_fringe`,
+`refresh_fog`, or the `moves_sight` gate** — five of those nine are the places a leak would go
+unnoticed, and the coordinate story in the first is the thing that looks like a mistake and is not.
 
 This covers the whole of milestone 16: automatic line of sight in 16a, and the DM's manual override
 in 16b. The two halves are separated in the text below wherever the second one changed the first.
@@ -672,9 +672,22 @@ has decided. See *No staged fog* above.
 ### One `drawImage`, whatever the dungeon looks like
 
 A fogged board is a few thousand cells, and a `fillRect` per cell per frame is a slideshow. `fog.ts`
-turns the packed rectangle into **a canvas one pixel per cell**, painted once per `fog_changed`, and
-the renderer stretches it over the board. Smoothing is off, which keeps the edge on the cell boundary
-the server actually decided rather than half a cell either side of it.
+turns the packed rectangle into **a small canvas**, painted once per `fog_changed`, and the renderer
+stretches it over the board.
+
+**The edge is feathered, and what makes that safe is `SUBCELLS`.** A fog edge is an approximation of
+where a wall is, and a crisp line claims a precision the raycast does not have — a ramp understates
+it, which is the more honest picture. But the obvious way to get one is wrong: the canvas used to be
+*one pixel per cell* with smoothing off, and simply turning smoothing on there ramps across the whole
+square **and moves the boundary half a cell**, because bilinear sampling anchors on pixel centres.
+That displacement is what the old "smoothing is off" comment was defending, and it was right about
+the danger and wrong about the only cure. Drawing each cell as a solid block of `SUBCELLS` pixels
+first and stretching *that* keeps the boundary exactly where the server put it and confines the ramp
+to a quarter of a cell.
+
+**The override tint next door keeps its hard edge**, and the asymmetry is the point: a fog edge
+approximates a wall, while an override edge is exactly the squares the DM clicked. Softening the
+second would misreport their own paint back to them.
 
 The four bands around that rectangle are filled flat and clipped to the board, since everything
 outside it is dark by definition. Same trick `drawOutsidePlayArea` uses, and here it is what lets the
@@ -726,6 +739,9 @@ The hint says what a torch does, and it says it differently in the two modes: th
 names the door, because a door is what that mode makes load-bearing and because a room that lit
 further than the DM expected is nearly always a wall with a gap in it.
 
+Below all of it, **sight check** — which edits nothing and belongs to the panel anyway, because this
+is where the DM comes to reason about what the table can see. See *Solo sight* below.
+
 Four brushes and two gestures:
 
 - **ground** hands the terrain over and leaves whoever is standing on it alone; **lit** hands over
@@ -741,6 +757,65 @@ cell, which is what makes a flood of a few thousand affordable on a pointer move
 A paint stroke accumulates on the tool and goes out as **one command** when the button comes up. A
 frame per cell would be a hundred of them across one drag, and there is nothing to predict — the
 answer is already on screen.
+
+## Solo sight: what one creature can see
+
+Milestone 26, and `solo.ts` is the whole of it. The DM arms *sight check* in the fog panel, clicks a
+creature, and their own board stops showing the table's wash and starts showing that creature's line
+of sight. It answers the question that actually gets asked at a table — *can the rogue see it* — and
+it is the only part of per-player fog worth having.
+
+**Per-player fog itself stays refused**, and this is why the refusal costs nothing. The architecture
+would take it: per-client `mpsc`, `snapshot_for`, and `FogView` is already built per recipient. What
+it costs is play. `unseen_by_table` would become `unseen_by(client)` at six call sites, `FogView`
+would stop being the one message identical for everyone — and there is no defensible answer for what
+the *DM's* board should then show, which is usually the sign a question was posed wrong. Six people
+narrating to each other get nothing from five answers unless the party splits, and a split is one
+sentence from the DM.
+
+**Client-only, and nothing goes in the room.** It is a second raycast over data the DM's client
+already holds — the walls, the radius, the mode, and where everybody is standing — so it needs no
+command, no event and no filter. It is leak-proof **by construction rather than by a check**, which
+is `crossesWall`'s argument for the movement hint word for word: a player's scene carries no walls,
+so their client could not compute this if it tried, and nothing in `solo.ts` asks who is reading it.
+*No staged fog* above sets the precedent for a second raycast living on this side; `shape_covers`
+sets it for a geometry rule living in two languages.
+
+It reuses the pieces rather than inventing any:
+
+- **`crossesWall` for `Dynamic`**, which already filters to solid walls and shut doors, over walls
+  culled to the radius once per source — the same bound `fog.rs` takes, and for the same reason.
+- **`fillFrom` for `Room`, unioned with the rays**, which is *The doorway carries sight, not light*
+  said again on the client. `fillFrom` grew an optional `within` circle for it, defaulting to
+  unbounded so the DM's reveal preview is unchanged.
+- **`fogFromWire` for the picture.** `soloSight` returns a `WireFog`, packed exactly as the server
+  packs one, so there is no second rendering path to keep in step and the wash is guaranteed to look
+  like the one it stands in for. It draws at the **table's** strength rather than the DM's faint one:
+  the faint wash exists so the DM can play on a board that also says what the party can see, and this
+  is a question with an answer that has to be legible.
+
+Two things it deliberately does not do, and both keep it one question rather than two:
+
+- **No memory.** Two states, `#` and `.`, never `o`. What this creature's eyes reach *now* is the
+  question; what the party remembers is a different one and `revealed` already answers it.
+- **No overrides.** Geometry only. The mask is the DM's own hand and they know what they painted;
+  folding it in would answer "what would the table be shown" instead.
+
+**Live board only**, so the button greys over a preview exactly as `ResetFog` does and for the same
+reason — nothing raycasts a board nobody has been shown.
+
+One button, three states, and **the order of its two branches is load-bearing**: anything on the
+board comes off first. With an answer up, the button is the way back to the table's board, which is
+what the hint under it promises — re-arming there instead leaves the DM holding one creature's sight
+with no control on screen that takes it away. That shipped wrong once and `drive-panels.mjs` caught
+it. `stop()` clears the answer as well as the arming, which is the rail's rule about closing a tab
+applied to a wash rather than to a tool: a wash nobody can account for is worse than a click nobody
+can account for. Meanwhile the board says so with the preview tag's treatment in blue.
+
+`drive-panels.mjs` asserts the half that matters in one reading: the DM's board moves and **the
+player's moves by nothing at all**. It is worth knowing that the first version of that check opened
+both browsers on the same debug port, so "the player" was the DM's own page — the two numbers came
+back identical and it read as a leak. The ports are fixed and they are not a detail.
 
 ## Drawings on ground the party cannot see
 

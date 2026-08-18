@@ -101,6 +101,39 @@
         display: none;
       }
 
+      /* The preview tag's twin, and it earns the same treatment for the same
+         reason: the DM is looking at something nobody else is. Blue rather than
+         amber because this one is a question being asked of the board and not a
+         second board — and the two cannot appear together anyway, since nothing
+         raycasts a map the table has not been shown. */
+      #sight-tag {
+        position: fixed;
+        top: 12px;
+        left: 50%;
+        transform: translateX(-50%);
+        padding: 4px 12px;
+        border-radius: 4px;
+        background: rgba(120, 190, 255, 0.92);
+        color: #08141f;
+        font-size: 12px;
+        font-weight: 600;
+        letter-spacing: 0.04em;
+        pointer-events: none;
+        user-select: none;
+      }
+
+      body:not(.solo-sight) #sight-tag {
+        display: none;
+      }
+
+      body.solo-sight::after {
+        content: '';
+        position: fixed;
+        inset: 0;
+        border: 2px solid rgba(120, 190, 255, 0.7);
+        pointer-events: none;
+      }
+
       body.previewing::after {
         content: '';
         position: fixed;
@@ -224,8 +257,38 @@
       .init-head {
         display: flex;
         align-items: center;
-        justify-content: space-between;
+        gap: 6px;
         margin-bottom: 8px;
+      }
+
+      /* Pushed right rather than spread by `space-between`, which only lands
+         correctly with two children and the chevron makes three. */
+      #init-controls {
+        margin-left: auto;
+      }
+
+      /* Out-specifies `#initiative button`, which gives every other button in
+         this panel a border and a filled background — this one is a disclosure
+         arrow and should read as part of the heading. */
+      #initiative #init-collapse {
+        width: 16px;
+        height: 16px;
+        padding: 0;
+        border: 0;
+        background: none;
+        color: #6f767f;
+        font-size: 10px;
+        line-height: 1;
+        cursor: pointer;
+        transition: transform 0.12s ease;
+      }
+
+      #initiative #init-collapse:hover {
+        color: #e8e6e1;
+      }
+
+      #initiative #init-collapse[aria-expanded='false'] {
+        transform: rotate(-90deg);
       }
 
       #init-round {
@@ -270,6 +333,15 @@
         padding: 4px 2px;
         color: #5a616c;
         font-size: 12px;
+      }
+
+      /* Collapsed, with a fight running, and the creature whose turn it is not
+         on this client's board — a hidden monster's row is filtered out of the
+         table's copy server-side, so there is nothing for the collapsed list to
+         draw. "no combat" would be a lie, and the round counter in the head
+         above already says what is true. */
+      #init-list.is-quiet:empty::after {
+        content: none;
       }
 
       .init-row {
@@ -596,7 +668,9 @@
          content without it. */
       #maptool,
       #tokentool,
-      #walltool {
+      #walltool,
+      #fogtool,
+      #tabletool {
         flex: 0 1 auto;
         min-height: 0;
         overflow-y: auto;
@@ -604,7 +678,19 @@
 
       /* --- map tool (DM only) ---------------------------------------------- */
 
-      #maptool {
+      /* Every panel behind the strip is the same box, said once. It was four
+         byte-identical copies and `#fogtool` was quietly missing — it drew as
+         bare text over the map, because a panel that never got its copy looks
+         exactly like a panel nobody wrote CSS for. One rule is what stops the
+         sixth one being wrong too.
+
+         No margin: the rail already puts a 10px gap between its children, and a
+         margin here would be that gap twice. */
+      #maptool,
+      #tokentool,
+      #walltool,
+      #fogtool,
+      #tabletool {
         box-sizing: border-box;
         width: 100%;
         padding: 10px;
@@ -912,17 +998,6 @@
          gave up height to the others — squeezed to a scrollbar and a heading on
          a short window, which is what the strip was built to fix. It now opens
          against the whole rail. */
-      #tokentool {
-        box-sizing: border-box;
-        width: 100%;
-        padding: 10px;
-        border-radius: 6px;
-        background: rgba(12, 14, 18, 0.88);
-        color: #d8d2c4;
-        font-size: 13px;
-        user-select: none;
-      }
-
       #tokentool.is-busy {
         opacity: 0.6;
         pointer-events: none;
@@ -994,44 +1069,6 @@
          its ring gets on the canvas, so the panel and the board agree. */
       .token-check:has(#token-hidden:checked) {
         color: #c4b2ec;
-      }
-
-      /* Ruled off from the form above it, which describes one token. This
-         describes the board, and the line is what stops it being read as a
-         seventh field of whatever is selected. */
-      .token-board {
-        margin-top: 10px;
-        padding-top: 8px;
-        border-top: 1px solid #23272e;
-      }
-
-      .token-board .map-hint {
-        margin-top: 2px;
-      }
-
-      /* Blue, like the fog switch and the grid controls: this is a board
-         setting. Violet is reserved for what the table cannot see, and there is
-         nothing hidden about a label. */
-      #token-names {
-        margin: 0;
-        accent-color: #78beff;
-        cursor: pointer;
-      }
-
-      /* Borrows `.token-field`'s row, which is the only reason it fits under a
-         rule that everything else crosses as a checkbox. The extra top margin is
-         because the hint above it belongs to the checkbox, not to this. */
-      .token-diagonals {
-        margin-top: 8px;
-        margin-bottom: 2px;
-      }
-
-      /* The label column above is 40px, which fits "name" and "owner" and not
-         this. Sized to its own text instead, and the selector has to out-specify
-         `.token-field > span` the way the hit point slash already does. */
-      .token-field > .token-diagonals-label {
-        width: auto;
-        flex: none;
       }
 
       .token-art {
@@ -1180,19 +1217,6 @@
          saying the same thing, and a second copy of those rules under another
          name would only be a second place to change a colour. The grid is its
          own, because three modes fit on one row. */
-      #walltool {
-        box-sizing: border-box;
-        width: 100%;
-        /* No margin: the rail already puts a 10px gap between its children, and
-           a margin here would be that gap twice. */
-        padding: 10px;
-        border-radius: 6px;
-        background: rgba(12, 14, 18, 0.88);
-        color: #d8d2c4;
-        font-size: 13px;
-        user-select: none;
-      }
-
       .wall-tools {
         display: grid;
         grid-template-columns: repeat(3, 1fr);
@@ -1326,6 +1350,65 @@
         cursor: default;
       }
 
+      /* Borrows `.draw-tool` like the brushes and the modes do, and takes the
+         whole row: it is one control rather than one of a set, and its label
+         becomes the name of whoever is being looked through. */
+      .fog-sight {
+        display: block;
+        width: 100%;
+        margin-top: 8px;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+
+      .fog-sight:disabled {
+        opacity: 0.45;
+        cursor: default;
+      }
+
+      /* The armed cursor the fog brush already sets, said again for the one
+         gesture in this panel that picks a creature rather than a square. */
+      body.checking-sight #stage {
+        cursor: crosshair;
+      }
+
+      /* --- table ----------------------------------------------------------- */
+
+      /* Two controls that belong to the room rather than to any one token or any
+         one map, which is the whole reason this panel exists: `show_names` and
+         `diagonals` are `RoomState` fields, and they used to sit under a form
+         describing one selected creature with a divider trying to say otherwise.
+         A panel mirrors where its fields live. Its box is the shared one further
+         up, with the other four. */
+
+      /* Blue, like the fog switch and the grid controls: this is a board
+         setting. Violet is reserved for what the table cannot see, and there is
+         nothing hidden about a label. */
+      #table-names {
+        margin: 0;
+        accent-color: #78beff;
+        cursor: pointer;
+      }
+
+      /* `.map-cells-label`'s row rather than `.token-field`'s, which is what the
+         fog panel's own label-and-control rows use. The token panel's 40px label
+         column fits "name" and "owner" and not "diagonals", and that mismatch is
+         what the deleted width override was working around. */
+      .table-diagonals {
+        margin-top: 10px;
+      }
+
+      #table-diagonals {
+        padding: 3px 4px;
+        border: 1px solid #2b3038;
+        border-radius: 4px;
+        background: #171a1f;
+        color: #d8d2c4;
+        font: inherit;
+        font-size: 12px;
+      }
+
       /* Inert over a preview until milestone 20, and no longer: the staged board
          carries a mask of its own, and its `fog` switch and radius have ridden
          on `MapInfo` since fog shipped. The bitsets are still the live board's —
@@ -1351,6 +1434,13 @@
     </div>
     <aside id="initiative" hidden>
       <div class="init-head">
+        <!-- Collapses the list and never the turn. A panel that collapses to a
+             tab puts "whose turn is it" behind a click, which is the one thing
+             this panel is for — so collapsed keeps the head and the current
+             row, and gives back the other eleven. -->
+        <button id="init-collapse" type="button" aria-expanded="true" aria-controls="init-list">
+          &#9662;
+        </button>
         <span id="init-round">Round 1</span>
         <div id="init-controls" hidden>
           <button id="init-previous" type="button" title="Previous turn">&lsaquo;</button>
@@ -1488,30 +1578,6 @@
         </div>
         <button id="token-new" class="map-subtle" type="button" hidden>+ new token</button>
         <p class="map-hint" id="token-hint">Click a token on the map to edit it.</p>
-        <!-- Below the rule on purpose. Everything above it describes the one
-             token in the form; this describes the board, and it sits next to
-             "hidden from the table" — which is per token — closely enough that
-             a divider is what keeps it from reading as another field of it. -->
-        <div class="token-board">
-          <label class="token-check">
-            <input id="token-names" type="checkbox" checked />
-            <span>names under tokens</span>
-          </label>
-          <p class="map-hint">Everyone's board, not just yours.</p>
-          <!-- The second thing under this rule that is about no token at all,
-               and it is here for want of a better home rather than because it
-               belongs to tokens: it is how the table counts, and a rail tab of
-               its own for one dropdown would cost more than it is worth. The
-               labels are what people say out loud, not the values on the wire. -->
-          <label class="token-field token-diagonals">
-            <span class="token-diagonals-label">diagonals</span>
-            <select id="token-diagonals">
-              <option value="equal">5-5-5</option>
-              <option value="alternating">5-10-5</option>
-            </select>
-          </label>
-          <p class="map-hint">How the ruler charges a diagonal step. (Do we care about Pythagoras?)</p>
-        </div>
       </aside>
       <!-- DM only, and the walls it traces reach nobody else at all — a player
            is not sent one, so there is nothing on their board for this panel to
@@ -1576,7 +1642,37 @@
             reset all
           </button>
         </div>
+        <!-- Solo sight. Below the paint controls because it edits nothing: it
+             is the DM asking what one creature can see, computed on this client
+             from walls only they hold and sent nowhere. -->
+        <button id="fog-sight" class="draw-tool fog-sight" type="button">sight check</button>
         <p class="map-hint" id="fog-hint"></p>
+      </aside>
+      <!-- DM only, and last on the strip: the least-touched panel during play.
+           Both controls are room-wide `RoomState` fields, which is why they are
+           here rather than in the token panel — a panel mirrors where its
+           fields live. Named "table" and not "room" because the fog panel one
+           tab over already uses "room" for a lighting mode. It arms nothing, so
+           unlike the four above it the rail needs no `stop()` for it. -->
+      <aside id="tabletool" hidden>
+        <div class="map-head">Table</div>
+        <label class="token-check">
+          <input id="table-names" type="checkbox" checked />
+          <span>names under tokens</span>
+        </label>
+        <p class="map-hint">Everyone's board, not just yours.</p>
+        <!-- How the table counts, which is the one thing here the server stores
+             and never computes with: the only thing the room is authoritative
+             over is that six clients agree. The labels are what people say out
+             loud, not the values on the wire. -->
+        <label class="map-cells-label table-diagonals">
+          <span>diagonals</span>
+          <select id="table-diagonals">
+            <option value="equal">5-5-5</option>
+            <option value="alternating">5-10-5</option>
+          </select>
+        </label>
+        <p class="map-hint">How the ruler charges a diagonal step. Everyone's ruler, not just yours.</p>
       </aside>
       <!-- The one panel everybody gets, and the one that is not behind a tab.
            Anyone may draw, so unlike the three above it is built on a player
@@ -1592,6 +1688,7 @@
     </div>
     <div id="hud"></div>
     <div id="preview-tag">NEXT MAP · not on the table</div>
+    <div id="sight-tag">ONE CREATURE'S SIGHT · not the table's board</div>
     <div id="hint">drag token to move · drag map or middle-drag to pan · wheel to zoom</div>
     <script type="module" src="/dist/main.js"></script>
   </body>

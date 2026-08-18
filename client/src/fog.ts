@@ -68,6 +68,35 @@ const SHADE = {
 const FOG_RGB = '11, 13, 16';
 
 /**
+ * Pixels per cell in the shade canvas, which is what softens the fog edge.
+ *
+ * The canvas used to be one pixel per cell and was stretched with smoothing
+ * *off*, so that the edge landed exactly on the cell boundary the server
+ * decided. The hard line is the thing worth revisiting rather than the
+ * placement: a fog edge is an approximation of where a wall is, and a crisp
+ * boundary claims a precision the raycast does not have — feathering it
+ * understates it instead, which is the more honest picture.
+ *
+ * Smoothing a one-pixel-per-cell canvas does not give that. Bilinear sampling
+ * anchors on pixel *centres*, so a 1px cell stretched to fifty ramps across the
+ * whole square and shifts the boundary half a cell off where the server put it,
+ * which is precisely the correctness the old comment was defending. Drawing each
+ * cell as a solid block first and stretching *that* keeps the boundary where it
+ * belongs and confines the ramp to one sub-pixel — a quarter of a cell here.
+ *
+ * Four rather than two because the ramp should read as a soft edge rather than
+ * as a second shade of grey, and rather than eight because this canvas is
+ * rebuilt on every `fog_changed` and sixteen times the pixels buys nothing the
+ * eye can find. The board is a few thousand cells; this is a few tens of
+ * thousands of bytes.
+ *
+ * The override tint next door is deliberately *not* built this way. A fog edge
+ * approximates a wall; an override edge is exactly the squares the DM clicked,
+ * and softening it would misreport their own paint back to them.
+ */
+const SUBCELLS = 4;
+
+/**
  * Builds the drawable fog from a frame off the wire, or null for an unfogged
  * map.
  *
@@ -82,8 +111,8 @@ export function fogFromWire(wire: WireFog | null, isDm: boolean): Fog | null {
   if (wire.w === 0 || wire.h === 0) return fog;
 
   const canvas = document.createElement('canvas');
-  canvas.width = wire.w;
-  canvas.height = wire.h;
+  canvas.width = wire.w * SUBCELLS;
+  canvas.height = wire.h * SUBCELLS;
   const ctx = canvas.getContext('2d');
   // A context is only ever unavailable in a browser that cannot draw the board
   // either. Returning the fog without one leaves the caller filling the whole
@@ -91,18 +120,29 @@ export function fogFromWire(wire: WireFog | null, isDm: boolean): Fog | null {
   if (ctx === null) return fog;
 
   const alpha = isDm ? SHADE.dm : SHADE.player;
-  const image = ctx.createImageData(wire.w, wire.h);
-  for (let i = 0; i < wire.w * wire.h; i++) {
-    const cell = wire.cells[i] ?? DARK;
-    // Anything that is neither dark nor explored is in sight, and in sight is
-    // clear. Written this way round so an unknown character fails towards
-    // showing the board rather than towards a black rectangle nobody can
-    // explain.
-    const a = cell === DARK ? alpha[DARK] : cell === KNOWN ? alpha[KNOWN] : 0;
-    image.data[i * 4] = 11;
-    image.data[i * 4 + 1] = 13;
-    image.data[i * 4 + 2] = 16;
-    image.data[i * 4 + 3] = Math.round(a * 255);
+  const image = ctx.createImageData(canvas.width, canvas.height);
+  for (let cy = 0; cy < wire.h; cy++) {
+    for (let cx = 0; cx < wire.w; cx++) {
+      const cell = wire.cells[cy * wire.w + cx] ?? DARK;
+      // Anything that is neither dark nor explored is in sight, and in sight is
+      // clear. Written this way round so an unknown character fails towards
+      // showing the board rather than towards a black rectangle nobody can
+      // explain.
+      const a = cell === DARK ? alpha[DARK] : cell === KNOWN ? alpha[KNOWN] : 0;
+      const value = Math.round(a * 255);
+      // One solid block per cell, so the ramp the stretch adds lands between
+      // blocks rather than across a whole square. See `SUBCELLS`.
+      for (let sy = 0; sy < SUBCELLS; sy++) {
+        const row = (cy * SUBCELLS + sy) * canvas.width;
+        for (let sx = 0; sx < SUBCELLS; sx++) {
+          const i = (row + cx * SUBCELLS + sx) * 4;
+          image.data[i] = 11;
+          image.data[i + 1] = 13;
+          image.data[i + 2] = 16;
+          image.data[i + 3] = value;
+        }
+      }
+    }
   }
   ctx.putImageData(image, 0, 0);
 

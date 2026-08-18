@@ -181,6 +181,19 @@ export function fillFrom(
    *  anything past it — stopping here means the DM sees a fill that plainly ran
    *  away rather than a command that comes back as an error. */
   limit: number,
+  /**
+   * A circle the fill may not leave, or nothing for the DM's reveal tool, which
+   * is bounded by walls and by the board alone.
+   *
+   * This is `Room` lighting's bound and not the paint's: a pure fill does not
+   * respect corners, so a winding corridor lights to its far end around every
+   * bend. The server's `lit_cells` bounds by `vision_ft` for that reason, and
+   * `solo.ts` asks the same question of the same walls on this side. Measured
+   * Euclidean from the source like the raycast's radius, and applied where a
+   * cell is *entered* rather than where it is taken, so a fill stops at the
+   * circle instead of stepping one cell past it.
+   */
+  within?: { centre: Vec2; radiusPx: number },
 ): number[] {
   const centre = (cx: number, cy: number): Vec2 => ({
     x: grid.offsetX + (cx + 0.5) * grid.px,
@@ -211,6 +224,9 @@ export function fillFrom(
         if (seen.has(id)) continue;
         const at = centre(to.x, to.y);
         if (!onBoard(at)) continue;
+        if (within !== undefined && Math.hypot(at.x - within.centre.x, at.y - within.centre.y) > within.radiusPx) {
+          continue;
+        }
         if (blocked(blockers, cell, to, from, at)) continue;
         seen.add(id);
         next.push(to);

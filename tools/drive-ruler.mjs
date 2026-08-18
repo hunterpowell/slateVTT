@@ -312,9 +312,11 @@ const readingBefore = await player.evaluate(`(() => {
   return c.getContext('2d').getImageData(0, 0, c.width, c.height).data.reduce((a, v) => a + v, 0);
 })()`);
 
-await tab('token');
+// The table tab, not the token one: the switch moved there with `show_names`,
+// because both are room-wide fields and a panel mirrors where its fields live.
+await tab('table');
 await dm.evaluate(`(() => {
-  const s = document.querySelector('#token-diagonals');
+  const s = document.querySelector('#table-diagonals');
   s.value = 'alternating';
   s.dispatchEvent(new Event('change'));
   return 'ok';
@@ -332,7 +334,7 @@ const readingAfter = await player.evaluate(`(() => {
 check("the player's reading redrew when the DM flipped the switch", readingBefore !== readingAfter, true);
 check(
   "the DM's own dropdown settled on the frame the room sent back",
-  await dm.evaluate('document.querySelector("#token-diagonals").value'),
+  await dm.evaluate('document.querySelector("#table-diagonals").value'),
   'alternating',
 );
 
@@ -362,7 +364,7 @@ note(`${(faded * 100).toFixed(1)} points once it has faded, against ${(justAfter
 check('and gone once it has faded', faded < justAfter / 4, true);
 
 await dm.evaluate(`(() => {
-  const s = document.querySelector('#token-diagonals');
+  const s = document.querySelector('#table-diagonals');
   s.value = 'equal';
   s.dispatchEvent(new Event('change'));
   return 'ok';

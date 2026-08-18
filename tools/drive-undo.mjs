@@ -99,7 +99,7 @@ if (restedAt === null) {
 // --- a change the whole table can see ---------------------------------------
 
 await dm.evaluate(`[...document.querySelectorAll('#rail-tabs .rail-tab')]
-  .find(b => b.textContent === 'token').click(); "ok"`);
+  .find(b => b.textContent === 'table').click(); "ok"`);
 
 const rails = await dm.evaluate(`document.querySelectorAll('#rail-tabs .rail-tab').length`);
 const zoomBefore = await dm.evaluate(`document.querySelector("#hud").textContent.trim()`);
@@ -108,10 +108,10 @@ note(`the rail has ${rails} tabs, and the HUD reads "${zoomBefore}"`);
 await remember(dm);
 await remember(player);
 
-await dm.evaluate(`document.getElementById('token-names').click(); "ok"`);
+await dm.evaluate(`document.getElementById('table-names').click(); "ok"`);
 await dm.wait(800);
 
-check('the names came off', await dm.evaluate(`document.getElementById('token-names').checked`), false);
+check('the names came off', await dm.evaluate(`document.getElementById('table-names').checked`), false);
 const dmOff = await changed(dm);
 const playerOff = await changed(player);
 note(`the switch moved ${dmOff}px for the DM and ${playerOff}px for the player`);
@@ -129,7 +129,7 @@ await dm.wait(900);
 
 check(
   'the switch went back',
-  await dm.evaluate(`document.getElementById('token-names').checked`),
+  await dm.evaluate(`document.getElementById('table-names').checked`),
   true,
 );
 
@@ -168,8 +168,8 @@ check(
   zoomBefore,
 );
 check(
-  'the token panel is still the open tab',
-  await dm.evaluate(`document.querySelector('#tokentool').hidden`),
+  'the table panel is still the open tab',
+  await dm.evaluate(`document.querySelector('#tabletool').hidden`),
   false,
 );
 
@@ -185,7 +185,7 @@ check('and is where it started', await button('disabled'), restedAt === null);
 
 // --- the keyboard path ------------------------------------------------------
 
-await dm.evaluate(`document.getElementById('token-names').click(); "ok"`);
+await dm.evaluate(`document.getElementById('table-names').click(); "ok"`);
 await dm.wait(700);
 check('something to undo again', await button('disabled'), false);
 
@@ -196,7 +196,7 @@ await dm.wait(900);
 
 check(
   'Ctrl+Z undid it',
-  await dm.evaluate(`document.getElementById('token-names').checked`),
+  await dm.evaluate(`document.getElementById('table-names').checked`),
   true,
 );
 check('and the ring is back where it started again', await button('textContent'), opening);
@@ -207,7 +207,7 @@ check('and the ring is back where it started again', await button('textContent')
 // a name box the one place in this application where the standard shortcut does
 // something violent and unrelated.
 
-await dm.evaluate(`document.getElementById('token-names').click(); "ok"`);
+await dm.evaluate(`document.getElementById('table-names').click(); "ok"`);
 await dm.wait(700);
 const armed = await button('textContent');
 await dm.evaluate(`document.getElementById('init-value').focus(); "ok"`);
@@ -221,7 +221,7 @@ await press();
 await dm.wait(800);
 check(
   'and the board was left as it was found',
-  await dm.evaluate(`document.getElementById('token-names').checked`),
+  await dm.evaluate(`document.getElementById('table-names').checked`),
   true,
 );
 

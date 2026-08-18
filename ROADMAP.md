@@ -25,8 +25,8 @@ Do not work ahead. Each milestone should run and be usable before starting the n
 6. Map upload and grid calibration UI.
 7. Package for Windows session hosting and deploy behind a Cloudflare Tunnel.
 
-Milestones 1–22 are done, and so is 25, which was never planned and is out of order for the reason
-its own entry gives. Everything from 8 on was planned after the original seven; 17 and 18 were
+Milestones 1–22 are done, and so are 25 and 26, which were never planned and are out of order for the
+reasons their own entries give. Everything from 8 on was planned after the original seven; 17 and 18 were
 workshopped after 16 landed, and 19–24 after 18:
 
 8. **Done.** Map library — list `maps/`, pick one, remember its calibration. The smallest thing
@@ -717,11 +717,94 @@ workshopped after 16 landed, and 19–24 after 18:
     was declined — but *the conflict was only visible from `docs/drawings.md`*, not from the code,
     which is the argument for reading the subsystem doc before designing against a subsystem.
 
+26. **Done, and out of order.** The panel pass — a table tab, a folding initiative panel, softer fog
+    edges, and the DM's solo sight. Numbered after 25 and built before 23 because none of it depends
+    on anything unbuilt, and because three of the four came out of playing on what exists rather than
+    from this file.
+
+    **The table tab is the one with a rule attached, and the rule is worth more than the tab.**
+    `show_names` and `diagonals` are `RoomState` fields and both were living under the token panel's
+    form — which describes one selected creature — behind a divider, with two comments in the markup
+    explaining the placement. One of them said in as many words that the dropdown was there "for want
+    of a better home". **A panel mirrors where its fields live**: `MapInfo` is the map tab, `Token` is
+    the token tab, room-wide state is the table tab. That arrangement was the only violation of it.
+
+    Cost: one entry in `RailTab`, one entry in the array `main.ts` passes to `createRail`, and a
+    fourteen-line `table.ts`. **Exactly what milestone 15's tab strip was built to make a panel cost**,
+    which is the first time that claim has been tested by adding one. No Rust at all — both commands
+    already existed. It is named *table* and not *room* because `Lighting::Room` is a fog mode one tab
+    over, and two meanings for one word in adjacent panels is worse than a slightly odd name.
+
+    **The initiative panel folds the list and never the turn.** Collapsed renders only the current
+    row, through the loop that was already there, so the folded panel is the unfolded one's
+    highlighted line rather than a second drawing of it. The turn buttons stay: advancing the turn
+    from a folded panel is most of what folding it is for. Collapsing to a bare tab was the obvious
+    shape and is the door-swing mistake with information instead of an action — `panel.ts` says of
+    itself that glancing at it is all it is for. In `localStorage` and pointedly not on the room,
+    which is the line `diagonals` falls on the other side of. See *It folds the list and never the
+    turn* in `docs/tokens.md`, which also settles the right dock question below.
+
+    **The fog edge is feathered now, and the interesting part is why the one-line version is wrong.**
+    Turning `imageSmoothingEnabled` back on over a one-pixel-per-cell canvas ramps across the whole
+    square *and moves the boundary half a cell*, because bilinear sampling anchors on pixel centres —
+    which is exactly the displacement the old "smoothing is off" comment was defending against. It was
+    right about the danger and wrong that a hard edge was the only cure. Drawing each cell as a solid
+    block of `SUBCELLS` pixels first keeps the boundary where the server put it and confines the ramp
+    to a quarter of a cell. The override tint keeps its hard edge, deliberately: a fog edge
+    approximates a wall, an override edge is exactly the squares the DM clicked.
+
+    **Solo sight is the answer to "should fog be per-player", and the answer is no.** That question
+    was asked directly and the architecture would take it — per-client `mpsc`, `snapshot_for`,
+    `FogView` already built per recipient. The cost is play, not code: `unseen_by_table` becomes
+    `unseen_by(client)` at six call sites, `FogView` stops being the one message identical for
+    everyone, and **there is no defensible answer for what the DM's own board should then show**,
+    which is usually the sign a question was posed wrong. What a table actually asks is narrower and
+    has one answer: *can the rogue see it*. That is `solo.ts`, it is client-only, and it needed no
+    command, no event, no filter and no line of Rust.
+
+    It is leak-proof **by construction rather than by a check**, which is `crossesWall`'s argument for
+    the movement hint word for word — a player's client holds no walls, so it could not compute this
+    if it tried. Every piece was already there: `crossesWall` for `Dynamic`, `fillFrom` for `Room`
+    (one optional radius bound added), and `fogFromWire` for the picture, so there is no second
+    rendering path to keep in step. **The generalisation to keep is milestone 21's twin: a feature
+    that only asks a question the client already has the data for is nearly free.**
+
+    Four things cost more than any of the state models, which were a `RailTab` variant, a boolean and
+    a `WireFog`.
+
+    **One button with three states, and the order of its branches is load-bearing.** *Arm*, *an answer
+    is up*, *neither*. It shipped toggling `checking` first, so pressing it with a creature picked
+    re-armed instead of going back to the table's board — leaving the DM holding one creature's sight
+    with no control on screen that takes it away, while the panel's own hint promised otherwise. The
+    driver caught it. Anything on the board comes off first.
+
+    **Ported UI takes its drivers with it.** Renaming two ids broke four drivers, and one of them
+    (`drive-undo`) failed on an assertion that had nothing to do with the change — it opened the token
+    tab, and the thing it was checking had moved. A rename is not a rename when a test names the id.
+
+    **`drive-panels.mjs` opened both browsers on the same debug port**, so "the player" was the DM's
+    own page. The two pixel readings came back *identical* and read as a leak; two more runs went into
+    chasing a bug in `solo.ts` that was never there. The ports are fixed — 9333, 9334, 9335 — and they
+    are not a detail. The control measurement is what settled it: a noise floor of 0.00% on a board
+    where nothing is happening turns every later number into evidence.
+
+    **A driver must not assume where the server puts a token.** Looking up a creature by name and
+    clicking where it ought to be failed repeatedly on a board with two of them side by side. Clicking
+    its initiative row centres the camera on it, which is one click instead of a hundred and cannot
+    miss — and then the driver asserts *which* creature it picked from what the panel says rather than
+    from what it assumed. Per-run token names, and a cleanup that sweeps by pattern rather than by
+    exact name, are what keep a failed run from poisoning the next one.
+
 ### The right dock
 
 Milestones 23 and 24 share one piece of client infrastructure and should be built with it rather
 than around it: **a collapsible dock on the right edge with a tab strip**, mirroring the left rail's
 established pattern instead of inventing floating windows.
+
+**Settled by milestone 26, so it need not be re-argued:** the initiative panel stays a fixed panel on
+that edge and this dock sits *beneath* it, rather than initiative becoming a third tab here. The dock
+is read-and-reply; initiative is glance-state, and the rule below about not auto-opening is the same
+reason its head row has to survive being folded.
 
 Everybody sees the same two tabs, Chat and Notes — which is the first time the two sides of this
 application have had the same furniture, and it falls out of the fact that neither feature is the

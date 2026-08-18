@@ -612,6 +612,21 @@ export function attachInput(
       return;
     }
 
+    // Solo sight, armed from the same panel and above the brush because arming
+    // either puts the other down — so at most one of these two blocks can fire.
+    //
+    // `anchorTokenAt` rather than `tokenAt`: the question is what a creature can
+    // see, and the interesting one is nearly always a player's. `tokenAt` is
+    // blind to tokens you cannot *move*, which is the wrong boundary here and
+    // would leave the DM able to check their own monsters and nobody else's.
+    // There is no permission to lose by widening it: this reads walls the DM
+    // already holds and sends nothing.
+    if (fogTool !== null && fogTool.checking && e.button === 0) {
+      fogTool.check(anchorTokenAt(scene, w.x, w.y));
+      canvas.style.cursor = 'crosshair';
+      return;
+    }
+
     // The fog brush is the fourth, and it takes the button the same way — a
     // room to black out is usually a room with creatures standing in it, so
     // nothing under the pointer may be grabbable while it is in hand.

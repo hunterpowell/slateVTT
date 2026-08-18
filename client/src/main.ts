@@ -2,6 +2,7 @@ import type { Camera, Vec2 } from './coords.js';
 import { gridToWorld, screenToWorld, worldToGrid } from './coords.js';
 import type { DrawTool } from './drawtool.js';
 import { createDrawTool } from './drawtool.js';
+import type { Fog } from './fog.js';
 import { fogFromWire } from './fog.js';
 import type { FogTool } from './fogtool.js';
 import { createFogTool } from './fogtool.js';
@@ -18,6 +19,9 @@ import type { MapTool } from './maptool.js';
 import { createMapTool } from './maptool.js';
 import type { Rail } from './rail.js';
 import { createRail } from './rail.js';
+import { soloSight } from './solo.js';
+import type { TableTool } from './table.js';
+import { createTableTool } from './table.js';
 import type { Net } from './net.js';
 import { connect } from './net.js';
 import { overridesFromWire } from './overrides.js';
@@ -37,7 +41,7 @@ import type { Viewport } from './render.js';
 import { render } from './render.js';
 import type { Rulers } from './ruler.js';
 import { createRulers } from './ruler.js';
-import type { Scene, Token } from './scene.js';
+import type { Board, Scene, Token } from './scene.js';
 import {
   adoptView,
   boardFromWire,
@@ -54,6 +58,7 @@ import type { TokenTool } from './tokens.js';
 import { createTokenTool } from './tokens.js';
 import type { Undo } from './undo.js';
 import { createUndo } from './undo.js';
+import type { Wall } from './walls.js';
 import { wallFromWire } from './walls.js';
 import type { WallTool } from './walltool.js';
 import { createWallTool } from './walltool.js';
@@ -78,6 +83,7 @@ interface Ui {
     clear: HTMLButtonElement;
     next: HTMLButtonElement;
     previous: HTMLButtonElement;
+    collapse: HTMLButtonElement;
   };
   rail: {
     tabs: HTMLElement;
@@ -139,6 +145,7 @@ interface Ui {
     brushes: HTMLElement;
     gesture: HTMLButtonElement;
     clear: HTMLButtonElement;
+    sight: HTMLButtonElement;
   };
   tokentool: {
     root: HTMLElement;
@@ -159,6 +166,9 @@ interface Ui {
     remove: HTMLButtonElement;
     fresh: HTMLButtonElement;
     hint: HTMLElement;
+  };
+  tabletool: {
+    root: HTMLElement;
     names: HTMLInputElement;
     diagonals: HTMLSelectElement;
   };
@@ -196,6 +206,7 @@ function findUi(): Ui {
       clear: need<HTMLButtonElement>('#init-clear'),
       next: need<HTMLButtonElement>('#init-next'),
       previous: need<HTMLButtonElement>('#init-previous'),
+      collapse: need<HTMLButtonElement>('#init-collapse'),
     },
     rail: {
       tabs: need('#rail-tabs'),
@@ -257,6 +268,7 @@ function findUi(): Ui {
       brushes: need('#fog-brushes'),
       gesture: need<HTMLButtonElement>('#fog-gesture'),
       clear: need<HTMLButtonElement>('#fog-clear'),
+      sight: need<HTMLButtonElement>('#fog-sight'),
     },
     tokentool: {
       root: need('#tokentool'),
@@ -277,8 +289,11 @@ function findUi(): Ui {
       remove: need<HTMLButtonElement>('#token-delete'),
       fresh: need<HTMLButtonElement>('#token-new'),
       hint: need('#token-hint'),
-      names: need<HTMLInputElement>('#token-names'),
-      diagonals: need<HTMLSelectElement>('#token-diagonals'),
+    },
+    tabletool: {
+      root: need('#tabletool'),
+      names: need<HTMLInputElement>('#table-names'),
+      diagonals: need<HTMLSelectElement>('#table-diagonals'),
     },
   };
 }
@@ -303,6 +318,7 @@ function boot(): void {
   let drawTool: DrawTool | null = null;
   let wallTool: WallTool | null = null;
   let fogTool: FogTool | null = null;
+  let tableTool: TableTool | null = null;
   // DM-only, like the three panels it shows. Null on a player connection, which
   // is why every use of it is optional-chained rather than guarded.
   let rail: Rail | null = null;
@@ -495,7 +511,13 @@ function boot(): void {
         );
         fogTool.update(room.scene);
 
-        // Last, because it owns whether the four above are on screen and has to
+        // The two room-wide settings. It arms nothing on the canvas and it is
+        // never inert, so unlike the four above it it needs neither a `stop()`
+        // nor a rule about greying its tab.
+        tableTool = createTableTool(ui.tabletool, (msg) => net.send(msg));
+        tableTool.update(room.scene);
+
+        // Last, because it owns whether the five above are on screen and has to
         // be able to put each of them down as it closes it. The order here is
         // the order of the tabs. Fog gained a `stop` in 16b: it used to arm
         // nothing, and the brush is a tool holding the left button like any
@@ -513,6 +535,9 @@ function boot(): void {
           },
           { tab: 'walls', label: 'walls', root: ui.walltool.root, stop: () => wallTool?.stop() },
           { tab: 'fog', label: 'fog', root: ui.fogtool.root, stop: () => fogTool?.stop() },
+          // Last on the strip: the least-touched panel during play. No `stop`,
+          // because two checkboxes arm nothing.
+          { tab: 'table', label: 'table', root: ui.tabletool.root },
         ]);
       }
 
@@ -625,7 +650,7 @@ function boot(): void {
     onNamesChanged: (show) => {
       if (room === null) return;
       room.scene.showNames = show;
-      tokenTool?.update(room.scene);
+      tableTool?.update(room.scene);
     },
 
     // The frame above's twin, and nothing more: the ruler reads the convention
@@ -634,7 +659,7 @@ function boot(): void {
     onDiagonalsChanged: (diagonals) => {
       if (room === null) return;
       room.scene.diagonals = diagonals;
-      tokenTool?.update(room.scene);
+      tableTool?.update(room.scene);
     },
 
     // Never reaches a player: the server sends this frame to the DM alone.
@@ -779,6 +804,7 @@ function boot(): void {
 
       panel?.update(room.initiative, scene);
       tokenTool?.update(scene);
+      tableTool?.update(scene);
       // Leaves preview mode if the slot it was previewing has just gone.
       mapTool?.update(scene);
       wallTool?.update(scene);
@@ -981,6 +1007,65 @@ async function start(
   };
 
   let lastHud = '';
+  /**
+   * The solo wash, rebuilt only when the answer could have changed.
+   *
+   * A raycast over the reach of one torch is a few hundred cells against the
+   * walls within it, which is affordable once and not sixty times a second. The
+   * five things it depends on are compared rather than hashed, and two of them
+   * are compared *by reference* on purpose: `scene.walls` and `scene.live` are
+   * both replaced wholesale by their deltas rather than mutated field by field,
+   * so identity is an exact answer to "did this change" and a cheap one.
+   */
+  let soloCache: {
+    id: string;
+    x: number;
+    y: number;
+    walls: readonly Wall[];
+    board: Board;
+    fog: Fog | null;
+  } | null = null;
+
+  const soloFog = (): Fog | null => {
+    const id = fogTool?.sightId ?? null;
+    if (id === null) {
+      soloCache = null;
+      return null;
+    }
+    // Live board only — nothing raycasts a map the table has not been shown, so
+    // the panel greys this over a preview and there is nothing to draw if the DM
+    // gets there anyway.
+    const token = scene.tokens.find((t) => t.id === id) ?? null;
+    if (token === null || scene.previewing) return null;
+
+    const board = scene.live;
+    const walls = scene.walls;
+    if (
+      soloCache !== null &&
+      soloCache.id === id &&
+      soloCache.x === token.x &&
+      soloCache.y === token.y &&
+      soloCache.walls === walls &&
+      soloCache.board === board
+    ) {
+      return soloCache.fog;
+    }
+
+    const size = stage?.naturalSize();
+    const wire = soloSight(
+      token,
+      board,
+      walls,
+      size === undefined ? null : { w: size.width, h: size.height },
+    );
+    // The table's shade rather than the DM's faint one, which is the same choice
+    // `drawFog` makes on the bands around it: this is a question with an answer
+    // and the answer has to be legible.
+    const fog = wire === null ? null : fogFromWire(wire, false);
+    soloCache = { id, x: token.x, y: token.y, walls, board, fog };
+    return fog;
+  };
+
   const frame = (): void => {
     const view = syncCanvasSize(ui.canvas);
     // Read once and passed down, so the sweep below and the fade the renderer
@@ -1033,6 +1118,7 @@ async function start(
               paint: fogTool.brush === null || fogTool.brush === 'clear' ? null : fogTool.brush,
               preview: fogTool.preview,
             },
+      solo: soloFog(),
     });
 
     const cursor = input.cursorGrid;

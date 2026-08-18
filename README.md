@@ -136,6 +136,7 @@ screen and which token is standing on a given square.
 | `drive-select.mjs` | Shift-click selection, and the group drag that moves them together | both     |
 | `drive-staged.mjs` | Tracing and painting the next dungeon, and the table not being told | both     |
 | `drive-undo.mjs`   | The DM's undo reaching the table, and not rebuilding their page    | both     |
+| `drive-panels.mjs` | The initiative panel folding, and the DM's solo sight staying theirs | both     |
 
 The ones marked *both* open two browsers at once, and that is the point of them: almost everything
 they assert is a **difference** between what two people are holding, which one client cannot see.
@@ -204,7 +205,7 @@ SLATE_DM_SECRET=test-secret SLATE_STATE=scratch.json cargo run &
 until curl -sf http://127.0.0.1:3000/ >/dev/null; do sleep 1; done
 
 cd ..
-for d in player names ui rail undo staged fog ruler select ping; do node tools/drive-$d.mjs; done
+for d in player names ui rail undo panels staged fog ruler select ping; do node tools/drive-$d.mjs; done
 ```
 
 That whole block is 169 seconds on the machine it was written on, and the order in it is the cheap

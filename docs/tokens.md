@@ -187,11 +187,17 @@ is what holds it.
 The hit point bar is untouched by the switch. A running total is not a label, it already reaches
 nobody but the DM, and hiding it here would be two features on one checkbox.
 
-On the panel it sits **below a rule**, under the hint. Everything above that line describes the one
-token in the form — including `hidden from the table`, which is a checkbox of the same shape two rows
-up — and this describes the board. Without the divider it reads as a seventh field of whatever
-happens to be selected. `tools/drive-names.mjs` drives the whole of it in two browsers at once,
-because the half that matters happens on a connection the DM's client knows nothing about.
+**It is on the table tab, and it took four milestones to get there.** It lived under a rule at the
+bottom of the token panel, with a divider and two comments in the markup explaining why a control
+about the board sat inside a form about one creature — and two comments explaining a placement is the
+bug report. `show_names` is a `RoomState` field; it belongs where `RoomState` fields go. The rule
+that came out of moving it is worth more than the move: **a panel mirrors where its fields live** —
+`MapInfo` is the map tab, `Token` is the token tab, room-wide state is the table tab, and the
+arrangement before this was the only violation of it. `table.ts` is fourteen lines of listener and
+`createTableTool` arms nothing, so the rail needed no `stop()` and the tab never greys.
+
+`tools/drive-names.mjs` drives the whole of it in two browsers at once, because the half that matters
+happens on a connection the DM's client knows nothing about.
 
 ## Hidden tokens and hit points
 
@@ -283,6 +289,41 @@ gets it, not just the DM: the panel already lists only what that client may see.
 *not* an automatic pan on turn change, which would yank the view out from under whoever was
 mid-drag. The `×` stops the click propagating, because a click that deletes something is the last
 one that should also be doing something else.
+
+### It folds the list and never the turn
+
+A dozen rows of portrait, name and hit point bar is most of a screen's height, permanently, in the
+corner. The chevron in `.init-head` gives it back — and **collapsed means `update` renders only the
+current row**, filtered before the row loop that was already there. No second head, no duplicate
+portrait code, and the folded panel *is* the unfolded one's highlighted line rather than a second
+drawing of it.
+
+**Never a bare tab**, and that is the rule the whole thing turns on. This panel says of itself that
+glancing at it is all it is for; whose turn it is is the most-asked question at a table, and putting
+it behind a click is the mistake a door swinging with no tool in hand already refuses — worse here,
+because what is hidden is information rather than an action. So the turn buttons stay reachable
+beside the one row: advancing the turn from a folded panel is most of what folding it is for. The
+DM's roll form and clear button fold with the rows they edit.
+
+**In `localStorage`, and this is the line `diagonals` falls on the other side of.** That one is on
+`RoomState` because the only thing the server is authoritative over there is that six clients agree
+on a *rule*; how much of a panel somebody wants on their own screen is nobody else's business and
+nothing has to agree about it. The read is wrapped the way `identity.ts` wraps its own, because a
+private browsing mode can throw on the property itself.
+
+One case needed a rule of its own: **collapsed, with a fight running, and whoever is up not on this
+client's board.** A hidden creature's row is filtered out of the table's copy server-side, so the
+folded list has nothing to draw — and `#init-list:empty::after` would then say "no combat", which is
+a lie. `is-quiet` suppresses it and the round counter in the head says what is true.
+
+**No auto-collapse out of combat**, considered and dropped: the panel is already small when the list
+is empty, so there is nothing to give back. It is only large during a fight, which is when it is
+wanted.
+
+Decided with it, so milestones 23 and 24 do not have to re-open it: **the initiative panel stays a
+fixed panel and the right dock sits beneath it** rather than becoming the dock's third tab. The dock
+is read-and-reply; this is glance-state, and the dock's own design already refuses to auto-open for
+exactly the reason the head row here has to survive a fold.
 
 ### On screen
 

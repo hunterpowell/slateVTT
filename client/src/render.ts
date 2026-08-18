@@ -1,6 +1,7 @@
 import type { Box } from './calibrate.js';
 import type { Camera, Rect, Vec2 } from './coords.js';
 import { firstLineAt, gridToWorld, playRect, worldToScreen } from './coords.js';
+import type { Fog } from './fog.js';
 import { darkFill, fogRect } from './fog.js';
 import type { Identity } from './identity.js';
 import { ownsToken } from './identity.js';
@@ -273,6 +274,15 @@ export interface Frame {
      *  thousand cells and it is rebuilt as the pointer crosses into a new one. */
     preview: readonly number[];
   } | null;
+  /**
+   * One creature's line of sight, drawn *instead of* the table's fog while the
+   * DM is checking it. Null the rest of the time and always for a player, whose
+   * client holds no walls to compute one from.
+   *
+   * It replaces the wash rather than joining it because the two answer different
+   * questions and overlaying them would answer neither. See `solo.ts`.
+   */
+  solo: Fog | null;
 }
 
 export function render(ctx: CanvasRenderingContext2D, view: Viewport, frame: Frame): void {
@@ -466,7 +476,14 @@ function drawFog(
   board: Board,
   area: Rect,
 ): void {
-  const { fog } = frame.scene;
+  // Solo sight wins where it is set: it is what the DM asked to look at, and
+  // drawing the table's wash underneath or over it would make neither readable.
+  const fog = frame.solo ?? frame.scene.fog;
+  // And it draws at the *table's* strength rather than the DM's faint one. The
+  // faint wash exists so the DM can still play on a board that also says what
+  // the party can see; this is a question with an answer, and a legible answer
+  // is the whole point of asking it.
+  const faint = frame.solo === null && frame.identity.isDm;
   if (fog === null || area.w <= 0 || area.h <= 0) return;
 
   const right = area.x + area.w;
@@ -478,7 +495,7 @@ function drawFog(
   ctx.beginPath();
   ctx.rect(area.x, area.y, area.w, area.h);
   ctx.clip();
-  ctx.fillStyle = darkFill(frame.identity.isDm);
+  ctx.fillStyle = darkFill(faint);
 
   // Nothing explored at all: the whole board is dark, and there is no rectangle
   // to cut out of it.
@@ -496,10 +513,14 @@ function drawFog(
   ctx.fillRect(area.x, seen.y, seen.x - area.x, seen.h);
   ctx.fillRect(seenRight, seen.y, right - seenRight, seen.h);
 
-  const smoothing = ctx.imageSmoothingEnabled;
-  ctx.imageSmoothingEnabled = false;
+  // Smoothing left *on*, which is what feathers the fog edge. It is safe to
+  // interpolate here only because `fogFromWire` draws each cell as a solid block
+  // of `SUBCELLS` pixels: the boundary stays where the server put it and the
+  // ramp is confined to a quarter of a cell. Interpolating a one-pixel-per-cell
+  // canvas would ramp across the whole square and move the edge half a cell,
+  // which is why this used to be switched off. The override tint below keeps its
+  // hard edge — see `SUBCELLS` in `fog.ts` for why the two differ.
   ctx.drawImage(fog.shade, seen.x, seen.y, seen.w, seen.h);
-  ctx.imageSmoothingEnabled = smoothing;
   ctx.restore();
 }
 

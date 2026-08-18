@@ -173,7 +173,10 @@ that depended on how far you had already come could not be checked by looking at
 
 It is one field on `RoomState`, `SetDiagonals`, and `DiagonalsChanged` — the third thing shaped like
 `show_names`, DM-only to set and sent to everyone, because who may set it is a permission and what
-it says is not a secret. **The server stores it and relays it and never computes with it**: there is
+it says is not a secret. It sits **beside that switch on the table tab**, which is where the two of
+them ended up once the rule was stated: a panel mirrors where its fields live, and both of these are
+the room's. This one spent four milestones in the token panel under a comment admitting it was there
+"for want of a better home", which is as clear a report as a codebase ever files against itself. **The server stores it and relays it and never computes with it**: there is
 no movement distance in that crate at all. What the room is authoritative over is that six clients
 agree, which is exactly what it would not own if this lived in `localStorage`. `Equal` is the
 default, and that is not luck — it is what the ruler did before the switch existed, so a save

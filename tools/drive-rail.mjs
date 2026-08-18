@@ -36,7 +36,7 @@ const tabs = () =>
 
 /** Which panels are actually on screen, by id. */
 const shown = () =>
-  evaluate(`['maptool','tokentool','walltool','drawtool']
+  evaluate(`['maptool','tokentool','walltool','tabletool','drawtool']
     .filter(id => document.getElementById(id).offsetParent !== null)`);
 
 const press = (label) =>
@@ -61,7 +61,7 @@ const heightOf = (id) =>
 
 // --- the strip itself -------------------------------------------------------
 
-check('the strip carries the four editing tabs', await tabs(), ['map', 'token', 'walls', 'fog']);
+check('the strip carries the five tabs', await tabs(), ['map', 'token', 'walls', 'fog', 'table']);
 check('nothing is open on connect', await openTab(), null);
 check('the draw tool is the only panel up', await shown(), ['drawtool']);
 

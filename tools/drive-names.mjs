@@ -62,26 +62,28 @@ const changed = (session) =>
   })()`);
 
 const flip = () =>
-  dm.evaluate(`document.getElementById('token-names').click(); "ok"`);
+  dm.evaluate(`document.getElementById('table-names').click(); "ok"`);
 
 const boxIs = (want) =>
-  dm.evaluate(`document.getElementById('token-names').checked`).then((got) => got === want);
+  dm.evaluate(`document.getElementById('table-names').checked`).then((got) => got === want);
 
 // --- the control itself -----------------------------------------------------
 
+// The table tab, not the token one. Both controls on it are room-wide
+// `RoomState` fields, and a panel mirrors where its fields live.
 await dm.evaluate(`[...document.querySelectorAll('#rail-tabs .rail-tab')]
-  .find(b => b.textContent === 'token').click(); "ok"`);
+  .find(b => b.textContent === 'table').click(); "ok"`);
 check(
-  'the switch is on the token panel',
-  await dm.evaluate(`document.getElementById('token-names').offsetParent !== null`),
+  'the switch is on the table panel',
+  await dm.evaluate(`document.getElementById('table-names').offsetParent !== null`),
   true,
 );
 check('and starts on, because the board was already labelled', await boxIs(true), true);
 
 // A player has no panel to hold it. Not styled away — never built.
 check(
-  'the player has no token panel to flip it from',
-  await player.evaluate('document.querySelector("#tokentool").hidden'),
+  'the player has no table panel to flip it from',
+  await player.evaluate('document.querySelector("#tabletool").hidden'),
   true,
 );
 

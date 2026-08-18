@@ -49,7 +49,7 @@ import type { Rect, Vec2 } from './coords.js';
 import { playRect } from './coords.js';
 import { fillFrom } from './overrides.js';
 import type { ClientMsg, FogPaint, Lighting } from './protocol.js';
-import type { Board, Scene } from './scene.js';
+import type { Board, Scene, Token } from './scene.js';
 import { shownBoard, shownWalls, showingStaged } from './scene.js';
 
 /** Matches `MIN_VISION_FT` and `MAX_VISION_FT` on the server, which re-checks. */
@@ -84,6 +84,8 @@ export interface FogToolUi {
   brushes: HTMLElement;
   gesture: HTMLButtonElement;
   clear: HTMLButtonElement;
+  /** Solo sight: arm it, then click a creature to see the board as it does. */
+  sight: HTMLButtonElement;
 }
 
 export interface FogTool {
@@ -94,6 +96,19 @@ export interface FogTool {
   /** The cells a fill would take, as flat pairs — empty in paint mode and
    *  whenever the pointer is off the board. */
   readonly preview: readonly number[];
+
+  /**
+   * Solo sight is armed, so the next click on a creature picks it rather than
+   * grabbing it. Separate from `brush` because the two are different gestures
+   * on the same button and arming either puts the other down.
+   */
+  readonly checking: boolean;
+  /** The creature whose sight is on the DM's board, or null. Outlives `checking`
+   *  deliberately: having picked one, the DM puts the tool down and goes on
+   *  looking at the answer. */
+  readonly sightId: string | null;
+  /** From a click on the board while `checking`. Null clears the answer. */
+  check(token: Token | null): void;
 
   /** Where the pointer is, in grid units, or null when it has left the canvas.
    *  Recomputes the fill only when it crosses into a different cell. */
@@ -175,6 +190,11 @@ export function createFogTool(
    *  release — a command per cell would be a hundred frames across one drag. */
   let stroke: number[] = [];
   let painted: Set<string> = new Set();
+  /** Solo sight: whether the next click picks a creature, and which one it
+   *  picked. Two variables rather than one because putting the tool down must
+   *  not take the answer off the board. */
+  let checking = false;
+  let sightId: string | null = null;
 
   const buttons = new Map<FogBrush, HTMLButtonElement>();
   const modes = new Map<Lighting, HTMLButtonElement>();
@@ -240,6 +260,19 @@ export function createFogTool(
     // shown. What it would mean over a preview is "clear the paint", which is
     // the `clear` brush with a bigger blast radius and no undo.
     ui.clear.disabled = locked || previewing;
+    // Live-only for the reason reset is, and it is the same reason twice:
+    // nothing has cast a ray on a board nobody has been shown, so there is no
+    // sight on it to check. Unfogged is not a bar — an unfogged map is one
+    // where everyone sees everything, and answering that is still an answer —
+    // but a board with no grid is, which `usable()` already covers for the rest
+    // of the panel.
+    ui.sight.disabled = on === null || previewing;
+    ui.sight.classList.toggle('is-on', checking);
+    ui.sight.setAttribute('aria-pressed', String(checking));
+    // The name is the readout: having picked a creature the DM puts the tool
+    // down, and the button is what says whose eyes the board is showing.
+    const watched = sightId === null ? null : (scene?.tokens.find((t) => t.id === sightId) ?? null);
+    ui.sight.textContent = watched === null ? 'sight check' : `seeing as ${watched.name}`;
     for (const [b, button] of buttons) {
       button.disabled = locked;
       button.classList.toggle('is-on', b === brush);
@@ -249,9 +282,17 @@ export function createFogTool(
     // The body class is what tells the rest of the page the left button is spoken
     // for, exactly as the wall editor's `tracing` does.
     document.body.classList.toggle('painting-fog', brush !== null);
+    document.body.classList.toggle('checking-sight', checking);
+    // The same treatment the staged map's border gets, and for the same reason:
+    // the DM is looking at something nobody else is, and mistaking it for the
+    // board is the one way this goes wrong.
+    document.body.classList.toggle('solo-sight', sightId !== null);
 
-    ui.hint.textContent =
-      on?.fog !== true
+    ui.hint.textContent = checking
+      ? 'Click a creature to see the board as it does. Geometry only — your painted squares are not applied.'
+      : sightId !== null
+        ? `Showing what ${watched?.name ?? 'that creature'} can see right now. Click the button to go back to the table's board.`
+        : on?.fog !== true
         ? previewing
           ? 'The map being prepared is unfogged; the table will see all of it.'
           : 'The table sees the whole board.'
@@ -330,6 +371,28 @@ export function createFogTool(
     ui.brushes.append(button);
   }
 
+  // Arming solo sight puts the brush down and vice versa: they are two gestures
+  // competing for the same button, and two tools armed at once is not a state
+  // input.ts could resolve. `onArm` says the same thing to the draw and wall
+  // tools outside this panel.
+  ui.sight.addEventListener('click', () => {
+    // Three states behind one button, and the order of these two branches is the
+    // whole of it: **anything on the board comes off first.** With an answer up,
+    // the button is the way back to the table's board, which is what the hint
+    // under it promises — and re-arming there instead would leave the DM holding
+    // one creature's sight with no control on screen that takes it away.
+    if (checking || sightId !== null) {
+      checking = false;
+      sightId = null;
+    } else {
+      checking = true;
+      brush = null;
+      clearPreview();
+      onArm();
+    }
+    paint();
+  });
+
   ui.gesture.addEventListener('click', () => {
     gesture = gesture === 'fill' ? 'paint' : 'fill';
     clearPreview();
@@ -390,7 +453,8 @@ export function createFogTool(
   ui.visionUp.addEventListener('click', () => nudge(STEP_FT));
 
   window.addEventListener('keydown', (e) => {
-    if (brush === null || e.key !== 'Escape') return;
+    if (e.key !== 'Escape') return;
+    if (brush === null && !checking && sightId === null) return;
     tool.stop();
   });
 
@@ -403,6 +467,23 @@ export function createFogTool(
     },
     get preview() {
       return preview;
+    },
+    get checking() {
+      return checking;
+    },
+    get sightId() {
+      return sightId;
+    },
+
+    check(token) {
+      if (!checking) return;
+      sightId = token?.id ?? null;
+      // The tool disarms itself on a hit: picking a creature is a one-shot
+      // gesture, and leaving the button armed would mean the next click on the
+      // board re-picks instead of doing what it normally does. A miss leaves it
+      // armed, because a miss is usually an aim that was slightly off.
+      if (sightId !== null) checking = false;
+      paint();
     },
 
     point(at) {
@@ -462,6 +543,14 @@ export function createFogTool(
       brush = null;
       stroke = [];
       painted = new Set();
+      // Solo sight goes with it, answer included. The rail's rule is that
+      // closing a tab puts down whatever the panel armed, and here what it armed
+      // is also the only thing on screen explaining why the DM's board is
+      // showing one creature's line of sight instead of the table's fog — a
+      // wash nobody can account for is worse than a click nobody can account
+      // for.
+      checking = false;
+      sightId = null;
       clearPreview();
       paint();
     },

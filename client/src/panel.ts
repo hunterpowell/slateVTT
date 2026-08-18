@@ -26,6 +26,7 @@ interface PanelUi {
   clear: HTMLButtonElement;
   next: HTMLButtonElement;
   previous: HTMLButtonElement;
+  collapse: HTMLButtonElement;
 }
 
 /**
@@ -71,6 +72,37 @@ function valueField(value: number, name: string, commit: (value: number) => void
   });
 
   return field;
+}
+
+/**
+ * Whether this browser had the list folded away last time.
+ *
+ * `localStorage` and deliberately not the room, which is the line `diagonals`
+ * falls on the other side of: that one is on `RoomState` because the only thing
+ * the server is authoritative over there is that six clients agree on a *rule*.
+ * How much of a panel somebody wants on their own screen is nobody else's
+ * business and nothing has to agree about it.
+ *
+ * Wrapped for the reason `identity.ts` wraps its own reads: a private browsing
+ * mode can throw on the property itself, and defaulting to the expanded panel is
+ * a worse outcome than a crash only in theory.
+ */
+const COLLAPSED_KEY = 'slate.initiative.collapsed';
+
+function readCollapsed(): boolean {
+  try {
+    return localStorage.getItem(COLLAPSED_KEY) === '1';
+  } catch {
+    return false;
+  }
+}
+
+function storeCollapsed(collapsed: boolean): void {
+  try {
+    localStorage.setItem(COLLAPSED_KEY, collapsed ? '1' : '0');
+  } catch {
+    /* the panel still folds; it just forgets by the next load */
+  }
 }
 
 export function createPanel(
@@ -121,8 +153,38 @@ export function createPanel(
   // even then, to put the placeholder in and take the clicks off it.
   let knownTokenIds: string | null = null;
 
-  return {
+  let collapsed = readCollapsed();
+  // The last frame this panel was handed, so the chevron can redraw without one
+  // arriving. Nothing else needs it: everything else that changes this panel
+  // comes off the wire and brings its own.
+  let last: { initiative: Initiative; scene: Scene } | null = null;
+
+  ui.collapse.addEventListener('click', () => {
+    collapsed = !collapsed;
+    storeCollapsed(collapsed);
+    if (last !== null) panel.update(last.initiative, last.scene);
+  });
+
+  const panel: Panel = {
     update(initiative, scene) {
+      last = { initiative, scene };
+
+      ui.collapse.setAttribute('aria-expanded', String(!collapsed));
+      ui.collapse.title = collapsed ? 'Show the whole order' : 'Show only whose turn it is';
+
+      // Collapsed is the current row and nothing else — the same row, built by
+      // the same code below, so the folded panel is the unfolded one's
+      // highlighted line rather than a second rendering of it.
+      const entries = collapsed
+        ? initiative.entries.filter((entry) => entry.token === initiative.current)
+        : initiative.entries;
+
+      // A fight is running and whoever is up is not on this client's board — a
+      // hidden creature's row is filtered out of the table's copy server-side,
+      // so the collapsed list has nothing to draw. The placeholder must not call
+      // that "no combat".
+      ui.list.classList.toggle('is-quiet', collapsed && initiative.entries.length > 0);
+
       const tokenFor = (id: string): Token | undefined =>
         scene.tokens.find((t: Token) => t.id === id);
       const nameOf = (id: string): string => tokenFor(id)?.name ?? id;
@@ -130,7 +192,7 @@ export function createPanel(
       ui.round.textContent = `Round ${initiative.round}`;
 
       ui.list.replaceChildren(
-        ...initiative.entries.map((entry) => {
+        ...entries.map((entry) => {
           const token = tokenFor(entry.token);
 
           const row = document.createElement('li');
@@ -284,9 +346,19 @@ export function createPanel(
         }
       }
 
+      // The DM's editing controls fold away with the rows they edit. The turn
+      // buttons deliberately do not: advancing the turn from a folded panel is
+      // most of what folding it is for.
+      if (isDm) {
+        ui.form.hidden = collapsed;
+        ui.clear.hidden = collapsed;
+      }
+
       // Players only see the panel once there is something in it; the DM always
       // needs it, since that is where combat gets started.
       ui.root.hidden = !isDm && initiative.entries.length === 0;
     },
   };
+
+  return panel;
 }

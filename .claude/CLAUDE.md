@@ -390,7 +390,8 @@ never held, which announces that the id exists.
 **Whether the board writes those names under the tokens is one switch on the room**, `SetShowNames`,
 DM-only to set and sent to everyone — six familiar party portraits need no labels and a room full of
 goblins does. Not on `MapInfo` beside `fog` and not on `UpdateToken`: it belongs to neither the image
-nor any one creature. It defaults on, which is the only thing keeping an older save from losing every
+nor any one creature, which is also why it and `SetDiagonals` are the table tab's two controls and
+not the token panel's. It defaults on, which is the only thing keeping an older save from losing every
 label. The hit point bar is not a label and the switch leaves it alone.
 
 Art is optional — a token without it draws as a named disc. The DM uploads it, or picks it out of
@@ -409,6 +410,12 @@ whole `Scene` and resolves each row's id to the token itself. The bar has *no pe
 player's copy of the token carries no `hp`, so there is nothing to decline to draw, which is
 invariant 4 the safe way round. Clicking a row centres the camera on that creature; it is not an
 automatic pan on turn change, which would move the board under whoever is mid-drag.
+
+**It folds, and folded is the current row rather than a bare tab.** Whose turn it is is what the
+panel is for, so the fold gives back the other eleven rows and keeps that one — rendered by the same
+loop, with the turn buttons still beside it. The preference is `localStorage` and pointedly not the
+room: `diagonals` is on `RoomState` because six clients must agree on a rule, and how much of a panel
+somebody wants on their own screen is nobody else's business.
 
 **Shift-click gathers tokens into a group and dragging any member moves all of them.** The server
 does not know this exists: a group move is N ordinary `MoveToken`s, so permission, snapping and
@@ -587,7 +594,14 @@ rather than standing on it, so it belongs with the terrain — fringe included, 
 reader downstream of that widening. `shape_covers` on the server is a second
 copy of `coveredCells`, and the two only have to agree loosely.
 
-→ **`docs/fog.md`** before touching `fog.rs`, `fog.ts`, `overrides.ts`, `fogtool.ts`,
+**Fog is party-shared and stays that way; what the DM gets instead is `solo.ts`.** Arming *sight
+check* and clicking a creature redraws the DM's own board as that creature's line of sight. It is
+**client-only** — a second raycast over the walls, radius and mode their client already holds — so
+there is no command, no event and no filter, and it is leak-proof by construction rather than by a
+check, exactly as the movement hint is: a player's client holds no walls to compute one from. Two
+states and no memory, no overrides applied, live board only. Do not put any of it in the room.
+
+→ **`docs/fog.md`** before touching `fog.rs`, `fog.ts`, `solo.ts`, `overrides.ts`, `fogtool.ts`,
 `unseen_by_table`, `with_fringe`, `shape_seen`, `refresh_fog`, `sight_cells`/`lit_cells`, or
 `moves_sight`.
 
@@ -603,8 +617,11 @@ against a hardcoded map with no networking, before any WebSocket code exists.
 
 **The left rail shows one of the DM's editing panels at a time, behind a tab strip.** A new panel
 is an entry in `RailTab` and an entry in the array `main.ts` passes to `createRail` — it is never
-another `<aside>` stacked on the others, which is how the rail ran out of room at four. Two rules
-come with it. Closing a tab must put down whatever that panel armed, via the panel's `stop`: the
+another `<aside>` stacked on the others, which is how the rail ran out of room at four. **Which panel
+a control belongs on is decided by where its field lives**: `MapInfo` is the map tab, `Token` is the
+token tab, and room-wide `RoomState` is the table tab. `show_names` and `diagonals` spent four
+milestones under the token panel's form with a divider and two apologetic comments trying to say
+otherwise, and moving them is what turned that into a rule. Three rules come with the strip. Closing a tab must put down whatever that panel armed, via the panel's `stop`: the
 calibration box and the wall editor both take the left mouse button, and a tool still holding it
 under a hidden panel is a click doing something with nothing on screen saying why. And a panel that
 goes inert in some state must make its **tab** inert too — a way in to a panel that can do nothing
