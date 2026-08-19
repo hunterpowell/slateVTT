@@ -7,6 +7,19 @@
 /** Adjacently tagged on the Rust side: `{"kind":"player","id":"saelyn"}`. */
 export type Owner = { kind: 'dm' } | { kind: 'player'; id: string };
 
+/**
+ * Which palette entry each player picked, keyed by roster slug.
+ *
+ * A plain object because that is what a `BTreeMap<PlayerId, u8>` serialises to
+ * — `PlayerId` is a newtype over a string, so it is a legal JSON key, which is
+ * exactly what `Owner` is not. A slug with no entry never picked, and
+ * `colourOf` falls back to the default for that roster position.
+ *
+ * The numbers index `PLAYER_HUES` in `pings.ts`, which is the only place the
+ * hues themselves exist. The server holds the bound and not the list.
+ */
+export type Colours = Readonly<Record<string, number>>;
+
 export interface WireMapInfo {
   url: string;
   grid_px: number;
@@ -268,6 +281,23 @@ export interface WireRoomView {
    *  the same value for every client. A counting convention only half the table
    *  holds is worse than either convention. */
   diagonals: Diagonals;
+  /** Who is connected right now, the DM among them.
+   *
+   *  The same value for everyone, like the two fields above it: there is no
+   *  permission here and nothing to withhold. A table that cannot tell whether
+   *  the DM is still on the other end of the line is what it exists for.
+   *
+   *  `Owner` rather than `RosterSlot` — which is the difference between this and
+   *  the picker's list, since a slot cannot say "the DM". One entry per person
+   *  and not per socket: somebody on a laptop and a phone is one name. */
+  here: Owner[];
+  /** What colour each player picked for themselves.
+   *
+   *  **Public, unlike the scratchpad below**, and the first thing here a player
+   *  writes that everybody else is sent. That is the axis a colour differs from
+   *  a note on: everyone has to draw everyone else's rings, so a colour only its
+   *  owner could see would not be a colour. */
+  colours: Colours;
   /** What the DM's undo would take back, or null for nothing to take.
    *
    *  **Null on every player connection**, which is the walls' rule rather than
@@ -397,6 +427,20 @@ export type ServerMsg =
    *  paint arrive with no frames of their own. */
   | { type: 'staged_changed'; board: WireStaged | null }
   | { type: 'initiative_changed'; initiative: Initiative }
+  /** Somebody joined or left. The whole list, at most seven names.
+   *
+   *  `names_changed`'s shape rather than `walls_changed`'s — identical for every
+   *  recipient, no filter — and unlike either, nobody sent a command to cause
+   *  it. Sent on every join and every leave rather than only when the list
+   *  differs, so a second connection as the same person repaints the same chips
+   *  rather than needing the room to remember what it last said. */
+  | { type: 'presence'; here: Owner[] }
+  /** A player picked their colour. The whole table, for the reason above.
+   *
+   *  Echoed to whoever picked, unlike `notes_changed`: there is no caret for it
+   *  to move and nothing was drawn locally, so this frame is how the chosen
+   *  swatch settles on the client that chose it. */
+  | { type: 'colours_changed'; colours: Colours }
   /** Somebody else's in-progress sweep, keyed by their connection. Never our
    *  own: we are already drawing that one from our own pointer. */
   | { type: 'sketch'; by: number; kind: ShapeKind; at: WirePos; to: WirePos; color: string }
@@ -510,6 +554,15 @@ export type ClientMsg =
    *  one the socket belongs to, because a key we could name is a key we could
    *  name somebody else's with. */
   | { type: 'set_notes'; text: string }
+  /** Pick our own colour. It carries no key either, for `set_notes`' reason —
+   *  whose colour it is comes from the socket.
+   *
+   *  An index into a closed palette rather than a hex string, and the reason is
+   *  on the board: free hex would let a player take the gold a token ring uses
+   *  for ownership and make their own ring say something false. The server holds
+   *  the bound; `PLAYER_HUES` in `pings.ts` holds the colours. Never sent by the
+   *  DM, whose hue is outside the six on purpose — the server refuses it. */
+  | { type: 'set_colour'; colour: number }
   /** DM-only. The staged map becomes the board; tokens keep their cells. */
   | { type: 'promote_staged' }
   /** DM-only. Throw the staged map away. */

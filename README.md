@@ -144,11 +144,20 @@ screen and which token is standing on a given square.
 | `drive-panels.mjs` | The initiative panel folding, and the DM's solo sight staying theirs | both     |
 | `drive-chat.mjs`   | Whisper and shout — and a whisper being absent from a *third* person's page | three    |
 | `drive-notes.mjs`  | The scratchpad — one person in two tabs, and the DM holding none of it | three    |
+| `drive-presence.mjs` | Who is connected, the colour a player picks, and being told it is your turn | three    |
 
 The ones marked *both* open two browsers at once, and that is the point of them: almost everything
 they assert is a **difference** between what two people are holding, which one client cannot see.
 `drive-chat.mjs` opens three, because the thing it has to show is what one *player* is not sent
 about another — a line drawn between two people at the same table rather than between the DM and it.
+`drive-presence.mjs` opens three for a related reason: its subject *is* the other connections, so a
+colour has to reach somebody who did not pick it, and with two browsers the picker and the observer
+would be the same window.
+
+**Reconnecting has no driver, deliberately.** The only way to drive it is to stop the server and
+start it again, which is not something a suite that runs against one long-lived room should do —
+so it is checked by hand: kill the server, watch the banner become "connection lost —
+reconnecting…", bring it back, watch the page reload itself.
 
 They need a server running with a **known** DM secret, and they change the room they connect to.
 Each takes an optional base URL, and the DM-side ones an optional secret after it — the defaults
@@ -196,9 +205,9 @@ picking the ones that look relevant. Picking is not worth the thought it costs: 
 `coords.ts`, `render.ts`, `input.ts` and `scene.ts`, and almost every client commit touches one of
 those, so any honest rule about which to skip says "none of them" nearly every time.
 
-| player | names | ui  | rail | undo | chat | staged | fog | ruler | select | ping |
-| ------ | ----- | --- | ---- | ---- | ---- | ------ | --- | ----- | ------ | ---- |
-| 4s     | 6s    | 9s  | 12s  | 14s  | 16s  | 22s    | 23s | 25s   | 30s    | 39s  |
+| player | names | ui  | rail | undo | chat | presence | staged | fog | ruler | select | ping |
+| ------ | ----- | --- | ---- | ---- | ---- | -------- | ------ | --- | ----- | ------ | ---- |
+| 4s     | 6s    | 9s  | 12s  | 14s  | 16s  | 17s      | 22s    | 23s | 25s   | 30s    | 39s  |
 
 `drive-ping.mjs` is the slowest and stays that way: most of its time is spent waiting for rings to
 expire, which is the feature.
@@ -214,7 +223,7 @@ SLATE_DM_SECRET=test-secret SLATE_STATE=scratch.json cargo run &
 until curl -sf http://127.0.0.1:3000/ >/dev/null; do sleep 1; done
 
 cd ..
-for d in player names ui rail undo panels chat staged fog ruler select ping; do node tools/drive-$d.mjs; done
+for d in player names ui rail undo panels chat presence staged fog ruler select ping; do node tools/drive-$d.mjs; done
 ```
 
 That whole block is 169 seconds on the machine it was written on, and the order in it is the cheap

@@ -36,6 +36,8 @@ import { createPanel } from './panel.js';
 import { createPicker } from './picker.js';
 import type { Pings } from './pings.js';
 import { createPings } from './pings.js';
+import type { Presence } from './presence.js';
+import { createPresence } from './presence.js';
 import type {
   ClientMsg,
   Initiative,
@@ -62,6 +64,8 @@ import type { Sketches } from './shapes.js';
 import { createSketches, shapeFromWire } from './shapes.js';
 import type { TokenTool } from './tokens.js';
 import { createTokenTool } from './tokens.js';
+import type { Turn } from './turn.js';
+import { createTurn } from './turn.js';
 import type { Undo } from './undo.js';
 import { createUndo } from './undo.js';
 import type { Wall } from './walls.js';
@@ -97,6 +101,14 @@ interface Ui {
   dock: {
     root: HTMLElement;
     tabs: HTMLElement;
+  };
+  presence: {
+    root: HTMLElement;
+    chips: HTMLElement;
+    swatches: HTMLElement;
+  };
+  turn: {
+    toast: HTMLElement;
   };
   chat: {
     root: HTMLElement;
@@ -237,6 +249,14 @@ function findUi(): Ui {
       root: need('#dock'),
       tabs: need('#dock-tabs'),
     },
+    presence: {
+      root: need('#presence'),
+      chips: need('#presence-chips'),
+      swatches: need('#presence-swatches'),
+    },
+    turn: {
+      toast: need('#turn-toast'),
+    },
     chat: {
       root: need('#chat'),
       log: need('#chat-log'),
@@ -362,6 +382,13 @@ function boot(): void {
   let chat: Chat | null = null;
   let notes: Notes | null = null;
   let dock: Dock | null = null;
+  // Everybody's too, and built before the chat panel because that one reads
+  // through it — who is connected decides which destination chips are dimmed,
+  // and what everyone picked decides what colour a line is written in.
+  let presence: Presence | null = null;
+  // And everybody's for the plainest reason of all: whose turn it is is not a
+  // secret, so this is the same feature on every screen.
+  let turn: Turn | null = null;
   // DM-only, like the three panels it shows. Null on a player connection, which
   // is why every use of it is optional-chained rather than guarded.
   let rail: Rail | null = null;
@@ -469,6 +496,25 @@ function boot(): void {
         wallTool?.stop(),
       );
 
+      // Before the chat panel, which reads through it. Everybody's, like the
+      // dock's two panels and unlike the rail's five: who is connected is
+      // nobody's secret, and a colour that only its owner could see would not be
+      // a colour. The DM's copy is the same object with one thing missing — the
+      // control, since their hue is not one of the six.
+      presence = createPresence(
+        ui.presence,
+        identity,
+        welcome.roster,
+        welcome.state.here,
+        welcome.state.colours,
+        (msg) => net.send(msg),
+      );
+
+      // Seeded from the join and never fired by it: adopting state is not a turn
+      // change, and a refresh mid-combat that announced whoever was already up
+      // would be the feature crying wolf on its first frame.
+      turn = createTurn(ui.turn, identity, welcome.state.initiative);
+
       // Built for everyone, like the draw tool above and unlike the rail
       // below: neither of the dock's panels is the DM's. The log the room hands
       // over here is already the one this client is party to — a whisper
@@ -478,6 +524,7 @@ function boot(): void {
         identity,
         welcome.roster,
         welcome.state.chat,
+        presence,
         (msg) => net.send(msg),
         // The dock does not exist yet on this line and does by the time a line
         // can arrive, which is why this reaches for it lazily.
@@ -646,6 +693,11 @@ function boot(): void {
         // be able to read who pinged, and they were offered these same names at
         // the identity picker.
         welcome.roster,
+        // And what each of those names picked to be drawn in, which the roster
+        // alone no longer answers. Passed as the object rather than the table:
+        // it is read every frame and somebody may change their mind between two
+        // of them.
+        presence,
       ).then(
         (started) => {
           stage = started;
@@ -773,6 +825,29 @@ function boot(): void {
       if (room === null || panel === null) return;
       room.initiative = initiative;
       panel.update(initiative, room.scene);
+      // The only path that fires the turn notice. A `Welcome` and a `Restored`
+      // both carry an initiative too and both go the other way — see `turn.ts`.
+      turn?.update(initiative, room.scene);
+    },
+
+    // Somebody joined or left. Reaches everyone and is filtered by nobody: this
+    // is the one thing in the room that is not about the room.
+    onPresence: (here) => {
+      presence?.here(here);
+      // A destination chip dims for somebody who is not connected, which is the
+      // specific failure the strip exists to prevent — whispering an empty
+      // chair.
+      chat?.repaint();
+    },
+
+    // A player picked. Everybody is told, this client included if it was ours:
+    // nothing here is predicted locally, so the frame is how our own swatch
+    // settles.
+    onColoursChanged: (colours) => {
+      presence?.picked(colours);
+      // The log is written in its senders' colours, and half a conversation in
+      // yesterday's colours attributes it to the wrong person.
+      chat?.repaint();
     },
 
     // Somebody else's sweep. Never our own — the server does not echo it, for
@@ -891,6 +966,17 @@ function boot(): void {
       // `adoptView` enforces rather than this remembering.
       adoptView(scene, view, identity.isDm);
       room.initiative = view.initiative;
+      // Seeded, never fired: a restore mid-combat that nudged six people for a
+      // turn that did not move is worse than the feature is good.
+      turn?.adopt(view.initiative);
+      // Carried on the view like everything else, so the undo is right here for
+      // free. Neither can actually have changed — an undo does not disconnect
+      // anybody, and a colour is exempt from the ring — which is exactly why
+      // adopting them costs nothing and forgetting to would be a trap the day
+      // one of those stops being true.
+      presence?.here(view.here);
+      presence?.picked(view.colours);
+      chat?.repaint();
 
       // A ruler measuring to a token the restore removed is a line pointing at
       // where something went, which is the argument `onTokenRemoved` already
@@ -921,6 +1007,19 @@ function boot(): void {
       flash(ui.banner, message);
     },
 
+    // The socket dropped and net.ts is trying again. The board is frozen from
+    // here — the room went on without us — so it says so, and the class that
+    // greys the boxes that can no longer reach the room goes on now rather than
+    // when the retries run out.
+    onLost: () => {
+      document.body.classList.add('offline');
+      ui.picker.hidden = true;
+      ui.banner.textContent = 'connection lost — reconnecting…';
+      ui.banner.hidden = false;
+    },
+
+    // And they ran out. The floor this client has always had, reached rather
+    // than reached for immediately.
     onClose: () => {
       document.body.classList.add('offline');
       ui.picker.hidden = true;
@@ -984,6 +1083,7 @@ async function start(
   rail: Rail | null,
   pings: Pings,
   roster: readonly RosterEntry[],
+  presence: Presence,
 ): Promise<Stage> {
   const { scene } = room;
   const firstUrl = shownBoard(scene).mapUrl;
@@ -1189,6 +1289,10 @@ async function start(
       // the growing preview and the ring it becomes are one drawing.
       pings: pings.active(now),
       roster,
+      // Read per frame, not captured: a ring already on the board changes colour
+      // on the next frame when its owner picks a new one, with nothing here
+      // recomputing anything.
+      colours: presence.colours,
       hoveredShapeId: input.hoveredShapeId,
       selectedId: tokenTool?.selectedId ?? null,
       selection: input.selection,

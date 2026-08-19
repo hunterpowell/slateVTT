@@ -34,6 +34,8 @@
 
 import type { Identity } from './identity.js';
 import { colourOf, nameOf } from './pings.js';
+import type { Presence } from './presence.js';
+import { ownerOf, sameOwner } from './presence.js';
 import type { ChatTo, ClientMsg, Owner, RosterEntry, WireChatLine } from './protocol.js';
 
 /** How long an arriving line sits beside a collapsed dock. Long enough to read
@@ -60,16 +62,16 @@ export interface Chat {
   said(line: WireChatLine): void;
   /** The panel came on screen: catch up to the bottom of the log. */
   opened(): void;
-}
-
-/** Who the sender is, as an `Owner` — the same pair of facts `pings.ts` needs
- *  and for the same reason: a name and a colour come out of the roster. */
-function ownerOf(identity: Identity): Owner {
-  return identity.playerId === null ? { kind: 'dm' } : { kind: 'player', id: identity.playerId };
-}
-
-function sameOwner(a: Owner, b: Owner): boolean {
-  return a.kind === 'dm' ? b.kind === 'dm' : b.kind === 'player' && a.id === b.id;
+  /**
+   * Somebody joined, left, or changed colour — redraw what says so.
+   *
+   * Two things move: a destination chip dims for somebody who is not connected,
+   * and every line already in the log is written in its sender's colour. The
+   * second is why this rebuilds the log rather than only repainting the chips —
+   * a log in yesterday's colours would attribute half a conversation to the
+   * wrong person, which is worse than the colour never having changed.
+   */
+  repaint(): void;
 }
 
 /** What a destination is called in a sentence. */
@@ -98,11 +100,22 @@ function sameTo(a: ChatTo, b: ChatTo): boolean {
   return a.kind === 'player' && b.kind === 'player' ? a.id === b.id : true;
 }
 
+/** The person a destination names, or null for the table — which is everybody
+ *  and is therefore never away. */
+function personAt(to: ChatTo): Owner | null {
+  if (to.kind === 'table') return null;
+  return to.kind === 'dm' ? { kind: 'dm' } : { kind: 'player', id: to.id };
+}
+
 export function createChat(
   ui: ChatUi,
   identity: Identity,
   roster: readonly RosterEntry[],
   history: readonly WireChatLine[],
+  /** Who is here and what colour they picked. Read at draw time rather than
+   *  copied, so a line drawn after somebody changes their mind is drawn in the
+   *  new colour without this holding a second copy of the table. */
+  presence: Presence,
   send: (msg: ClientMsg) => void,
   /** Tells the dock how many lines have arrived since this panel was last on
    *  screen. The dock ignores it while the panel is open. */
@@ -119,6 +132,10 @@ export function createChat(
 
   // --- the log --------------------------------------------------------------
 
+  // Every line on screen, so a colour change can redraw them. The log is capped
+  // on the server, so this is a few hundred short strings at worst.
+  const lines: WireChatLine[] = [...history];
+
   const draw = (line: WireChatLine): HTMLElement => {
     const row = document.createElement('div');
     row.className = 'chat-line';
@@ -128,7 +145,7 @@ export function createChat(
 
     const who = document.createElement('span');
     who.className = 'chat-who';
-    who.style.color = colourOf(line.by, roster);
+    who.style.color = colourOf(line.by, roster, presence.colours);
     who.textContent = nameOf(line.by, roster);
     row.append(who);
 
@@ -153,6 +170,7 @@ export function createChat(
   };
 
   const append = (line: WireChatLine): void => {
+    lines.push(line);
     // Read before the append: somebody scrolled up reading what was said a
     // minute ago should not be yanked to the bottom by an arrival. While the
     // panel is hidden this is false and `opened` catches up instead.
@@ -180,7 +198,15 @@ export function createChat(
   const chips = new Map<ChatTo, HTMLButtonElement>();
 
   const showDestination = (): void => {
-    for (const [dest, chip] of chips) chip.classList.toggle('is-armed', sameTo(dest, to));
+    for (const [dest, chip] of chips) {
+      chip.classList.toggle('is-armed', sameTo(dest, to));
+      // Dimmed, never disabled. A whisper to somebody who stepped away is a
+      // reasonable thing to type — they will read it when they come back, since
+      // the log is the session's — and a chip that could not be pressed would
+      // move the armed destination out from under somebody mid-sentence.
+      const person = personAt(dest);
+      chip.classList.toggle('is-away', person !== null && !presence.connected(person));
+    }
     // Said twice on purpose. The chip is where the choice was made; the box is
     // where the eyes are while the sentence is being typed, and a whisper that
     // goes to the table because the box looked like any other box is the one
@@ -261,6 +287,15 @@ export function createChat(
       toBottom();
       ui.toast.hidden = true;
       ui.text.focus();
+    },
+    repaint() {
+      showDestination();
+      // Read and put back, because rebuilding the log resets it — and somebody
+      // scrolled up reading what was said a minute ago should stay there when
+      // a name three rows down changes colour.
+      const wasAt = ui.log.scrollTop;
+      ui.log.replaceChildren(...lines.map(draw));
+      ui.log.scrollTop = wasAt;
     },
   };
 }

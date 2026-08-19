@@ -236,6 +236,95 @@
         color: #6a5f45;
       }
 
+      /* --- presence --------------------------------------------------------- */
+
+      /* First in the column, and `flex: 0 0 auto` because it is the fixed thing
+         the two panels below it flex around: every roster slot is drawn from the
+         first frame and none of them ever leaves, so this has one height for the
+         whole session. */
+      #presence {
+        flex: 0 0 auto;
+        box-sizing: border-box;
+        width: 100%;
+        padding: 6px;
+        border-radius: 6px;
+        background: rgba(12, 14, 18, 0.88);
+        user-select: none;
+      }
+
+      #presence-chips {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 4px;
+      }
+
+      .presence-chip {
+        display: inline-flex;
+        align-items: center;
+        gap: 4px;
+        max-width: 100%;
+        padding: 2px 6px;
+        border: 1px solid #2b3038;
+        border-radius: 4px;
+        background: #171a1f;
+        color: #d8d2c4;
+        font-size: 11px;
+      }
+
+      /* Dimmed and not gone. A chip that vanished would move its neighbours
+         under the pointer, and would make "nobody is here" look the same as
+         "there is no such person". */
+      .presence-chip.is-away {
+        opacity: 0.32;
+      }
+
+      /* The one chip that is a control, and the only hint it needs: everything
+         else on this strip is a label. */
+      .presence-chip.is-mine {
+        border-color: #4a525e;
+        cursor: pointer;
+      }
+
+      .presence-chip.is-mine:hover {
+        background: #232830;
+      }
+
+      .presence-dot {
+        flex: 0 0 auto;
+        width: 8px;
+        height: 8px;
+        border-radius: 50%;
+        /* Set from `colourOf`, which is the same function the ring on the board
+           and the name in the chat log go through. */
+        background: #6a5f45;
+      }
+
+      .presence-name {
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+
+      #presence-swatches {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 4px;
+        margin-top: 6px;
+      }
+
+      .presence-swatch {
+        width: 20px;
+        height: 20px;
+        padding: 0;
+        border: 1px solid #2b3038;
+        border-radius: 4px;
+        cursor: pointer;
+      }
+
+      .presence-swatch.is-armed {
+        border-color: #e8e6e1;
+      }
+
       /* --- initiative ------------------------------------------------------ */
 
       /* Wider than it was: the portrait and the hit point bar both eat into the
@@ -545,14 +634,22 @@
         pointer-events: none;
       }
 
+      /* And the strip is the most misleading thing on a dead socket: it says who
+         was here when the connection went, which reads as who is here now. The
+         same treatment says it cannot be believed and cannot be pressed. */
+      body.offline #presence {
+        opacity: 0.45;
+        pointer-events: none;
+      }
+
       /* Beside the dock rather than inside it, because this is what shows when
          the panel does not. It never opens anything: a layout reflow under
          whoever is mid-drag is what the ping arrow and the folded initiative
          panel each declined to cause. */
-      #chat-toast {
+      #chat-toast,
+      #turn-toast {
         position: fixed;
         right: 272px;
-        bottom: 46px;
         max-width: 320px;
         padding: 6px 9px;
         border: 1px solid #2b3038;
@@ -563,6 +660,19 @@
         overflow-wrap: break-word;
         pointer-events: none;
         user-select: none;
+      }
+
+      #chat-toast {
+        bottom: 46px;
+      }
+
+      /* Above the chat toast, so a whisper arriving in the same second does not
+         land on top of it. Both grow from the bottom, which is the dock's rule
+         one screen over: the edge that moves is the top one. */
+      #turn-toast {
+        bottom: 86px;
+        border-color: #4a525e;
+        color: #e8e6e1;
       }
 
       .init-head {
@@ -1748,6 +1858,22 @@
          fight and whether it is folded, so any fixed offset for the thing under
          it is a number a later feature makes wrong. -->
     <div id="right-rail">
+      <!-- Who is here. The top of this column and never anywhere else: the
+           initiative panel folds and the dock grows upward from the bottom, so
+           this is the one edge that does not move — and a strip answering "is
+           the DM still there" is worth nothing if it is somewhere different
+           every time you look.
+
+           Both lists are empty here and built in `presence.ts`: which chips
+           exist depends on the roster, and the swatches are the palette that
+           lives in `pings.ts`. -->
+      <aside id="presence" hidden>
+        <div id="presence-chips"></div>
+        <!-- Opens under your own chip, which is where your colour already is.
+             Never built on a DM connection — their hue is outside the six and
+             the server refuses a `set_colour` from them. -->
+        <div id="presence-swatches" hidden></div>
+      </aside>
     <aside id="initiative" hidden>
       <div class="init-head">
         <!-- Collapses the list and never the turn. A panel that collapses to a
@@ -2072,6 +2198,11 @@
          whoever is mid-drag, which the ping arrow and the initiative panel each
          declined to do for the same reason. -->
     <div id="chat-toast" hidden></div>
+    <!-- The chat toast's neighbour rather than the same box: a whisper arriving
+         must not wipe out the news that you are up, and the two can be true at
+         the same moment. It sits above it for the same reason the dock grows
+         upward — the bottom edge is the one that stays put. -->
+    <div id="turn-toast" hidden></div>
     <div id="hint">drag token to move · drag map or middle-drag to pan · wheel to zoom</div>
     <script type="module" src="/dist/main.js"></script>
   </body>

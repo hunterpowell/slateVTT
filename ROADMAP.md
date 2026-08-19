@@ -25,9 +25,13 @@ Do not work ahead. Each milestone should run and be usable before starting the n
 6. Map upload and grid calibration UI.
 7. Package for Windows session hosting and deploy behind a Cloudflare Tunnel.
 
-**Every milestone on this list is built.** 25 and 26 were never planned and are out of order for the
-reasons their own entries give. Everything from 8 on was planned after the original seven; 17 and 18 were
-workshopped after 16 landed, and 19–24 after 18. What comes next is not written down yet:
+**Everything through 27 is built; 28 and 29 are not.** 25 and 26 were never planned and are out of
+order for the reasons their own entries give. Everything from 8 on was planned after the original
+seven; 17 and 18 were workshopped after 16 landed, 19–24 after 18, and 27–29 on 2026-08-18 after 26.
+That batch was the first one written down while nothing in it existed; 27 landed on 2026-08-19 and
+its entry is now a record like the rest, while 28 and 29 are still design — and note that both of
+those exist to **overturn something this file already says**, which their own entries open by
+naming.
 
 8. **Done.** Map library — list `maps/`, pick one, remember its calibration. The smallest thing
    on this list and the only one that touched nothing else.
@@ -867,6 +871,226 @@ workshopped after 16 landed, and 19–24 after 18. What comes next is not writte
     from what it assumed. Per-run token names, and a cleanup that sweeps by pattern rather than by
     exact name, are what keep a failed run from poisoning the next one.
 
+27. **Done**, on 2026-08-19, and all four parts of it. What the design below did not anticipate is
+    in the four notes marked **On landing**; everything else held, including the claim that three
+    of the four touch no Rust and that the fourth is where all the teeth are. See
+    `docs/presence.md`.
+
+    The presence pass — who is here, and who they are. Four parts, and the theme is
+    what makes them one milestone rather than four: this application currently has no answer to
+    *is the DM still connected*, no answer to *it is your turn*, no answer to *my socket dropped*,
+    and colours nobody chose. Milestone 26 is the precedent for a four-part pass held together by
+    a theme rather than by a dependency.
+
+    Three of the four touch no Rust at all. The fourth is where all the teeth are, and it is not
+    the one that looks it.
+
+    **27a — connected players.** `roster` is the cast list and not who is connected; that sentence
+    is in CLAUDE.md and this is what finally wants the other thing. The server already computes it:
+    `roster_slots()` builds `claimed` by scanning `clients`, and today only sockets sitting on the
+    identity picker ever see the answer. Both emit points exist and already do neighbouring work —
+    `hello`'s success path calls `refresh_pickers`, and the `Disconnected` arm calls it *and*
+    dispatches `Event::SketchEnded`.
+
+    - `ServerMsg::Presence { here: Vec<Owner> }`. **`Owner` rather than `RosterSlot`**, because the
+      thing a table most wants to know is whether the *DM* is there and `RosterSlot` cannot say it —
+      and because `colourOf` and `nameOf` already resolve an `Owner` to a name and a colour with
+      nothing on the wire, which is `Pinged`'s argument reused whole.
+    - **A set of identities, not a count.** `RosterSlot`'s own doc comment says a player on a laptop
+      and a phone is legitimate, so two connections as one person is one entry.
+    - `here` on `RoomView` as well as on the delta, so the join snapshot carries it — invariant 3 —
+      and `Restored` is right for free. `state` is already boxed, so milestone 15's large-variant
+      warning does not bite.
+    - `NamesChanged`-shaped: identical for every recipient, no filter, no permission. **Off `Saved`**,
+      so off the undo ring by construction exactly as `chat` is. The room already wrote the sentence
+      that makes this correct rather than convenient, in the `Disconnected` arm: *"Who happens to be
+      connected is not part of the room."*
+    - On screen it is a row of chips at the **top of the right-hand flex column**. That is the one
+      end of that column which never moves — the initiative panel folds and the dock grows upward,
+      which is `dock.ts`'s own argument for putting its strip last. Absent players **dim rather than
+      disappear**, so the row never reflows. Dim the chat destination chips too: whispering somebody
+      who is not there is the specific failure this feature exists to prevent.
+
+    **On landing:** all of the above held. The one thing not designed for was the *test suite* —
+    a `Presence` now rides beside every join and leave, and every test in the server suite opens
+    two or three connections, so `drain` had to filter it exactly as it already filters
+    `UndoChanged`. Three tests using raw `try_recv` needed a `settle` after their joins. That is
+    the cost of a frame nobody asked for arriving in a suite built around "and nothing else".
+
+    **27b — "your turn".** When `initiative.current` becomes a token you own, flash the title while
+    the tab is hidden and surface beside the dock. Client-only — `panel.update` is already handed the
+    whole `Scene` and `identity.ts` holds your id — which is milestone 26's generalisation again: *a
+    feature that only asks a question the client already has the data for is nearly free.*
+
+    It **must not fire on `Welcome` or `Restored`**. Adopting state is not a turn change, and a
+    restore mid-combat that nudges six people is worse than the feature is good; seed the previous
+    value from the snapshot. It does not open or move anything, which is the rule the ping arrow, the
+    initiative panel and the chat badge each already follow for the same reason.
+
+    One thing left open on purpose rather than pre-solved: it fires for the DM on every monster's
+    turn, because monsters are `Owner::Dm` and it genuinely *is* their turn to act. That may be right
+    or may be noise, a `localStorage` off-switch is the cheap follow-up, and **play decides** — the
+    same shape as milestone 19's draw-tool question, which was also only answerable by using it.
+
+    **On landing:** built as designed, with `update` and `adopt` as two methods so the seeding
+    rule is in the type rather than in a comment. The line got **its own box** beside the chat
+    toast rather than sharing it — a whisper arriving must not wipe out the news that you are up,
+    and both can be true in the same second.
+
+    **27c — reconnect on drop.** CLAUDE.md states the gap outright: *"A keepalive is not a
+    reconnect — when the socket does close, the page still says so and waits for a refresh."* Back
+    off on close and **`location.reload()`** when a fresh socket opens.
+
+    The reload is the design and not a shortcut, and milestone 22 is why: `onWelcome` builds the
+    pings, the panels, the four tools, the rail and the board once per socket on the stated
+    assumption of one Welcome per socket, so a second one constructs a second of everything and
+    registers another `window` keydown listener per tool. That is the same wall `Restored` was
+    invented to avoid, and here there is nothing to invent — a reload is already the supported path,
+    and this only automates what the page currently asks the user to do by hand. Keep today's banner
+    as the floor for when the backoff gives up.
+
+    **On landing:** built as designed. `onClose` split into `onLost` and `onClose`, which is what
+    "keep today's banner as the floor" turned out to mean in practice. Nine attempts over about a
+    minute; verified by hand both ways — the reload fires when the server comes back, and the
+    give-up banner lands at ~80s when it does not. **No driver**, deliberately: driving it means
+    stopping and starting the server, which is not something the README's run-all loop should do.
+
+    **27d — player-picked colours.** Split out of milestone 19 and already priced there: *"it
+    replaces the body of `colourOf` below and touches nothing else, with these as the defaults for
+    whoever never picks."* That is true and it is the **client** half. The server half is new
+    persisted state and is the whole cost of this milestone.
+
+    - `colours: HashMap<Owner, String>` on `RoomState`, persisted.
+    - **`SetColour` carries no key** — whose colour it is comes from the socket. That is `Say`'s rule
+      and `SetNotes`'s rule a *third* time, and three instances is a pattern worth naming in
+      `docs/`: a key a client could name is a key it could name somebody else's with.
+    - **Public, unlike the notes**, because everyone needs everyone's colour to draw pings and chat
+      attribution. So this is the first player-writable state in the project that is *not* private,
+      which is the axis it differs from the scratchpad on and the reason it does not simply inherit
+      `notes_for`.
+    - **A closed palette, not free hex, and the reason is already written down.** `pings.ts` records
+      that the six hues deliberately avoid the token ring vocabulary in `render.ts` — gold is
+      ownership, blue is in progress, white is the turn, violet is hidden, teal is staged-only. Free
+      hex lets a player pick gold and make their own ring lie about ownership, which is the board
+      saying something false about a creature. So the command carries an **index into a fixed set**,
+      validated server-side the way `Token.size` is, and there is no colour-picker UI to build.
+    - **The undo exemption, and it needs both halves.** Milestone 22's rule is that the ring may only
+      hold state the undoing hand wrote, and a player's colour is not the DM's. So `undid` returns
+      `None` for `SetColour`, *and* the `Undo` arm of `apply` lifts the colours out and puts them
+      back around `adopt` — because a colour picked *between* two commands is on the snapshot the
+      later one pushed. **This is the second thing to need that exemption**, which turns
+      `docs/notes.md`'s "the only thing exempted by hand" into a rule with two instances. Update it
+      and `docs/undo.md` when this lands.
+    - The control is **your own chip on the presence strip**, which is where every colour is already
+      visible. Not a third dock tab for one control — `dock.ts` argues against that itself, since its
+      panels are things you read while something else is going on.
+
+    What it will owe on landing: a `docs/presence.md` and a CLAUDE.md section pointing at it, and a
+    `tools/drive-presence.mjs` on **fixed** debug ports — two browsers listing each other, then one
+    closed and the other's strip dimming that name. Milestone 26's `drive-panels` post-mortem is what
+    makes the fixed ports non-optional rather than tidiness.
+
+    **On landing:** all of it held, and it owed and paid all three. Four things the design did not
+    settle and the build did:
+
+    - **The table is a `BTreeMap<PlayerId, u8>` and not a `HashMap<Owner, String>`.** `PlayerId` is
+      a newtype over `String`, so it is a legal JSON object key — which is exactly what `Owner` is
+      not, and why `notes` had to be a sorted list of pairs. `BTreeMap` sorts itself, so the file
+      does not churn. One type in the room, on the wire and on the disk, and `to_saved` is a clone.
+    - **The value stored is the index, not the resolved hue.** The server has no copy of
+      `PLAYER_HUES` and no opinion about what `3` looks like — it holds the list's *length* as
+      `PALETTE` and nothing else, so changing a colour touches no Rust.
+    - **Two people may pick the same swatch and nothing refuses it.** `pings.ts` already argued
+      that colour does not scale to seven and the name beside a ring is the real answer, so a
+      duplicate is legible rather than broken — and it keeps `check` to a bounds test.
+    - **The DM is refused `SetColour` outright**, at three layers: the table is keyed by
+      `PlayerId` so a DM entry is unrepresentable, `check` says no, and `colourOf` answers `dm`
+      before it reads the table. A rule only the UI keeps is not a rule.
+
+    The driver opens **three** browsers rather than the two designed for: a colour has to reach
+    somebody who did not pick it, and with two the picker and the observer are the same window.
+
+28. **Not built.** Cursors — everyone's pointer drawn on everyone's board. See *Cursors* below,
+    which held its design without a number until now.
+
+    **Ping did not absorb the need.** That section was written deliberately unscheduled because
+    milestone 19 might have made it pointless and *"that is not knowable before playing a session
+    with pings in it."* Sessions have now been played and the answer is no: a ping is a deliberate
+    gesture and what this buys is ambient presence — knowing where somebody is looking without them
+    having to ask for attention. Everything else that section settled still stands, including the two
+    warnings worth re-reading before starting: it would be the busiest thing in the room by an order
+    of magnitude, and **the fog question lands the opposite way from ping's** — gate on `known`,
+    because a pointer that drifts across an unexplored room is not a claim about anything.
+
+    **It depends on 27d and must not be built before it.** A cursor is a colour with a name beside
+    it, and `colourOf` indexing a fixed palette by roster position is exactly the arrangement
+    player-picked colours replace. Building this first builds it against a function that is about to
+    change underneath it, for no gain — 27d is a body swap either way.
+
+29. **Not built.** Party sight and split sight — a switch between today's party-shared fog and a
+    per-player `visible`, so the rogue scouting ahead sees what the rest of the table does not.
+
+    **This reopens a question milestone 26 answered no**, and the reason it can be reopened is that
+    26's closing argument has been answered by 26 itself. That argument was *"there is no defensible
+    answer for what the DM's own board should then show"* — and `solo.ts` shipped in the same
+    milestone and **is** that answer: the DM's board shows the party union, and sight check is how
+    they ask about one creature. That stays true under either setting, so the tool built instead of
+    this feature is now the thing that makes it defensible.
+
+    What has *not* been answered is the objection under *Fog of war* below — "five people narrating
+    to each other on Discord get nothing out of per-player fog but confusion and five times the
+    state." That is why this is a **switch and not a replacement**, and why it is the middle of three
+    possible depths rather than the deepest.
+
+    **The three rungs, and why the middle one.**
+
+    - **Creatures only.** `unseen_by_table` becomes `unseen_by(&Identity, ...)`, the fog picture stays
+      identical for everybody, and only *which creatures you are sent* changes. Cheapest by far and
+      needs no client code at all, since it is exactly what `hidden` already does. Rejected as too
+      little: a lit room with a creature silently missing from it is the same picture as an empty
+      room, and the table cannot tell which they are looking at.
+    - **Per-player `visible`.** What ships. `revealed` and `known` stay party-shared and persisted
+      exactly as today, so the explored map stays the party's map — that is what keeps the board
+      navigable, and it is what stops a player who owns no token from staring at a black screen.
+    - **Full per-player, `revealed` too.** Three sets times seven, persisted times seven, and your
+      map and my map become different maps. This is the version *Fog of war* below argues against by
+      name and the argument has not weakened.
+
+    **The switch is on `RoomState`, and it belongs on the table tab.** `fog`, `vision_ft` and
+    `lighting` are on `MapInfo` because each is a fact about the dungeon's geometry — open ground
+    versus rooms. Whether the party splits vision is a fact about *how this table plays*, which is
+    `show_names` and `diagonals`, and milestone 26's rule is that a panel mirrors where its field
+    lives. An enum with a `Party` default, like `Lighting`, so no existing save changes behaviour.
+    The counter-argument is real and was declined: it would sit naturally beside the other three
+    sight fields and would get per-URL memory for free. Recorded so it is not re-litigated.
+
+    **The cost is not the six call sites it looks like, and this is the part to read first.**
+    Milestone 26 counted `unseen_by_table` becoming `unseen_by(client)` at six sites and stopped
+    there. Two more things follow from it and neither is small:
+
+    - **`struct Sight` grows a per-identity dimension.** It is the "what did the table hold a moment
+      ago" snapshot that `refresh_fog` diffs against, and its three fields — `fog`, `seen`, `shapes` —
+      are each *one answer for the whole table*. Under split sight each becomes an answer per
+      recipient, or the room cannot work out which client is owed which frame.
+    - **Therefore `was_unseen` stops being a bool.** CLAUDE.md: *"Every `was_unseen` on an event asks
+      the same question, read before the change it describes."* Under split sight it is a different
+      answer per recipient. Milestone 16a already recorded what missing one of those sites costs — a
+      `TokenRemoved` naming an id a client has never held, which announces that the id exists — and
+      that was the *last* time this question changed shape. It is the third.
+
+    `visible` also gains a per-player sibling, memory-only and derived on boot like `known` is. The
+    union is still needed and does not go away: `revealed` unions in from all sight, and the DM's
+    board still shows the whole party's.
+
+    **`FogView` stops being the one message identical for every recipient** while the switch is on.
+    Three files assert that in prose and want amending rather than deleting, because under `Party` it
+    still holds — which is itself the argument for the switch being an enum on the room rather than a
+    rewrite.
+
+    **It needs the project's second three-browser driver.** `tools/drive-chat.mjs` is the precedent:
+    the assertion is that player A is sent a creature and player B is not, and no two connections can
+    show that. Fixed debug ports, per milestone 26.
+
 ### The right dock
 
 **Built in milestone 23, with one tab on it.** `dock.ts` is the strip; milestone 24's notes are a
@@ -895,16 +1119,29 @@ the players are not technical, and a badge in a corner asks them to already be l
 does not auto-open the dock: expanding a panel reflows the layout under whoever is mid-drag, which
 is what the ping arrow and the initiative panel each declined to do for the same reason. One box.
 
-## Cursors — unscheduled
+## Cursors
 
-Everyone's pointer drawn on everyone's board. Written down deliberately without a number, because
-**milestone 19 may absorb the entire need** and that is not knowable before playing a session with
-pings in it.
+**Scheduled as milestone 28.** This section was written deliberately without a number, because
+**milestone 19 might have absorbed the entire need** and that was not knowable before playing a
+session with pings in it. It has been played, and the answer is that ping did not absorb it: a ping
+is a deliberate gesture, and what this buys is ambient presence.
 
-What is already settled, so the question can be reopened cheaply rather than re-argued:
+Everything below was written before ping existed and is kept as it was. Two bullets are annotated
+in place where they stopped being true, and neither is the design — one is the dependency below and
+the other is this section's own reason for waiting, now discharged. The **fog gate is untouched**,
+which is worth saying because it is the line a reader is most likely to assume milestone 19 settled:
+it did not, and it still lands the other way.
+
+The one addition this section could not have made, because the feature it now depends on did not
+exist when it was written: **28 depends on milestone 27d.** A cursor is a colour with a name beside
+it, and the palette indexed by roster position below is exactly the arrangement player-picked
+colours replace.
+
+Everyone's pointer drawn on everyone's board. What was already settled, kept as it was written:
 
 - It is `Ping`'s shape with the ephemerality turned up — a throttled `CursorMoved` carrying a `Pos`,
-  no persistence, absent from the snapshot, never dirty. Nothing has to be built first.
+  no persistence, absent from the snapshot, never dirty. Nothing has to be built first. *(No longer
+  true, and it is the only line here that stopped being: 27d does, per the note above.)*
 - It would be **the busiest thing in the room by an order of magnitude.** Drag frames exist only
   while a token is moving; cursor frames exist whenever anybody's hand is on the mouse. Seven clients
   at 15Hz is still nothing at this scale, but this is the first feature where that sentence has to be
@@ -916,7 +1153,40 @@ What is already settled, so the question can be reopened cheaply rather than re-
 - Seven pointers twitching over a board that already carries tokens, nameplates, hit point bars,
   rulers, trails, shapes and fog is a real cost against a real benefit — ambient presence, and
   knowing where somebody is looking without them having to gesture. That trade only reads correctly
-  in a live session, which is the other reason this waits.
+  in a live session, which is the other reason this waits. *(Waited, and the sessions came down on
+  the benefit — which is what scheduled it. The cost is still real and is the thing to watch when
+  it lands: if the board is unreadable with seven pointers on it, the decay is the dial.)*
+
+## Multi-room — unscheduled
+
+More than one campaign on one server, and the screen that lists them. **Real but far off**, written
+down so the decisions are settled cheaply rather than re-derived, which is the treatment *Cursors*
+above got for the same reason.
+
+**Do not build the screen first.** It is the cheap half of a feature whose expensive half is a room
+registry, and CLAUDE.md is explicit that the registry does not get built before there is a second
+room. A campaign picker in front of one hardcoded room is scaffolding for a feature that does not
+exist, which the working agreement forbids by name.
+
+What it costs, so the size of it is known rather than guessed:
+
+- **`RwLock<HashMap<RoomId, RoomHandle>>` replacing `AppState.room`**, touched on connect and
+  disconnect only and never on a token move. This is the one piece CLAUDE.md has already designed;
+  everything above it in the architecture was built to allow this and none of it is waiting for it.
+- **`SLATE_STATE` becomes a directory**, where today it is the single path `Store::new` takes. One
+  save file per room, and the Pi's backup procedure in `deploy/pi/README.md` changes shape with it.
+- **A `dm_secret` per room**, rather than one for the process. A DM running two campaigns wants two
+  links, and a link that opens every room is worse than one that opens one.
+- **A room id in the WebSocket URL, and in `localStorage` beside `player_id`.** That second one is
+  the fiddly part: `player_id` is currently one value for one room, and a player in two campaigns is
+  two slugs.
+- **`maps/`, `portraits/` and the uploads directory stay shared.** It is the same DM with the same
+  art, and splitting them buys nothing and costs a copy of every goblin.
+
+**The roster becoming per-room is the actual point.** A second campaign is a different cast, and
+every other item above is machinery in service of that one. If a request ever arrives that is
+satisfied by something smaller — a second roster, say, on one room — that is the smaller change and
+this section is not the answer to it.
 
 ## Drawings
 
@@ -959,6 +1229,11 @@ and one `visible` bitset (current line of sight), each the union over every play
 Five people narrating to each other on Discord get nothing out of per-player fog but confusion
 and five times the state. Terrain gates on `revealed`; tokens gate on `visible`. Vision comes
 from tokens a player *owns*, so handing a token over grants vision with no extra rule.
+
+*Still what ships, and still the default — but no longer the only setting on offer. Milestone 29
+puts `visible` behind a switch and leaves `revealed` alone, which is this paragraph's confusion
+argument taken seriously rather than overruled: the explored map stays the party's map. Read 29
+before this paragraph, not instead of it — the objection above is why it is a switch.*
 
 Tokens do not block line of sight; only walls do. **The play-area boundary is an implicit wall**,
 so vision does not spill into the void off the edge of the map — nothing in the wall editor

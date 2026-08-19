@@ -361,6 +361,7 @@ fn a_staged_map_never_reaches_a_player_as_a_delta() {
     let player = ClientId(2);
     let mut dm_rx = join_as_dm(&mut state, dm);
     let mut player_rx = join_as_player(&mut state, player, "saelyn");
+    settle(&mut [&mut dm_rx, &mut player_rx]);
 
     stage(&mut state, dm, "/uploads/next.png");
 

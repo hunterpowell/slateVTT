@@ -13,7 +13,7 @@ use tokio::fs;
 
 use crate::fog::{FogView, OverrideView};
 use crate::protocol::{
-    Calibration, Diagonals, Initiative, MapInfo, Owner, Shape, StagedView, Token, Wall,
+    Calibration, Colours, Diagonals, Initiative, MapInfo, Owner, Shape, StagedView, Token, Wall,
 };
 
 /// What actually goes to disk.
@@ -130,6 +130,21 @@ pub struct Saved {
     /// room guarantees is narrower and is the only guarantee its architecture
     /// makes about anything — **no client is ever sent somebody else's**.
     pub notes: Vec<SavedNote>,
+    /// Which colour each player picked, by roster slug.
+    ///
+    /// **A map, where the field above it had to become a list**, and the two
+    /// together are the whole reason either shape was chosen. `Owner` is an
+    /// adjacently tagged enum and JSON has no object key that can carry one, so
+    /// a scratchpad table had to be flattened into pairs and then sorted by hand
+    /// to stop the file churning. `PlayerId` is a newtype over `String`, so it is
+    /// a key already — and `BTreeMap` sorts itself, which is the other half for
+    /// free.
+    ///
+    /// Persisted because a colour picked once at the start of a campaign that
+    /// had to be picked again every session would not be worth picking. It is the
+    /// second thing on this file a *player* wrote, after the notes, and the
+    /// second the undo ring is told to leave alone.
+    pub colours: Colours,
 }
 
 /// One person's scratchpad as it is written down.
@@ -405,6 +420,13 @@ mod tests {
                     text: "ask about the sigil".to_owned(),
                 },
             ],
+            // The field above's opposite shape, and the round trip has to prove
+            // it too: this one is a JSON *object* keyed by the slug, which only
+            // works because `PlayerId` is a newtype over `String`.
+            colours: Colours::from([
+                (PlayerId::new("cleodara"), 4),
+                (PlayerId::new("saelyn"), 1),
+            ]),
         }
     }
 
@@ -514,6 +536,12 @@ mod tests {
             mine(&Owner::Player(PlayerId::new("cleodara"))),
             Some("ask about the sigil")
         );
+
+        // The other half of the same argument, and the reason this table is a
+        // map where the one above it is a list: a slug is a legal JSON key, so
+        // there is no encoding here to lose a name in.
+        assert_eq!(loaded.colours.get(&PlayerId::new("cleodara")), Some(&4));
+        assert_eq!(loaded.colours.get(&PlayerId::new("saelyn")), Some(&1));
     }
 
     #[tokio::test]

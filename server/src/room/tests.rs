@@ -43,6 +43,10 @@ fn join_as_player(
         },
     );
     rx.try_recv().expect("welcome");
+    // And the `Presence` that rides behind it, so this helper's contract stays
+    // "a connection with the join already consumed". Everyone *else's* queue
+    // still has one — that is what `settle` is for.
+    drain_all(&mut rx);
     rx
 }
 
@@ -56,6 +60,7 @@ fn join_as_dm(state: &mut RoomState, client: ClientId) -> mpsc::Receiver<ServerM
         },
     );
     rx.try_recv().expect("welcome");
+    drain_all(&mut rx);
     rx
 }
 
@@ -179,9 +184,9 @@ fn as_player(slot: &str) -> Identity {
     Identity::Player(PlayerId::new(slot))
 }
 
-/// Every frame waiting on a connection, **except the undo label**. `try_recv`
-/// one at a time makes a test that says "and nothing else" hard to write and
-/// easy to get wrong.
+/// Every frame waiting on a connection, **except the two that ride along with
+/// something else**. `try_recv` one at a time makes a test that says "and
+/// nothing else" hard to write and easy to get wrong.
 ///
 /// `UndoChanged` is filtered out because it rides beside *every* command that
 /// changes the room, and only ever to the DM. Leaving it in would put a trailing
@@ -189,14 +194,39 @@ fn as_player(slot: &str) -> Identity {
 /// make each of them partly a test of undo, and would mean a future feature
 /// touching the ring broke fifty assertions that have nothing to say about it.
 ///
+/// `Presence` is filtered for the same reason from the other end: it rides
+/// beside every *join and leave* rather than every command, and every test in
+/// this suite starts by connecting two or three people. Leaving it in would put
+/// a leading frame in front of every expectation, and every one of them would
+/// then be partly a test of who is connected.
+///
 /// So "and nothing else" here means "nothing else about the thing under test".
-/// The tests that *are* about the ring use `drain_all`, and one of them asserts
-/// the pairing this hides — see `undo.rs`.
+/// The tests that *are* about either use `drain_all` — `undo.rs` asserts the
+/// pairing this hides, and `presence.rs` asserts the frames.
 fn drain(rx: &mut mpsc::Receiver<ServerMsg>) -> Vec<ServerMsg> {
     drain_all(rx)
         .into_iter()
-        .filter(|msg| !matches!(msg, ServerMsg::UndoChanged { .. }))
+        .filter(|msg| {
+            !matches!(
+                msg,
+                ServerMsg::UndoChanged { .. } | ServerMsg::Presence { .. }
+            )
+        })
         .collect()
+}
+
+/// Drops whatever is already waiting on these connections, so a test can assert
+/// on what arrives *next*.
+///
+/// Every join tells everyone already connected that somebody arrived, so a test
+/// that opens two or three connections starts with a `Presence` sitting in each
+/// of the earlier queues. That is the same nuisance `drain` filters out, turning
+/// up in the tests that reach for `try_recv` directly — so this is where they
+/// say "and now everybody is here", once, after the last join.
+fn settle(rxs: &mut [&mut mpsc::Receiver<ServerMsg>]) {
+    for rx in rxs {
+        drain_all(rx);
+    }
 }
 
 /// Every frame, bookkeeping included. What `drain` filters, and the only way to
@@ -472,6 +502,7 @@ mod maps;
 mod movement;
 mod notes;
 mod persistence;
+mod presence;
 mod tokens;
 mod undo;
 mod walls;

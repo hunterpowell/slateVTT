@@ -8,7 +8,7 @@ import { ownsToken } from './identity.js';
 import { OVERRIDE_ALPHA, overrideRect, paintColor } from './overrides.js';
 import type { Ping } from './pings.js';
 import { colourOf, EDGE_INSET_PX, edgeMarker, nameOf, ringAlpha, ringRadius } from './pings.js';
-import type { FogPaint, Hp, RosterEntry } from './protocol.js';
+import type { Colours, FogPaint, Hp, RosterEntry } from './protocol.js';
 import type { Ruler } from './ruler.js';
 import { feetMoved, rulerAlpha, trailCells } from './ruler.js';
 import type { Board, Scene, Token } from './scene.js';
@@ -246,6 +246,10 @@ export interface Frame {
    *  by every client since `Welcome` and not a secret — it is the same list
    *  everyone was offered at the identity picker. */
   roster: readonly RosterEntry[];
+  /** What each of those names picked to draw in. Held beside the roster because
+   *  the two answer one question together — the roster gives the default and
+   *  this overrides it. */
+  colours: Colours;
   /** The DM's in-progress grid reference box. Null for everyone else. */
   calibration: { box: Box; cells: number } | null;
   /** The wall editor's state: whether it is armed, the run being traced, where
@@ -1224,7 +1228,7 @@ function drawPings(
   frame: Frame,
   board: Board,
 ): void {
-  const { cam, pings, roster, now } = frame;
+  const { cam, pings, roster, colours, now } = frame;
   if (pings.length === 0) return;
 
   ctx.save();
@@ -1243,7 +1247,7 @@ function drawPings(
 
     const world = gridToWorld(board.grid, ping.at.x, ping.at.y);
     const at = worldToScreen(cam, world.x, world.y);
-    const colour = colourOf(ping.owner, roster);
+    const colour = colourOf(ping.owner, roster, colours);
     const name = nameOf(ping.owner, roster);
 
     ctx.globalAlpha = alpha;

@@ -1,7 +1,9 @@
 import type {
   ClientMsg,
+  Colours,
   Diagonals,
   Initiative,
+  Owner,
   RosterSlot,
   ServerMsg,
   TokenMoved,
@@ -40,6 +42,12 @@ export interface Handlers {
    *  is now empty, indistinguishably from not being the DM. */
   onStagedChanged(board: WireStaged | null): void;
   onInitiativeChanged(initiative: Initiative): void;
+  /** Somebody joined or left. The whole list, the DM among them. Called on every
+   *  connection and never filtered — who is connected is nobody's secret. */
+  onPresence(here: Owner[]): void;
+  /** A player picked their colour. The whole table, on every connection —
+   *  including the client that picked, which is how its own swatch settles. */
+  onColoursChanged(colours: Colours): void;
   /** Somebody else's sweep, keyed by their connection. Never our own. */
   onSketch(sketch: Extract<ServerMsg, { type: 'sketch' }>): void;
   onSketchEnded(by: number): void;
@@ -79,6 +87,11 @@ export interface Handlers {
    *  called on a DM connection. */
   onUndoChanged(label: string | null): void;
   onError(message: string): void;
+  /** The socket dropped and a new one is being tried. May be called several
+   *  times as the backoff climbs. */
+  onLost(): void;
+  /** And it is not coming back — the backoff gave up. The floor this file has
+   *  always had, now reached rather than reached for immediately. */
   onClose(): void;
 }
 
@@ -87,13 +100,72 @@ export interface Net {
 }
 
 /**
- * One WebSocket to the room. There is no reconnect: per the protocol a
- * reconnection is just another join, so when this closes the page says so and
- * waits for a refresh rather than pretending the board is still live.
+ * How long to wait before each attempt, in milliseconds, and how many there
+ * are.
+ *
+ * It climbs so that a laptop lid closed for a minute is not a hundred requests,
+ * and it stops so that a machine left open overnight against a server that is
+ * gone does not reconnect at dawn to a board nobody is looking at. Nine
+ * attempts is a little over a minute, which covers the case this exists for: the
+ * Pi's service restarting, or a tunnel blipping mid-session.
+ */
+const BACKOFF_MS = [500, 1000, 2000, 4000, 8000, 8000, 10000, 10000, 10000];
+
+/**
+ * One WebSocket to the room, and a fresh one if it drops.
+ *
+ * **A reconnect here is a `location.reload()`**, and that is the design rather
+ * than a shortcut. `onWelcome` in main.ts builds the pings, the panels, the four
+ * tools, the rail and the board once per socket, on the stated assumption of one
+ * Welcome per socket — a second one would construct a second of each and
+ * register another `window` keydown listener per tool. That is the wall
+ * `ServerMsg::Restored` was invented to get around for the undo, and here there
+ * is nothing to invent: a refresh is already the supported way back, and this
+ * only stops asking the person at the keyboard to do it by hand.
+ *
+ * So the socket opened below is a *probe*. It proves the server is answering
+ * and then throws the page away; nothing is sent on it and no handler is
+ * attached to it but this one.
+ *
+ * The banner that used to be the immediate answer is still here — it is what
+ * `onClose` means now, which is the backoff having given up.
  */
 export function connect(on: Handlers): Net {
   const scheme = location.protocol === 'https:' ? 'wss:' : 'ws:';
-  const socket = new WebSocket(`${scheme}//${location.host}/ws`);
+  const url = `${scheme}//${location.host}/ws`;
+  const socket = new WebSocket(url);
+
+  let attempt = 0;
+  // Set the moment a probe answers. A reload is not instant, and the probe's own
+  // `close` fires as the page unloads — without this that close would schedule
+  // one more attempt against a page that is already going away.
+  let reloading = false;
+
+  const retry = (): void => {
+    if (reloading) return;
+    const wait = BACKOFF_MS[attempt];
+    if (wait === undefined) {
+      on.onClose();
+      return;
+    }
+    attempt += 1;
+    on.onLost();
+    window.setTimeout(() => {
+      const probe = new WebSocket(url);
+      // It answered, so a whole page against a live room is one reload away —
+      // and this socket is not the one that page will use.
+      probe.addEventListener('open', () => {
+        reloading = true;
+        location.reload();
+      });
+      // It did not. `error` fires before `close` on a failed connect, so
+      // hanging the next attempt off `close` alone runs it exactly once.
+      probe.addEventListener('close', () => retry());
+      probe.addEventListener('error', () => {
+        /* the close that follows is what schedules the next attempt */
+      });
+    }, wait);
+  };
 
   socket.addEventListener('open', () => on.onOpen());
 
@@ -139,6 +211,12 @@ export function connect(on: Handlers): Net {
       case 'initiative_changed':
         on.onInitiativeChanged(msg.initiative);
         break;
+      case 'presence':
+        on.onPresence(msg.here);
+        break;
+      case 'colours_changed':
+        on.onColoursChanged(msg.colours);
+        break;
       case 'sketch':
         on.onSketch(msg);
         break;
@@ -180,7 +258,9 @@ export function connect(on: Handlers): Net {
     }
   });
 
-  socket.addEventListener('close', () => on.onClose());
+  // The board is stale from this moment, whatever happens next: the room went
+  // on without us and there is no resync protocol, deliberately.
+  socket.addEventListener('close', () => retry());
   socket.addEventListener('error', () => console.warn('websocket error'));
 
   return {

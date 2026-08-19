@@ -14,7 +14,7 @@
 // *Ping* in `docs/drawings.md`.
 
 import type { Vec2 } from './coords.js';
-import type { Owner, RosterEntry } from './protocol.js';
+import type { Colours, Owner, RosterEntry } from './protocol.js';
 
 /**
  * How long a hold has to last before it fires.
@@ -174,22 +174,29 @@ export function ringAlpha(ping: Ping, now: number): number {
 /**
  * The ping vocabulary: one colour per roster slot, plus the DM's.
  *
- * Derived rather than chosen. Every client holds the same roster from the same
- * `Welcome`, so indexing it gives six people six colours that all six screens
- * agree on, with nothing on the wire, nothing persisted, and nothing anybody
- * has to set at the start of a session. Letting players pick their own is a
- * feature worth having and it is not this one — when it lands it replaces the
- * body of `colourOf` below and touches nothing else, with these as the defaults
- * for whoever never picks.
+ * **The one place these six hues exist.** The server stores an index into this
+ * list and holds its length as `PALETTE`, and knows nothing else about it — so
+ * changing a hue here changes it everywhere and touches no Rust.
+ *
+ * Originally derived rather than chosen: every client holds the same roster from
+ * the same `Welcome`, so indexing it gave six people six colours all six screens
+ * agreed on with nothing on the wire at all. Milestone 27 kept that whole
+ * arrangement as the **default** and let a player say otherwise — which is what
+ * this file predicted it would cost, and it was right: the body of `colourOf`
+ * below, and nothing else.
  *
  * The hues avoid the token ring vocabulary in render.ts — gold is ownership,
  * blue is in progress, white is the turn, violet is hidden, teal is staged-only
  * — for the reason the draw palette does: a ring on the board should not be
- * mistakeable for something the board is saying about a creature. There is a
- * name written beside it regardless, which is the real answer to six people at
- * one table, because colour alone does not scale to seven.
+ * mistakeable for something the board is saying about a creature. **That is also
+ * why what a player picks is an index into this list rather than a colour**: a
+ * free choice includes gold, and a ring in gold is the board lying about who
+ * owns a creature. There is a name written beside it regardless, which is the
+ * real answer to six people at one table, because colour alone does not scale to
+ * seven — and it is what makes two people picking the same swatch legible rather
+ * than broken, which is why nothing refuses it.
  */
-const PLAYER_HUES: readonly string[] = [
+export const PLAYER_HUES: readonly string[] = [
   '#f43f5e', // rose
   '#f59e0b', // amber
   '#84cc16', // lime
@@ -205,13 +212,27 @@ const DM_HUE = '#e8e6e1';
 /**
  * What colour this owner's ring is, as `#rrggbb`.
  *
- * A roster the sender is not in falls back to the DM's colour, which is the
- * closed door in the only sense available here — there is nothing to protect,
- * so "closed" just means the ring still draws rather than vanishing over a
- * roster the two clients disagree about.
+ * Three answers in order, and the order is the feature. **What they picked**, if
+ * they picked; otherwise **their roster position**, which is what every client
+ * agreed on before anybody could pick and is still what a room with an empty
+ * table looks like; otherwise the DM's, for a sender who is not in the roster
+ * this client holds. That last one is the closed door in the only sense
+ * available here — there is nothing to protect, so "closed" means the ring draws
+ * anyway rather than vanishing over a roster two clients disagree about.
+ *
+ * **The DM is answered before any of that**, and there is no entry in `colours`
+ * that could reach them: the server refuses a `set_colour` from the DM, and the
+ * table it keeps is keyed by player. Theirs is the one ring at this table that
+ * is not a player's, and it stays outside the six.
  */
-export function colourOf(owner: Owner, roster: readonly RosterEntry[]): string {
+export function colourOf(
+  owner: Owner,
+  roster: readonly RosterEntry[],
+  colours: Colours,
+): string {
   if (owner.kind === 'dm') return DM_HUE;
+  const picked = colours[owner.id];
+  if (picked !== undefined) return PLAYER_HUES[picked] ?? DM_HUE;
   const at = roster.findIndex((slot) => slot.id === owner.id);
   if (at === -1) return DM_HUE;
   return PLAYER_HUES[at % PLAYER_HUES.length] ?? DM_HUE;

@@ -10,7 +10,7 @@ deliberately, and neither is loaded for you:
 - **`ROADMAP.md`** — design for what is not built yet, and the milestone order. Read it when
   starting a milestone.
 - **`docs/maps.md`, `docs/tokens.md`, `docs/drawings.md`, `docs/walls.md`, `docs/fog.md`,
-  `docs/undo.md`, `docs/chat.md`, `docs/notes.md`** — why each
+  `docs/undo.md`, `docs/chat.md`, `docs/notes.md`, `docs/presence.md`** — why each
   built feature is the shape it is. Every section below that summarises a feature ends with a pointer
   to its file and the code that file covers.
 
@@ -32,6 +32,8 @@ them would load them into every session, which is what moving them out avoided.)
 - Lets anyone say something to the table, or whisper the DM — and the DM whisper any one player;
   two destinations and nothing else, kept for the evening and never written down
 - Gives everyone a box to write in that no other screen is ever sent, the DM's included
+- Shows who is connected, tells you when it is your turn, picks the page back up when a
+  socket drops, and lets a player choose the colour they are drawn in
 
 ## Non-goals
 
@@ -181,6 +183,12 @@ struct RoomState {
     /// disk, unlike `chat`, and exempt from the undo ring by hand rather than by
     /// construction — see `docs/notes.md`.
     notes: HashMap<Owner, String>,
+    /// Which colour each player picked. **The notes' opposite: public**, because
+    /// everyone draws everyone else's rings — and the second thing exempted from
+    /// the undo ring by hand. A `BTreeMap` where the notes are a sorted list,
+    /// since `PlayerId` is a legal JSON key and `Owner` is not — see
+    /// `docs/presence.md`.
+    colours: BTreeMap<PlayerId, u8>,
     /// Identified clients, who are the only ones any event reaches, and the
     /// sockets that are connected but have not said who they are yet.
     clients: HashMap<ClientId, Client>,
@@ -294,8 +302,9 @@ that rule**, and for the same reason: it is what the DM authored, and the fog is
 drawing is on the ring like everything else persisted, because a restore restores the room whole and
 skipping their shape would take it *and* the DM's last command together. The rule that decides what
 may go on the ring is **state the undoing hand wrote**; the scratchpads are the case it was written
-for and the only thing exempted by hand — `undid` says `None` and the `Undo` arm puts them back
-around `adopt`, and both halves are needed. See `docs/undo.md`. The chat log tested the same rule
+for and a player's colour is the second — for each, `undid` says `None` and the `Undo` arm puts it
+back around `adopt`, and both halves are needed. **Two instances is what makes it a rule**: anything
+persisted that a player writes wants the same two lines. See `docs/undo.md`. The chat log tested the same rule
 first and passes without being named anywhere: a snapshot is a `Saved`, and the log is not on one.
 
 **Saying something is the second exception to "everything else is DM-only", and it is a permission
@@ -309,6 +318,13 @@ asks `is_dm`. See `docs/chat.md`.
 the socket — so there is nothing to check but a length. What is new is on the way *out*:
 `notes_for` is the first filter in the project that gives the **DM** less than the room holds, and
 `is_owner` is the question both it and `party_to` ask. See `docs/notes.md`.
+
+**Picking a colour is the fourth exception, and it is the third command that names no key.**
+`SetColour` reaches only the sender's own entry because whose it is comes from the socket —
+`Say`'s rule and `SetNotes`' rule again, and three instances is the pattern: *a key a client
+could name is a key it could name somebody else's with*. What it validates is a bound, like a
+token's size, because the palette is closed. **The DM is refused it outright** — their hue is
+the one ring at the table that is not a player's. See `docs/presence.md`.
 
 Token creation, deletion, map changes, initiative edits, and whether the board writes token names
 under them are DM-only. That last one is the one whose *result* everybody is sent — see the wire
@@ -372,6 +388,12 @@ is the third layer of the same idea as `Event` vs `ServerMsg` and `RoomState` vs
 it exists to make the failure fail the safe way round: a secret added to `Token` and forgotten
 here is *absent from the wire*, which shows up as the DM's own client missing a field, rather
 than shipped to everyone, which shows up as nothing at all until somebody opens devtools.
+
+**`here` and `colours` are the fourth and fifth things identical for every recipient**, which
+puts them with `fog`, `show_names` and `diagonals` rather than with anything filtered. Neither
+is a secret: a table that cannot tell whether the DM is still connected is what the first
+exists to fix, and a colour nobody else can see is not a colour. `Presence` is also the one
+frame no command produced — it is dispatched where the socket table changes.
 
 **`ServerMsg::Restored` is the second frame that carries a whole `RoomView`, and it goes through the
 same `snapshot_for`** — invariant 3 on the one message that would otherwise be a second place to get
@@ -659,6 +681,13 @@ there is no command, no event and no filter, and it is leak-proof by constructio
 check, exactly as the movement hint is: a player's client holds no walls to compute one from. Two
 states and no memory, no overrides applied, live board only. Do not put any of it in the room.
 
+*"Stays that way" is still what ships and still the default, and it is no longer a closed question:
+`ROADMAP.md` milestone 29 designs a switch that makes `visible` per-player and leaves `revealed`
+alone. It exists because this paragraph's own argument was answered — the reason per-player fog was
+refused was that there was no defensible answer for the DM's board, and `solo.ts` is that answer
+under either setting. Nothing above changes until 29 is built; read it before arguing from this
+line.*
+
 → **`docs/fog.md`** before touching `fog.rs`, `fog.ts`, `solo.ts`, `overrides.ts`, `fogtool.ts`,
 `unseen_by_table`, `with_fringe`, `shape_seen`, `refresh_fog`, `sight_cells`/`lit_cells`, or
 `moves_sight`.
@@ -690,6 +719,11 @@ over a preview, and the rules deleted were the CSS that greyed their tabs.
 The draw tool is deliberately *not* on the strip. It is the one panel everybody has and it is used
 in the middle of a fight, so it stays pinned to the bottom of the rail — the same reason a door
 swings with no tool in hand. `rail.ts` is short and holds the rest of the reasoning.
+
+**The right-hand column now holds three things, and their order is not a layout choice.** The
+presence strip is pinned at the top because that is the one edge of the column that never moves —
+the initiative panel folds and the dock grows upward, so anything between them shifts when either
+does. See `docs/presence.md`.
 
 **The right edge is a second strip, `dock.ts`, and it is everybody's.** The initiative panel and
 the dock share a flex column for the reason the left rail is one — the panel's height is however
@@ -819,6 +853,49 @@ one, because a paragraph typed *between* two commands is on the snapshot the lat
 → **`docs/notes.md`** before touching `notes.ts`, `RoomState::notes`, `notes_for`, `is_owner`, the
 `Undo` arm of `apply`, or `SetNotes`/`NotesChanged` on the server.
 
+## Presence, turns and colours
+
+Four parts of one milestone, and the theme is what makes them one: **everything else in Slate
+is about the board, and these are about the people looking at it.**
+
+**Who is connected** is a row of chips at the top of the right-hand column. The room already
+computed it — `roster_slots` has scanned `clients` since milestone 5 and told only the identity
+picker — so `Presence` routes an existing answer to everyone. It carries **`Owner` and not
+`RosterSlot`**, because a list of slots cannot say the DM is there and that is the connection a
+table most wants to be sure of; it is **identities and not sockets**, so a laptop and a phone are
+one name; and it is **not part of the room** — off `Saved`, so off the undo ring by construction
+like the chat log, and `persists` refuses it on that principle rather than on it being fleeting.
+Absent people dim rather than disappear, the chat destination chips dim from the same answer, and
+`here` is on `RoomView` as well as on the delta because invariant 3 applies to it like everything
+else.
+
+**"It is your turn"** is client-only and has no server half at all — `initiative.current`,
+the scene and `identity.ts` are already in hand. The rule that would ruin it is that it **must not
+fire on a `Welcome` or a `Restored`**: adopting state is not a turn change, which is why `turn.ts`
+has `update` and `adopt` rather than one method. It opens and moves nothing, which is the ping
+arrow's rule a fourth time. It fires for the DM on every monster's turn, deliberately unresolved —
+**play decides**, and the off-switch is `localStorage` if it ever needs one.
+
+**A dropped socket now backs off and reloads the page** when a fresh one opens. **The reload is
+the design**: `onWelcome` builds the panels, the tools and the board once per socket, so a second
+`Welcome` would build a second of each — the wall `Restored` was invented to avoid, except that
+here a refresh was already the supported way back. The socket the backoff opens is a probe and
+nothing is sent on it. Today's banner is now the floor, reached when the backoff gives up.
+
+**A player picks their own colour**, and it replaced the body of `colourOf` exactly as milestone 19
+predicted. It is **public**, unlike the scratchpad, because everyone draws everyone else's rings —
+which makes it the first player-writable state here that is not private. It is **an index into a
+closed palette**, because free hex would let a player take the gold a token ring uses for ownership
+and make the board say something false; `PLAYER_HUES` in `pings.ts` is the only place the hues
+exist and the server holds only the bound. **Duplicates are allowed** — the name beside a ring is
+what tells two people apart, and colour never scaled to seven anyway. The DM has none, enforced at
+three layers: the table is keyed by `PlayerId`, `check` refuses them, and `colourOf` answers `dm`
+first.
+
+→ **`docs/presence.md`** before touching `presence.ts`, `turn.ts`, the reconnect half of `net.ts`,
+`RoomState::colours`, `RoomState::here`, `PLAYER_HUES`, or `SetColour`/`Presence`/`ColoursChanged`
+on the server.
+
 ## Testing
 
 Three suites; which one a change belongs in is decided by what can observe it.
@@ -859,6 +936,12 @@ lists them and what each drives.
   it when the behaviour changes. The summaries above are enough to use a feature and not enough to
   redesign one; the reasoning that would stop you deleting something load-bearing is in those
   files. Nothing loads them for you either.
+- **A new feature gets a short summary and a pointer here; the rest goes in `docs/`.** This file is
+  loaded into every session and the per-feature sections are already most of its length, because
+  each milestone since 20 has written its reasoning into both places. The summary says what the
+  feature *is*, which rules bind it, and what a change to it must not break — the mechanism, the
+  failure modes and the arguments live in its `docs/` file. If the summary would let you redesign
+  the feature, it is too long. The same holds for a new field's comment in the state model.
 - Stay within the milestone currently being worked on. Do not scaffold future milestones,
   do not add abstraction for features that are not being built yet. The invariants here, and the
   design in `ROADMAP.md`, are the only forward-looking work permitted.

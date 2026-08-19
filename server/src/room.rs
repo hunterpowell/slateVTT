@@ -17,9 +17,10 @@ use uuid::Uuid;
 
 use crate::fog::{self, Cell, FogView, Override, OverrideView};
 use crate::protocol::{
-    Calibration, ChatLine, ChatTo, ClientId, ClientMsg, Diagonals, Hp, Initiative, InitiativeEntry,
-    MapInfo, Origin, Owner, PlayerId, Pos, Px, RoomView, RosterEntry, RosterSlot, ServerMsg, Shape,
-    ShapeId, ShapeKind, StagedView, Token, TokenId, TokenView, Wall, WallId, WallKind,
+    Calibration, ChatLine, ChatTo, ClientId, ClientMsg, Colours, Diagonals, Hp, Initiative,
+    InitiativeEntry, MapInfo, Origin, Owner, PALETTE, PlayerId, Pos, Px, RoomView, RosterEntry,
+    RosterSlot, ServerMsg, Shape, ShapeId, ShapeKind, StagedView, Token, TokenId, TokenView, Wall,
+    WallId, WallKind,
 };
 use crate::store::{Saved, SavedNote, Store};
 
@@ -420,6 +421,28 @@ enum Event {
     /// which is the `OverridesChanged` / `FogChanged` pairing again: the room
     /// changed, and so did what the DM can say about it next.
     UndoChanged,
+
+    /// Somebody joined or left.
+    ///
+    /// **The only event in this enum no command produced.** Every other variant
+    /// here is the tail of a `ClientMsg` that arrived and was allowed; this one
+    /// is dispatched from the two places the socket table changes — a `Hello`
+    /// that turned into an identity, and a connection that went away. That is
+    /// also why it is the only one `persists` refuses on a principle rather than
+    /// on it being ephemeral: who happens to be connected is not part of the
+    /// room.
+    ///
+    /// Payload-free like its neighbours; `message_for` reads the list off
+    /// `&self`, and every recipient gets the same one.
+    PresenceChanged,
+    /// A player picked their colour.
+    ///
+    /// Payload-free for the reason above and identical for every recipient, the
+    /// sender included — there is nothing to exclude them from, because nothing
+    /// was drawn locally and there is no caret for an echo to move. That is what
+    /// separates it from `NotesChanged`, which is the other thing on this list
+    /// that a player writes.
+    ColoursChanged,
 }
 
 impl Initiative {
@@ -754,6 +777,26 @@ pub struct RoomState {
     /// no key, because a key a client could name is a key it could name
     /// somebody else's with.
     notes: HashMap<Owner, String>,
+    /// Which colour each player picked for themselves.
+    ///
+    /// **The scratchpads' opposite in the one respect that decides everything
+    /// else about it: this is public.** A colour is only worth picking because
+    /// the other six screens draw your ring and your lines in it, so `snapshot_for`
+    /// hands the whole table to everyone and there is no filter here at all.
+    /// It is still *yours to write* — `SetColour` names no slot, exactly as
+    /// `SetNotes` names no box.
+    ///
+    /// Persisted, which put it on the undo ring by construction and took the
+    /// hand-written exemption `notes` above already needed — see the `Undo` arm
+    /// of `apply`. It is the second thing to want that exemption, which is what
+    /// turned milestone 22's rule from a special case into a rule: **the ring
+    /// holds state the undoing hand wrote**, and a player's colour is not the
+    /// DM's to take back.
+    ///
+    /// Keyed by `PlayerId` and not by `Owner`, which is the type saying the DM
+    /// has no entry here rather than a check saying so. Their hue is outside the
+    /// six on purpose.
+    colours: Colours,
     /// Identified clients. Only these receive events.
     clients: HashMap<ClientId, Client>,
     /// Connected but not yet identified. They hold a sender and nothing else.
@@ -838,9 +881,16 @@ async fn run(mut state: RoomState, mut rx: mpsc::Receiver<RoomCmd>, store: Store
                     // This is what a movement ruler cannot have: nothing tells
                     // the room a drag stopped, so that one guesses with a
                     // timeout. Here the socket closing *is* the news.
-                    state.dispatch(client, &[Event::SketchEnded { by: client }]);
+                    // The socket is already out of `clients`, so neither of
+                    // these reaches it and `here` no longer counts it.
+                    state.dispatch(
+                        client,
+                        &[Event::SketchEnded { by: client }, Event::PresenceChanged],
+                    );
                 }
-                // Who happens to be connected is not part of the room.
+                // Who happens to be connected is not part of the room. That
+                // sentence is why `persists` refuses `PresenceChanged` and why
+                // this arm still returns `false` having just sent one.
                 false
             }
             RoomCmd::Msg { client, msg } => state.handle(client, msg),
@@ -948,17 +998,27 @@ fn persists(event: &Event) -> bool {
         // are worth nothing the morning after. That one decision is also what
         // keeps it out of the undo ring, since a snapshot is whatever `Saved`
         // describes.
+        //
+        // And presence is the one arm here that refuses on a principle rather
+        // than on the thing being fleeting. The room already wrote the sentence
+        // in the `Disconnected` arm — *who happens to be connected is not part
+        // of the room* — and a file that recorded it would boot claiming five
+        // people were in a house nobody is in.
         Event::Sketching { .. }
         | Event::SketchEnded { .. }
         | Event::Pinged { .. }
         | Event::Said { .. }
+        | Event::PresenceChanged
         | Event::UndoChanged => false,
 
-        // And the one that is `Said`'s opposite on this list: the room keeps
-        // this *and* writes it down. Surviving a restart is most of what a
-        // scratchpad is worth, so it is the last field on `Saved` rather than
-        // the second thing kept only in memory.
-        Event::NotesChanged { .. } => true,
+        // And the two that are `Said`'s opposite on this list: the room keeps
+        // these *and* writes them down. Surviving a restart is most of what a
+        // scratchpad is worth, and a colour picked once at the start of a
+        // campaign that had to be picked again every session would not be worth
+        // picking. They are the two things a player writes that reach the disk,
+        // which is also what makes them the two the undo ring has to be told to
+        // leave alone.
+        Event::NotesChanged { .. } | Event::ColoursChanged => true,
     }
 }
 
@@ -1035,7 +1095,16 @@ fn undid(msg: &ClientMsg) -> Option<&'static str> {
         // it off the ring is only half of that — see the `Undo` arm of `apply`
         // for the other half, which is a restore being told to leave a box it
         // did not write alone.
-        | ClientMsg::SetNotes { .. } => None,
+        | ClientMsg::SetNotes { .. }
+        // **The fourth exclusion, and the second that `persists` disagrees
+        // with.** A colour is somebody else's the same way a scratchpad is, and
+        // the DM's undo reaching across the table to change what colour a player
+        // draws in is the same surprise with nothing on screen to explain it.
+        // Two instances is what makes milestone 22's rule a rule: the ring holds
+        // state the undoing hand wrote. The other half is in the `Undo` arm of
+        // `apply`, and it is needed here for the identical reason — a colour
+        // picked *between* two commands is on the snapshot the later one pushed.
+        | ClientMsg::SetColour { .. } => None,
     }
 }
 
@@ -1112,6 +1181,8 @@ fn moves_sight(msg: &ClientMsg) -> bool {
         // A box of text on one person's screen is not on the board either, and
         // this one is not even in the room the others are looking at.
         | ClientMsg::SetNotes { .. }
+        // What colour a ring is drawn in is not what a ray reaches.
+        | ClientMsg::SetColour { .. }
         | ClientMsg::SetInitiative { .. }
         | ClientMsg::RemoveFromInitiative { .. }
         | ClientMsg::ClearInitiative
@@ -1342,6 +1413,7 @@ impl RoomState {
             undo: VecDeque::new(),
             chat: VecDeque::new(),
             notes: HashMap::new(),
+            colours: Colours::new(),
             clients: HashMap::new(),
             pending: HashMap::new(),
         }
@@ -1432,6 +1504,9 @@ impl RoomState {
             .into_iter()
             .map(|note| (note.by, note.text))
             .collect();
+        // The field above's twin, and exempted at the same call site for the
+        // same reason: boot wants these back, an undo does not.
+        self.colours = saved.colours;
     }
 
     fn to_saved(&self) -> Saved {
@@ -1471,6 +1546,10 @@ impl RoomState {
                 notes.sort_by(|a, b| a.by.cmp(&b.by));
                 notes
             },
+            // Nothing to sort and nothing to convert: a `BTreeMap` is already
+            // both the room's shape and the file's, which is the whole of what
+            // `PlayerId` being a legal JSON key buys over the list above.
+            colours: self.colours.clone(),
         }
     }
 
@@ -1585,6 +1664,9 @@ impl RoomState {
             undo: VecDeque::new(),
             chat: VecDeque::new(),
             notes: HashMap::new(),
+            // Empty, so every slot draws in the default its roster position
+            // gives it — which is what a room that predates this table does too.
+            colours: Colours::new(),
             clients: HashMap::new(),
             pending: HashMap::new(),
         };
@@ -1722,6 +1804,17 @@ impl RoomState {
         );
         self.clients.insert(origin, Client { out, identity });
         self.refresh_pickers();
+        // After the insert, so the list this describes includes whoever just
+        // arrived — and so they are in it on their own screen. They were also
+        // told by the `Welcome` above, which carries the same list through
+        // `snapshot_for`; the two agreeing is invariant 3 rather than a
+        // duplicate, and a repaint of the same chips is what the second costs.
+        //
+        // `refresh_pickers`' neighbour and its opposite number: that one tells
+        // the undecided which *slots* are taken, this tells the table which
+        // *people* are here. Both are the socket table changing and neither is
+        // the room changing, which is why this returns nothing to save.
+        self.dispatch(origin, &[Event::PresenceChanged]);
     }
 
     /// A slot is claimed while someone is connected as it. Nothing persists —
@@ -1738,6 +1831,39 @@ impl RoomState {
                     .any(|c| c.identity == Identity::Player(entry.id.clone())),
             })
             .collect()
+    }
+
+    /// Who is connected, the DM among them.
+    ///
+    /// `roster_slots`'s neighbour and deliberately not the same answer. That one
+    /// describes *slots* and is for somebody choosing one; this describes
+    /// *people* and is for everybody who already has. The difference that
+    /// decides which is which is the DM, who occupies no slot and is the
+    /// connection a table most wants to be sure of.
+    ///
+    /// **Deduplicated**, because `RosterSlot::claimed` already records that one
+    /// person on a laptop and a phone is legitimate — two sockets there are one
+    /// name here, and counting sockets would put seven people at a table of six.
+    ///
+    /// Ordered: the DM, then the roster's own order. Nothing downstream depends
+    /// on it — the strip draws every slot and dims the absent ones, so it never
+    /// reflows — but a list whose order varied per process would make a test
+    /// assert on `HashMap` iteration.
+    fn here(&self) -> Vec<Owner> {
+        let mut here = Vec::new();
+        if self.clients.values().any(|c| c.identity == Identity::Dm) {
+            here.push(Owner::Dm);
+        }
+        for entry in &self.roster {
+            let claimed = self
+                .clients
+                .values()
+                .any(|c| c.identity == Identity::Player(entry.id.clone()));
+            if claimed {
+                here.push(Owner::Player(entry.id.clone()));
+            }
+        }
+        here
     }
 
     /// Re-sends the roster to everyone still on the picker, so a slot taken
@@ -1820,6 +1946,12 @@ impl RoomState {
             // And the same again, for the same reason. A counting convention
             // half the table holds is worse than either convention.
             diagonals: self.diagonals,
+            // And the same a third and fourth time. Neither is anybody's secret:
+            // the point of one is that the table can see whether the DM is still
+            // there, and the point of the other is that six other screens draw
+            // your ring in the colour you chose.
+            here: self.here(),
+            colours: self.colours.clone(),
             // And back to the walls' rule to finish, which is where this list
             // started: the DM's next undo, and `None` for everybody else. A
             // player has no button for it to label, and `None` is also what an
@@ -2464,6 +2596,29 @@ impl RoomState {
                 }
                 Ok(())
             }
+
+            // The arm above with one thing to check instead of none, and the
+            // check is a closed set rather than a length — a token's size in a
+            // different costume. What it must not become is a colour string: the
+            // six hues are chosen to be unmistakeable for the token rings the
+            // board draws in gold, blue, white, violet and teal, and free hex is
+            // a player making their own ring say something false about a
+            // creature.
+            //
+            // The DM is refused outright. Their hue is outside the six because
+            // theirs is the one ring at the table that is not a player's, and
+            // that is a rule about the board rather than about a control — so it
+            // is kept here, where it is true whatever a client sends.
+            ClientMsg::SetColour { colour } => match &client.identity {
+                Identity::Dm => Err("the DM's colour is the DM's".to_owned()),
+                Identity::Player(_) => {
+                    if *colour < PALETTE {
+                        Ok(())
+                    } else {
+                        Err(format!("there are {PALETTE} colours to choose from"))
+                    }
+                }
+            },
 
             // Anyone may ping, and there is nothing else to check. No bound, no
             // clip to the play area, no fog test: the position is written into
@@ -3244,6 +3399,24 @@ impl RoomState {
                 }]
             }
 
+            // The arm above with the private half taken out. Whose colour it is
+            // still comes from the socket and never from the frame — but there
+            // is no `by` on the event, because there is nobody to exclude: this
+            // is one table everybody holds, so everybody is sent the same one.
+            ClientMsg::SetColour { colour } => {
+                let id = match self.clients.get(&origin) {
+                    Some(Client {
+                        identity: Identity::Player(id),
+                        ..
+                    }) => id.clone(),
+                    // `check` proved this is a player. The DM is refused there,
+                    // and an unidentified socket never reaches `apply` at all.
+                    _ => return Vec::new(),
+                };
+                self.colours.insert(id, colour);
+                vec![Event::ColoursChanged]
+            }
+
             ClientMsg::Ping { at } => {
                 let owner = match self.clients.get(&origin) {
                     Some(client) => drawn_by(client),
@@ -3418,9 +3591,19 @@ impl RoomState {
                 // Taken and put back rather than filtered out of the snapshot at
                 // push time: what belongs here is whatever people have typed
                 // *since*, which is what the room is holding right now.
+                //
+                // **Two things now, and the second is why this is a rule rather
+                // than a special case.** A colour is a player's the same way a
+                // paragraph is, and neither is the DM's to take back — milestone
+                // 27 is what turned "the only thing exempted by hand" into a
+                // list. Both halves are still needed for each: `undid` keeps the
+                // command from being a step, and this keeps a colour picked
+                // between two other commands off the snapshot they pushed.
                 let notes = std::mem::take(&mut self.notes);
+                let colours = std::mem::take(&mut self.colours);
                 self.adopt(back);
                 self.notes = notes;
+                self.colours = colours;
                 // `adopt` empties both derived sets — a `Saved` holds the party's
                 // memory and not their sight. Done here rather than through
                 // `moves_sight` and `refresh_fog`, because `Restored` already
@@ -3515,6 +3698,8 @@ impl RoomState {
                 // point of this match being exhaustive is that a later event
                 // naming a token cannot be forgotten.
                 | Event::Restored
+                | Event::PresenceChanged
+                | Event::ColoursChanged
                 | Event::UndoChanged => None,
             })
             .collect();
@@ -4089,6 +4274,17 @@ impl RoomState {
             // player does not have.
             Event::UndoChanged => self.is_dm(recipient).then(|| ServerMsg::UndoChanged {
                 label: self.undo_label(),
+            }),
+
+            // And the two arms with no rule in them at all, which is the shape
+            // `NamesChanged` and `FogChanged` already have: one list, read off
+            // `&self`, identical for every recipient including whoever caused
+            // it. There is nothing here to filter — a table that cannot tell
+            // whether the DM is still connected is the problem the first one
+            // exists to solve, and a colour nobody else can see is not a colour.
+            Event::PresenceChanged => Some(ServerMsg::Presence { here: self.here() }),
+            Event::ColoursChanged => Some(ServerMsg::ColoursChanged {
+                colours: self.colours.clone(),
             }),
         }
     }

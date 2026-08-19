@@ -3,6 +3,8 @@
 //! `ServerMsg` is the outbound wire format. The room's internal `Event` type
 //! lives in `room.rs` and is deliberately not this type — see `message_for`.
 
+use std::collections::BTreeMap;
+
 use serde::{Deserialize, Serialize};
 
 use crate::fog::{Cell, FogView, Override, OverrideView};
@@ -55,6 +57,32 @@ pub enum Owner {
     Dm,
     Player(PlayerId),
 }
+
+/// Which palette entry each player has chosen, by roster slug. A slot with no
+/// entry never chose one, and the client's default for that slot stands.
+///
+/// **A `BTreeMap` rather than the `HashMap` every other table in this project
+/// is**, for two reasons that are the scratchpads' two reasons answered the
+/// other way round. `PlayerId` is a newtype over `String`, so it is a legal JSON
+/// object key — which `Owner` is not, and which is why `notes` had to become a
+/// sorted list of pairs on the disk. Sorted keys are that list's other half: a
+/// `HashMap` iterates in a different order every process, so the file would
+/// churn on every write.
+///
+/// The value is an **index into a palette this crate does not hold.** The six
+/// hues live in `client/src/pings.ts` and nowhere else, because a second copy
+/// here would be a second thing to keep in step for no gain — the server has no
+/// opinion about what `3` looks like, only that it names a colour. See
+/// `PALETTE`.
+pub type Colours = BTreeMap<PlayerId, u8>;
+
+/// How many colours there are to choose between.
+///
+/// The length of `PLAYER_HUES` in `client/src/pings.ts`, and the only thing this
+/// crate knows about that list. It is here so `SetColour` can be refused the way
+/// a token's size is — a closed set checked on the server — and the reason the
+/// set is closed rather than free hex is written on `ClientMsg::SetColour`.
+pub const PALETTE: u8 = 6;
 
 // Invariant 2 wants `#[serde(default)]` on every persisted field. Declaring it
 // on the container is equivalent for deserialization and strictly safer: a
@@ -829,6 +857,39 @@ pub struct RoomView {
     /// is a counting convention the table shares, so a client holding a different
     /// one from its neighbour is the only way this can be wrong.
     pub diagonals: Diagonals,
+    /// Who is connected right now, the DM among them.
+    ///
+    /// **The same value for everyone**, which puts it with the two fields above
+    /// rather than with the six below — there is no permission here and nothing
+    /// to withhold: a table that cannot tell whether the DM is still on the other
+    /// end of the line is the whole reason this exists.
+    ///
+    /// `Owner` rather than `RosterSlot`, unlike the identity picker's list, and
+    /// that is the difference between the two: a slot cannot say "the DM", and
+    /// the DM is the connection most worth knowing about. It also means
+    /// `colourOf` and `nameOf` on the client resolve these with nothing further
+    /// on the wire, which is the argument `Pinged` already made.
+    ///
+    /// **A set of identities and not a count.** Somebody on a laptop and a phone
+    /// is one entry — `RosterSlot::claimed` says that arrangement is legitimate,
+    /// so counting sockets would report seven people at a table of six.
+    ///
+    /// It is on the view as well as on `ServerMsg::Presence` so a join is filled
+    /// in by the same path as every delta, which is invariant 3 — and it is what
+    /// makes `Restored` right without a line of its own.
+    pub here: Vec<Owner>,
+    /// Which colour each player picked for themselves.
+    ///
+    /// **Public, unlike the scratchpad below**, and it is the first thing in this
+    /// project a player may write that everybody else is then sent. That is not
+    /// an oversight in the direction of the notes: everyone has to draw everyone
+    /// else's pings and attribute everyone else's lines, so a colour that only
+    /// its owner could see would not be a colour at all.
+    ///
+    /// A slot with no entry has not chosen, and the client's default for that
+    /// slot stands — which is what keeps a room that predates this field looking
+    /// exactly as it did.
+    pub colours: Colours,
     /// What the DM's undo would take back, or `None` when there is nothing to
     /// take back — and **`None` for a player, always**, which is the walls' rule
     /// arriving for the fourth time.
@@ -1096,6 +1157,30 @@ pub enum ClientMsg {
         text: String,
     },
 
+    /// Pick the colour this client's rings and lines are drawn in.
+    ///
+    /// **It carries no key either**, and that is the same rule for the third
+    /// time: whose colour this is comes from the socket, exactly as `Say`'s
+    /// sender and `SetNotes`' box do. A key a client could name is a key it
+    /// could name somebody else's with.
+    ///
+    /// **An index into a closed palette rather than free hex**, and the reason
+    /// is on the board rather than in the protocol. `pings.ts` records that its
+    /// six hues deliberately avoid the token ring vocabulary in `render.ts` —
+    /// gold is ownership, blue is in progress, white is the turn, violet is
+    /// hidden, teal is staged-only. A player who could send `#d4af37` could
+    /// make their own ring lie about who owns a creature, which is the board
+    /// saying something false. So the set is closed and the bound is `PALETTE`,
+    /// checked here the way a token's size is.
+    ///
+    /// **The DM may not send it.** Their hue sits outside the six on purpose —
+    /// it is the one ring at the table that is not a player's — and a DM who
+    /// took a player's colour would erase that. Refused rather than merely
+    /// unbuilt on their client, because a rule only the UI keeps is not a rule.
+    SetColour {
+        colour: u8,
+    },
+
     // Walls and doors. All DM-only, and unlike the drawings above, invisible to
     // everyone else — a player is not told these commands happened at all.
     //
@@ -1296,6 +1381,38 @@ pub enum ServerMsg {
     /// person beside it, which is the one failure this message exists to prevent.
     DiagonalsChanged {
         diagonals: Diagonals,
+    },
+    /// Somebody joined or left. The whole list, because it is at most seven
+    /// names and nothing is predicted locally.
+    ///
+    /// **`NamesChanged`'s shape rather than `WallsChanged`'s**: identical for
+    /// every recipient, no filter, no permission — and unlike either of them,
+    /// nobody sent a command to cause it. It is dispatched from the two places
+    /// the socket table changes, which is why it is the one message in this enum
+    /// that never rides beside a disk write: who happens to be connected is not
+    /// part of the room.
+    ///
+    /// Sent whenever a connection is claimed or lost rather than only when the
+    /// list differs. A second connection as the same person changes nothing, and
+    /// a frame saying what the client already holds is a repaint of the same
+    /// chips.
+    Presence {
+        here: Vec<Owner>,
+    },
+    /// A player picked their colour. The whole table, for `Presence`'s reason.
+    ///
+    /// Its neighbour above in every respect that matters — identical for every
+    /// recipient, no filter — and the difference is that a *player* caused this
+    /// one. It is the first frame in this protocol carrying something a player
+    /// wrote to everybody else, which is the axis a colour differs from a
+    /// scratchpad on: both are yours to set, and only one of them is any use if
+    /// nobody else can see it.
+    ///
+    /// **The sender is echoed**, like `NamesChanged` and unlike `NotesChanged`.
+    /// There is no caret to move and nothing was drawn locally, so this frame is
+    /// how the chosen swatch settles on the client that chose it.
+    ColoursChanged {
+        colours: Colours,
     },
     /// The staged board — its map, its walls and its paint — or `None` once
     /// there is not one. Reaches the DM and nobody else; this is the first

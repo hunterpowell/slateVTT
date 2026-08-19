@@ -18,10 +18,11 @@ import {
   GROW_FROM_MS,
   HOLD_MS,
   nameOf,
+  PLAYER_HUES,
   ringAlpha,
   ringRadius,
 } from './pings.js';
-import type { Owner, RosterEntry } from './protocol.js';
+import type { Colours, Owner, RosterEntry } from './protocol.js';
 
 const ME: Owner = { kind: 'player', id: 'saelyn' };
 const ROSTER: RosterEntry[] = [
@@ -121,17 +122,57 @@ test('the hold rides along with the rings and does not displace them', () => {
 
 // --- who a ring belongs to ------------------------------------------------
 
+/** Nobody has picked. The default table, and what a room that predates the
+ *  feature holds. */
+const UNPICKED: Colours = {};
+
 test('every roster slot gets its own colour and the DM gets a seventh', () => {
-  const hues = ROSTER.map((slot) => colourOf({ kind: 'player', id: slot.id }, ROSTER));
+  const hues = ROSTER.map((slot) => colourOf({ kind: 'player', id: slot.id }, ROSTER, UNPICKED));
   assert.equal(new Set(hues).size, ROSTER.length, 'no two players share a hue');
-  assert.ok(!hues.includes(colourOf({ kind: 'dm' }, ROSTER)), 'nor does the DM');
+  assert.ok(!hues.includes(colourOf({ kind: 'dm' }, ROSTER, UNPICKED)), 'nor does the DM');
 });
 
-test('a colour is derived, so every client agrees without being told', () => {
+test('a colour nobody picked is derived, so every client agrees without being told', () => {
   // The argument for indexing the roster rather than putting a colour on the
-  // wire: two clients holding the same roster cannot disagree.
+  // wire: two clients holding the same roster cannot disagree. Still the
+  // default, and still what an empty table means.
   const owner: Owner = { kind: 'player', id: 'torrin' };
-  assert.equal(colourOf(owner, ROSTER), colourOf(owner, [...ROSTER]));
+  assert.equal(colourOf(owner, ROSTER, UNPICKED), colourOf(owner, [...ROSTER], UNPICKED));
+});
+
+test('a picked colour wins over the roster position', () => {
+  const torrin: Owner = { kind: 'player', id: 'torrin' };
+  const saelyn: Owner = { kind: 'player', id: 'saelyn' };
+  const picked: Colours = { torrin: 0 };
+
+  assert.equal(colourOf(torrin, ROSTER, picked), PLAYER_HUES[0]);
+  assert.notEqual(
+    colourOf(torrin, ROSTER, picked),
+    colourOf(torrin, ROSTER, UNPICKED),
+    'and it is not what their slot would have given them',
+  );
+  assert.equal(
+    colourOf(saelyn, ROSTER, picked),
+    colourOf(saelyn, ROSTER, UNPICKED),
+    'somebody else picking does not move anybody',
+  );
+});
+
+test('two people may pick the same colour, and neither is refused it', () => {
+  // The name written beside a ring is what tells them apart, which is why
+  // nothing on either side of the wire checks for this.
+  const picked: Colours = { torrin: 2, saelyn: 2 };
+  assert.equal(
+    colourOf({ kind: 'player', id: 'torrin' }, ROSTER, picked),
+    colourOf({ kind: 'player', id: 'saelyn' }, ROSTER, picked),
+  );
+});
+
+test('the DM keeps their own hue whatever the table says', () => {
+  // The server refuses a `set_colour` from the DM, so no such entry can exist —
+  // and this is the other half of that rule, kept where it decides what draws.
+  const claimed: Colours = { dm: 0 };
+  assert.equal(colourOf({ kind: 'dm' }, ROSTER, claimed), colourOf({ kind: 'dm' }, ROSTER, UNPICKED));
 });
 
 test('a ring is labelled with the roster name and not the slug', () => {
@@ -140,7 +181,7 @@ test('a ring is labelled with the roster name and not the slug', () => {
   // A sender this client has never heard of still draws, attributed to
   // something rather than to nobody.
   assert.equal(nameOf({ kind: 'player', id: 'stranger' }, ROSTER), 'stranger');
-  assert.ok(colourOf({ kind: 'player', id: 'stranger' }, ROSTER).startsWith('#'));
+  assert.ok(colourOf({ kind: 'player', id: 'stranger' }, ROSTER, UNPICKED).startsWith('#'));
 });
 
 // --- the arrow at the edge ------------------------------------------------

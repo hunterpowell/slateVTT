@@ -425,6 +425,7 @@ fn a_created_token_reaches_the_dm_who_made_it() {
     let mut state = room();
     let mut dm = join_as_dm(&mut state, ClientId(1));
     let mut saelyn = join_as_player(&mut state, ClientId(2), "saelyn");
+    settle(&mut [&mut dm, &mut saelyn]);
 
     state.handle(ClientId(1), create("Goblin", 1.0, Owner::Dm));
 
@@ -441,6 +442,7 @@ fn a_deleted_token_reaches_everyone() {
     let mut state = room();
     let mut dm = join_as_dm(&mut state, ClientId(1));
     let mut saelyn = join_as_player(&mut state, ClientId(2), "saelyn");
+    settle(&mut [&mut dm, &mut saelyn]);
 
     state.handle(
         ClientId(1),
