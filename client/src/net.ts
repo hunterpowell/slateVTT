@@ -269,7 +269,11 @@ export function connect(on: Handlers): Net {
         on.onError(msg.message);
         break;
       default:
-        console.warn('unknown message type', msg);
+        // `error` and not `warn`: an unknown frame means the two hand-written
+        // copies of this union have drifted, and `cdp.mjs` only collects console
+        // entries of type `error` — so as a warning this failed every browser
+        // driver silently, which is the way a protocol mismatch must not fail.
+        console.error('unknown message type', msg);
     }
   });
 

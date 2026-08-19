@@ -1047,6 +1047,13 @@ function boot(): void {
     onLost: () => {
       document.body.classList.add('offline');
       ui.picker.hidden = true;
+      // `body.offline` greys the scratchpad and takes its pointer events, which
+      // is not the same as letting go of it: a caret already in the box keeps
+      // taking keystrokes, and the reconnect is a page reload, so a paragraph
+      // typed after the socket died is lost with nothing said. Blurring both
+      // flushes what the debounce is holding — while the socket may still be
+      // open — and puts the box beyond the keyboard.
+      ui.notes.text.blur();
       ui.banner.textContent = 'connection lost — reconnecting…';
       ui.banner.hidden = false;
     },

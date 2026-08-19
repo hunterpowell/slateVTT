@@ -1695,3 +1695,211 @@ pub enum ServerMsg {
         message: String,
     },
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The tag of every variant, and the compiler is what keeps the list whole.
+    ///
+    /// A `match` with no wildcard: adding a variant to the enum stops this file
+    /// compiling until it is named here, which is the only enforcement available
+    /// when the other copy of the union is in another language.
+    fn client_tag(msg: &ClientMsg) -> &'static str {
+        match msg {
+            ClientMsg::Hello { .. } => "hello",
+            ClientMsg::MoveToken { .. } => "move_token",
+            ClientMsg::CreateToken { .. } => "create_token",
+            ClientMsg::UpdateToken { .. } => "update_token",
+            ClientMsg::DeleteToken { .. } => "delete_token",
+            ClientMsg::SetShowNames { .. } => "set_show_names",
+            ClientMsg::SetDiagonals { .. } => "set_diagonals",
+            ClientMsg::SetShowCursors { .. } => "set_show_cursors",
+            ClientMsg::SetMap { .. } => "set_map",
+            ClientMsg::PromoteStaged => "promote_staged",
+            ClientMsg::ClearStaged => "clear_staged",
+            ClientMsg::Sketch { .. } => "sketch",
+            ClientMsg::AddShape { .. } => "add_shape",
+            ClientMsg::RemoveShape { .. } => "remove_shape",
+            ClientMsg::ClearShapes => "clear_shapes",
+            ClientMsg::Ping { .. } => "ping",
+            ClientMsg::MoveCursor { .. } => "move_cursor",
+            ClientMsg::Say { .. } => "say",
+            ClientMsg::SetNotes { .. } => "set_notes",
+            ClientMsg::SetColour { .. } => "set_colour",
+            ClientMsg::AddWalls { .. } => "add_walls",
+            ClientMsg::RemoveWall { .. } => "remove_wall",
+            ClientMsg::ToggleDoor { .. } => "toggle_door",
+            ClientMsg::ClearWalls { .. } => "clear_walls",
+            ClientMsg::SetFogOverride { .. } => "set_fog_override",
+            ClientMsg::ResetFog => "reset_fog",
+            ClientMsg::SetInitiative { .. } => "set_initiative",
+            ClientMsg::RemoveFromInitiative { .. } => "remove_from_initiative",
+            ClientMsg::ClearInitiative => "clear_initiative",
+            ClientMsg::NextTurn => "next_turn",
+            ClientMsg::PreviousTurn => "previous_turn",
+            ClientMsg::Undo => "undo",
+        }
+    }
+
+    fn server_tag(msg: &ServerMsg) -> &'static str {
+        match msg {
+            ServerMsg::ChooseIdentity { .. } => "choose_identity",
+            ServerMsg::Welcome { .. } => "welcome",
+            ServerMsg::TokenMoved { .. } => "token_moved",
+            ServerMsg::TokenChanged { .. } => "token_changed",
+            ServerMsg::TokenRemoved { .. } => "token_removed",
+            ServerMsg::MapChanged { .. } => "map_changed",
+            ServerMsg::NamesChanged { .. } => "names_changed",
+            ServerMsg::DiagonalsChanged { .. } => "diagonals_changed",
+            ServerMsg::CursorsChanged { .. } => "cursors_changed",
+            ServerMsg::Presence { .. } => "presence",
+            ServerMsg::ColoursChanged { .. } => "colours_changed",
+            ServerMsg::StagedChanged { .. } => "staged_changed",
+            ServerMsg::InitiativeChanged { .. } => "initiative_changed",
+            ServerMsg::Sketch { .. } => "sketch",
+            ServerMsg::SketchEnded { .. } => "sketch_ended",
+            ServerMsg::ShapesChanged { .. } => "shapes_changed",
+            ServerMsg::WallsChanged { .. } => "walls_changed",
+            ServerMsg::FogChanged { .. } => "fog_changed",
+            ServerMsg::OverridesChanged { .. } => "overrides_changed",
+            ServerMsg::Pinged { .. } => "pinged",
+            ServerMsg::CursorMoved { .. } => "cursor_moved",
+            ServerMsg::Said { .. } => "said",
+            ServerMsg::NotesChanged { .. } => "notes_changed",
+            ServerMsg::Restored { .. } => "restored",
+            ServerMsg::UndoChanged { .. } => "undo_changed",
+            ServerMsg::Error { .. } => "error",
+        }
+    }
+
+    /// The two unions are written out by hand twice — once here and once in
+    /// `client/src/protocol.ts` — and nothing generates either from the other.
+    /// `protocol-tags.json` is the third copy and the one both are measured
+    /// against; `protocol.test.ts` is the far half of this test.
+    ///
+    /// Variant-level only. A renamed field keeps its tag and passes here — see
+    /// the note in the fixture itself.
+    #[test]
+    fn every_variant_is_in_the_shared_tag_list() {
+        #[derive(serde::Deserialize)]
+        struct Tags {
+            client: Vec<String>,
+            server: Vec<String>,
+        }
+        let tags: Tags = serde_json::from_str(include_str!("../../protocol-tags.json"))
+            .expect("protocol-tags.json parses");
+
+        // Every tag the fixture names must be one the match above can produce.
+        // The other direction — a variant missing from the fixture — is caught
+        // by the count, since the match cannot omit one and still compile.
+        let mine = KNOWN_CLIENT_TAGS;
+        for tag in &tags.client {
+            assert!(
+                mine.contains(&tag.as_str()),
+                "protocol-tags.json names a client tag the server does not have: {tag}"
+            );
+        }
+        assert_eq!(
+            tags.client.len(),
+            mine.len(),
+            "the server has {} client tags and the fixture names {} — a variant was              added without updating protocol-tags.json, and protocol.ts with it",
+            mine.len(),
+            tags.client.len(),
+        );
+
+        let mine = KNOWN_SERVER_TAGS;
+        for tag in &tags.server {
+            assert!(
+                mine.contains(&tag.as_str()),
+                "protocol-tags.json names a server tag the server does not have: {tag}"
+            );
+        }
+        assert_eq!(
+            tags.server.len(),
+            mine.len(),
+            "the server has {} server tags and the fixture names {} — a variant was              added without updating protocol-tags.json, and protocol.ts with it",
+            mine.len(),
+            tags.server.len(),
+        );
+    }
+
+    /// Kept beside the matches above, and the matches are what make them honest:
+    /// a variant added to either enum breaks `client_tag`/`server_tag`, and
+    /// whoever fixes that has these two lists in front of them.
+    const KNOWN_CLIENT_TAGS: &[&str] = &[
+        "add_shape",
+        "add_walls",
+        "clear_initiative",
+        "clear_shapes",
+        "clear_staged",
+        "clear_walls",
+        "create_token",
+        "delete_token",
+        "hello",
+        "move_cursor",
+        "move_token",
+        "next_turn",
+        "ping",
+        "previous_turn",
+        "promote_staged",
+        "remove_from_initiative",
+        "remove_shape",
+        "remove_wall",
+        "reset_fog",
+        "say",
+        "set_colour",
+        "set_diagonals",
+        "set_fog_override",
+        "set_initiative",
+        "set_map",
+        "set_notes",
+        "set_show_cursors",
+        "set_show_names",
+        "sketch",
+        "toggle_door",
+        "undo",
+        "update_token",
+    ];
+    const KNOWN_SERVER_TAGS: &[&str] = &[
+        "choose_identity",
+        "colours_changed",
+        "cursor_moved",
+        "cursors_changed",
+        "diagonals_changed",
+        "error",
+        "fog_changed",
+        "initiative_changed",
+        "map_changed",
+        "names_changed",
+        "notes_changed",
+        "overrides_changed",
+        "pinged",
+        "presence",
+        "restored",
+        "said",
+        "shapes_changed",
+        "sketch",
+        "sketch_ended",
+        "staged_changed",
+        "token_changed",
+        "token_moved",
+        "token_removed",
+        "undo_changed",
+        "walls_changed",
+        "welcome",
+    ];
+
+    /// Proves the two lists above are the tags the matches actually produce,
+    /// rather than a third thing that drifted from them.
+    #[test]
+    fn the_tag_lists_agree_with_the_matches() {
+        assert_eq!(client_tag(&ClientMsg::Undo), "undo");
+        assert_eq!(
+            server_tag(&ServerMsg::UndoChanged { label: None }),
+            "undo_changed"
+        );
+        assert!(KNOWN_CLIENT_TAGS.contains(&"undo"));
+        assert!(KNOWN_SERVER_TAGS.contains(&"undo_changed"));
+    }
+}

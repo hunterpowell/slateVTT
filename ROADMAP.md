@@ -1134,11 +1134,10 @@ and 28 also overturned something *its own* design section said, which its entry 
 
 ### The right dock
 
-**Built in milestone 23, with one tab on it.** `dock.ts` is the strip; milestone 24's notes are a
+**Built in milestone 23, and 24 put the second tab on it.** `dock.ts` is the strip; the notes were a
 second entry in `DockTab` and a second entry in the array `main.ts` passes to `createDock`, which is
-what the rail's strip already costs a panel. Everything below held and is kept because 24 is the
-half that has not been built yet — including the argument for why this is not a generalised
-`createRail`, which is in `docs/chat.md`.
+what the rail's strip already costs a panel. Everything below held and is kept as the record of why
+— including the argument for why this is not a generalised `createRail`, which is in `docs/chat.md`.
 
 Milestones 23 and 24 share one piece of client infrastructure and should be built with it rather
 than around it: **a collapsible dock on the right edge with a tab strip**, mirroring the left rail's

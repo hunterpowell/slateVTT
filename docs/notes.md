@@ -146,6 +146,22 @@ The cap is `MAX_NOTES_LEN` on the server and the same number as the textarea's `
 typing simply stops rather than bouncing off a refusal after the paragraph is written. The server's
 copy is the backstop for a client that does not have one.
 
+**A dropped socket lets go of the box, and that is the honest version of an indicator.** `Net.send`
+drops a frame written while the socket is not open — it returns nothing and there is nowhere for it
+to go — and `flush` records the text as sent before it learns that, so a flush into a dead socket
+loses the paragraph. The reconnect is a page reload, so there is no in-page recovery to write: the
+box comes back holding whatever the server last stored.
+
+What `body.offline` already did was grey the panel and take its pointer events. That is not the same
+as letting go of it — a caret already in the textarea keeps taking keystrokes, so the one person
+most likely to lose a paragraph is the one who was mid-paragraph when the socket died. `onLost` now
+blurs it, which both flushes what the debounce is holding while the socket may still be open and
+puts the box beyond the keyboard.
+
+**Still no "saved" chip, and this is why a blur is the right size of fix.** An indicator would
+narrate the network on every keystroke to prevent a loss that needs a dead socket and an unflushed
+timer at the same moment. Letting go of the box says the same thing with no new UI at all.
+
 ### A keystroke in the box belongs to the box
 
 `chat.ts`'s rule, and it matters more here: this is the one place in the application where somebody

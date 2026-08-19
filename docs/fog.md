@@ -236,6 +236,16 @@ would have to agree. Nothing is being adjudicated — the DM may reveal whatever
 server has no answer of its own to defend, only a size to bound (`MAX_OVERRIDE_CELLS`) and a board to
 clip against (`cell_on_board`, the same bound the sweep uses and for the same reason).
 
+**`MAX_OVERRIDE_CELLS` is bounded by the frame and not by taste.** Sending the cells means the
+command grows with the fill — one `[x,y]` pair each, up to twelve bytes at four-digit coordinates —
+so the count the room refuses past has to fit inside `MAX_WS_MESSAGE_BYTES` or it is never reached.
+It did not: 50,000 cells against a 16 KiB frame meant any fill past roughly 1,700 cells killed the
+DM's socket and reloaded their page, which is well inside the "large dungeon room" this feature is
+for. It is now 8,000 against 128 KiB, `MAX_FILL_CELLS` in `fogtool.ts` mirrors it, and
+`largest_override_fits_in_a_frame` asserts the pair rather than trusting them. The general rule that
+came out of it is in `docs/net.md`; what it costs *here* is that the two numbers move together, and
+a fill bigger than a level is not a case worth widening the socket for.
+
 `fillFrom` in `overrides.ts` is **not the raycast written twice**. That asks whether a viewer can see
 a cell; this asks whether two cells are connected. They read the same walls and are different
 questions, and they do not have to agree: a fill that squeezes through a gap the DM traced badly is

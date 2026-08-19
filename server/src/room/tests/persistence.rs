@@ -317,9 +317,15 @@ fn a_save_written_before_the_staged_slot_held_walls_still_loads_its_map() {
 
     let saved: Saved = serde_json::from_str(old).expect("an older save still parses");
     let staged = saved.staged.as_ref().expect("the staged slot survived");
-    assert_eq!(staged.map.url, "/uploads/crypt.png", "flattened, not nested");
+    assert_eq!(
+        staged.map.url, "/uploads/crypt.png",
+        "flattened, not nested"
+    );
     assert_eq!((staged.map.grid_px, staged.map.offset_x), (48.0, 12.0));
-    assert!(staged.map.fog, "every map field comes through, not just the url");
+    assert!(
+        staged.map.fog,
+        "every map field comes through, not just the url"
+    );
     assert!(staged.walls.is_empty(), "nothing was traced on it yet");
 
     // And through the room, which is what actually has to hold up.
@@ -349,10 +355,7 @@ fn a_staged_dungeon_survives_a_restart_with_its_walls_and_its_paint() {
         ClientId(1),
         staged(trace(&[(0.0, 0.0), (100.0, 0.0), (100.0, 100.0)], false)),
     );
-    state.handle(
-        ClientId(1),
-        staged(paint(&[(3, 4)], Some(Override::Dark))),
-    );
+    state.handle(ClientId(1), staged(paint(&[(3, 4)], Some(Override::Dark))));
 
     // Through JSON, because the file is the contract.
     let json = serde_json::to_vec(&state.to_saved()).expect("encodes");

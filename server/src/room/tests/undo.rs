@@ -99,7 +99,10 @@ fn undoing_a_map_load_gives_back_the_walls_the_shapes_and_the_fog_together() {
     let dm = ClientId(1);
     let mut dm_rx = join_as_dm(&mut state, dm);
 
-    state.handle(dm, fogged(set_map("/uploads/dungeon.png", 64.0, 0.0, 0.0), 60.0));
+    state.handle(
+        dm,
+        fogged(set_map("/uploads/dungeon.png", 64.0, 0.0, 0.0), 60.0),
+    );
     state.handle(dm, trace(&[(0.0, 0.0), (64.0, 0.0), (64.0, 64.0)], false));
     draw(&mut state, dm, &mut dm_rx);
     state.handle(
@@ -130,7 +133,11 @@ fn undoing_a_map_load_gives_back_the_walls_the_shapes_and_the_fog_together() {
     assert_eq!(state.walls.len(), walls, "the masonry came back");
     assert_eq!(state.shapes.len(), shapes, "and the drawings");
     assert_eq!(state.overrides.len(), overrides, "and the paint");
-    assert_eq!(state.revealed.len(), revealed, "and where the party had been");
+    assert_eq!(
+        state.revealed.len(),
+        revealed,
+        "and where the party had been"
+    );
     // Derived rather than restored — a `Saved` holds the memory and not the
     // sight — so this is the assertion that `adopt` is followed by a recompute.
     assert!(
@@ -341,4 +348,3 @@ fn a_players_drawing_is_a_step_the_dm_can_take_back() {
         "and only the drawing — the wall traced before it stayed"
     );
 }
-

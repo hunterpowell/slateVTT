@@ -40,11 +40,13 @@ fn pick(colour: u8) -> ClientMsg {
     ClientMsg::SetColour { colour }
 }
 
-/// A socket going away, as the actor loop's `Disconnected` arm does it. These
-/// tests drive `RoomState` directly, so this is that arm's two lines.
+/// A socket going away, as the actor loop's `Disconnected` arm does it.
+///
+/// That arm is now one call, so this is it rather than a copy of it — which is
+/// the point of the extraction: a departure that these tests drive and a
+/// departure the loop drives cannot drift apart any more.
 fn leaves(state: &mut RoomState, client: ClientId) {
-    state.clients.remove(&client);
-    state.dispatch(client, &[Event::PresenceChanged]);
+    state.remove_client(client);
 }
 
 // --- who is here ----------------------------------------------------------
@@ -181,6 +183,109 @@ fn who_is_connected_is_not_part_of_the_room() {
         !json.contains("here"),
         "nothing about who is connected reaches the file: {json}"
     );
+}
+
+/// A client dropped for a full mailbox leaves the same way one that hung up does.
+///
+/// `dispatch` drops a wedged peer rather than stalling the room on it, and it
+/// used to do that with a bare `clients.remove`. The socket closing does raise
+/// `Disconnected`, but that arm is guarded on the entry still being there — so
+/// the guard was false by the time the news arrived and every departure step was
+/// skipped. What the table saw was a name in the presence strip belonging to
+/// nobody, a roster slot that could not be claimed, and a half-drawn line that
+/// stayed until somebody reloaded.
+///
+/// The assertion is what the *survivors* were sent, which is the only place the
+/// bug was ever visible: the room's own `here` was right all along.
+#[test]
+fn a_wedged_client_leaves_as_loudly_as_one_that_hung_up() {
+    let mut state = room();
+    let mut dm = join_as_dm(&mut state, ClientId(1));
+
+    // A mailbox of two, filled deliberately below. The real one is 256 and takes
+    // a stalled TCP peer to fill; the mechanism is the same and this does not
+    // need a network to reach it.
+    const MAILBOX: usize = 2;
+    let (tx, mut wedged_rx) = mpsc::channel(MAILBOX);
+    state.pending.insert(ClientId(2), tx);
+    state.handle(
+        ClientId(2),
+        ClientMsg::Hello {
+            dm_secret: None,
+            player_id: Some(PlayerId::new("saelyn")),
+        },
+    );
+
+    // Somebody sitting on the picker, who is owed the slot coming back free.
+    let mut watcher = connect(&mut state, ClientId(3));
+    state.handle(
+        ClientId(3),
+        ClientMsg::Hello {
+            dm_secret: None,
+            player_id: None,
+        },
+    );
+
+    // Everybody's join traffic off the queues, saelyn's included — so what
+    // follows is the only thing their mailbox is asked to hold.
+    settle(&mut [&mut dm, &mut watcher, &mut wedged_rx]);
+    assert!(state.clients.contains_key(&ClientId(2)), "saelyn is here");
+
+    // One frame more than the mailbox holds, and nothing on the other end is
+    // reading. The last one cannot be delivered, which is the whole trigger.
+    let overflow = vec![Event::PresenceChanged; MAILBOX + 1];
+    state.dispatch(ClientId(1), &overflow);
+
+    assert!(
+        !state.clients.contains_key(&ClientId(2)),
+        "a client whose mailbox is full is dropped rather than stalling the room"
+    );
+
+    // Each queue read once, because all three assertions below are about the
+    // same burst of frames and `drain_all` empties what it reads.
+    let to_dm = drain_all(&mut dm);
+    let to_watcher = drain_all(&mut watcher);
+
+    // 1. The strip. The last thing the DM was told must not still name them.
+    let here = to_dm
+        .iter()
+        .filter_map(|msg| match msg {
+            ServerMsg::Presence { here } => Some(here),
+            _ => None,
+        })
+        .next_back()
+        .expect("the DM is told somebody left");
+    assert!(
+        !here.contains(&player("saelyn")),
+        "the presence strip still names a socket the room has dropped: {here:?}"
+    );
+
+    // 2. The picker. The slot is free and the person looking at it is owed that.
+    let roster = to_watcher
+        .iter()
+        .filter_map(|msg| match msg {
+            ServerMsg::ChooseIdentity { roster } => Some(roster),
+            _ => None,
+        })
+        .next_back()
+        .expect("the open picker is refreshed");
+    let slot = roster.iter().find(|s| s.id.0 == "saelyn").expect("saelyn");
+    assert!(
+        !slot.claimed,
+        "the slot came free and the picker was not told"
+    );
+
+    // 3. The sketch. Sent unconditionally on any departure, because whether they
+    //    were mid-sweep is state the room does not keep.
+    assert!(
+        to_dm
+            .iter()
+            .any(|msg| matches!(msg, ServerMsg::SketchEnded { .. })),
+        "a line the dropped client was drawing would sit on every other screen"
+    );
+
+    // And nothing was sent to the socket that could not take it.
+    drop(wedged_rx);
 }
 
 // --- what colour they draw in ---------------------------------------------

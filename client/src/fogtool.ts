@@ -60,8 +60,14 @@ const STEP_FT = 5;
 
 /** Matches `MAX_OVERRIDE_CELLS` on the server, which refuses anything past it.
  *  A fill that reaches this has escaped through a gap, and stopping is how the
- *  DM sees that rather than getting a refusal they have to interpret. */
-const MAX_FILL_CELLS = 50_000;
+ *  DM sees that rather than getting a refusal they have to interpret.
+ *
+ *  **Both numbers are bounded by the frame, not by taste.** `set_fog_override`
+ *  carries one `[x,y]` pair per cell, so the command has to fit inside
+ *  `MAX_WS_MESSAGE_BYTES`; the server's test asserts the largest legal one does.
+ *  This was 50,000 against a 16 KiB frame, which meant a whole-room fill killed
+ *  the socket and reloaded the page instead of being refused — see `docs/net.md`. */
+const MAX_FILL_CELLS = 8_000;
 
 /** What the brush is loaded with. `clear` is the absence of an override rather
  *  than a fourth kind of one, which is why it goes on the wire as null. */

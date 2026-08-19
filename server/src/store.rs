@@ -439,10 +439,7 @@ mod tests {
             // The field above's opposite shape, and the round trip has to prove
             // it too: this one is a JSON *object* keyed by the slug, which only
             // works because `PlayerId` is a newtype over `String`.
-            colours: Colours::from([
-                (PlayerId::new("cleodara"), 4),
-                (PlayerId::new("saelyn"), 1),
-            ]),
+            colours: Colours::from([(PlayerId::new("cleodara"), 4), (PlayerId::new("saelyn"), 1)]),
         }
     }
 

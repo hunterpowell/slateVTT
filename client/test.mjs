@@ -12,10 +12,19 @@
 // canvas or a socket is the browser drivers' job — see `tools/drive-*.mjs`.
 
 import { build } from 'esbuild';
-import { readdirSync, rmSync } from 'node:fs';
+import { readFileSync, readdirSync, rmSync } from 'node:fs';
 import { spawnSync } from 'node:child_process';
 
 const OUT = 'testbuild';
+
+// The shared protocol tag list, injected rather than imported.
+//
+// `protocol.test.ts` is checked against it, and it lives at the repo root
+// because `server/src/protocol.rs` is checked against the same file. That puts
+// it outside `tsconfig`'s `include`, and reading it from the test itself would
+// mean `node:fs` — which needs `@types/node`, a dependency this project does not
+// have and does not need for one string.
+const PROTOCOL_TAGS = readFileSync('../protocol-tags.json', 'utf8');
 
 const entryPoints = readdirSync('src')
   .filter((name) => name.endsWith('.test.ts'))
@@ -36,6 +45,7 @@ await build({
   // Inline, so a failure points at the line of TypeScript that failed rather
   // than at a column of the bundle.
   sourcemap: 'inline',
+  define: { __PROTOCOL_TAGS__: PROTOCOL_TAGS },
 });
 
 // Named explicitly rather than handing over the directory: `--test <dir>` tries

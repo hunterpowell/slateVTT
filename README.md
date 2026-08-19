@@ -93,7 +93,9 @@ character is a change to the name alone and their tokens follow them.
 ```
 client/   TypeScript source, canvas rendering, esbuild config
 server/   axum server: room actor, wire protocol, JSON persistence
-tools/    gen-assets.mjs — placeholder map/token art for local dev
+tools/    check.mjs — every check that does not need a browser, in one command
+          gen-assets.mjs — placeholder map/token art for local dev
+          audit-uploads.mjs — what is in uploads/ and what the room still points at
           cdp.mjs, board.mjs, drive-*.mjs — drive the real client in a headless browser
 maps/     the map library — the DM picks from these in-app during play
 portraits/ the token-art library — the same, for faces rather than floors
@@ -102,10 +104,19 @@ portraits/ the token-art library — the same, for faces rather than floors
 ## Testing
 
 ```sh
+node tools/check.mjs         # all of the below, reporting every failure
+
 cd server && cargo test
+cd server && cargo fmt -- --check
+cd server && cargo clippy --all-targets -- -D warnings
 cd client && npm run check   # typecheck + unit tests + build
 cd client && npm test        # just the unit tests
 ```
+
+`tools/check.mjs` runs the four of them in sequence and does not stop at the first failure — a
+formatting diff should not hide a failing test. It deliberately leaves out the browser drivers,
+which need Chrome, a running server and a scratch state file; those are below and stay a separate,
+deliberate act. There is no CI: these run when somebody runs them.
 
 The server's tests live in [server/src/room/tests/](server/src/room/tests/), one file per
 subsystem along the same seams as [docs/](docs/). They are child modules of the room rather
@@ -206,14 +217,14 @@ coordinates. Anything that clicks the board should go through it rather than rea
 
 ### Running the lot
 
-**All fourteen take about five minutes**, so run all of them whenever the client changes rather than
+**All fifteen take about five minutes**, so run all of them whenever the client changes rather than
 picking the ones that look relevant. Picking is not worth the thought it costs: they all sit on
 `coords.ts`, `render.ts`, `input.ts` and `scene.ts`, and almost every client commit touches one of
 those, so any honest rule about which to skip says "none of them" nearly every time.
 
-| player | names | ui  | rail | undo | chat | presence | staged | fog | ruler | select | ping | panels | cursors |
-| ------ | ----- | --- | ---- | ---- | ---- | -------- | ------ | --- | ----- | ------ | ---- | ------ | ------- |
-| 4s     | 6s    | 9s  | 12s  | 14s  | 16s  | 17s      | 22s    | 23s | 25s   | 30s    | 39s  | 49s    | 59s     |
+| player | names | ui  | rail | undo | chat | notes | presence | staged | fog | ruler | select | ping | panels | cursors |
+| ------ | ----- | --- | ---- | ---- | ---- | ----- | -------- | ------ | --- | ----- | ------ | ---- | ------ | ------- |
+| 4s     | 6s    | 9s  | 12s  | 14s  | 16s  | 16s   | 17s      | 22s    | 23s | 25s   | 30s    | 39s  | 49s    | 59s     |
 
 `drive-cursors.mjs` is the slowest and `drive-ping.mjs` is next, and both stay that way for the same
 reason: most of their time is spent waiting for something to expire, which is the feature.
@@ -229,7 +240,7 @@ SLATE_DM_SECRET=test-secret SLATE_STATE=scratch.json cargo run &
 until curl -sf http://127.0.0.1:3000/ >/dev/null; do sleep 1; done
 
 cd ..
-for d in player names ui rail undo panels chat presence staged fog ruler select ping cursors; do node tools/drive-$d.mjs; done
+for d in player names ui rail undo panels chat notes presence staged fog ruler select ping cursors; do node tools/drive-$d.mjs; done
 ```
 
 That whole block is a little over five minutes on the machine it was written on, and the order in it is the cheap
@@ -240,6 +251,28 @@ A driver killed part-way leaves two things behind that make the *next* run lie: 
 debug port, which the next `open()` attaches to and hangs on, and whatever tokens it had not tidied
 away yet. `taskkill //F //IM chrome.exe` and a fresh scratch file put both right. **Never pipe a
 driver through `head`** — it dies on the broken pipe part-way through and leaves exactly that mess.
+
+## What is in `uploads/`
+
+Every direct upload gets a fresh UUID filename and nothing ever deletes one, so the directory only
+grows — a map is capped at 25 MB, and re-uploading the same battle map five times keeps five copies.
+A library *pick* is fingerprinted and lands on one file however many times it is picked; an upload
+is not, deliberately (see [docs/maps.md](docs/maps.md)). On an always-on Pi that also grows every
+backup.
+
+```sh
+node tools/audit-uploads.mjs [state.json] [uploads/]
+```
+
+It reads the save file and the directory and sorts the files three ways: **in use** by the live
+board, the staged one or a token; **remembered**, meaning nothing shows it but the DM has calibrated
+it, so loading it again keeps its grid; and **unreferenced**, which nothing in the room points at.
+
+**It deletes nothing.** It prints the `rm` lines and the DM runs the ones they want, with the server
+stopped. A reaper inside the room actor is the thing deliberately not built: the room would have to
+know about the filesystem, and the one case it cannot judge — art referenced only by a calibration
+the DM may still want — is exactly the case worth a human look. Check the list before acting on it;
+a file uploaded since the last save is unreferenced only because the room has not been persisted yet.
 
 ## Hosting a remote session from Windows
 

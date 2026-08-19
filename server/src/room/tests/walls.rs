@@ -65,12 +65,7 @@ fn only_the_dm_may_trace_erase_or_open_anything() {
     state.handle(ClientId(1), trace(&[(0.0, 0.0), (64.0, 0.0)], true));
     let door = state.walls.first().expect("the door").id.clone();
 
-    for msg in [
-        a_corner(),
-        erase(door.clone()),
-        swing(door),
-        clear_walls(),
-    ] {
+    for msg in [a_corner(), erase(door.clone()), swing(door), clear_walls()] {
         assert!(
             state.check(ClientId(2), &msg).is_err(),
             "a player got as far as {msg:?}"
@@ -105,7 +100,11 @@ fn a_player_is_never_sent_a_wall_or_told_one_exists() {
     );
     assert!(
         state
-            .message_for(ClientId(1), dm_client, &Event::WallsChanged { staged: false })
+            .message_for(
+                ClientId(1),
+                dm_client,
+                &Event::WallsChanged { staged: false }
+            )
             .is_some(),
         "the DM is the one recipient it has"
     );
@@ -151,10 +150,7 @@ fn erasing_a_wall_that_is_already_gone_is_refused_not_ignored() {
     let _dm = join_as_dm(&mut state, ClientId(1));
 
     let err = state
-        .check(
-            ClientId(1),
-            &erase(WallId("nothing".to_owned())),
-        )
+        .check(ClientId(1), &erase(WallId("nothing".to_owned())))
         .expect_err("refused");
     assert!(err.contains("already gone"), "{err}");
 }
@@ -251,7 +247,10 @@ fn a_wall_command_names_a_slot_and_reaches_only_that_one() {
     let _dm = join_as_dm(&mut state, ClientId(1));
     state.handle(ClientId(1), a_corner());
     stage(&mut state, ClientId(1), "/uploads/next.webp");
-    state.handle(ClientId(1), staged(trace(&[(0.0, 0.0), (64.0, 0.0)], false)));
+    state.handle(
+        ClientId(1),
+        staged(trace(&[(0.0, 0.0), (64.0, 0.0)], false)),
+    );
 
     let live = state.walls.first().expect("live masonry").id.clone();
     let planned = staged_walls(&state).first().expect("staged").id.clone();
@@ -268,7 +267,11 @@ fn a_wall_command_names_a_slot_and_reaches_only_that_one() {
 
     state.handle(ClientId(1), staged(erase(planned)));
     assert!(staged_walls(&state).is_empty());
-    assert_eq!(state.walls.len(), 2, "the board never heard about any of it");
+    assert_eq!(
+        state.walls.len(),
+        2,
+        "the board never heard about any of it"
+    );
 }
 
 #[test]
@@ -309,7 +312,11 @@ fn a_player_is_never_sent_a_staged_wall_either() {
     );
     assert!(
         state
-            .message_for(ClientId(2), dm_client, &Event::WallsChanged { staged: true })
+            .message_for(
+                ClientId(2),
+                dm_client,
+                &Event::WallsChanged { staged: true }
+            )
             .is_none(),
         "not even an empty list: the frame itself is news"
     );

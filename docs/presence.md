@@ -89,6 +89,31 @@ frame goes out anyway. The alternative is the room remembering what it last said
 compare — state kept purely to avoid a repaint of seven chips. `refresh_pickers` beside it
 is unconditional for the same reason.
 
+### One way out, for both kinds of leaving
+
+A socket leaves the room for two reasons, and for a while only one of them said so.
+
+`RoomCmd::Disconnected` is the ordinary hang-up and it does the whole departure: drop the
+entry, refresh the pickers because a roster slot just came free, and dispatch `SketchEnded`
+and `PresenceChanged`. The other reason is `dispatch` itself — a client whose outbound
+mailbox is full is wedged, and dropping it is better than stalling the room on one bad peer.
+That path used to be a bare `clients.remove`, and because the disconnect arm is guarded on
+the entry *still being there*, the socket closing afterwards found nothing to do and every
+step above was skipped in silence.
+
+Nothing leaked; the room's own `here` was right the whole time, because it is derived from
+`clients` rather than stored. What was wrong is what the **other** clients had last been
+told — a name in the strip belonging to nobody, a roster slot that read as taken and could
+not be claimed, and a half-drawn sketch line with no one to end it. All three would sit
+there until some unrelated join or leave happened to refresh them.
+
+So there is one `RoomState::remove_client` and both callers go through it. It is re-entrant
+by way of `dispatch` and bounded because every call removes an entry before dispatching, so
+a client wedged by the frames it sends is removed by the nested call rather than by a second
+visit to the same one. `a_wedged_client_leaves_as_loudly_as_one_that_hung_up` is the test,
+and it asserts on what the *survivors* were sent, which is the only place the bug was ever
+visible.
+
 ### On screen
 
 **The top of the right-hand flex column, which is the one edge of that column that never

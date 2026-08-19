@@ -105,12 +105,22 @@ const MAX_WALL_POINTS: usize = 256;
 /// How many cells one override command may name.
 ///
 /// A flood fill is legitimately thousands — a large dungeon room is a few
-/// hundred, the whole traced level is a few thousand — so this is generous on
-/// purpose. What it bounds is the fill that escapes through a gap the DM did not
-/// notice and the client that sends a million cells for any other reason: the
-/// frame is the cost, and the refusal names the size so the DM knows to fill a
-/// smaller region rather than wondering what went wrong.
-const MAX_OVERRIDE_CELLS: usize = 50_000;
+/// hundred, the whole traced level is a few thousand, and a 4000×3000 map at
+/// 50 px to the cell is 80×60 — so this is generous on purpose. What it bounds
+/// is the fill that escapes through a gap the DM did not notice and the client
+/// that sends a million cells for any other reason: the frame is the cost, and
+/// the refusal names the size so the DM knows to fill a smaller region rather
+/// than wondering what went wrong.
+///
+/// **That refusal is only deliverable because this number is reconciled against
+/// `MAX_WS_MESSAGE_BYTES`.** `cells` is a `Vec<Cell>` and a `Cell` is a tuple,
+/// so the command carries `[x,y]` per cell — up to 12 bytes with the comma at
+/// four-digit coordinates. 8,000 of them is ~94 KiB inside a 128 KiB frame.
+/// It shipped at 50,000 against a 16 KiB frame, which is 25× over: the socket
+/// died on the read and the DM's page reloaded, so the check below never ran.
+/// `fog_of_war::largest_override_fits_in_a_frame` is what keeps the two honest,
+/// and `MAX_FILL_CELLS` in `fogtool.ts` mirrors it — see `docs/net.md`.
+const MAX_OVERRIDE_CELLS: usize = 8_000;
 
 /// How much of a session's talk the room keeps.
 ///
@@ -895,28 +905,7 @@ async fn run(mut state: RoomState, mut rx: mpsc::Receiver<RoomCmd>, store: Store
                 false
             }
             RoomCmd::Disconnected { client } => {
-                state.pending.remove(&client);
-                if state.clients.remove(&client).is_some() {
-                    debug!(?client, remaining = state.clients.len(), "client left");
-                    // That slot just came free; anyone still on the picker
-                    // should see it immediately.
-                    state.refresh_pickers();
-                    // A client that vanishes mid-sweep sends no release, and
-                    // its line would sit on five other screens until somebody
-                    // reloaded. Sent unconditionally, because "was that client
-                    // sketching" is state the room would have to keep to answer
-                    // and an id nobody is drawing is a no-op on arrival.
-                    //
-                    // This is what a movement ruler cannot have: nothing tells
-                    // the room a drag stopped, so that one guesses with a
-                    // timeout. Here the socket closing *is* the news.
-                    // The socket is already out of `clients`, so neither of
-                    // these reaches it and `here` no longer counts it.
-                    state.dispatch(
-                        client,
-                        &[Event::SketchEnded { by: client }, Event::PresenceChanged],
-                    );
-                }
+                state.remove_client(client);
                 // Who happens to be connected is not part of the room. That
                 // sentence is why `persists` refuses `PresenceChanged` and why
                 // this arm still returns `false` having just sent one.
@@ -4081,9 +4070,53 @@ impl RoomState {
         for client in wedged {
             // Dropping the sender ends that connection's send task, which
             // closes its socket. Better than stalling the room on one bad peer.
+            //
+            // Through `remove_client` and not a bare `clients.remove`, which is
+            // what this was. The socket closing does raise `Disconnected`, but
+            // that arm is guarded on the entry still being there — so removing
+            // it here used to mean the guard was false when the news arrived and
+            // every departure step was skipped in silence.
             warn!(?client, "outbound mailbox full, dropping client");
-            self.clients.remove(&client);
+            self.remove_client(client);
         }
+    }
+
+    /// The one way a client leaves, whether it hung up or wedged.
+    ///
+    /// **Two callers and they used to disagree.** `Disconnected` did all of this;
+    /// `dispatch` dropped a wedged client with a bare `clients.remove` and left
+    /// the room believing they were still here — the presence strip still named
+    /// them, their roster slot still read as taken to anyone sitting on the
+    /// picker, and a sketch they were part way through stayed on every other
+    /// screen. Not a leak, but three things the table can see and nothing to
+    /// explain them.
+    ///
+    /// Re-entrant by way of `dispatch`, and bounded because every call removes at
+    /// least one entry before dispatching: a client wedged by the frames sent
+    /// here is removed by the nested call, not by a second visit to this one.
+    fn remove_client(&mut self, client: ClientId) {
+        self.pending.remove(&client);
+        if self.clients.remove(&client).is_none() {
+            return;
+        }
+        debug!(?client, remaining = self.clients.len(), "client left");
+        // That slot just came free; anyone still on the picker should see it
+        // immediately.
+        self.refresh_pickers();
+        // A client that vanishes mid-sweep sends no release, and its line would
+        // sit on five other screens until somebody reloaded. Sent
+        // unconditionally, because "was that client sketching" is state the room
+        // would have to keep to answer and an id nobody is drawing is a no-op on
+        // arrival.
+        //
+        // This is what a movement ruler cannot have: nothing tells the room a
+        // drag stopped, so that one guesses with a timeout. Here the socket
+        // closing *is* the news. The socket is already out of `clients`, so
+        // neither of these reaches it and `here` no longer counts it.
+        self.dispatch(
+            client,
+            &[Event::SketchEnded { by: client }, Event::PresenceChanged],
+        );
     }
 
     /// The visibility filter. One `Event` in, at most one `ServerMsg` out, per

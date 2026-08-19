@@ -33,7 +33,20 @@ const MAX_MAP_BYTES: usize = 25 * 1024 * 1024;
 const MAX_TOKEN_BYTES: usize = 4 * 1024 * 1024;
 /// Protocol frames are tiny JSON commands. Keeping this bounded prevents a
 /// public WebSocket from using one frame to reserve an unreasonable buffer.
-const MAX_WS_MESSAGE_BYTES: usize = 16 * 1024;
+///
+/// **Inbound only** — `max_message_size` and `max_frame_size` gate tungstenite's
+/// *read* path, so nothing here bounds a `Welcome` on its way out. What it does
+/// bound is every command, and one of them carries a variable-length collection:
+/// `SetFogOverride` names its cells one pair at a time. `MAX_OVERRIDE_CELLS` is
+/// reconciled against this number and a test in `room::tests::fog_of_war`
+/// serialises the largest legal one and asserts it fits — see `docs/net.md`.
+/// It shipped at 16 KiB, which was under a legitimate room fill and dropped the
+/// DM's socket rather than refusing the command.
+///
+/// The cost of the larger number is that a socket which has not said who it is
+/// yet may push this much; acceptable behind a tunnel with a DM secret, and
+/// worth saying out loud rather than leaving implied.
+pub(crate) const MAX_WS_MESSAGE_BYTES: usize = 128 * 1024;
 const DM_SECRET_HEADER: &str = "x-slate-dm-secret";
 
 /// Milestone 2 is one hardcoded room, so the handle lives directly in app

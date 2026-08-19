@@ -25,9 +25,15 @@ use crate::room::{MAX_MAP_PX, MAX_SHAPE_CELLS};
 /// `(3.5, 3.5)` stands in is `(3, 3)`.
 ///
 /// A tuple rather than a struct, unlike `Pos` and `Px`: it is an index into a
-/// lattice rather than a position on the board, it is never serialized as itself
-/// — `FogView` packs it — and it wants to be a `HashSet` key, which is one derive
-/// instead of four.
+/// lattice rather than a position on the board, and it wants to be a `HashSet`
+/// key, which is one derive instead of four.
+///
+/// **Outbound it is never serialized as itself — `FogView` packs a whole
+/// rectangle of them into one string. Inbound it is**: `SetFogOverride` carries
+/// `Vec<Cell>`, one `[x,y]` pair per cell, because the DM's client computes the
+/// fill to preview it and the preview and the result have to be the same array.
+/// This comment used to claim the packing held in both directions, which is how
+/// `MAX_OVERRIDE_CELLS` came to be 25× what a frame could hold.
 pub type Cell = (i32, i32);
 
 /// A grid cell is five feet. The one piece of tabletop arithmetic in the server,

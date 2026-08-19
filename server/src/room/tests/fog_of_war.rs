@@ -1051,6 +1051,63 @@ fn an_override_is_refused_where_it_could_do_nothing() {
     );
 }
 
+/// The assertion whose absence was the bug.
+///
+/// Every other test here drives `check` directly, which is the only way to see
+/// what a client was not sent — and it is also a way to pass green over a path
+/// production cannot reach. `MAX_OVERRIDE_CELLS` shipped at 50,000 against a
+/// 16 KiB frame, so the refusal the test above asserts was undeliverable: the
+/// socket died on the read and the DM's page reloaded instead.
+///
+/// So this one asserts on the bytes rather than on the room. Worst case is what
+/// matters — four-digit coordinates, `[1234,5678],` at 12 bytes — because a cap
+/// that only fits at two digits fails on a big map, which is the map a fill that
+/// size comes from.
+///
+/// It builds the frame rather than serialising a `ClientMsg`, which is inbound
+/// and so carries no `Serialize`. That is the better half of the bargain: the
+/// text below is what a client actually puts on the wire, and deserialising it
+/// back is what proves the shape being measured is the real one.
+#[test]
+fn largest_override_fits_in_a_frame() {
+    // Four digits in both coordinates, and every cell distinct, so nothing here
+    // is cheaper to serialise than the real thing.
+    let cells: Vec<Cell> = (0..MAX_OVERRIDE_CELLS)
+        .map(|i| (1000 + (i % 9000) as i32, 1000 + (i / 9000) as i32))
+        .collect();
+    let frame = serde_json::json!({
+        "type": "set_fog_override",
+        "cells": cells,
+        "state": Override::Dark,
+        "staged": false,
+    });
+    let bytes = serde_json::to_vec(&frame).expect("encodes");
+
+    // The shape above is the server's own, not this test's idea of it.
+    let parsed: ClientMsg = serde_json::from_slice(&bytes).expect("the server parses its own");
+    assert!(
+        matches!(parsed, ClientMsg::SetFogOverride { cells, .. } if cells.len() == MAX_OVERRIDE_CELLS),
+        "the frame being measured is the command being capped",
+    );
+
+    assert!(
+        bytes.len() <= crate::MAX_WS_MESSAGE_BYTES,
+        "the largest legal fill is {} bytes and the frame cap is {} — the DM's \
+         socket would die on the read before `check` could name the refusal",
+        bytes.len(),
+        crate::MAX_WS_MESSAGE_BYTES,
+    );
+
+    // And the other way round, because a cap far under the frame is a fill the
+    // DM is refused for no reason. Half is the loosest bound worth asserting.
+    assert!(
+        bytes.len() * 2 >= crate::MAX_WS_MESSAGE_BYTES,
+        "the cap has drifted well under what a frame holds ({} of {})",
+        bytes.len(),
+        crate::MAX_WS_MESSAGE_BYTES,
+    );
+}
+
 #[test]
 fn moving_the_lattice_forgets_the_overrides_and_a_new_map_does_too() {
     // Cells, like the two sets they mask — so the squares moving underneath
