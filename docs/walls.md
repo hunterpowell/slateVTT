@@ -198,7 +198,8 @@ harmless, and it is also what a DM who double-clicked by accident meant.
 
 ### Snapping lives in the client
 
-`snapToCorner` is the second snapping rule on this side of the wire, after `originCell`, and it is
+`snapToCorner` is the third snapping rule on this side of the wire, after `snapOrigin` and
+`snapExtent`, and it is
 here for the same reason: a run is authored one click at a time and the DM has to watch each corner
 land where it will actually sit, with the rubber band drawn from it. A snap applied on the server
 would arrive after the polyline had already been drawn somewhere else, and the whole trace would

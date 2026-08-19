@@ -1592,6 +1592,17 @@
         margin: 8px 0;
       }
 
+      /* The measure tool draws in the sweeper's own colour, so the picked
+         swatch is not what would come out. Dimmed rather than hidden: the pick
+         is still there and comes back with the next area tool. */
+      .draw-swatches.is-inert {
+        opacity: 0.35;
+      }
+
+      .draw-swatches.is-inert .draw-swatch {
+        cursor: default;
+      }
+
       .draw-swatch {
         width: 20px;
         height: 20px;

@@ -245,6 +245,15 @@ attribute everybody else's lines. So `colours` goes whole to every client and th
 filter on it at all, which makes it the **first player-writable state in this project that
 is not private**. It does not inherit `notes_for` and it should not.
 
+### What reads it
+
+`colourOf` is the only way in, and its readers are the ring a ping draws, the dot and name a cursor
+draws, the chip in the presence strip, the attribution in the chat log — and **the measure tool**,
+which is the one that is not a label beside somebody's name but a thing drawn on the board. It is
+still the same argument: a measure line is a gesture that ends at the release, so it is whose it is
+rather than what it is. The three area tools keep the draw palette, because they outlive the hand
+that made them. See `docs/drawings.md`.
+
 ### An index into a closed palette, not free hex
 
 `pings.ts` records that its six hues deliberately avoid the token ring vocabulary in

@@ -12,7 +12,7 @@ import type { Rulers } from './ruler.js';
 import type { Scene, Token } from './scene.js';
 import { shownBoard, shownPos, shownWalls, showingStaged } from './scene.js';
 import type { Sketches } from './shapes.js';
-import { anchorable, clampExtent, erasableAt, originCell } from './shapes.js';
+import { anchorable, clampExtent, erasableAt, snapExtent, snapOrigin } from './shapes.js';
 import type { WallTool } from './walltool.js';
 import { snapToCorner, wallAt } from './walls.js';
 
@@ -733,12 +733,16 @@ export function attachInput(
         tool,
         keeps: drawTool.keeps,
         color: drawTool.color,
-        // A free-placed sweep starts at the centre of the cell it began in, so
-        // a circle is centred on a square rather than on wherever in it the
-        // pointer happened to land. An anchored one starts at the token's own
-        // position instead — an aura is centred on the creature, including a
-        // wide one whose centre is a corner where four cells meet.
-        at: on === null ? originCell(gridUnder(w)) : { x: on.x, y: on.y },
+        // A free-placed sweep starts on the nearest point of the half-cell
+        // lattice — a centre, a corner or the middle of an edge — so a circle
+        // is centred on a square or an intersection rather than on wherever in
+        // the cell the pointer happened to land. Alt is not offered a way past
+        // it: it already means "do not anchor" on this event, and the origin is
+        // the one end of a sweep nobody has ever wanted off the grid. An
+        // anchored sweep starts at the token's own position instead — an aura
+        // is centred on the creature, including a wide one whose centre is a
+        // corner where four cells meet.
+        at: on === null ? snapOrigin(gridUnder(w)) : { x: on.x, y: on.y },
         anchor: on?.id ?? null,
         to: { x: 0, y: 0 },
         fromX: p.x,
@@ -885,7 +889,14 @@ export function attachInput(
 
     if (drag.kind === 'draw') {
       const g = gridUnder(w);
-      drag.to = clampExtent({ x: g.x - drag.at.x, y: g.y - drag.at.y });
+      const reach = { x: g.x - drag.at.x, y: g.y - drag.at.y };
+      // Snapped to whole cells, so what is drawn is what the label reads. Alt
+      // sweeps free, which is the wall tool's key for the wall tool's reason —
+      // and it is read *here*, on the move, rather than latched at pointerdown
+      // beside the tool and the colour. That is what keeps it from colliding
+      // with the other thing Alt means on the way down: holding it to sweep
+      // straight through a creature must not also throw away the snap.
+      drag.to = clampExtent(e.altKey ? reach : snapExtent(drag.tool, reach));
       // A pointer that has barely left where it went down is still a click, and
       // a click erases. Nothing is sent until it is a sweep, so an erase costs
       // the room no frames at all.
@@ -946,7 +957,11 @@ export function attachInput(
     cancelTrailingSend();
     send({ type: 'sketch', kind: d.tool, at: d.at, to: d.to, color: d.color, drawing: false });
 
-    if (!d.keeps) return;
+    // A sweep that snapped to nothing keeps nothing. The release above still
+    // goes out — five other screens were shown this — but committing a shape
+    // with no extent leaves something on the board that cannot be seen and can
+    // only be erased by clicking the square it is hiding in.
+    if (!d.keeps || (d.to.x === 0 && d.to.y === 0)) return;
     const from: WireOrigin =
       d.anchor === null ? { kind: 'point', at: d.at } : { kind: 'token', at: d.anchor };
     send({ type: 'add_shape', kind: d.tool, from, to: d.to, color: d.color });

@@ -37,9 +37,9 @@ import { createPicker } from './picker.js';
 import type { Cursors } from './cursors.js';
 import { createCursors } from './cursors.js';
 import type { Pings } from './pings.js';
-import { createPings } from './pings.js';
+import { colourOf, createPings } from './pings.js';
 import type { Presence } from './presence.js';
-import { createPresence } from './presence.js';
+import { createPresence, ownerOf } from './presence.js';
 import type {
   ClientMsg,
   Initiative,
@@ -500,8 +500,17 @@ function boot(): void {
       // Built for everyone, unlike the two panels below it. Anyone may draw —
       // this is the first thing a player can add to the room, and the only
       // thing that differs by identity here is the clear-all button.
-      drawTool = createDrawTool(ui.drawtool, identity.isDm, (msg) => net.send(msg), () =>
-        wallTool?.stop(),
+      drawTool = createDrawTool(
+        ui.drawtool,
+        identity.isDm,
+        (msg) => net.send(msg),
+        // Whose line it is, for the measure tool. Reached for lazily like the
+        // panel's `lookAt` above: presence is built a few lines below this one
+        // and owns the live colour table, so a player changing their mind
+        // changes the next line they measure. Before it exists nobody has
+        // picked anything, which is exactly what an empty table means.
+        () => colourOf(ownerOf(identity), welcome.roster, presence?.colours ?? {}),
+        () => wallTool?.stop(),
       );
 
       // Before the chat panel, which reads through it. Everybody's, like the

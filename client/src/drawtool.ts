@@ -6,11 +6,13 @@
 // only the DM is offered "clear all", since that reaches into five other
 // people's drawings.
 //
-// Which tool is in hand decides two things and no more:
+// Which tool is in hand decides three things and no more:
 //
 //   what gets swept   the kind on every frame
 //   what a release does  the measure tool keeps nothing; the three area tools
 //                        follow the release with an `add_shape`
+//   what colour it is  the measure tool is drawn in the sweeper's own hue; the
+//                      three area tools take the swatch that is picked
 //
 // That second one is entirely ours. The server takes all four kinds, stores
 // whichever it is told to store, and never learns which tool was in hand — the
@@ -41,14 +43,26 @@ export interface DrawTool {
 }
 
 /**
+ * How hard everything this panel draws reads, as the `aa` of `#rrggbbaa`.
+ *
+ * Baked into every entry of the palette below rather than offered — how hard a
+ * spell area reads is a thing to get right once, and the renderer multiplies it
+ * down again for the fill. It is a named constant rather than six literals'
+ * worth of tail because the measure tool has to say it about a colour that came
+ * from somewhere else: `colourOf` answers in `#rrggbb` and the server accepts no
+ * shape but the eight-digit one.
+ */
+const SHAPE_ALPHA = 'e6';
+
+/**
  * The palette, as `#rrggbbaa`.
  *
- * Alpha is baked in rather than offered: how hard a spell area reads is a thing
- * to get right once, and the renderer multiplies it down again for the fill. The
- * hues deliberately avoid the ring vocabulary on the tokens — gold is ownership,
- * blue is in progress, white is the turn, violet is hidden, teal is staged-only
- * — so a shape can never be mistaken for something the board is saying about a
- * creature.
+ * The hues deliberately avoid the ring vocabulary on the tokens — gold is
+ * ownership, blue is in progress, white is the turn, violet is hidden, teal is
+ * staged-only — so a shape can never be mistaken for something the board is
+ * saying about a creature. They avoid `PLAYER_HUES` for no such reason: a
+ * measure line is now drawn in one of those and it is *meant* to be read as
+ * whose it is, and nothing it could be confused with outlives the release.
  */
 const PALETTE: readonly { value: string; name: string }[] = [
   { value: '#ff8c42e6', name: 'ember' },
@@ -63,7 +77,7 @@ const TOOLS: readonly { kind: ShapeKind; label: string; hint: string }[] = [
   {
     kind: 'line',
     label: 'measure',
-    hint: 'Drag to measure. Everyone sees it while you hold it; it vanishes when you let go.',
+    hint: 'Drag to measure, in your own colour. Everyone sees it while you hold it; it vanishes when you let go.',
   },
   { kind: 'circle', label: 'circle', hint: 'Drag from the centre out. Stays until somebody erases it.' },
   { kind: 'cone', label: 'cone', hint: 'Drag from the point outwards. It is as wide as it is long.' },
@@ -78,6 +92,19 @@ export function createDrawTool(
   ui: DrawToolUi,
   isDm: boolean,
   send: (msg: ClientMsg) => void,
+  /**
+   * This client's own hue as `#rrggbb`, which is what the measure tool draws in.
+   *
+   * A function rather than a value because it has two ways of going stale: this
+   * panel is built before the one that holds the colour table, and a player may
+   * change their mind at any point after that. Asked at the moment a sweep
+   * starts, so the next line measured is in whatever they last picked.
+   *
+   * Passed in rather than reached for. `colourOf` wants a roster and the live
+   * table, and this file has never needed to know that either exists — what it
+   * is being told is one string.
+   */
+  mine: () => string,
   /**
    * Called when a tool is picked up here, so whatever else had taken the left
    * button can let go of it.
@@ -121,13 +148,22 @@ export function createDrawTool(
       kind = kind === tool.kind ? null : tool.kind;
       if (kind !== null) onArm();
       showTool();
+      showColor();
     });
     buttons.set(tool.kind, button);
     ui.tools.append(button);
   }
 
   const showColor = (): void => {
+    // Inert while the measure tool is in hand, because the swatch it is showing
+    // as picked is not what would be drawn. A panel that looks armed and is not
+    // is the same lie a live tab on a dead panel would be — and it is dimmed
+    // rather than hidden, since the pick is still there and comes back with the
+    // next area tool.
+    const inert = kind === EPHEMERAL;
+    ui.swatches.classList.toggle('is-inert', inert);
     for (const swatch of ui.swatches.querySelectorAll('button')) {
+      swatch.disabled = inert;
       swatch.classList.toggle('is-on', swatch.dataset['color'] === color);
     }
   };
@@ -164,6 +200,7 @@ export function createDrawTool(
     if (e.key !== 'Escape' || kind === null) return;
     kind = null;
     showTool();
+    showColor();
   });
 
   showTool();
@@ -175,7 +212,13 @@ export function createDrawTool(
       return kind;
     },
     get color() {
-      return color;
+      // The measure tool is whose it is rather than what was picked: a line
+      // that vanishes on release is a gesture, like a ping, and the question
+      // its watchers have is who is measuring. The three area tools keep the
+      // palette, because a shape that stays on the board is a thing rather
+      // than somebody, and six players' worth of hue is not a vocabulary for
+      // spell areas.
+      return kind === EPHEMERAL ? mine() + SHAPE_ALPHA : color;
     },
     get keeps() {
       return kind !== null && kind !== EPHEMERAL;
@@ -183,6 +226,7 @@ export function createDrawTool(
     stop() {
       kind = null;
       showTool();
+      showColor();
     },
   };
 }

@@ -14,7 +14,8 @@ import {
   feetOf,
   isArea,
   labelFor,
-  originCell,
+  snapExtent,
+  snapOrigin,
   shapeEnd,
 } from './shapes.js';
 import { feetMoved } from './ruler.js';
@@ -131,9 +132,32 @@ test('a sweep is held inside what the server will accept', () => {
   assert.deepEqual(clampExtent(at(5, -5)), { x: 5, y: -5 });
 });
 
-test('a free-placed shape starts at the centre of the cell clicked', () => {
-  assert.deepEqual(originCell(at(2.9, 2.1)), { x: 2.5, y: 2.5 });
-  assert.deepEqual(originCell(at(-0.1, -2.9)), { x: -0.5, y: -2.5 }, 'below zero too');
+test('a free-placed shape starts on the nearest half-cell point', () => {
+  // The three the hand thinks of — a centre, a corner, the middle of an edge —
+  // are one lattice, so all three come out of the same round to the nearest
+  // half rather than out of a search over three candidate sets.
+  assert.deepEqual(snapOrigin(at(2.9, 2.1)), { x: 3, y: 2 }, 'a corner');
+  assert.deepEqual(snapOrigin(at(2.6, 2.4)), { x: 2.5, y: 2.5 }, 'a centre');
+  assert.deepEqual(snapOrigin(at(2.4, 2.9)), { x: 2.5, y: 3 }, 'the middle of an edge');
+  assert.deepEqual(snapOrigin(at(-0.6, -2.4)), { x: -0.5, y: -2.5 }, 'below zero too');
+});
+
+test('a line and a rectangle snap per axis, onto the lattice the origin is on', () => {
+  // Both are pointed at squares: a rectangle reads as two numbers, and a line
+  // is dragged to the cell being measured to. From an origin on the lattice a
+  // whole-cell offset lands the far point on it as well.
+  assert.deepEqual(snapExtent('rect', at(3.4, -2.6)), { x: 3, y: -3 });
+  assert.deepEqual(snapExtent('line', at(0.4, 4.5)), { x: 0, y: 5 });
+});
+
+test('a circle and a cone snap their length and keep their bearing', () => {
+  // Per axis would leave the radius irrational and the label lying about it:
+  // (4, 4) is 5.66 cells, drawn as 28 ft under a label reading 30.
+  const c = snapExtent('circle', at(4, 4));
+  assert.ok(Math.abs(Math.hypot(c.x, c.y) - 6) < 1e-9, 'a whole number of cells out');
+  assert.ok(Math.abs(c.x - c.y) < 1e-9, 'along the bearing it was swept on');
+  assert.deepEqual(snapExtent('cone', at(3.2, 0)), { x: 3, y: 0 });
+  assert.deepEqual(snapExtent('circle', at(0, 0)), { x: 0, y: 0 }, 'and no divide by zero');
 });
 
 test('the far point is the origin plus the offset it stored', () => {

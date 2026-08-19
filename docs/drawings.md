@@ -46,6 +46,26 @@ whatever it is told to, and never learns which tool was in hand — the same rul
 learning the DM is previewing. A "keep this line" toggle would be a change to `drawtool.ts` and to
 nothing else.
 
+**The measure tool draws in the sweeper's own colour, and the three area tools take the swatch.**
+That is the third thing which tool is in hand decides, beside what gets swept and whether the release
+keeps anything, and it splits along the same line the other two do: a line that vanishes when you let
+go is a *gesture*, so what its watchers want to know is who is measuring — the question `Pinged`
+carries an `Owner` to answer. A shape that stays on the board is a thing rather than somebody, and
+`PLAYER_HUES` is not a vocabulary for spell areas: six of them mean six people, and a fireball is
+nobody.
+
+Nothing on the wire changed for it. `Sketch` is keyed by `ClientId` rather than by `Owner`, so a
+recipient cannot derive whose line it is the way it derives a ping's colour — the colour has to
+travel, and it already did. What changed is the one line that reads `drawTool.color` at pointerdown,
+and `colourOf` gained a reader. The alpha is `SHAPE_ALPHA`, spelled out because `colourOf` answers in
+`#rrggbb` and `shape_fields` on the server accepts nothing but the eight-digit form.
+
+The swatch row goes **inert while the measure tool is armed** rather than hidden. A picked swatch
+that is not what would be drawn is the same lie as a live tab on a dead panel, and the pick is still
+there and comes back with the next area tool. The DM's own hue is `DM_HUE`, which is the palette's
+chalk to the digit — so their measure line looks exactly as it always did, and nothing about this
+change is visible on a DM's screen at all.
+
 **A stranded sketch dies on disconnect, not on a timeout.** The room is told when a socket closes,
 so `RoomCmd::Disconnected` dispatches `SketchEnded` unconditionally — an id nobody is drawing is a
 no-op on arrival, and that is cheaper than keeping "is this client sketching" as state. This is the
@@ -127,19 +147,57 @@ A cone is as wide as it is long (`atan(0.5)`), which is a statement about a wedg
 breath weapon. Its far edge is an arc, because the far edge of a wedge is every point the same
 distance from the apex — the same reason a circle is not a square.
 
-**A free-placed shape starts at the centre of the cell it began in.** `originCell`, and it is the
-one snapping rule that lives in the client — deliberately, and it is not the token rule written
-twice. `snap_to_cell` depends on how wide a token is; a shape has no width to settle by, so its
-origin is always a cell centre. And it *has* to be decided here: a token's drop is echoed back
-carrying its settled position, so the client can afford never to snap, whereas a sweep is relayed
-and never echoed, and an origin settled on the server would arrive after five people had watched
-the circle being drawn somewhere else. An anchored shape skips it and sits on its token, which the
-server has already settled — an aura on a 2×2 creature belongs on the creature, not in one of the
-four cells under it.
+### Both ends snap
+
+**A sweep is snapped at both ends, and the two ends snap to different things** — `snapOrigin` and
+`snapExtent`, and they are the first snapping rules that live in the client.
+
+**The origin goes to the nearest point on the half-cell lattice.** Cell centres, the corners between
+them and the middle of every cell edge are one set rather than three: union them and what is left is
+every half-integer, so the rule is a round to the nearest half and there is no search over candidate
+sets. Which of the three a sweep lands on is a question about where the hand was. A centre is where a
+circle on somebody's square goes, a corner is where the table actually drops a fireball, and an edge
+midpoint falls out for free. This replaced a snap to cell centres alone, under which a rectangle
+could not be drawn aligned to the squares it covers at all — its outline ran through the middle of
+four rows and only the tint was telling the truth.
+
+**The extent goes to whole cells, so what is drawn is what is read**, and the split there is by what
+a kind's label says. A rectangle reads as two numbers and a line is dragged at a square, so both snap
+*per axis*; from an origin on the lattice that lands the far point on the lattice too, corner to
+corner and centre to centre. A circle and a cone read as one number that is a *length*, and per-axis
+snapping does not make a length whole — four cells across and four up is a radius of 5.66 cells,
+drawn as 28 ft under a label reading 30. So those two snap the **magnitude** and leave the bearing
+free: a cone is pointed wherever it is pointed, and the rim of a 20 ft circle is 20 ft away on every
+bearing. `feetOf`'s rounding is still there and still needed — for an Alt sweep, and for an anchored
+one whose origin was settled by something else — but it has stopped being what decides whether a
+spell area is the size the DM said out loud.
+
+**Alt sweeps free, and it is read on the move rather than latched at pointerdown** beside the tool
+and the colour. That is the whole of what keeps it from colliding with the other thing Alt means on
+the way down: holding it to sweep straight through a creature must not also throw away the origin
+snap. The origin is offered no way past the lattice at all — it is the end of a sweep nobody has
+wanted off the grid, and it snapped before this was a feature.
+
+**A sweep that snapped to nothing keeps nothing.** The release frame still goes out, because five
+other screens were shown the sketch, but a zero extent is not committed: a shape with no size is one
+nobody can see and nobody can find to erase. Rounding is what makes that reachable — free-hand, a
+sweep past the click slop always had *some* extent.
+
+Neither rule is the token rule written twice. `snap_to_cell` depends on how wide a token is — an
+even width settles on the corner four cells meet at — and it lives on the server as the only copy of
+itself; a shape has no width to settle by, so it is offered every point on the lattice and the hand
+picks. That the two lattices coincide is what lets an anchored shape skip all of this and still sit
+on one of these points. And it *has* to be decided here: a token's drop is echoed back carrying its
+settled position, so the client can afford never to snap, whereas a sweep is relayed and never
+echoed, and an origin settled on the server would arrive after five people had watched the circle
+being drawn somewhere else. An anchored shape sits on its token, which the server has already
+settled — an aura on a 2×2 creature belongs on the creature, not in one of the four cells under it.
 
 That snap is also why a sweep and a click are told apart by **pointer travel in screen pixels**
 rather than by the offset still being zero: from a snapped origin the offset is up to half a cell
 the instant the hand twitches, and the old test would have turned every erase into a kept circle.
+Snapping the far end does not give that test back — the offset now rounds to zero over a whole cell
+of travel, which is the wrong side of the same mistake.
 
 **A sweep starting on a token anchors to it**, with Alt to sweep straight through. No extra UI, and
 it is where most auras start. The tool and colour are fixed at pointerdown like a drag's `staged`

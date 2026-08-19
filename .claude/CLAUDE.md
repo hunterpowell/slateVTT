@@ -533,8 +533,17 @@ an *offset* from the origin rather than a second position. One hit test and one 
 both `containsPoint`. Geometry is in grid units like a token, so recalibrating leaves a 20 ft
 circle 20 ft across.
 
+**A sweep snaps at both ends and both rules are the client's** — the origin to the nearest point of
+the half-cell lattice (centres, corners, edge midpoints, which are one set), the extent to whole
+cells: per axis for a line and a rectangle, by magnitude for a circle and a cone, so the drawn size
+is the number on the label. Alt sweeps free and is read on the move, not at pointerdown, where it
+already means something else.
+
 **Anyone may draw** — the only thing in the room a player can add, and the only thing they can
-destroy; `can_erase` is the DM or whoever drew it. A shape being swept out is on the wire and is
+destroy; `can_erase` is the DM or whoever drew it. **The measure tool draws in the sweeper's own
+colour** and the three area tools take the picked swatch: a line that vanishes on release is a
+gesture and the question is whose, while a shape that stays is a thing and `PLAYER_HUES` is not a
+vocabulary for spell areas. Nothing on the wire changed — a sketch already carried its colour. A shape being swept out is on the wire and is
 not in the room (`ClientMsg::Sketch` carries `drawing`, the way `MoveToken` carries `dragging`).
 There are no staged shapes. `shapes_for` withholds a shape whose anchor the recipient cannot see,
 through `unseen_by_table` — so an aura on a monster in the dark goes with it, and no new line was
@@ -582,15 +591,15 @@ the wire. The sender is not echoed their own. **A ping off the edge of your view
 the edge of the screen**, never a camera pan.
 
 → **`docs/drawings.md`** before touching `shapes.ts`, `drawtool.ts`, `ruler.ts`, `pings.ts`,
-`trailCells`, `crossesWall`, `edgeMarker`, `SetDiagonals`, or `Shape`/`ShapeKind`/`Sketch`/`Ping` on
-the server.
+`snapOrigin`/`snapExtent`, `trailCells`, `crossesWall`, `edgeMarker`, `SetDiagonals`, or
+`Shape`/`ShapeKind`/`Sketch`/`Ping` on the server.
 
 ## Walls and doors
 
 The DM traces a polyline — click, click, double-click — and the room stores **one `Wall` per gap
 between corners**. The run is authoring and is never stored, which is what makes one bad segment of
 a long trace erasable without redrawing it. Corners snap to grid corners, Alt places freely, and
-that snap is the client's like `originCell` is.
+that snap is the client's like `snapOrigin` is.
 
 **In image pixels, not cells** — invariant 1's exception, because a wall traces the art. A door is
 `WallKind::Door(bool)` rather than a flag beside a wall, so "a solid wall that is open" cannot be

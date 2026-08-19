@@ -44,8 +44,8 @@ export function wallFromWire(wire: WireWall): Wall {
 /**
  * The nearest grid corner to a world point.
  *
- * The second snapping rule that lives in the client rather than on the server,
- * and it is here for `originCell`'s reason rather than despite it: a run is
+ * The third snapping rule that lives in the client rather than on the server,
+ * and it is here for `snapOrigin`'s reason rather than despite it: a run is
  * authored one click at a time and the DM has to watch each corner land where
  * it will actually sit, with the segment to the cursor drawn from it. A snap
  * applied on the server would arrive after the polyline had already been drawn

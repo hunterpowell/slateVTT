@@ -37,13 +37,25 @@ export function clampExtent(to: Vec2): Vec2 {
 }
 
 /**
- * The centre of the cell a point falls in. Where a free-placed shape starts.
+ * The nearest point on the half-cell lattice. Where a free-placed shape starts.
+ *
+ * Cell centres, the corners between them and the middle of every cell edge are
+ * one set and not three: union them and what is left is every half-integer, so
+ * the whole rule is a round to the nearest half. Which of the three a given
+ * point lands on is a question about that point rather than about the code.
+ *
+ * A centre is where a circle on one creature's square goes and a corner is
+ * where the table actually drops a fireball; a rectangle starting on a centre
+ * could never be drawn aligned to the squares it covers at all, which is what
+ * this replaced.
  *
  * This is **not** the token rule and does not duplicate it. `snap_to_cell`
  * depends on how wide a token is — an even width settles on the corner four
  * cells meet at — and it lives on the server as the only copy of itself. A
- * shape has no width to settle by, so its origin is always a cell centre, and
- * that is a different sentence rather than the same one written twice.
+ * shape has no width to settle by, so it is offered every point on the lattice
+ * and the hand picks; that is a different sentence rather than the same one
+ * written twice. The two lattices coincide, which is what lets an anchored
+ * shape skip this and still sit on one of these points.
  *
  * It also has to be said here rather than on the server, which is the honest
  * reason it is in the client at all. A token's drop is echoed back carrying the
@@ -55,8 +67,34 @@ export function clampExtent(to: Vec2): Vec2 {
  * position, which the server has already settled, and an aura on a 2x2 creature
  * belongs on that creature rather than in one of the four cells it covers.
  */
-export function originCell(at: Vec2): Vec2 {
-  return { x: Math.floor(at.x) + 0.5, y: Math.floor(at.y) + 0.5 };
+export function snapOrigin(at: Vec2): Vec2 {
+  return { x: Math.round(at.x * 2) / 2, y: Math.round(at.y * 2) / 2 };
+}
+
+/**
+ * The sweep held to whole cells, so what is drawn is what is read.
+ *
+ * Two rules, and which one a kind gets is decided by what its label says. A
+ * rectangle reads as two numbers and a line is pointed at a square, so both
+ * snap **per axis** — from an origin on the lattice that lands the far point on
+ * the lattice too, corner to corner and centre to centre.
+ *
+ * A circle and a cone read as one number that is a *length*, and snapping their
+ * offset per axis would not make that length whole: four cells across and four
+ * up is a radius of 5.66, drawn as 28 ft and labelled 30. So those two snap the
+ * **magnitude** and leave the direction free — a cone is pointed wherever it is
+ * pointed, and the rim of a 20 ft circle is 20 ft away on every bearing. That
+ * is what makes `feetOf`'s rounding stop mattering for the two kinds where the
+ * drawn size and the spoken number have to agree.
+ */
+export function snapExtent(kind: ShapeKind, to: Vec2): Vec2 {
+  if (kind === 'circle' || kind === 'cone') {
+    const length = Math.hypot(to.x, to.y);
+    if (length === 0) return { x: 0, y: 0 };
+    const cells = Math.round(length);
+    return { x: (to.x / length) * cells, y: (to.y / length) * cells };
+  }
+  return { x: Math.round(to.x), y: Math.round(to.y) };
 }
 
 /**
