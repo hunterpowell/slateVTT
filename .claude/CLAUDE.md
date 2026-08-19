@@ -33,7 +33,8 @@ them would load them into every session, which is what moving them out avoided.)
   two destinations and nothing else, kept for the evening and never written down
 - Gives everyone a box to write in that no other screen is ever sent, the DM's included
 - Shows who is connected, tells you when it is your turn, picks the page back up when a
-  socket drops, and lets a player choose the colour they are drawn in
+  socket drops, lets a player choose the colour they are drawn in, and draws everybody's
+  pointer on everybody's board
 
 ## Non-goals
 
@@ -189,6 +190,11 @@ struct RoomState {
     /// since `PlayerId` is a legal JSON key and `Owner` is not — see
     /// `docs/presence.md`.
     colours: BTreeMap<PlayerId, u8>,
+    /// Whether everybody's pointer is drawn on everybody's board. `show_names`'
+    /// and `diagonals`' third sibling — room-wide, the DM's to set, everyone's to
+    /// hold — and the one of the three read *in the filter*: off, no cursor frame
+    /// leaves the room. Defaults on; see `docs/presence.md`.
+    show_cursors: bool,
     /// Identified clients, who are the only ones any event reaches, and the
     /// sockets that are connected but have not said who they are yet.
     clients: HashMap<ClientId, Client>,
@@ -327,7 +333,7 @@ token's size, because the palette is closed. **The DM is refused it outright** �
 the one ring at the table that is not a player's. See `docs/presence.md`.
 
 Token creation, deletion, map changes, initiative edits, and whether the board writes token names
-under them are DM-only. That last one is the one whose *result* everybody is sent — see the wire
+under them — or draws everybody's pointer — are DM-only. That last one is the one whose *result* everybody is sent — see the wire
 protocol below. So is reassigning a token's `owner`, which is how a player is handed a token the DM
 built for them. So is planning
 where a token lands — a player may move their own token and may not plan for it, because the
@@ -393,7 +399,14 @@ than shipped to everyone, which shows up as nothing at all until somebody opens 
 puts them with `fog`, `show_names` and `diagonals` rather than with anything filtered. Neither
 is a secret: a table that cannot tell whether the DM is still connected is what the first
 exists to fix, and a colour nobody else can see is not a colour. `Presence` is also the one
-frame no command produced — it is dispatched where the socket table changes.
+frame no command produced — it is dispatched where the socket table changes. **`show_cursors`
+is the sixth**, and the only one of them a client reads to decide what to *send*.
+
+**`CursorMoved` is `Pinged`'s twin and its opposite in one line.** Same payload, same
+`Owner`, same no-echo — and this one is filtered: the DM's pointer is withheld from a player
+over ground the party has not explored, because a ping is a gesture somebody chose to make
+and a cursor is where a hand happens to be. A player's pointer is relayed wherever it goes
+and the DM is sent every one. `cursor_seen` is the whole rule.
 
 **`ServerMsg::Restored` is the second frame that carries a whole `RoomView`, and it goes through the
 same `snapshot_for`** — invariant 3 on the one message that would otherwise be a second place to get
@@ -470,8 +483,8 @@ never held, which announces that the id exists.
 **Whether the board writes those names under the tokens is one switch on the room**, `SetShowNames`,
 DM-only to set and sent to everyone — six familiar party portraits need no labels and a room full of
 goblins does. Not on `MapInfo` beside `fog` and not on `UpdateToken`: it belongs to neither the image
-nor any one creature, which is also why it and `SetDiagonals` are the table tab's two controls and
-not the token panel's. It defaults on, which is the only thing keeping an older save from losing every
+nor any one creature, which is also why it, `SetDiagonals` and `SetShowCursors` are the table tab's
+controls and not the token panel's. It defaults on, which is the only thing keeping an older save from losing every
 label. The hit point bar is not a label and the switch leaves it alone.
 
 Art is optional — a token without it draws as a named disc. The DM uploads it, or picks it out of
@@ -853,10 +866,11 @@ one, because a paragraph typed *between* two commands is on the snapshot the lat
 → **`docs/notes.md`** before touching `notes.ts`, `RoomState::notes`, `notes_for`, `is_owner`, the
 `Undo` arm of `apply`, or `SetNotes`/`NotesChanged` on the server.
 
-## Presence, turns and colours
+## Presence, turns, colours and cursors
 
-Four parts of one milestone, and the theme is what makes them one: **everything else in Slate
-is about the board, and these are about the people looking at it.**
+Milestone 27's four parts and milestone 28, and the theme is what makes them one:
+**everything else in Slate is about the board, and these are about the people looking at
+it.**
 
 **Who is connected** is a row of chips at the top of the right-hand column. The room already
 computed it — `roster_slots` has scanned `clients` since milestone 5 and told only the identity
@@ -892,9 +906,31 @@ what tells two people apart, and colour never scaled to seven anyway. The DM has
 three layers: the table is keyed by `PlayerId`, `check` refuses them, and `colourOf` answers `dm`
 first.
 
-→ **`docs/presence.md`** before touching `presence.ts`, `turn.ts`, the reconnect half of `net.ts`,
-`RoomState::colours`, `RoomState::here`, `PLAYER_HUES`, or `SetColour`/`Presence`/`ColoursChanged`
-on the server.
+**Everybody's pointer is drawn on everybody's board**, which is `Ping` with the
+deliberateness taken out: `MoveCursor` at ~30Hz, relayed as `CursorMoved`, no persistence,
+no snapshot, and **stillness rather than any frame is what ends one** — a client that stops
+moving sends nothing, and each recipient's own decay does the rest. One pointer per person,
+a small dot in their colour at reduced opacity with their name always under it, and no edge
+marker for one off screen: `edgeMarker` exists because a ping would otherwise be missed, and seven markers
+pinned round the border for hands that are simply elsewhere is this feature's whole risk.
+Nothing is sent or drawn while the DM previews the staged board.
+
+**The fog question lands the opposite way from ping's, and only for the DM.** `cursor_seen`
+withholds the DM's pointer from a player over cells outside `known` — their hand lingers
+where they are working — and answers yes to everything else: the DM sees every pointer, a
+player's is relayed wherever it goes, and an unfogged map has nothing to withhold. This
+overturned `ROADMAP.md`, which proposed gating everybody; the entry records why.
+
+**`SetShowCursors` stops the relay, not the drawing.** DM-only, room-wide, on the table tab,
+persisted, a step on the ring, defaults on — and with it off the room drops every frame *and*
+every client stops sending. This is the busiest message in the protocol, so a switch that
+saved none of that would be a preference rather than a dial. It is deliberately not refused
+in `check`: a red banner per `pointermove` is worse than a frame nobody is sent.
+
+→ **`docs/presence.md`** before touching `presence.ts`, `turn.ts`, `cursors.ts`, the reconnect
+half of `net.ts`, `RoomState::colours`, `RoomState::here`, `RoomState::show_cursors`,
+`cursor_seen`, `PLAYER_HUES`, or `SetColour`/`Presence`/`ColoursChanged`/`MoveCursor`/
+`CursorMoved`/`SetShowCursors` on the server.
 
 ## Testing
 

@@ -103,6 +103,17 @@ pub struct Saved {
     /// "whatever the room was already doing" are the same value here. That is not
     /// luck — the variants were ordered to make it true.
     pub diagonals: Diagonals,
+    /// Whether everybody's pointer is drawn on everybody's board. Room-wide, and
+    /// the DM's to set.
+    ///
+    /// **The second field here to carry a default of its own**, and for a
+    /// different reason from `show_names` above: there was no cursor at all
+    /// before this existed, so "whatever the room was already doing" cannot
+    /// decide it. What decides it is that a feature switched off in every room
+    /// that predates it is a feature nobody finds — and the DM who does not want
+    /// it has one checkbox, where the DM who never learns it exists has nothing.
+    #[serde(default = "shown")]
+    pub show_cursors: bool,
     /// Remembered grid calibrations, keyed by map URL.
     ///
     /// The first thing here that is not part of any client's view of the room.
@@ -159,8 +170,9 @@ pub struct SavedNote {
     pub text: String,
 }
 
-/// The default for `Saved::show_names`. Serde wants a function rather than a
-/// literal, and this is the only place on this file that needs one.
+/// The default for `Saved::show_names` and `Saved::show_cursors`. Serde wants a
+/// function rather than a literal, and these are the two fields on this file
+/// whose safe default is not the container's.
 fn shown() -> bool {
     true
 }
@@ -393,6 +405,10 @@ mod tests {
             // is what a missing field decodes to, so a round trip that lost this
             // one entirely would pass.
             diagonals: Diagonals::Alternating,
+            // Off, and off for `show_names`' reason rather than `diagonals`':
+            // this one defaults to `true`, so a round trip that dropped it would
+            // come back on and pass a test written the other way round.
+            show_cursors: false,
             calibrations: HashMap::from([(
                 "/uploads/digital-goblin-camp-1a2b3c4d.jpg".to_owned(),
                 Calibration {
@@ -517,6 +533,11 @@ mod tests {
         assert!(
             !loaded.show_names,
             "the DM turned the names off, and a restart is not them turning them back on"
+        );
+        assert!(
+            !loaded.show_cursors,
+            "and the same for the pointers: a table that decided against them \
+             does not have to decide again every session"
         );
 
         // Surviving a restart is the whole of what a scratchpad is worth over
@@ -658,6 +679,12 @@ mod tests {
             loaded.show_names,
             "a save predating the switch is a board that was drawing names; \
              defaulting the other way would strip every label on an upgrade"
+        );
+        assert!(
+            loaded.show_cursors,
+            "a save predating cursors was drawing none, so this one cannot argue \
+             from what the room was already doing — it defaults on because a \
+             feature switched off in every existing room is one nobody finds"
         );
     }
 

@@ -145,6 +145,7 @@ screen and which token is standing on a given square.
 | `drive-chat.mjs`   | Whisper and shout — and a whisper being absent from a *third* person's page | three    |
 | `drive-notes.mjs`  | The scratchpad — one person in two tabs, and the DM holding none of it | three    |
 | `drive-presence.mjs` | Who is connected, the colour a player picks, and being told it is your turn | three    |
+| `drive-cursors.mjs` | Everybody's pointer, and the DM's *not* reaching the table over unexplored ground | both     |
 
 The ones marked *both* open two browsers at once, and that is the point of them: almost everything
 they assert is a **difference** between what two people are holding, which one client cannot see.
@@ -153,6 +154,11 @@ about another — a line drawn between two people at the same table rather than 
 `drive-presence.mjs` opens three for a related reason: its subject *is* the other connections, so a
 colour has to reach somebody who did not pick it, and with two browsers the picker and the observer
 would be the same window.
+
+`drive-cursors.mjs` is `drive-ping.mjs`'s mirror and the pair is worth reading together: they
+assert **opposite** outcomes about the same kind of square. A ping over ground the party has never
+explored is relayed, and a pointer over it is not — because a ping is a gesture somebody chose to
+make and a cursor is where the DM's hand happens to be while they work on the ambush.
 
 **Reconnecting has no driver, deliberately.** The only way to drive it is to stop the server and
 start it again, which is not something a suite that runs against one long-lived room should do —
@@ -174,8 +180,8 @@ node tools/drive-player.mjs http://127.0.0.1:3000
 
 Point them at a scratch `SLATE_STATE`, never at the room you are about to play in — the first
 thing `drive-ui.mjs` does is erase every wall on the board, `drive-staged.mjs` throws away whatever
-was in the staged slot, and the fog, names, ruler and ping drivers each build a token or flip a
-switch that persists. Run them one at a time: they share debug ports (9333 for a DM, 9334 for a
+was in the staged slot, and the fog, names, ruler, ping and cursor drivers each build a token or flip
+a switch that persists. Run them one at a time: they share debug ports (9333 for a DM, 9334 for a
 player, 9335 for a second player), so two at once attach to each other's browser. Set `SLATE_BROWSER` if Chrome or Edge is
 somewhere unusual.
 
@@ -200,17 +206,17 @@ coordinates. Anything that clicks the board should go through it rather than rea
 
 ### Running the lot
 
-**All twelve take about three minutes**, so run all of them whenever the client changes rather than
+**All fourteen take about five minutes**, so run all of them whenever the client changes rather than
 picking the ones that look relevant. Picking is not worth the thought it costs: they all sit on
 `coords.ts`, `render.ts`, `input.ts` and `scene.ts`, and almost every client commit touches one of
 those, so any honest rule about which to skip says "none of them" nearly every time.
 
-| player | names | ui  | rail | undo | chat | presence | staged | fog | ruler | select | ping |
-| ------ | ----- | --- | ---- | ---- | ---- | -------- | ------ | --- | ----- | ------ | ---- |
-| 4s     | 6s    | 9s  | 12s  | 14s  | 16s  | 17s      | 22s    | 23s | 25s   | 30s    | 39s  |
+| player | names | ui  | rail | undo | chat | presence | staged | fog | ruler | select | ping | panels | cursors |
+| ------ | ----- | --- | ---- | ---- | ---- | -------- | ------ | --- | ----- | ------ | ---- | ------ | ------- |
+| 4s     | 6s    | 9s  | 12s  | 14s  | 16s  | 17s      | 22s    | 23s | 25s   | 30s    | 39s  | 49s    | 59s     |
 
-`drive-ping.mjs` is the slowest and stays that way: most of its time is spent waiting for rings to
-expire, which is the feature.
+`drive-cursors.mjs` is the slowest and `drive-ping.mjs` is next, and both stay that way for the same
+reason: most of their time is spent waiting for something to expire, which is the feature.
 
 The per-run cost is not the drivers, it is the room — a fresh one means restarting the server, so
 run the suite against **one** server rather than restarting between drivers. Sequentially, because
@@ -223,10 +229,10 @@ SLATE_DM_SECRET=test-secret SLATE_STATE=scratch.json cargo run &
 until curl -sf http://127.0.0.1:3000/ >/dev/null; do sleep 1; done
 
 cd ..
-for d in player names ui rail undo panels chat presence staged fog ruler select ping; do node tools/drive-$d.mjs; done
+for d in player names ui rail undo panels chat presence staged fog ruler select ping cursors; do node tools/drive-$d.mjs; done
 ```
 
-That whole block is 169 seconds on the machine it was written on, and the order in it is the cheap
+That whole block is a little over five minutes on the machine it was written on, and the order in it is the cheap
 drivers first — so a broken client fails `drive-player.mjs` four seconds in rather than two minutes
 in. The order is a convenience and nothing rests on it.
 

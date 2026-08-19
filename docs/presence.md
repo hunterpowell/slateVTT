@@ -1,16 +1,23 @@
 # Presence
 
-Who is here, whose turn it is, what happens when a socket drops, and what colour each
-person draws in. Milestone 27, four parts, and the theme is what makes them one thing:
-**every other feature in Slate is about the board, and these four are about the people
-looking at it.**
+Who is here, whose turn it is, what happens when a socket drops, what colour each person
+draws in, and where everybody's hand is. Milestone 27's four parts and milestone 28, and
+the theme is what makes them one thing: **every other feature in Slate is about the board,
+and these are about the people looking at it.**
+
+28 is in this file rather than one of its own for that reason and for a second: a cursor
+*is* a colour with a name beside it, resolved through the same `colourOf` and `nameOf` the
+strip uses, and it was scheduled behind 27d because those two functions were about to
+change underneath it.
 
 Read `.claude/CLAUDE.md` first for the summary. This file is why each part is the shape
 it is, and what a change to it must not break.
 
-Covers: `presence.ts`, `turn.ts`, the reconnect half of `net.ts`, `RoomState::colours`,
-`RoomState::here`, `Event::PresenceChanged`, `Event::ColoursChanged`, and
-`SetColour`/`Presence`/`ColoursChanged` on the server.
+Covers: `presence.ts`, `turn.ts`, `cursors.ts`, the reconnect half of `net.ts`,
+`RoomState::colours`, `RoomState::here`, `RoomState::show_cursors`, `cursor_seen`,
+`Event::PresenceChanged`, `Event::ColoursChanged`, `Event::CursorMoved`,
+`Event::CursorsChanged`, and `SetColour`/`Presence`/`ColoursChanged`/`MoveCursor`/
+`CursorMoved`/`SetShowCursors`/`CursorsChanged` on the server.
 
 ---
 
@@ -298,7 +305,187 @@ attribute half a conversation to the wrong person.
 
 ---
 
-## Testing
+## 28 — everybody's pointer
+
+### `Ping`'s shape with the deliberateness taken out
+
+The roadmap priced this as *"`Ping`'s shape with the ephemerality turned up"* and that held
+line for line: `MoveCursor` carries a `Pos` and nothing else, `CursorMoved` carries an
+`Owner` and a `Pos`, the sender is not echoed, nothing is persisted, nothing is in
+`snapshot_for`, and `apply`'s arm for it never writes to the room at all.
+
+What the roadmap could not price is the sentence that decides everything below: **a ping is
+a gesture somebody chose to make, and a cursor is where a hand happens to be.** Every
+difference between the two files falls out of that one line.
+
+- A ping accumulates — two rings can be on screen at once, because they are two things
+  somebody did. A cursor is *replaced*: `cursors.ts` is a `Map` keyed by person, because a
+  hand is only ever in one place.
+- A ping ends on its own timer from the moment it was made. A cursor ends on **stillness**,
+  which is a different clock and a different meaning: a client that has stopped moving sends
+  nothing at all, and every recipient's own decay does the rest. There is no frame that ends
+  one, which is also why a dropped socket costs nothing — a closed laptop fades out on the
+  same timer as a hand let go of a mouse.
+- A ping is relayed wherever it lands. A cursor is not, and that is the next section.
+
+### The one thing withheld, and it lands the opposite way from ping's
+
+`cursor_seen` is the whole filter and three of its four cases are *yes*:
+
+- **The DM as recipient**: yes, always. They can see the whole board already.
+- **A player's pointer**: yes, wherever it goes. A player can only point at what their own
+  client drew, so a player's pointer over the dark is somebody waving at a black rectangle.
+- **An unfogged map**: yes. `known` is empty with the lights on, so the `!map.fog ||` guard
+  is load-bearing exactly as it is in `shape_seen` — without it the DM's pointer would
+  vanish from every board the moment fog was switched off, which is most rooms most of the
+  time.
+- **The DM's pointer over ground the party has not explored**: withheld. The DM's hand
+  *lingers where the DM is working*, which is over the ambush in the unlit chamber and over
+  the creature the table cannot see. That is the one thing in this frame worth reading.
+
+**This is where the design departs from what was originally written down**, and the
+departure is recorded because the argument matters. `ROADMAP.md`'s *Cursors* section
+proposed gating on `known` for **everybody**; what shipped gates the DM alone. The reason
+is that the gate only ever protects against a hand that knows something, and the only hand
+at the table that does is the DM's. Gating a player's pointer buys nothing and costs the
+feature on exactly the ground the party is fighting over.
+
+Read together, `drive-ping.mjs` and `drive-cursors.mjs` assert *opposite outcomes about the
+same kind of square*, on purpose. That is not an inconsistency to tidy away later; it is the
+distinction between the two features, written down twice where it can fail loudly.
+
+### `known` and not `visible`
+
+The same split every other reader downstream of the fog makes. A pointer is over the
+terrain rather than standing on it, so it goes with the explored map and not with the
+creatures — which is `shape_seen`'s rule for an unanchored shape arriving for a second kind
+of thing.
+
+It also means the DM's own mask applies for free: a room they have painted `Dark` swallows
+their pointer too. That is the honest reading of having blacked it out, and it needed no
+line of its own, because `known` already has the overrides in it.
+
+### The switch stops the relay, not the drawing
+
+`show_cursors` is `show_names`' and `diagonals`' third sibling: on `RoomState`, DM-only to
+set, identical for every recipient, and on the table tab because that is where a room-wide
+field's control belongs. It is persisted, it is a step on the undo ring, and it defaults
+**on**.
+
+That default is the one place it differs from `show_names`, and the difference is worth
+keeping: `show_names` defaults on because *that is what the board was already doing* before
+the switch existed, and there is no such argument here — before this milestone there were no
+pointers at all. It defaults on because **a feature switched off in every room that predates
+it is a feature nobody finds**, and the DM who does not want it has one checkbox while the
+DM who never learns it exists has nothing.
+
+**Off means the room drops every `CursorMoved` in `message_for`, and every client stops
+sending its own.** Both halves, because this is the busiest message in the protocol by an
+order of magnitude — drag frames exist while a token is moving, and these exist whenever
+anybody's hand is on the mouse. A switch that left the frames crossing the wire and merely
+declined to draw them would be a preference rather than a dial, which is the whole reason
+this is room state and not `localStorage` beside the initiative panel's fold.
+
+What is deliberately *not* done is refusing `MoveCursor` in `check`. A client that has not
+yet been told is a client in the middle of a `pointermove`, and a red banner per frame is a
+far worse answer than a frame nobody is sent.
+
+### The throttle, and the trailing edge that is not there
+
+~30Hz, leading edge only — **faster than a drag frame's 25Hz**, which is the opposite of what
+this feature shipped at. The first argument was that a pointer is ambient and the busiest
+message in the protocol has no business being the smoothest thing on screen; play answered it
+within the hour. A token drag is a heavy object everybody is watching land and a hand is
+*quick*, so the rate that reads as fine on a token reads as a stutter here. It is affordable
+for the reason it always was — seven clients is nothing at this scale — and if it ever stops
+being, the room's switch is the dial and this number is the fine one beside it.
+
+The two throttles above it in `input.ts` have a trailing send and this one does not, which
+is the one place it differs from them. Theirs exists because a drag or a sweep *ends by
+stopping* and leaves something behind that has to be correct; a pointer leaves nothing behind
+at all. What a missing trailing frame costs is that a hand which stops just after an interval
+boundary sits up to 33ms stale on other screens for the two and a half seconds it takes to
+fade — which nobody can see, and which no later frame has to correct.
+
+It is sent **ahead of every branch** in the `pointermove` handler and outside all of them:
+where a hand is does not depend on what it is holding, so a pointer goes out while a token is
+being dragged, while a wall is being traced, and while nothing at all is happening.
+
+### Nothing while previewing
+
+The DM's client sends no pointer at all while it is showing the staged board. A position
+there is in a different dungeon's grid units, so the table would be shown a pointer wandering
+across cells nobody is pointing at — and the server, which does not know preview exists and
+must not learn, would be gating it against the live board's `known`.
+
+Client-only, one condition at the send site, and the same trade `drawPings` and `drawShapes`
+already make from the other direction: preview is where the DM stops participating in the
+board's ephemera.
+
+### On screen
+
+**A small dot, not an arrow**, in the owner's colour with their name under it, both sized in
+screen pixels for `ringRadius`' reason: a pointer that shrank as the camera pulled back would
+stop being a pointer.
+
+The arrow was the first thing tried and the argument for it was that every desktop already
+draws one, so it needs no explaining. What that argument misses is *how many*: seven arrows
+on a board already carrying tokens, nameplates, hit point bars, rulers, trails, shapes and
+fog read as seven things demanding to be clicked. A dot marks a spot and claims nothing,
+which is exactly what ambient presence is — it says a hand is here, not that it is about to
+do something.
+
+It is also drawn **below full strength**, at `CURSOR_ALPHA`, on top of its own fade. That
+constant is the only *volume* among the drawing constants here, and the reason is worth
+keeping: everything else on this canvas is something somebody decided, and a cursor is the
+only mark that is merely true. It should be legible when looked for and invisible when not.
+Turn it down before the decay.
+
+**The name is always there**, which is `pings.ts`' argument arriving where it bites hardest:
+colour does not scale to seven, two people may pick the same swatch and nothing refuses it,
+and the name beside the mark is the real answer to who is who.
+
+**A pointer off the edge of the view draws nothing**, and this is where the ping vocabulary
+is deliberately not reused. `edgeMarker` exists because a ping is a deliberate gesture that
+would otherwise be missed; seven permanent markers pinned around the border for hands that
+are simply elsewhere is the clutter this feature is most at risk of. The canvas clips them
+for free.
+
+Drawn under the rings and over everything else, which is the order the two gestures deserve.
+Nothing is drawn while previewing, for the reason pings and shapes are not.
+
+**If the board reads badly with seven pointers on it, the decay is the dial.** The roadmap
+says so in as many words, and it is the number to turn down before anything else here is
+reconsidered.
+
+### Testing
+
+**`server/src/room/tests/cursors.rs`** is where the filter is asserted, and half that file
+is a frame that did not leave. It is the first visibility test in this suite whose subject
+is the *DM's* own hand — `walls.rs` asserts what a player is never told, `chat.rs` asserts
+what one player is told and another is not, and this one asserts what the DM cannot say by
+accident. The paint case is the one worth keeping: it is what pins `known` rather than
+`revealed`, which is the line a later reader would be most tempted to simplify.
+
+**`client/src/cursors.test.ts`** covers what a single process can see: one pointer per
+person, the decay, and `clear()`.
+
+**`tools/drive-cursors.mjs`** opens two browsers on the fixed ports. Two is the minimum this
+feature has any meaning at — the assertion is that a real mouse moving in one window drew an
+dot in another, and that the DM's pointer over the dark *did not*, which one window cannot
+tell apart from the DM simply not having moved.
+
+Its lit square is **built rather than found**: a token handed to a player is a vision source,
+it lands in the first free cell out from the middle of the view, and it is deleted again at
+the end. Looking for a lit square instead would be looking for a fact about whatever room the
+driver was pointed at, and the run this replaced skipped its own positive arm on the built-in
+map — a check that skips itself is not a check.
+
+---
+
+## Testing — milestone 27
+
+(28's are under its own heading above, with the feature they belong to.)
 
 **`server/src/room/tests/presence.rs`** holds both halves. The two features share a file
 because they share a milestone and a strip, and share almost nothing else — presence is the

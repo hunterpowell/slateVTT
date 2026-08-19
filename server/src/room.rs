@@ -265,6 +265,10 @@ enum Event {
     /// The ruler charges diagonals differently now. Payload-free and rebuilt into
     /// the same answer for everybody, exactly like the one above it.
     DiagonalsChanged,
+    /// Pointers are drawn on every board now, or they are not. The third of
+    /// these, and identical to its two neighbours in every respect — including
+    /// that the frame reaches the DM who flipped it.
+    CursorsChanged,
     /// Carries no payload on purpose: `message_for` has `&self` and builds the
     /// panel per recipient. That seam is now load-bearing — a hidden creature's
     /// row is dropped from the copy the table receives, and fog of war will hide
@@ -309,6 +313,21 @@ enum Event {
     /// draw. Resolved here rather than in `message_for` because the filter runs
     /// per recipient and this is one lookup for all six.
     Pinged { by: ClientId, owner: Owner, at: Pos },
+    /// Somebody's pointer moved.
+    ///
+    /// The event above with its `by` and `owner` meaning exactly the same two
+    /// things, and one difference: **`message_for` has a question to ask about
+    /// this one.** A ping is relayed wherever it lands; the DM's pointer over
+    /// unexplored ground is not, because a hand that lingers is a hand that is
+    /// working on something. `at` is carried for that filter to read as well as
+    /// for the recipient to draw, which is why it is here rather than resolved
+    /// per recipient — the answer differs by who is asking.
+    ///
+    /// Even less stateful than `Pinged`, which is a low bar it clears anyway: a
+    /// ring at least stays on the recipient's screen on its own timer, while
+    /// this is superseded by the next frame and forgotten by stillness. Nothing
+    /// in the room knows a pointer was ever anywhere.
+    CursorMoved { by: ClientId, owner: Owner, at: Pos },
     /// The drawn shapes changed. Payload-free like `InitiativeChanged`, and for
     /// the same reason twice over: the list is short, and the copy the table may
     /// hold is not the copy the DM may hold.
@@ -711,6 +730,16 @@ pub struct RoomState {
     /// not dead state: what the room owns is that six clients agree, which is
     /// exactly what it would not own if this lived in a browser.
     diagonals: Diagonals,
+    /// Whether everybody's pointer is drawn on everybody's board.
+    ///
+    /// The third room-wide switch and the two above it in every respect: the
+    /// DM's to set, everyone's to hold, filtered by nobody. What is different is
+    /// that this one is read *in the filter* — `CursorMoved` is dropped for
+    /// every recipient while it is off, so the frames stop crossing the wire
+    /// rather than merely stopping being drawn. That is the whole point of it:
+    /// this is the busiest message in the room, and a switch that saved nothing
+    /// would be a preference rather than a dial.
+    show_cursors: bool,
     /// How each map URL was last calibrated. Server-side only — it never enters
     /// a snapshot or a message, because the finished `MapInfo` already says
     /// everything a client needs.
@@ -952,9 +981,11 @@ fn persists(event: &Event) -> bool {
         | Event::TokenRemoved { .. }
         | Event::TokenPlanChanged { .. }
         | Event::Promoted { .. }
-        // Two switches the DM flipped once and expects to find flipped next week.
+        // Three switches the DM flipped once and expects to find flipped next
+        // week.
         | Event::NamesChanged
         | Event::DiagonalsChanged
+        | Event::CursorsChanged
         | Event::InitiativeChanged
         | Event::MapChanged
         | Event::StagedChanged
@@ -1004,9 +1035,16 @@ fn persists(event: &Event) -> bool {
         // in the `Disconnected` arm — *who happens to be connected is not part
         // of the room* — and a file that recorded it would boot claiming five
         // people were in a house nobody is in.
+        //
+        // And a cursor is the ping's argument taken as far as it goes. A ping
+        // existed for the instant somebody chose to send it; this is true for a
+        // sixteenth of a second and is not a decision anybody made. There has
+        // never been a moment at which the room held one, and a file that
+        // recorded one would be recording where a hand was on a Tuesday.
         Event::Sketching { .. }
         | Event::SketchEnded { .. }
         | Event::Pinged { .. }
+        | Event::CursorMoved { .. }
         | Event::Said { .. }
         | Event::PresenceChanged
         | Event::UndoChanged => false,
@@ -1060,6 +1098,7 @@ fn undid(msg: &ClientMsg) -> Option<&'static str> {
         ClientMsg::DeleteToken { .. } => Some("deleting a token"),
         ClientMsg::SetShowNames { .. } => Some("the name switch"),
         ClientMsg::SetDiagonals { .. } => Some("the diagonal rule"),
+        ClientMsg::SetShowCursors { .. } => Some("the cursor switch"),
         // Loading and recalibrating are one command, so this label has to cover
         // both without claiming which — "the map" is true either way.
         ClientMsg::SetMap { .. } => Some("the map"),
@@ -1083,6 +1122,9 @@ fn undid(msg: &ClientMsg) -> Option<&'static str> {
         ClientMsg::Hello { .. }
         | ClientMsg::Sketch { .. }
         | ClientMsg::Ping { .. }
+        // Where a hand is is not a step in anything. It persists nothing, so
+        // this arm is the belt-and-braces half rather than the rule.
+        | ClientMsg::MoveCursor { .. }
         // Nothing anybody said is the DM's to take back, and the exclusion is
         // free rather than argued: this persists nothing, so the pair would
         // never agree about it anyway.
@@ -1164,6 +1206,11 @@ fn moves_sight(msg: &ClientMsg) -> bool {
         // the light rather than in it.
         ClientMsg::Hello { .. }
         | ClientMsg::SetShowNames { .. }
+        // A pointer is drawn over the light like the ruler is, and switching
+        // every pointer off changes what is on a screen rather than what a ray
+        // reaches.
+        | ClientMsg::SetShowCursors { .. }
+        | ClientMsg::MoveCursor { .. }
         // A ruler is drawn over the light and never in it, and this only
         // changes what the ruler says.
         | ClientMsg::SetDiagonals { .. }
@@ -1409,6 +1456,7 @@ impl RoomState {
             overrides: HashMap::new(),
             show_names: true,
             diagonals: Diagonals::Equal,
+            show_cursors: true,
             calibrations: HashMap::new(),
             undo: VecDeque::new(),
             chat: VecDeque::new(),
@@ -1489,6 +1537,7 @@ impl RoomState {
         self.overrides = fog::unpack_overrides(&saved.overrides);
         self.show_names = saved.show_names;
         self.diagonals = saved.diagonals;
+        self.show_cursors = saved.show_cursors;
         self.calibrations = saved.calibrations;
         // Restored here like everything else, because this has one inverse and
         // two field lists would be the trap `docs/undo.md` names: a field read
@@ -1530,6 +1579,7 @@ impl RoomState {
             overrides: fog::pack_overrides(&self.overrides),
             show_names: self.show_names,
             diagonals: self.diagonals,
+            show_cursors: self.show_cursors,
             calibrations: self.calibrations.clone(),
             // Sorted for the tokens' reason: `HashMap` order varies per process,
             // and an unsorted list would rewrite the whole file every time
@@ -1660,6 +1710,10 @@ impl RoomState {
             // What the ruler did before there was a switch, which is the same
             // rule the line above follows to the opposite value.
             diagonals: Diagonals::Equal,
+            // On, and the one of the three that no earlier behaviour decides —
+            // there were no cursors at all before there was a switch. A feature
+            // that ships off is a feature a table never discovers.
+            show_cursors: true,
             calibrations: HashMap::new(),
             undo: VecDeque::new(),
             chat: VecDeque::new(),
@@ -1946,7 +2000,12 @@ impl RoomState {
             // And the same again, for the same reason. A counting convention
             // half the table holds is worse than either convention.
             diagonals: self.diagonals,
-            // And the same a third and fourth time. Neither is anybody's secret:
+            // And a third time, with a second job: this one is read by the
+            // client to decide whether to *send*, so a join that omitted it
+            // would leave every fresh page shipping its pointer into a room that
+            // has switched cursors off.
+            show_cursors: self.show_cursors,
+            // And the same a fourth and fifth time. Neither is anybody's secret:
             // the point of one is that the table can see whether the DM is still
             // there, and the point of the other is that six other screens draw
             // your ring in the colour you chose.
@@ -2144,6 +2203,35 @@ impl RoomState {
         fog::covered_cells(token.x, token.y, token.size)
             .iter()
             .any(|cell| self.visible.contains(cell))
+    }
+
+    /// Whether this recipient may be shown a pointer at `at`.
+    ///
+    /// **The whole of milestone 28's filter, and it is asymmetric on purpose.**
+    /// Three of the four cases are yes and only one is no: the DM sees every
+    /// pointer, because they can see the whole board already; a *player's*
+    /// pointer is relayed wherever it goes, because a player can only point at
+    /// what their own client drew; and an unfogged map has nothing to withhold.
+    /// What is left is the DM's pointer over ground the party has not explored,
+    /// and that is the one case worth a filter at all — the DM's hand lingers
+    /// where the DM is working, which is over the ambush in the unlit chamber.
+    ///
+    /// **`known` and not `visible`**, which is the same split every other reader
+    /// downstream of the fog makes: a pointer is over the terrain rather than
+    /// standing on it, so it goes with the explored map and not with the
+    /// creatures. That means it inherits the fringe and the DM's own mask for
+    /// free — a room the DM has painted `Dark` swallows their pointer too, which
+    /// is the honest reading of having blacked it out.
+    ///
+    /// The `map.fog` guard is load-bearing and is `shape_seen`'s: `known` is
+    /// empty on an unfogged map, so without it the DM's pointer would vanish
+    /// from every player's board the moment fog was switched off.
+    fn cursor_seen(&self, by: &Owner, at: Pos, to_dm: bool) -> bool {
+        if to_dm || !matches!(by, Owner::Dm) || !self.map.fog {
+            return true;
+        }
+        let px = fog::grid_to_px(&self.map, at.x, at.y);
+        self.known.contains(&fog::cell_of(&self.map, px))
     }
 
     /// Where the party is looking from, in image pixels.
@@ -2451,6 +2539,7 @@ impl RoomState {
             // Nothing to bound either: serde has already refused anything that
             // is not one of the two variants, which is what a closed set is for.
             ClientMsg::SetDiagonals { .. } => require_dm(client, "set how diagonals count"),
+            ClientMsg::SetShowCursors { .. } => require_dm(client, "set what the boards draw"),
 
             // Which slot this is for makes no difference here: a grid size or a
             // play area is no more or less usable for being staged, so both go
@@ -2626,6 +2715,17 @@ impl RoomState {
             // never reaches — and `finite` is here anyway, because a NaN would
             // reach six clients and draw a ring nowhere.
             ClientMsg::Ping { at } => finite(&[at.x, at.y]),
+
+            // The arm above, and everything it says holds here twice over: the
+            // position is written into no state, so `finite` is the whole of it.
+            // There is no permission — a pointer is not a thing anybody has to
+            // be allowed to have — and pointedly **no check that the room's
+            // switch is on**. A client that goes on sending into a room that
+            // switched cursors off is wasting its own bandwidth and nobody
+            // else's, because `message_for` drops every one of these; refusing
+            // it here would turn a switch into a stream of red banners on the
+            // screen of whoever had the tab open when it was flipped.
+            ClientMsg::MoveCursor { at } => finite(&[at.x, at.y]),
 
             ClientMsg::AddShape {
                 from, to, color, ..
@@ -3038,6 +3138,15 @@ impl RoomState {
                 vec![Event::DiagonalsChanged]
             }
 
+            // The third of the three, unconditional for both reasons above —
+            // and the resync one is sharper here than anywhere else, because a
+            // client holding a stale `false` has quietly stopped sending its
+            // own pointer and nothing on its screen would say why.
+            ClientMsg::SetShowCursors { show } => {
+                self.show_cursors = show;
+                vec![Event::CursorsChanged]
+            }
+
             // Tokens are deliberately untouched. They are stored in grid units,
             // so recalibrating changes where a token *draws* without changing
             // which cell it is in — invariant 1, and the whole reason positions
@@ -3432,6 +3541,25 @@ impl RoomState {
                 }]
             }
 
+            // The arm above, and the only one in this function that takes
+            // `&self` for nothing but a lookup twice over. **The room is not
+            // touched**: no field is written, nothing is marked dirty, and the
+            // event is the whole of what happened.
+            //
+            // The fallback is not harmless the way `Ping`'s is and cannot be
+            // reached the way that one describes: an owner guessed as the DM
+            // here would be a pointer that the fog filter then treats as the
+            // DM's. `check` has already proved this is a client, so the arm
+            // returns nothing rather than inventing a sender.
+            ClientMsg::MoveCursor { at } => match self.clients.get(&origin) {
+                Some(client) => vec![Event::CursorMoved {
+                    by: origin,
+                    owner: drawn_by(client),
+                    at,
+                }],
+                None => Vec::new(),
+            },
+
             // One run in, one segment per gap between its corners out. The run
             // itself is not stored — it was how the DM drew, not what the map
             // holds — which is what lets one bad segment of a long trace be
@@ -3686,6 +3814,7 @@ impl RoomState {
                 | Event::Sketching { .. }
                 | Event::SketchEnded { .. }
                 | Event::Pinged { .. }
+                | Event::CursorMoved { .. }
                 | Event::Said { .. }
                 | Event::NotesChanged { .. }
                 | Event::ShapesChanged
@@ -3700,6 +3829,7 @@ impl RoomState {
                 | Event::Restored
                 | Event::PresenceChanged
                 | Event::ColoursChanged
+                | Event::CursorsChanged
                 | Event::UndoChanged => None,
             })
             .collect();
@@ -4118,6 +4248,15 @@ impl RoomState {
                 diagonals: self.diagonals,
             }),
 
+            // And a third time. This is the one of the three whose frame changes
+            // what the recipient *sends* rather than only what it draws, which
+            // is why nobody may be left out of it: a client still holding `true`
+            // after the switch went off would go on shipping its pointer into a
+            // room that drops every frame.
+            Event::CursorsChanged => Some(ServerMsg::CursorsChanged {
+                show: self.show_cursors,
+            }),
+
             // The filter doing its actual job. Every arm above drops a message
             // for something the recipient *did*; this one drops it for who the
             // recipient is, which is the shape hidden tokens and fog need. A
@@ -4174,6 +4313,29 @@ impl RoomState {
             // does nothing, which is worse than useless: a gesture you cannot
             // tell has failed is one you stop trusting.
             Event::Pinged { by, owner, at } => (recipient != *by).then(|| ServerMsg::Pinged {
+                by: owner.clone(),
+                at: *at,
+            }),
+
+            // **The arm above with the paragraph above reversed**, and the two
+            // are worth reading together because the difference between them is
+            // the whole design of both. A ping is a deliberate 400ms gesture and
+            // a ring over black says only that somebody is pointing in a
+            // direction; a cursor is nobody's decision, and the DM's drifts
+            // wherever the DM is working. So this one asks `cursor_seen`, which
+            // is no filter at all for three of its four cases and the fog for
+            // the fourth.
+            //
+            // The room's switch is read here rather than in `check`, which is
+            // what makes it a dial on the traffic rather than a preference: with
+            // it off, not one of these leaves the room. The mover is skipped for
+            // `Pinged`'s reason — their own pointer is drawn by their own
+            // operating system, and drawing a second one a round trip behind it
+            // is the rubber-band a token drag already refuses.
+            Event::CursorMoved { by, owner, at } => (recipient != *by
+                && self.show_cursors
+                && self.cursor_seen(owner, *at, self.is_dm(recipient)))
+            .then(|| ServerMsg::CursorMoved {
                 by: owner.clone(),
                 at: *at,
             }),

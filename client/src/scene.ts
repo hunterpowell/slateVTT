@@ -148,6 +148,14 @@ export interface Scene {
    *  for the same reason too: it is how the table counts, not a property of the
    *  image they are counting over. */
   diagonals: Diagonals;
+  /** Whether everybody's pointer is drawn on everybody's board. Room-wide and
+   *  the same for every client, exactly like the two switches above it — and
+   *  here rather than on `Board` for their reason too.
+   *
+   *  The one of the three that `input.ts` reads as well as the renderer: with it
+   *  off the room relays nothing, so a client that went on sending its own
+   *  pointer would be paying the whole cost of a feature nobody can see. */
+  showCursors: boolean;
 }
 
 /**
@@ -232,6 +240,7 @@ function fromView(view: WireRoomView, isDm: boolean): Omit<Scene, 'previewing'> 
     overrides: overridesFromWire(view.overrides),
     showNames: view.show_names,
     diagonals: view.diagonals,
+    showCursors: view.show_cursors,
   };
 }
 

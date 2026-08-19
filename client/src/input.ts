@@ -23,6 +23,22 @@ const ZOOM_SENSITIVITY = 0.0015;
 const LINE_HEIGHT_PX = 16;
 /** ~25 Hz. Smooth enough to watch, far below what the room needs to absorb. */
 const DRAG_SEND_INTERVAL_MS = 40;
+/**
+ * How often our own pointer goes out, in milliseconds — ~30Hz.
+ *
+ * **Faster than a drag frame**, which is the opposite of what this file assumed
+ * when the feature landed at half the rate. The argument for slower was that a
+ * pointer is ambient and the busiest message in the protocol has no business
+ * being the smoothest thing on screen; play answered it. A cursor is the one
+ * mark on the board with no inertia of its own — a token drag is a heavy object
+ * everybody is watching land, and a hand is *quick*, so the frame rate that
+ * reads as fine on a token reads as a stutter here.
+ *
+ * It is affordable for the reason it always was: seven clients is nothing at
+ * this scale. If it ever stops being, the room's switch is the dial and this
+ * number is the fine one beside it.
+ */
+const CURSOR_SEND_INTERVAL_MS = 33;
 /** How far the pointer may wander during a click on a shape before it counts as
  *  a sweep instead. A hand on a mouse is never perfectly still. */
 const DRAW_CLICK_SLOP_PX = 4;
@@ -244,6 +260,7 @@ export function attachInput(
 ): InputState {
   let drag: Drag | null = null;
   let lastDragSentAt = 0;
+  let lastCursorSentAt = 0;
   let trailingSend: number | null = null;
   const state = {
     draggingIds: new Set<string>(),
@@ -452,6 +469,34 @@ export function attachInput(
       lastDragSentAt = performance.now();
       emit();
     }, DRAG_SEND_INTERVAL_MS - sinceLast);
+  };
+
+  /**
+   * Where our pointer is, for everybody else's board.
+   *
+   * **Leading edge only, and no trailing send** — which is the one place this
+   * differs from the two throttles above it, deliberately. Their trailing edge
+   * exists because a drag or a sweep *ends* by stopping and leaves something
+   * behind that has to be right; a pointer leaves nothing behind at all. What a
+   * missing trailing frame costs here is that a hand which stops just after an
+   * interval boundary sits up to 33ms stale on other screens for the couple of
+   * seconds it takes to fade, which nobody can see and no later frame has to
+   * correct.
+   *
+   * Two guards, and both are about not paying for something nobody can see. The
+   * room's switch is read here as well as in `message_for`: the server would
+   * drop every one of these, and a client that kept sending would be shipping
+   * 30Hz into a void. And nothing goes out while the DM is previewing the staged
+   * map, because a position on that board is in a different dungeon's grid units
+   * — the table would be shown a pointer wandering across cells nobody is
+   * pointing at, which is the same reason preview draws no pings and no shapes.
+   */
+  const sendCursor = (g: Vec2): void => {
+    if (!scene.showCursors || previewing()) return;
+    const now = performance.now();
+    if (now - lastCursorSentAt < CURSOR_SEND_INTERVAL_MS) return;
+    lastCursorSentAt = now;
+    send({ type: 'move_cursor', at: { x: g.x, y: g.y } });
   };
 
   /** Our own copy of the sweep, so it draws under the cursor without waiting
@@ -772,6 +817,11 @@ export function attachInput(
     const p = localPoint(e);
     const w = screenToWorld(cam, p.x, p.y);
     state.cursorGrid = gridUnder(w);
+    // Ahead of every branch below and outside all of them: where a hand is does
+    // not depend on what it is holding. A pointer goes out while a token is
+    // being dragged, while a wall is being traced and while nothing at all is
+    // happening, which is what makes this ambient rather than another gesture.
+    sendCursor(state.cursorGrid);
 
     // Before every branch below, which is the ordering `HOLD_SLOP_PX` depends
     // on: a press that has wandered far enough to be a sweep has already

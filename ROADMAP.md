@@ -25,13 +25,13 @@ Do not work ahead. Each milestone should run and be usable before starting the n
 6. Map upload and grid calibration UI.
 7. Package for Windows session hosting and deploy behind a Cloudflare Tunnel.
 
-**Everything through 27 is built; 28 and 29 are not.** 25 and 26 were never planned and are out of
+**Everything through 28 is built; 29 is not.** 25 and 26 were never planned and are out of
 order for the reasons their own entries give. Everything from 8 on was planned after the original
 seven; 17 and 18 were workshopped after 16 landed, 19–24 after 18, and 27–29 on 2026-08-18 after 26.
-That batch was the first one written down while nothing in it existed; 27 landed on 2026-08-19 and
-its entry is now a record like the rest, while 28 and 29 are still design — and note that both of
-those exist to **overturn something this file already says**, which their own entries open by
-naming.
+That batch was the first one written down while nothing in it existed; 27 and 28 both landed on
+2026-08-19 and their entries are now records like the rest, while 29 is still design. All three
+exist to **overturn something this file already says**, which their own entries open by naming —
+and 28 also overturned something *its own* design section said, which its entry records.
 
 8. **Done.** Map library — list `maps/`, pick one, remember its calibration. The smallest thing
    on this list and the only one that touched nothing else.
@@ -1010,8 +1010,49 @@ naming.
     The driver opens **three** browsers rather than the two designed for: a colour has to reach
     somebody who did not pick it, and with two the picker and the observer are the same window.
 
-28. **Not built.** Cursors — everyone's pointer drawn on everyone's board. See *Cursors* below,
-    which held its design without a number until now.
+28. **Done**, on 2026-08-19. Cursors — everyone's pointer drawn on everyone's board. See
+    *Cursors* below, which held its design without a number until then, and `docs/presence.md`,
+    which 28 was written into rather than getting a file of its own: a cursor is a colour with a
+    name beside it, and this milestone is about the people looking at the board like the four
+    before it.
+
+    **What the design got right**, and it was most of it: `Ping`'s shape with the ephemerality
+    turned up, a throttled frame carrying a `Pos`, nothing persisted, nothing in the snapshot,
+    send only on movement, decay after a few seconds of stillness, and 27d first so `colourOf`
+    was not swapped underneath it.
+
+    **What it got wrong is the fog, and it is the one thing worth reading here.** This file said
+    to gate on `known` — for everybody. What shipped gates **the DM alone**, because the gate is
+    only ever protecting against a hand that knows something, and the only hand at the table that
+    does is the DM's. A player can point only at what their own client drew, so gating a player's
+    pointer buys nothing and costs the feature on exactly the ground the party is fighting over.
+    The section below is left as it was written; this paragraph is the amendment.
+
+    **Three things the build settled that the design did not:**
+
+    - **The switch is new state**, and was not in the design at all. `show_cursors` is
+      `show_names`' and `diagonals`' third sibling on `RoomState`, on the table tab by the rule
+      that a panel mirrors where its field lives. It stops the **relay** and not the drawing —
+      this is the busiest message in the protocol, and a switch that saved none of that would be
+      a preference rather than a dial. It defaults **on**, which is the one place it differs from
+      `show_names`: that one defaults on because it is what the board was already doing, and this
+      one because a feature switched off in every room that predates it is a feature nobody finds.
+    - **The client stops sending while previewing the staged board.** A position there is in a
+      different dungeon's grid units, and the server must not learn preview exists — so it is one
+      condition at the send site, exactly as every other `staged` decision is client-side.
+    - **Two numbers moved within the hour of first use, and both moved the same way.** It
+      shipped at ~15Hz with a full-strength arrow, on the argument that a pointer is ambient
+      and should be neither the smoothest nor the loudest thing on the board. Half of that
+      was right and half was backwards: *quieter* was right and went further — a small dot at
+      55% rather than an arrow at full — and *slower* was wrong, because a hand has no
+      inertia and 15Hz reads as a stutter where 25Hz on a token reads as fine. 30Hz and a dot
+      is what plays. The switch is still the dial if the cost ever bites.
+    - **`drive-ping.mjs` needed a change, and it is the interesting one.** A parked pointer draws
+      into the pixel boxes that driver measures on the *other* client's screen, so a baseline
+      taken while an arrow was up and read once it had decayed reported a difference that had
+      nothing to do with a ring. It now switches pointers off for its own run. That is the first
+      time a feature in this project has made an existing driver lie, and the lesson is narrow:
+      **a driver that diffs a box on somebody else's screen now has a second thing moving in it.**
 
     **Ping did not absorb the need.** That section was written deliberately unscheduled because
     milestone 19 might have made it pointless and *"that is not knowable before playing a session
@@ -1121,7 +1162,12 @@ is what the ping arrow and the initiative panel each declined to do for the same
 
 ## Cursors
 
-**Scheduled as milestone 28.** This section was written deliberately without a number, because
+**Built, as milestone 28**, on 2026-08-19 — see `docs/presence.md`. Everything below is kept as
+it was, including the bullet this milestone **overturned**: the fog gate landed on the DM's
+pointer alone rather than on everybody's, and milestone 28's entry above is the amendment. Read
+that before arguing from the third bullet.
+
+This section was written deliberately without a number, because
 **milestone 19 might have absorbed the entire need** and that was not knowable before playing a
 session with pings in it. It has been played, and the answer is that ping did not absorb it: a ping
 is a deliberate gesture, and what this buys is ambient presence.
@@ -1149,7 +1195,10 @@ Everyone's pointer drawn on everyone's board. What was already settled, kept as 
 - **The fog question is not settled the way 19's is, and probably lands the other way.** A ping is a
   deliberate gesture and a cursor is not, so "the DM's pointer drifted across an unexplored room" is
   a different question from "the DM pointed at it" — gate on `known`, which is the answer 19 was able
-  to refuse.
+  to refuse. *(Half right, and the half it got wrong is who. It gates on `known` and only for the
+  **DM's** pointer: the sentence above names the DM's drifting hand and then generalises to
+  everybody's, which is a step this paragraph never justified. A player can point only at what their
+  own client drew.)*
 - Seven pointers twitching over a board that already carries tokens, nameplates, hit point bars,
   rulers, trails, shapes and fog is a real cost against a real benefit — ambient presence, and
   knowing where somebody is looking without them having to gesture. That trade only reads correctly

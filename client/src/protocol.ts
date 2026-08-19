@@ -281,6 +281,13 @@ export interface WireRoomView {
    *  the same value for every client. A counting convention only half the table
    *  holds is worse than either convention. */
   diagonals: Diagonals;
+  /** Whether everybody's pointer is drawn on everybody's board.
+   *
+   *  The third of these and the same value for everyone, with one job the other
+   *  two do not have: **we read it to decide whether to send**. A page that
+   *  joined without it would ship its own pointer at 30Hz into a room that has
+   *  switched cursors off. */
+  show_cursors: boolean;
   /** Who is connected right now, the DM among them.
    *
    *  The same value for everyone, like the two fields above it: there is no
@@ -456,6 +463,21 @@ export type ServerMsg =
    *  The one frame carrying a position that no visibility filter touches — a
    *  ping lands wherever it was pointed, unexplored ground included. */
   | { type: 'pinged'; by: Owner; at: WirePos }
+  /** Somebody's pointer is here now. Draw it until it stops arriving.
+   *
+   *  `pinged`'s twin — an `Owner` for the same reason, never our own for the
+   *  same reason — and its opposite in one respect: this one *is* filtered. The
+   *  DM's pointer is withheld from a player while it is over ground the party
+   *  has not explored, because a ping is a gesture somebody chose to make and a
+   *  cursor is where a hand happens to be. Nothing here has to know that; it is
+   *  the room's decision, and what arrives is what may be drawn. */
+  | { type: 'cursor_moved'; by: Owner; at: WirePos }
+  /** Pointers are drawn on every board now, or they are not.
+   *
+   *  `names_changed`'s neighbour, and the one of the three that changes what
+   *  this client *sends*: with it off the room relays nothing, so a client that
+   *  kept sending would be paying for a feature nobody can see. */
+  | { type: 'cursors_changed'; show: boolean }
   /** Every shape we may see. The whole list, like the initiative panel. */
   /** Somebody said something we are party to — a shout, or a whisper at whose
    *  either end we stand.
@@ -608,6 +630,13 @@ export type ClientMsg =
    *  on `set_map`, for the reason above: the table's counting outlives the
    *  dungeon it is being done on. */
   | { type: 'set_diagonals'; diagonals: Diagonals }
+  /** DM-only. Whether everybody's pointer is drawn on everybody's board.
+   *
+   *  The switch stops the *relay* rather than the drawing, so a client told
+   *  `false` stops sending as well — seven pointers over a board that already
+   *  carries tokens, nameplates, bars, rulers, trails, shapes and fog is a real
+   *  cost, and a switch that saved none of it would be a preference. */
+  | { type: 'set_show_cursors'; show: boolean }
   /** A shape being swept out right now: relayed to everyone watching, stored by
    *  nobody. `drawing: false` is the release that ends it.
    *
@@ -629,6 +658,14 @@ export type ClientMsg =
    *  No colour on it either, unlike `sketch`: what a ring looks like is decided
    *  by who sent it, and every client can work that out from the roster. */
   | { type: 'ping'; at: WirePos }
+  /** Where our pointer is now, in grid units. Relayed to everyone else and
+   *  stored by nobody — `ping` with the deliberateness taken out.
+   *
+   *  Throttled to ~30Hz and sent only on movement, because this is the busiest
+   *  thing either side of this wire: drag frames exist while a token is moving,
+   *  and these exist whenever a hand is on the mouse. There is no frame that
+   *  ends one — stillness does, on every recipient's own timer. */
+  | { type: 'move_cursor'; at: WirePos }
   /** Keep the shape just swept. No id — the server invents it, like a token's. */
   | { type: 'add_shape'; kind: ShapeKind; from: WireOrigin; to: WirePos; color: string }
   /** Whoever drew it, or the DM. */

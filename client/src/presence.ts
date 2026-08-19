@@ -61,9 +61,13 @@ export interface Presence {
   picked(colours: Colours): void;
 }
 
-/** A key for one person that a `Set` can hold. `Owner` is an object, so two
- *  copies of the same identity are never the same value. */
-function keyOf(owner: Owner): string {
+/** A key for one person that a `Set` or a `Map` can hold. `Owner` is an object,
+ *  so two copies of the same identity are never the same value.
+ *
+ *  Exported for `cursors.ts`, which keeps one pointer per person and needs the
+ *  same answer to "is this the same person" that this file and `chat.ts`
+ *  already share. */
+export function keyOf(owner: Owner): string {
   return owner.kind === 'dm' ? 'dm' : `player:${owner.id}`;
 }
 

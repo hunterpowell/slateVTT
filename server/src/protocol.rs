@@ -857,6 +857,14 @@ pub struct RoomView {
     /// is a counting convention the table shares, so a client holding a different
     /// one from its neighbour is the only way this can be wrong.
     pub diagonals: Diagonals,
+    /// Whether everybody's pointer is drawn on everybody's board.
+    ///
+    /// The third of these, and the same value for everyone for the same reason.
+    /// It is on the view because a client reads it to decide whether to *send*
+    /// — the only one of the three that governs traffic out as well as what is
+    /// drawn — and a join that did not carry it would have every fresh page
+    /// shipping cursors into a room that has switched them off.
+    pub show_cursors: bool,
     /// Who is connected right now, the DM among them.
     ///
     /// **The same value for everyone**, which puts it with the two fields above
@@ -1024,6 +1032,22 @@ pub enum ClientMsg {
         diagonals: Diagonals,
     },
 
+    /// Whether everybody's pointer is drawn on everybody's board. DM-only, and
+    /// `SetShowNames`' neighbour for the third time: room-wide, about no
+    /// particular token, and not a field on `SetMap` because how much the table
+    /// wants on their screens outlives the dungeon.
+    ///
+    /// **What it switches off is the relay and not the drawing.** Seven pointers
+    /// twitching over a board that already carries tokens, nameplates, hit point
+    /// bars, rulers, trails, shapes and fog is a real cost against a real
+    /// benefit, and when the table decides against it the traffic should stop
+    /// too — a switch that left `MoveCursor` flowing and merely declined to draw
+    /// the result would be the one control here that costs what it claims to
+    /// save.
+    SetShowCursors {
+        show: bool,
+    },
+
     /// The map image and its grid, in one command. DM-only.
     ///
     /// Uploading a new map and calibrating the grid on the current one are the
@@ -1124,6 +1148,30 @@ pub enum ClientMsg {
     /// standing there — and the alternative is a deliberate 400ms gesture that
     /// silently does nothing. See *Ping* in `docs/drawings.md`.
     Ping {
+        at: Pos,
+    },
+
+    /// Where this client's pointer is now, in grid units.
+    ///
+    /// **`Ping`'s shape with the ephemerality turned all the way up, and its
+    /// deliberateness turned all the way down** — which is the whole difference
+    /// between the two and decides everything else about this one. A ping is a
+    /// 400ms gesture somebody chose to make; this is where a hand happens to be,
+    /// sent whenever it moves and true of nothing a moment later.
+    ///
+    /// It carries no sender for `Say`'s reason, no colour for `Ping`'s, and no
+    /// `drawing` flag because there is no stream to close: stillness ends a
+    /// cursor, and the client that stopped moving says nothing at all. Nothing
+    /// in the room remembers one arrived.
+    ///
+    /// **The busiest command in this protocol by an order of magnitude.** Drag
+    /// frames exist while a token is moving; these exist whenever anybody's hand
+    /// is on the mouse. Throttled to ~30Hz on the client and sent only on
+    /// movement, which at seven clients is still nothing at this scale — but it
+    /// is the first message here where that sentence has to be said out loud
+    /// rather than assumed, and it is why the room's switch stops the *relay*
+    /// rather than only the drawing.
+    MoveCursor {
         at: Pos,
     },
 
@@ -1382,6 +1430,18 @@ pub enum ServerMsg {
     DiagonalsChanged {
         diagonals: Diagonals,
     },
+
+    /// Pointers are drawn on every board now, or they are not.
+    ///
+    /// The two frames above it in every respect: identical for every recipient,
+    /// no filter, echoed to the DM who flipped it. What is different is what a
+    /// client does about it — this is the one of the three that changes what a
+    /// client *sends*, because the room stops relaying cursors and a client that
+    /// went on shipping them would be paying the whole cost of a feature nobody
+    /// at the table can see.
+    CursorsChanged {
+        show: bool,
+    },
     /// Somebody joined or left. The whole list, because it is at most seven
     /// names and nothing is predicted locally.
     ///
@@ -1532,6 +1592,27 @@ pub enum ServerMsg {
     /// **Sent to everyone else regardless of the fog.** The only message in this
     /// file with a position in it that no visibility filter touches.
     Pinged {
+        by: Owner,
+        at: Pos,
+    },
+
+    /// Somebody's pointer is here now. Draw it until it stops arriving.
+    ///
+    /// `Pinged`'s twin above in everything it carries — an `Owner` rather than a
+    /// `ClientId`, for the identical reason, and not echoed to the hand that
+    /// moved — and its opposite in one respect that matters more than any of
+    /// them: **this one is filtered.**
+    ///
+    /// **The DM's pointer is withheld from a player when it is over ground the
+    /// party has not explored.** A ping is a deliberate gesture and a ring over
+    /// black says only that somebody is pointing in a direction; a cursor is
+    /// nobody's decision, and the DM's hand *lingers where the DM is working* —
+    /// over the ambush in the unlit chamber, over the creature the table cannot
+    /// see. That is the one thing in this frame worth reading, so it is the one
+    /// case the filter exists for. A player's cursor is relayed wherever it
+    /// goes, and the DM is sent every one of them: they can see the whole board
+    /// already.
+    CursorMoved {
         by: Owner,
         at: Pos,
     },

@@ -34,6 +34,8 @@ import { overridesFromWire } from './overrides.js';
 import type { Panel } from './panel.js';
 import { createPanel } from './panel.js';
 import { createPicker } from './picker.js';
+import type { Cursors } from './cursors.js';
+import { createCursors } from './cursors.js';
 import type { Pings } from './pings.js';
 import { createPings } from './pings.js';
 import type { Presence } from './presence.js';
@@ -205,6 +207,7 @@ interface Ui {
     root: HTMLElement;
     names: HTMLInputElement;
     diagonals: HTMLSelectElement;
+    cursors: HTMLInputElement;
   };
 }
 
@@ -352,6 +355,7 @@ function findUi(): Ui {
       root: need('#tabletool'),
       names: need<HTMLInputElement>('#table-names'),
       diagonals: need<HTMLSelectElement>('#table-diagonals'),
+      cursors: need<HTMLInputElement>('#table-cursors'),
     },
   };
 }
@@ -402,6 +406,10 @@ function boot(): void {
   // The same arrangement for sweeps: ours goes in from input.ts, everyone
   // else's from the frames below.
   const sketches = createSketches();
+  // And for the pointers — except that this one is fed from *one* direction
+  // only. Ours is drawn by the machine it is plugged into, so nothing ever puts
+  // our own in here and there is no identity for it to know.
+  const cursors = createCursors();
   // And a third time for the rings — except that this one cannot be built until
   // Welcome, because it has to know whose ring ours is.
   let pings: Pings | null = null;
@@ -687,6 +695,7 @@ function boot(): void {
         fogTool,
         rail,
         pings,
+        cursors,
         // The cast list, which every connection is sent and which nothing
         // changes after this frame — it is what turns anybody's `Owner` into a
         // name and a colour on their ring. A player holds it too: they have to
@@ -793,6 +802,20 @@ function boot(): void {
     // The frame above's twin, and nothing more: the ruler reads the convention
     // off the scene every time it draws, so a reading already on screen changes
     // on the next frame without anything here recomputing it.
+    // Pointers are on or off for the whole table now. The scene field is read by
+    // the renderer *and* by `input.ts`, which stops sending ours the moment this
+    // says so — the switch is a dial on the traffic, not a preference about
+    // drawing.
+    onCursorsChanged: (show) => {
+      if (room === null) return;
+      room.scene.showCursors = show;
+      // Whatever is already on the board would otherwise sit there for the
+      // couple of seconds its decay takes, which reads as the switch not having
+      // worked.
+      if (!show) cursors.clear();
+      tableTool?.update(room.scene);
+    },
+
     onDiagonalsChanged: (diagonals) => {
       if (room === null) return;
       room.scene.diagonals = diagonals;
@@ -874,6 +897,12 @@ function boot(): void {
     // pointed. It is the one frame this client is handed that no filter on
     // either side of the wire has touched.
     onPinged: (ping) => pings?.add(ping.by, ping.at, performance.now()),
+
+    // Somebody's hand moved. Never our own, and nothing to check on arrival —
+    // this is the frame the room *has* already filtered, so what lands here is
+    // what may be drawn. A person's previous pointer is replaced rather than
+    // added to, and stillness rather than any frame is what ends one.
+    onCursorMoved: (cursor) => cursors.moved(cursor.by, cursor.at, performance.now()),
 
     // Somebody said something we are party to — including ourselves, which is
     // the one relayed frame the sender is echoed. Nothing about a line of text
@@ -984,6 +1013,10 @@ function boot(): void {
       // mouse right now and neither is in the room to be restored.
       rulers.forgetExcept(new Set(scene.tokens.map((t) => t.id)));
 
+      // An undo can put the cursor switch back, and the pointers already drawn
+      // are not the room's to restore — same line the delta above runs.
+      if (!scene.showCursors) cursors.clear();
+
       panel?.update(room.initiative, scene);
       tokenTool?.update(scene);
       tableTool?.update(scene);
@@ -1082,6 +1115,7 @@ async function start(
   fogTool: FogTool | null,
   rail: Rail | null,
   pings: Pings,
+  cursors: Cursors,
   roster: readonly RosterEntry[],
   presence: Presence,
 ): Promise<Stage> {
@@ -1288,6 +1322,9 @@ async function start(
       // that ever takes one off the board. It includes the hold in progress, so
       // the growing preview and the ring it becomes are one drawing.
       pings: pings.active(now),
+      // Read per frame like the rings, and expiring the same way: whoever has
+      // gone still since the last frame is simply not in this array.
+      cursors: cursors.active(now),
       roster,
       // Read per frame, not captured: a ring already on the board changes colour
       // on the next frame when its owner picks a new one, with nothing here

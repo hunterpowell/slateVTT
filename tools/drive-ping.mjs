@@ -47,6 +47,25 @@ const tab = (name) =>
   dm.evaluate(`[...document.querySelectorAll('.rail-tab')]
     .find(t => t.textContent.trim().toLowerCase().startsWith('${name}')).click(); "ok"`);
 
+// **Pointers go off for the length of this script**, and it is not tidiness.
+// Milestone 28 draws everybody else's cursor on the board, so the DM's dot lands
+// on the player's canvas wherever the DM's mouse was last left — which is the
+// middle of every pixel box measured below, because the mouse is left exactly
+// where the thing being asserted happened. It decays on its own timer, so a
+// baseline remembered while it is up and read once it has gone reports a
+// difference that has nothing to do with a ring. That is what it did: two checks
+// failed the day cursors landed, and both were the dot rather than the ping.
+//
+// `drive-cursors.mjs` is where the pointer is the subject. Here it is noise, and
+// the room has a switch for exactly this.
+await tab('table');
+const cursorsWere = await dm.evaluate('document.querySelector("#table-cursors").checked');
+if (cursorsWere) {
+  await dm.evaluate('document.querySelector("#table-cursors").click(); "ok"');
+  await dm.wait(600);
+}
+note(`pointers were ${cursorsWere ? 'on, and are off for this run' : 'already off'}`);
+
 /**
  * Both clients' grids, and the two reasons there are two of them.
  *
@@ -395,6 +414,17 @@ if (!fogOn) {
   await dm.evaluate('document.querySelector("#fog-on").click(); "ok"');
   await dm.wait(600);
   check('fog is back off', await dm.evaluate('document.querySelector("#fog-on").checked'), false);
+}
+
+if (cursorsWere) {
+  await tab('table');
+  await dm.evaluate('document.querySelector("#table-cursors").click(); "ok"');
+  await dm.wait(600);
+  check(
+    'and the pointers are back on',
+    await dm.evaluate('document.querySelector("#table-cursors").checked'),
+    true,
+  );
 }
 
 const code = verdict(dm);

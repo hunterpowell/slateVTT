@@ -1806,10 +1806,17 @@
       /* Blue, like the fog switch and the grid controls: this is a board
          setting. Violet is reserved for what the table cannot see, and there is
          nothing hidden about a label. */
-      #table-names {
+      #table-names,
+      #table-cursors {
         margin: 0;
         accent-color: #78beff;
         cursor: pointer;
+      }
+
+      /* The hint above it belongs to the checkbox above it, so this one needs
+         the gap the second control in a stack of pairs would otherwise lose. */
+      .table-cursors {
+        margin-top: 10px;
       }
 
       /* `.map-cells-label`'s row rather than `.token-field`'s, which is what the
@@ -2163,6 +2170,15 @@
           <span>names under tokens</span>
         </label>
         <p class="map-hint">Everyone's board, not just yours.</p>
+        <!-- The busiest thing in the room, and the only switch here that stops
+             traffic rather than only changing what is drawn: with it off the
+             server relays no pointer at all and every client stops sending its
+             own. -->
+        <label class="token-check table-cursors">
+          <input id="table-cursors" type="checkbox" checked />
+          <span>pointers on the board</span>
+        </label>
+        <p class="map-hint">Everyone's pointer, drawn where their hand is.</p>
         <!-- How the table counts, which is the one thing here the server stores
              and never computes with: the only thing the room is authoritative
              over is that six clients agree. The labels are what people say out

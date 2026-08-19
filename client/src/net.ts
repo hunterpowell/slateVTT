@@ -37,6 +37,10 @@ export interface Handlers {
   /** The ruler charges diagonals differently now. Called on every connection,
    *  for the reason above: the DM sets it, everyone holds it. */
   onDiagonalsChanged(diagonals: Diagonals): void;
+  /** Pointers are drawn on every board now, or they are not. Called on every
+   *  connection, like the two above — and unlike them it changes what this
+   *  client *sends*, because with it off the room relays nothing. */
+  onCursorsChanged(show: boolean): void;
   /** The staged slot whole — map, walls and paint. Only ever called on a DM
    *  connection; the server sends no such frame to a player. Null means the slot
    *  is now empty, indistinguishably from not being the DM. */
@@ -55,6 +59,11 @@ export interface Handlers {
    *  Called on every connection and never filtered — a ping is relayed wherever
    *  it lands, unexplored ground included. */
   onPinged(ping: Extract<ServerMsg, { type: 'pinged' }>): void;
+  /** Somebody's pointer moved. Never our own, which our own machine is already
+   *  drawing. Unlike `onPinged` this one *has* been filtered — the DM's pointer
+   *  over ground the party has not explored never arrives — so what lands here
+   *  is what may be drawn, with nothing further to ask. */
+  onCursorMoved(cursor: Extract<ServerMsg, { type: 'cursor_moved' }>): void;
   /** Somebody said something we are party to — including our own, which is the
    *  one relayed frame in this protocol the sender is echoed. Nothing here is
    *  filtered: the server decided we may hold this line. */
@@ -205,6 +214,9 @@ export function connect(on: Handlers): Net {
       case 'diagonals_changed':
         on.onDiagonalsChanged(msg.diagonals);
         break;
+      case 'cursors_changed':
+        on.onCursorsChanged(msg.show);
+        break;
       case 'staged_changed':
         on.onStagedChanged(msg.board);
         break;
@@ -225,6 +237,9 @@ export function connect(on: Handlers): Net {
         break;
       case 'pinged':
         on.onPinged(msg);
+        break;
+      case 'cursor_moved':
+        on.onCursorMoved(msg);
         break;
       case 'said':
         on.onSaid(msg.line);

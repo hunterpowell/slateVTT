@@ -6,6 +6,8 @@ import { darkFill, fogRect } from './fog.js';
 import type { Identity } from './identity.js';
 import { ownsToken } from './identity.js';
 import { OVERRIDE_ALPHA, overrideRect, paintColor } from './overrides.js';
+import type { Cursor } from './cursors.js';
+import { cursorAlpha } from './cursors.js';
 import type { Ping } from './pings.js';
 import { colourOf, EDGE_INSET_PX, edgeMarker, nameOf, ringAlpha, ringRadius } from './pings.js';
 import type { Colours, FogPaint, Hp, RosterEntry } from './protocol.js';
@@ -166,6 +168,35 @@ const PING_TEXT_GAP = 7;
 const PING_FONT = '600 12px ui-sans-serif, system-ui, sans-serif';
 /** How long the arrow's head is, in screen pixels. */
 const PING_ARROW_PX = 13;
+/**
+ * A pointer's dot and the name under it, both in screen pixels — a cursor that
+ * shrank as the camera pulled back would stop being a cursor, which is
+ * `ringRadius`' argument arriving for the second time.
+ *
+ * **A dot and not an arrow.** An arrow is what a desktop draws under your own
+ * hand, and seven of them on a board already carrying tokens, nameplates, hit
+ * point bars, rulers, trails, shapes and fog read as seven things demanding to
+ * be clicked. A dot marks a spot and claims nothing, which is what ambient
+ * presence is: it says a hand is *here*, not that it is about to do something.
+ *
+ * Smaller and quieter than a ping's ring on purpose, and quieter again through
+ * `CURSOR_ALPHA`. The gesture these are *not* is the one that means "look here".
+ */
+const CURSOR_R_PX = 5;
+const CURSOR_HALO_WIDTH = 2;
+const CURSOR_FONT = '600 11px ui-sans-serif, system-ui, sans-serif';
+/** Between the dot and the name under it. */
+const CURSOR_TEXT_GAP = 5;
+/**
+ * How solidly a pointer draws at rest, on top of its own fade.
+ *
+ * The one constant here that is a *volume* rather than a size. Everything else
+ * on this canvas is something somebody decided — a token is where it was put, a
+ * ring is where somebody pointed — and a cursor is the only mark that is merely
+ * true. It should be legible when looked for and invisible when not, which is
+ * what a mark below full strength is for. Turn it down before the decay.
+ */
+const CURSOR_ALPHA = 0.55;
 /** Between a shape's far point and its reading. */
 const SHAPE_TEXT_GAP = 8;
 
@@ -242,6 +273,10 @@ export interface Frame {
   /** Every ring on the board, ours and everyone else's, plus the one still
    *  being held down if there is one. */
   pings: readonly Ping[];
+  /** Everybody else's pointer. Never our own — the machine under our hand is
+   *  already drawing that one, and a second arrow a round trip behind it is the
+   *  rubber-band a token drag refuses. */
+  cursors: readonly Cursor[];
   /** The cast list, so a ring can be attributed to a name and a colour. Held
    *  by every client since `Welcome` and not a secret — it is the same list
    *  everyone was offered at the identity picker. */
@@ -388,6 +423,12 @@ export function render(ctx: CanvasRenderingContext2D, view: Viewport, frame: Fra
   // pointed at. The DM misses pings while they are preparing the next room,
   // which is the same trade preview already makes with every other board-level
   // thing on screen.
+  // Under the rings and over everything else, which is the order the two
+  // gestures deserve: a ping is somebody asking for attention and a pointer is
+  // somebody having a hand. Nothing while previewing, for pings' reason exactly
+  // — these positions are in the live board's grid units, and the staged map is
+  // a different dungeon's lattice.
+  if (!showingStaged(frame.scene)) drawCursors(ctx, frame, board);
   if (!showingStaged(frame.scene)) drawPings(ctx, view, frame, board);
 }
 
@@ -1279,6 +1320,70 @@ function drawPings(
   }
 
   ctx.restore();
+}
+
+/**
+ * Everybody else's pointer, in their own colour with their name beside it.
+ *
+ * **No visibility test here either, and for a different reason from `drawPings`
+ * one function up.** That one draws unfiltered because a ping is relayed
+ * unfiltered; this one draws unfiltered because the *room* has already decided
+ * — the DM's pointer over ground the party has not explored never arrives, so
+ * there is nothing on this side to withhold. Invariant 4 the safe way round: a
+ * client cannot draw what it was not sent.
+ *
+ * Off the edge of the view is nothing at all, which is where this parts company
+ * with a ping for the second time. An arrow at the screen edge exists because a
+ * ping is a deliberate gesture that would otherwise be missed; seven permanent
+ * markers pinned around the border for hands that are simply elsewhere is the
+ * clutter this feature is most at risk of, and the answer is to draw nothing.
+ * The canvas clips these for free.
+ */
+function drawCursors(ctx: CanvasRenderingContext2D, frame: Frame, board: Board): void {
+  const { cam, cursors, roster, colours, now } = frame;
+  if (cursors.length === 0) return;
+
+  ctx.save();
+  ctx.font = CURSOR_FONT;
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'top';
+  ctx.lineJoin = 'round';
+
+  for (const cursor of cursors) {
+    const alpha = cursorAlpha(cursor, now);
+    if (alpha <= 0) continue;
+
+    const world = gridToWorld(board.grid, cursor.at.x, cursor.at.y);
+    const at = worldToScreen(cam, world.x, world.y);
+    const colour = colourOf(cursor.owner, roster, colours);
+
+    ctx.globalAlpha = alpha * CURSOR_ALPHA;
+    drawDot(ctx, at, colour);
+    // Under it, which is where a ping's name goes and for the same reason: the
+    // one thing a mark on the board must not cover is what it is marking.
+    label(
+      ctx,
+      nameOf(cursor.owner, roster),
+      at.x,
+      at.y + CURSOR_R_PX + CURSOR_TEXT_GAP,
+      colour,
+    );
+  }
+
+  ctx.restore();
+}
+
+/** The pointer glyph: a small filled dot on the spot, with the dark halo every
+ *  other mark on this canvas gets — a coloured circle on a parchment map is
+ *  otherwise a smudge, and on a cave floor it is nothing. */
+function drawDot(ctx: CanvasRenderingContext2D, at: Vec2, colour: string): void {
+  ctx.beginPath();
+  ctx.arc(at.x, at.y, CURSOR_R_PX, 0, TAU);
+  ctx.strokeStyle = PING_HALO;
+  ctx.lineWidth = CURSOR_HALO_WIDTH;
+  ctx.stroke();
+  ctx.fillStyle = colour;
+  ctx.fill();
 }
 
 /** A filled triangle pointing along `angle`, in the sender's colour with the
