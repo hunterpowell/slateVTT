@@ -13,7 +13,7 @@ use tokio::fs;
 
 use crate::fog::{FogView, OverrideView};
 use crate::protocol::{
-    Calibration, Diagonals, Initiative, MapInfo, Shape, StagedView, Token, Wall,
+    Calibration, Diagonals, Initiative, MapInfo, Owner, Shape, StagedView, Token, Wall,
 };
 
 /// What actually goes to disk.
@@ -114,6 +114,34 @@ pub struct Saved {
     /// hundred bytes an entry that is not worth a cap; a DM would have to load
     /// tens of thousands of maps before this rivalled a single token image.
     pub calibrations: HashMap<String, Calibration>,
+    /// Everybody's scratchpad, the DM's among them.
+    ///
+    /// **A list of pairs rather than the `HashMap<Owner, String>` the room
+    /// holds**, for two reasons that both come from this being a file. JSON has
+    /// no object key an adjacently tagged enum can be written as, so a map would
+    /// need `Owner` to have a string form invented for the disk and parsed back;
+    /// and a list can be *sorted*, which keeps the file from churning on every
+    /// write the way the token list does.
+    ///
+    /// Persisted at all because "it is in the window and it survives a restart"
+    /// is the entire thing this is worth over the Notepad window everyone
+    /// already has open. Be accurate about how far that goes: the DM hosts the
+    /// server, so anyone holding this file can read every one of these. What the
+    /// room guarantees is narrower and is the only guarantee its architecture
+    /// makes about anything — **no client is ever sent somebody else's**.
+    pub notes: Vec<SavedNote>,
+}
+
+/// One person's scratchpad as it is written down.
+///
+/// It never reaches the wire, which is why it lives here rather than in
+/// `protocol.rs` beside the types that do: what a client is sent is its own
+/// `String` and no owner at all, because the only box it may have is its own.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(default)]
+pub struct SavedNote {
+    pub by: Owner,
+    pub text: String,
 }
 
 /// The default for `Saved::show_names`. Serde wants a function rather than a
@@ -363,6 +391,20 @@ mod tests {
                     lighting: Lighting::Room,
                 },
             )]),
+            // Two of them, one the DM's and one a player's, because the pair is
+            // what a round trip could collapse: `Owner` is the only enum on this
+            // file used as a key, and a form that lost its variant would put
+            // both boxes on one person.
+            notes: vec![
+                SavedNote {
+                    by: Owner::Dm,
+                    text: "the innkeeper is lying".to_owned(),
+                },
+                SavedNote {
+                    by: Owner::Player(PlayerId::new("cleodara")),
+                    text: "ask about the sigil".to_owned(),
+                },
+            ],
         }
     }
 
@@ -453,6 +495,24 @@ mod tests {
         assert!(
             !loaded.show_names,
             "the DM turned the names off, and a restart is not them turning them back on"
+        );
+
+        // Surviving a restart is the whole of what a scratchpad is worth over
+        // the Notepad window everyone already has open. Two boxes, kept apart:
+        // `Owner` is the only enum here used as a key, and a form that lost the
+        // variant would hand both of these to one person.
+        assert_eq!(loaded.notes.len(), 2);
+        let mine = |by: &Owner| {
+            loaded
+                .notes
+                .iter()
+                .find(|note| &note.by == by)
+                .map(|note| note.text.as_str())
+        };
+        assert_eq!(mine(&Owner::Dm), Some("the innkeeper is lying"));
+        assert_eq!(
+            mine(&Owner::Player(PlayerId::new("cleodara"))),
+            Some("ask about the sigil")
         );
     }
 

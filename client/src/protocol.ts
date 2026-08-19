@@ -286,6 +286,14 @@ export interface WireRoomView {
    *  Session memory on the server: it is never written to disk, so it is empty
    *  on the first join after a restart and never carries last week's game. */
   chat: WireChatLine[];
+  /** Our own scratchpad, and never anybody else's.
+   *
+   *  **The second field here that is content per client rather than the room's
+   *  copy with rows dropped**, and the first where the DM's is narrower than the
+   *  room's. There is no view of this that carries somebody else's box — not for
+   *  the DM either, which is the point of it. Empty when nothing has been
+   *  written and empty for a client with no slot claimed, indistinguishably. */
+  notes: string;
 }
 
 /**
@@ -412,6 +420,13 @@ export type ServerMsg =
    *  `sketch` above: a line of text is not drawn locally first, because where it
    *  lands in the log is the room's to decide and two people type at once. */
   | { type: 'said'; line: WireChatLine }
+  /** Our own scratchpad now reads this — sent when our *other* tab changed it.
+   *
+   *  Never sent to the socket that typed it: that box already holds the text,
+   *  and writing it back a round trip later moves the caret. That is `pinged`'s
+   *  exclusion rather than `said`'s echo, and for the same reason those two
+   *  differ from each other. */
+  | { type: 'notes_changed'; text: string }
   | { type: 'shapes_changed'; shapes: WireShape[] }
   /** Every wall the DM has traced. DM connections only — a player is not sent
    *  this frame at all, not even an empty one, because a frame they cannot use
@@ -491,6 +506,10 @@ export type ClientMsg =
    *  permission check is about. It carries no sender: who said it is what the
    *  socket already proved. */
   | { type: 'say'; to: ChatTo; text: string }
+  /** Replace our own scratchpad. It carries no key — the box it lands in is the
+   *  one the socket belongs to, because a key we could name is a key we could
+   *  name somebody else's with. */
+  | { type: 'set_notes'; text: string }
   /** DM-only. The staged map becomes the board; tokens keep their cells. */
   | { type: 'promote_staged' }
   /** DM-only. Throw the staged map away. */

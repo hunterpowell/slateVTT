@@ -294,16 +294,23 @@
         min-height: 0;
       }
 
-      /* The rail's strip said again for the other edge — same grid, same
-         negative margin cancelling the parent's gap so an open tab sits on its
-         panel rather than floating above it. */
+      /* The rail's strip said again for the other edge, and then turned upside
+         down. Same grid, same negative margin cancelling the parent's gap so an
+         open tab sits against its panel rather than floating below it — but the
+         margin is on the *top* here, because this strip is the last child and
+         the panels are above it.
+
+         That is what keeps the buttons still. The dock grows upward from the
+         bottom of the rail, so its top edge moves every time a panel opens; the
+         bottom edge never does, and the strip is the one thing here that should
+         be in the same place in every state. */
       #dock-tabs {
         display: grid;
         grid-auto-flow: column;
         grid-auto-columns: 1fr;
         flex: 0 0 auto;
         gap: 4px;
-        margin-bottom: -10px;
+        margin-top: -10px;
       }
 
       .dock-tab {
@@ -313,7 +320,7 @@
         gap: 5px;
         padding: 5px 0;
         border: 1px solid #2b3038;
-        border-radius: 4px 4px 0 0;
+        border-radius: 0 0 4px 4px;
         background: #171a1f;
         color: #8d939c;
         font: inherit;
@@ -325,9 +332,11 @@
         color: #d8d2c4;
       }
 
+      /* Merged with the panel *above* it, which is the one thing that flipped
+         when the strip moved to the bottom. */
       .dock-tab.is-open {
         border-color: #3a4048;
-        border-bottom-color: transparent;
+        border-top-color: transparent;
         background: rgba(12, 14, 18, 0.88);
         color: #e8e6e1;
       }
@@ -355,9 +364,12 @@
         box-sizing: border-box;
         width: 100%;
         /* Tall enough for a round of initiative rolls, and the first thing to
-           give when the window is short — the board is what this is played on. */
-        height: 42vh;
-        min-height: 0;
+           give when the window is short — the board is what this is played on.
+           `flex` rather than a fixed height because these panels stack: with
+           both open the pair shrinks against the rail's bottom edge instead of
+           pushing the initiative panel off the top of the screen. */
+        flex: 1 1 42vh;
+        min-height: 90px;
         padding: 10px;
         border-radius: 6px;
         background: rgba(12, 14, 18, 0.88);
@@ -479,6 +491,56 @@
       /* A frozen board must not look like a live one, and neither must a box
          that would swallow a sentence. */
       body.offline #chat-form {
+        opacity: 0.45;
+        pointer-events: none;
+      }
+
+      /* --- the scratchpad ---------------------------------------------------- */
+
+      /* Shorter than the chat panel by default and shrinks the same way. Two
+         open panels plus twelve creatures is the case the flex column above is
+         arranged for: the initiative panel gives first, then these two. */
+      #notes {
+        display: flex;
+        flex: 1 1 26vh;
+        box-sizing: border-box;
+        width: 100%;
+        min-height: 80px;
+        padding: 10px;
+        border-radius: 6px;
+        background: rgba(12, 14, 18, 0.88);
+      }
+
+      /* No border of its own inside a panel that already has one, and no resize
+         grip — the panel's own height is the thing to change, and a grip here
+         would fight the flex column it lives in. */
+      #notes-text {
+        flex: 1 1 auto;
+        box-sizing: border-box;
+        width: 100%;
+        min-height: 0;
+        padding: 0;
+        border: 0;
+        background: transparent;
+        color: #d8d2c4;
+        font: inherit;
+        font-size: 12px;
+        line-height: 1.4;
+        resize: none;
+      }
+
+      #notes-text:focus {
+        outline: none;
+      }
+
+      #notes-text::placeholder {
+        color: #5a616c;
+      }
+
+      /* A box that cannot reach the room must not look like one that can — the
+         chat form's rule, and here it matters more: what is typed into a frozen
+         scratchpad is lost on the refresh that fixes the socket. */
+      body.offline #notes {
         opacity: 0.45;
         pointer-events: none;
       }
@@ -1719,7 +1781,29 @@
            Nothing in here arms the canvas, so unlike the rail there is no
            `stop` to call as a panel closes. -->
       <div id="dock" hidden>
-        <nav id="dock-tabs"></nav>
+        <!-- One box of text, yours, and nobody else is ever sent it — see
+             `notes.ts`. No title, no second page and no share button: a second
+             document makes this a journal, which is the line the non-goal in
+             `.claude/CLAUDE.md` draws.
+
+             `maxlength` is the room's cap said again, so typing stops rather
+             than bouncing off a refusal after the paragraph is written. -->
+        <section id="notes" hidden>
+          <textarea
+            id="notes-text"
+            maxlength="10000"
+            spellcheck="false"
+            placeholder="notes to yourself…"
+            aria-label="Your notes"
+          ></textarea>
+        </section>
+        <!-- Last of the panels, so the chat sits against the strip whatever
+             else is open. Two reasons, and neither is which was opened first —
+             a stacking order that depended on that would put a panel somewhere
+             different every session. The box somebody types into wants to be
+             the thing nearest the bottom edge, where the send button and the
+             tabs already are; and the log grows downward, so the newest line is
+             at the bottom of the dock rather than in the middle of it. -->
         <section id="chat" hidden>
           <div id="chat-log"></div>
           <!-- Where the next thing typed is going. Built in `chat.ts`, because
@@ -1738,6 +1822,13 @@
             <button id="chat-send" type="submit">say</button>
           </form>
         </section>
+        <!-- **Last, not first**: the strip is pinned to the bottom edge of the
+             rail and the panels grow upward above it, so opening or closing one
+             never moves the buttons. With the strip on top every toggle slid
+             them — the dock grows upward, so its top edge is exactly the thing
+             that moves. The left rail has the opposite problem and the opposite
+             answer: it grows downward, so its strip goes on top. -->
+        <nav id="dock-tabs"></nav>
       </div>
     </div>
     <div id="left-rail">

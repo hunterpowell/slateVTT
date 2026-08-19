@@ -98,9 +98,9 @@ trip completes is how somebody types it twice.
 ## The right dock
 
 `dock.ts` is `rail.ts` on the other edge of the screen, and the resemblance is the point — a tab
-strip with one panel open at a time is the shape this project already uses, and inventing a
-floating window would have been a second answer to a settled question. Three things differ, and
-they are why it is its own file rather than a generalised `createRail`:
+strip is the shape this project already uses, and inventing a floating window would have been a
+second answer to a settled question. Four things differ, and they are why it is its own file rather
+than a generalised `createRail`:
 
 - **The rail is the DM's furniture; this is everybody's.** Both tabs are built on every connection.
   It is the first time the two sides of this application have had the same thing on screen.
@@ -109,10 +109,33 @@ they are why it is its own file rather than a generalised `createRail`:
   hidden. There is no `stop` in `dock.ts` and one would mean something had gone wrong.
 - **A tab here carries a count.** A rail tab describes what you could do; a dock tab describes what
   happened while you were not looking.
+- **The panels stack.** One rail panel is open at a time because rail panels are *editing modes*,
+  and two armed tools would be two meanings for one mouse button. Nothing in the dock is a mode: a
+  log and a scratchpad are both things you read while something else is going on. Milestone 24
+  added the second tab and this rule with it — making notes close the chat would have rebuilt on
+  this edge the complaint that kept the scratchpad off the other one. `dock.ts` therefore holds a
+  `Set<DockTab>` and a `toggle`, where it held a nullable tab and a `show`; `#chat` and `#notes`
+  are flex items so the pair shrinks against the rail's bottom edge with both open.
 
 It sits *beneath* the initiative panel rather than becoming a third tab on it. The dock is
 read-and-reply and initiative is glance-state — the same distinction that makes the folded
 initiative panel keep its current row instead of collapsing to a bare tab.
+
+**The strip is the dock's last child, not its first** — the one place this is upside down from the
+rail, and it is not a style choice. The dock grows *upward*, so its top edge moves every time a
+panel opens and its bottom edge never does; with the strip on top, every toggle slid the buttons out
+from under the pointer that was aiming at them. That was tolerable with one tab and is not with two,
+which is why it changed in milestone 24 rather than 23. The rail grows downward and puts its strip
+on top for the same reason read the other way round. `drive-notes.mjs` asserts the strip's rectangle
+across all four open/shut combinations.
+
+**The panels stack in document order, never in the order they were opened** — notes above, chat
+against the strip. A layout that depended on which tab was pressed first would put a panel somewhere
+different every session, which is the buttons-moving complaint again and worse. Chat is last because
+the box somebody types into wants to be nearest the bottom edge, where the send button and the tabs
+already are, and because a log grows downward — the newest line belongs at the bottom of the dock
+rather than in the middle of it. `dock.ts` hides and shows panels and has no opinion about where
+they sit; `index.html` is the only place that says.
 
 **`#right-rail` is a flex column for the reason the left rail is one.** The initiative panel's
 height is however many creatures are in the fight and whether it is folded, so anything pinned

@@ -51,6 +51,10 @@ export interface Handlers {
    *  one relayed frame in this protocol the sender is echoed. Nothing here is
    *  filtered: the server decided we may hold this line. */
   onSaid(line: WireChatLine): void;
+  /** Our own scratchpad changed in another tab of ours. Never called for our own
+   *  typing — the room does not echo it, so this cannot move our caret — and
+   *  never called with anybody else's box, because no client is ever sent one. */
+  onNotesChanged(text: string): void;
   /** Every shape we may see, replacing whatever we held. */
   onShapesChanged(shapes: WireShape[]): void;
   /** Every wall on one board, and which board that is. Only ever called on a DM
@@ -146,6 +150,9 @@ export function connect(on: Handlers): Net {
         break;
       case 'said':
         on.onSaid(msg.line);
+        break;
+      case 'notes_changed':
+        on.onNotesChanged(msg.text);
         break;
       case 'shapes_changed':
         on.onShapesChanged(msg.shapes);

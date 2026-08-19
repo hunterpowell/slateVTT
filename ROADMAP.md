@@ -25,9 +25,9 @@ Do not work ahead. Each milestone should run and be usable before starting the n
 6. Map upload and grid calibration UI.
 7. Package for Windows session hosting and deploy behind a Cloudflare Tunnel.
 
-Milestones 1–23 are done, and so are 25 and 26, which were never planned and are out of order for the
+**Every milestone on this list is built.** 25 and 26 were never planned and are out of order for the
 reasons their own entries give. Everything from 8 on was planned after the original seven; 17 and 18 were
-workshopped after 16 landed, and 19–24 after 18:
+workshopped after 16 landed, and 19–24 after 18. What comes next is not written down yet:
 
 8. **Done.** Map library — list `maps/`, pick one, remember its calibration. The smallest thing
    on this list and the only one that touched nothing else.
@@ -698,8 +698,14 @@ workshopped after 16 landed, and 19–24 after 18:
     A whisper and a shout interleave in **one log**, styled apart, rather than living in two panes.
     Attribution is the roster name in the owner's colour, the same pair milestone 19's ring uses.
 
-24. **The scratchpad.** One box of text per person, private to whoever wrote it. A
-    `HashMap<Owner, String>` on `RoomState`, one `SetNotes` carrying only the text — the sender's
+24. **Done.** The scratchpad — one box of text per person, private to whoever wrote it. See
+    `docs/notes.md`.
+
+    What it cost: a `HashMap<Owner, String>`, one command, one event, one 100-line `notes.ts` and a
+    dock tab. **The design below was right about all of it except one line**, and the exception is
+    the interesting part — see *the dock stacks now* at the end.
+
+    A `HashMap<Owner, String>` on `RoomState`, one `SetNotes` carrying only the text — the sender's
     own key is never on the wire, because a key a client could name is a key it could name somebody
     else's — and an `Event::NotesChanged` that reaches its author and nobody else.
 
@@ -721,10 +727,23 @@ workshopped after 16 landed, and 19–24 after 18:
 
     **It cannot be a rail tab.** Only one rail panel is open at a time, notes have to stay readable
     while a tool is armed, and the rail is the DM's furniture in the first place while this belongs
-    to everybody.
+    to everybody. Milestone 26's dock answered all three — and then, **the dock stacks now**, which
+    is the one line above that changed. Its panels were one-at-a-time because that is what the rail
+    does; the reason the *rail* is one-at-a-time is that its panels are editing modes and two armed
+    tools would be two meanings for one mouse button. Nothing in the dock is a mode, so making notes
+    close the chat would have rebuilt on that edge the complaint that kept the scratchpad off this
+    one. A `Set<DockTab>` and a `toggle`, and two flex items instead of a fixed height.
 
     The line to hold: **a second document makes it a journal.** No titles, no pages, no sharing, no
     handout button.
+
+    Two things about the build that the design did not say. **The undo exemption needs two halves**,
+    not one: keeping `SetNotes` off the ring leaves a paragraph typed *between* two other commands
+    on the snapshot the later one pushed, so the `Undo` arm takes the notes out and puts them back
+    around `adopt` — the only exception `adopt` has ever needed, and it is `docs/undo.md`'s own
+    prediction arriving. And the one frame this feature sends turns out to be for **your other tab**:
+    the author's socket is excluded, which is `Pinged`'s rule rather than `Said`'s, because writing
+    the text back a round trip later moves the caret.
 
 25. **Done, and out of order.** Shift-click selection and the group drag — six goblins cross a
     corridor in one drag rather than six. See *Moving several at once* in `docs/tokens.md`.

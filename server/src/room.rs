@@ -21,7 +21,7 @@ use crate::protocol::{
     MapInfo, Origin, Owner, PlayerId, Pos, Px, RoomView, RosterEntry, RosterSlot, ServerMsg, Shape,
     ShapeId, ShapeKind, StagedView, Token, TokenId, TokenView, Wall, WallId, WallKind,
 };
-use crate::store::{Saved, Store};
+use crate::store::{Saved, SavedNote, Store};
 
 /// Per-client outbound buffer. Six clients at ~30 Hz never approach this; if a
 /// client does fill it, its socket is wedged and it gets dropped.
@@ -122,6 +122,15 @@ const MAX_CHAT_LINES: usize = 200;
 /// How long one thing somebody says may be. A sentence, generously — this is a
 /// table talking, not a journal, and the box is one line high on purpose.
 const MAX_CHAT_LEN: usize = 400;
+
+/// How much one person may keep in their scratchpad.
+///
+/// Four pages, which is far past what a box for "the innkeeper is called Doran"
+/// is for and far short of anything that troubles a save file on a Raspberry Pi.
+/// The client's textarea carries the same number as its `maxlength`, so typing
+/// simply stops rather than bouncing off the room — this is the backstop for a
+/// client that does not, which is the shape every cap on this file has.
+const MAX_NOTES_LEN: usize = 10_000;
 
 /// The table, plus the DM, who holds no slot.
 ///
@@ -365,6 +374,25 @@ enum Event {
     /// capped, and out of `Saved`, which is what keeps it off the disk and out
     /// of the undo ring without either of those having to name it.
     Said { line: ChatLine },
+
+    /// Somebody's scratchpad changed, and it is theirs.
+    ///
+    /// **The first event in this enum that goes to one person who is not
+    /// necessarily the DM**, and the first whose audience is narrower for the DM
+    /// than for anyone else: their own box is the only one they are ever told
+    /// about. `message_for` asks whose it is and nothing else — no `is_dm`, no
+    /// board, no fog.
+    ///
+    /// Carries `by` as well as `owner` for `Pinged`'s reason: the socket that
+    /// typed it already holds the text, and writing it back a round trip later
+    /// would move the caret out from under whoever is still typing. What is left
+    /// after that exclusion is the author's *other* tab, which is the whole
+    /// reason this is an event rather than nothing at all.
+    NotesChanged {
+        by: ClientId,
+        owner: Owner,
+        text: String,
+    },
 
     /// The DM undid something, and the room is now a state it held earlier.
     ///
@@ -705,6 +733,27 @@ pub struct RoomState {
     /// **Not filtered here.** The room holds every line; who may see which is
     /// `chat_seen`, asked per recipient in `snapshot_for` and in `message_for`.
     chat: VecDeque<ChatLine>,
+    /// One box of text per person, private to whoever wrote it — the DM's is no
+    /// different from anyone else's.
+    ///
+    /// **The first state in this project the DM is not sent**, and every
+    /// asymmetry before it runs the other way: `snapshot_for` and `message_for`
+    /// have only ever been asked to withhold *downward*. There is no `is_dm` in
+    /// either arm here, because a scratchpad somebody else's client can open is
+    /// not a scratchpad — it is a surveillance feature, and nobody writes
+    /// honestly in a box they know is read.
+    ///
+    /// Persisted, unlike `chat` above it, which is what makes it worth having at
+    /// all over the Notepad window everyone already tabs to: it is in the window
+    /// and it survives the Pi being rebooted. Being persisted is also what makes
+    /// it the case milestone 22's rule was written for — see the `Undo` arm of
+    /// `apply`, which is the one place a restore is told to leave something
+    /// alone.
+    ///
+    /// Keyed by `Owner` and never by anything a client says: `SetNotes` carries
+    /// no key, because a key a client could name is a key it could name
+    /// somebody else's with.
+    notes: HashMap<Owner, String>,
     /// Identified clients. Only these receive events.
     clients: HashMap<ClientId, Client>,
     /// Connected but not yet identified. They hold a sender and nothing else.
@@ -904,6 +953,12 @@ fn persists(event: &Event) -> bool {
         | Event::Pinged { .. }
         | Event::Said { .. }
         | Event::UndoChanged => false,
+
+        // And the one that is `Said`'s opposite on this list: the room keeps
+        // this *and* writes it down. Surviving a restart is most of what a
+        // scratchpad is worth, so it is the last field on `Saved` rather than
+        // the second thing kept only in memory.
+        Event::NotesChanged { .. } => true,
     }
 }
 
@@ -971,7 +1026,16 @@ fn undid(msg: &ClientMsg) -> Option<&'static str> {
         // Nothing anybody said is the DM's to take back, and the exclusion is
         // free rather than argued: this persists nothing, so the pair would
         // never agree about it anyway.
-        | ClientMsg::Say { .. } => None,
+        | ClientMsg::Say { .. }
+        // **The third exclusion, and the first that `persists` disagrees with.**
+        // Milestone 22's rule is that the ring may only hold state the undoing
+        // hand wrote, and a scratchpad is the case it was written for: undoing
+        // somebody's paragraph away would be a stranger's button eating work
+        // there is no way to get back and nothing on screen to explain. Leaving
+        // it off the ring is only half of that — see the `Undo` arm of `apply`
+        // for the other half, which is a restore being told to leave a box it
+        // did not write alone.
+        | ClientMsg::SetNotes { .. } => None,
     }
 }
 
@@ -1045,6 +1109,9 @@ fn moves_sight(msg: &ClientMsg) -> bool {
         // Words are not on the board at all. The fog does not apply to them and
         // they do not apply to it.
         | ClientMsg::Say { .. }
+        // A box of text on one person's screen is not on the board either, and
+        // this one is not even in the room the others are looking at.
+        | ClientMsg::SetNotes { .. }
         | ClientMsg::SetInitiative { .. }
         | ClientMsg::RemoveFromInitiative { .. }
         | ClientMsg::ClearInitiative
@@ -1210,17 +1277,28 @@ fn can_move(client: &Client, token: &Token) -> bool {
 /// it has to ask where the party is standing; this asks nothing of the board at
 /// all, which is the difference between hiding a monster and hiding a sentence.
 fn party_to(identity: &Identity, line: &ChatLine) -> bool {
-    let is = |owner: &Owner| match (identity, owner) {
-        (Identity::Dm, Owner::Dm) => true,
-        (Identity::Player(me), Owner::Player(them)) => me == them,
-        _ => false,
-    };
+    let is = |owner: &Owner| is_owner(identity, owner);
     match &line.to {
         // Filtered by nothing at all. The fog does not apply to words, and this
         // is the arm that says so.
         ChatTo::Table => true,
         ChatTo::Dm => matches!(identity, Identity::Dm) || is(&line.by),
         ChatTo::Player(id) => matches!(identity, Identity::Player(me) if me == id) || is(&line.by),
+    }
+}
+
+/// Whether this identity is the person that `Owner` names.
+///
+/// The one question `Identity` and `Owner` can be asked together, pulled out
+/// because two features now ask it for different reasons: `party_to` asks it
+/// about the ends of a whisper, and `notes_for` asks it about the only box a
+/// client may hold. It is `drawn_by`'s inverse and stays a free function for the
+/// same reason that one is — it needs nothing from the room.
+fn is_owner(identity: &Identity, owner: &Owner) -> bool {
+    match (identity, owner) {
+        (Identity::Dm, Owner::Dm) => true,
+        (Identity::Player(me), Owner::Player(them)) => me == them,
+        _ => false,
     }
 }
 
@@ -1263,6 +1341,7 @@ impl RoomState {
             calibrations: HashMap::new(),
             undo: VecDeque::new(),
             chat: VecDeque::new(),
+            notes: HashMap::new(),
             clients: HashMap::new(),
             pending: HashMap::new(),
         }
@@ -1339,6 +1418,20 @@ impl RoomState {
         self.show_names = saved.show_names;
         self.diagonals = saved.diagonals;
         self.calibrations = saved.calibrations;
+        // Restored here like everything else, because this has one inverse and
+        // two field lists would be the trap `docs/undo.md` names: a field read
+        // in `restored` and forgotten in the undo arm loads correctly and undoes
+        // to a stale value, and neither shows up as an error.
+        //
+        // **The undo arm is where a scratchpad is exempted, not this one.** Boot
+        // wants these back; a restore does not, and saying so once at the call
+        // site that means it is what keeps this function the single answer to
+        // "what is a saved room".
+        self.notes = saved
+            .notes
+            .into_iter()
+            .map(|note| (note.by, note.text))
+            .collect();
     }
 
     fn to_saved(&self) -> Saved {
@@ -1363,6 +1456,21 @@ impl RoomState {
             show_names: self.show_names,
             diagonals: self.diagonals,
             calibrations: self.calibrations.clone(),
+            // Sorted for the tokens' reason: `HashMap` order varies per process,
+            // and an unsorted list would rewrite the whole file every time
+            // anybody typed.
+            notes: {
+                let mut notes: Vec<SavedNote> = self
+                    .notes
+                    .iter()
+                    .map(|(by, text)| SavedNote {
+                        by: by.clone(),
+                        text: text.clone(),
+                    })
+                    .collect();
+                notes.sort_by(|a, b| a.by.cmp(&b.by));
+                notes
+            },
         }
     }
 
@@ -1476,6 +1584,7 @@ impl RoomState {
             calibrations: HashMap::new(),
             undo: VecDeque::new(),
             chat: VecDeque::new(),
+            notes: HashMap::new(),
             clients: HashMap::new(),
             pending: HashMap::new(),
         };
@@ -1721,7 +1830,31 @@ impl RoomState {
             // `is_dm` is not enough to answer it and is not asked — a whisper
             // between the DM and Saelyn is Saelyn's as much as it is theirs.
             chat: self.chat_for(identity),
+            // And a rule the line above nearly shares, pointed the other way. It
+            // is filtered by which person too — but where a whisper has two ends
+            // and the DM is one end of all of them, a scratchpad has one end and
+            // the DM has no standing in anybody's but their own.
+            notes: self.notes_for(identity),
         }
+    }
+
+    /// This client's own scratchpad, and there is no other question to ask.
+    ///
+    /// **The only `*_for` on this impl that gives the DM less than the room
+    /// holds.** Every other one narrows for a player and hands the DM the whole
+    /// of it; there is no `is_dm` here, and adding one would not be a widening
+    /// of a filter but the deletion of the feature — a box somebody else can
+    /// read is not a box anybody writes honestly in.
+    ///
+    /// Invariant 3 is what makes this a function rather than a field read at the
+    /// call site: a join and a restore both come through here, so there is no
+    /// second place for the whole table's notes to escape from.
+    fn notes_for(&self, identity: &Identity) -> String {
+        self.notes
+            .iter()
+            .find(|(owner, _)| is_owner(identity, owner))
+            .map(|(_, text)| text.clone())
+            .unwrap_or_default()
     }
 
     /// This session's talk as this recipient may see it.
@@ -2318,6 +2451,18 @@ impl RoomState {
                         Err("you are the DM — shout, or whisper a player".to_owned())
                     }
                 }
+            }
+
+            // Anyone may write in their own box, and there is no permission
+            // underneath that at all — not a role, not a destination, not an
+            // owner to compare. The command names no box, so the only one it
+            // can reach is the sender's, which is the check this arm does not
+            // have to make. Everything below is about size and shape.
+            ClientMsg::SetNotes { text } => {
+                if text.chars().count() > MAX_NOTES_LEN {
+                    return Err(format!("a scratchpad holds {MAX_NOTES_LEN} characters"));
+                }
+                Ok(())
             }
 
             // Anyone may ping, and there is nothing else to check. No bound, no
@@ -3071,6 +3216,34 @@ impl RoomState {
                 vec![Event::Said { line }]
             }
 
+            // Whose box this is comes from the socket, exactly as a line of
+            // talk's author does one arm up. Written whole rather than patched:
+            // it is one string that changes when somebody stops typing.
+            //
+            // **Emptying it removes the entry rather than storing an empty
+            // string**, which is `Override`'s `Auto` again — one representation
+            // of "there is nothing here", so a cleared box costs the save file
+            // nothing and a player who never opened this leaves no trace in it.
+            ClientMsg::SetNotes { text } => {
+                let owner = match self.clients.get(&origin) {
+                    Some(client) => drawn_by(client),
+                    // `check` proved this is a client. Same reasoning as the two
+                    // arms around it: this decides whose box is being written,
+                    // and a note nobody owns is one nobody can ever be sent.
+                    None => return Vec::new(),
+                };
+                if text.is_empty() {
+                    self.notes.remove(&owner);
+                } else {
+                    self.notes.insert(owner.clone(), text.clone());
+                }
+                vec![Event::NotesChanged {
+                    by: origin,
+                    owner,
+                    text,
+                }]
+            }
+
             ClientMsg::Ping { at } => {
                 let owner = match self.clients.get(&origin) {
                     Some(client) => drawn_by(client),
@@ -3232,7 +3405,22 @@ impl RoomState {
                 // the DM now stands. Taking it off would make the next undo skip
                 // a step.
                 let back = back.state.clone();
+                // **The one thing a restore is told to leave alone**, and the
+                // only exception `adopt` has ever needed. Milestone 22's rule is
+                // that the ring may hold state the undoing hand wrote; every
+                // scratchpad on that snapshot was written by somebody else, and
+                // restoring one eats a paragraph its author cannot get back and
+                // was never told about. `undid` keeps `SetNotes` from *being* a
+                // step; this is the other half, because a note written between
+                // two other commands is on the snapshot regardless of what put
+                // it there.
+                //
+                // Taken and put back rather than filtered out of the snapshot at
+                // push time: what belongs here is whatever people have typed
+                // *since*, which is what the room is holding right now.
+                let notes = std::mem::take(&mut self.notes);
                 self.adopt(back);
+                self.notes = notes;
                 // `adopt` empties both derived sets — a `Saved` holds the party's
                 // memory and not their sight. Done here rather than through
                 // `moves_sight` and `refresh_fog`, because `Restored` already
@@ -3316,6 +3504,7 @@ impl RoomState {
                 | Event::SketchEnded { .. }
                 | Event::Pinged { .. }
                 | Event::Said { .. }
+                | Event::NotesChanged { .. }
                 | Event::ShapesChanged
                 | Event::WallsChanged { .. }
                 | Event::FogChanged
@@ -3816,6 +4005,23 @@ impl RoomState {
             Event::Said { line } => {
                 let identity = &self.clients.get(&recipient)?.identity;
                 party_to(identity, line).then(|| ServerMsg::Said { line: line.clone() })
+            }
+
+            // **The narrowest audience in this function, and the first the DM
+            // is not automatically in.** One person is party to a scratchpad —
+            // its author — so this asks whose it is and stops. The `is_dm` that
+            // every filter above eventually reaches for would, here, be the
+            // thing that broke it.
+            //
+            // Minus the socket that typed it, which is `Pinged`'s exclusion
+            // rather than `Said`'s: the text is already in that box, and writing
+            // it back a round trip later moves the caret mid-sentence. The
+            // author's *second tab* is what is left, and is the whole audience
+            // this event has.
+            Event::NotesChanged { by, owner, text } => {
+                let identity = &self.clients.get(&recipient)?.identity;
+                (recipient != *by && is_owner(identity, owner))
+                    .then(|| ServerMsg::NotesChanged { text: text.clone() })
             }
 
             // Built per recipient, like the initiative panel and for the same

@@ -52,8 +52,8 @@ const tabs = (session) =>
 
 // The first time the two sides of this application have had the same furniture.
 // Neither of the dock's panels is the DM's, so this is not the rail.
-check('the DM has a chat tab', await tabs(dm), ['chat']);
-check('and so does a player', await tabs(saelyn), ['chat']);
+check('the DM has both dock tabs', await tabs(dm), ['chat', 'notes']);
+check('and so does a player', await tabs(saelyn), ['chat', 'notes']);
 
 const openDock = (session) =>
   session.evaluate(`[...document.querySelectorAll('#dock-tabs .dock-tab')]

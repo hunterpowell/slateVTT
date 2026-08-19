@@ -23,6 +23,8 @@ replaces Foundry for one group that only needs a shared map, tokens, and turn or
   standing in, where an open door lets the light through and a shut one seals it
 - Whisper and shout: a player says something to the table or privately to the DM, the DM whispers
   any one player, and nobody messages anybody else — kept for the evening and never written to disk
+- A scratchpad each: one box of text, kept with the room, that no other screen is ever sent — the
+  DM's is no different from anybody's
 - State is saved to a JSON file on disk and restored on restart
 
 See [CLAUDE.md](.claude/CLAUDE.md) for the architecture, invariants, and non-goals, and [docs/](docs/)
@@ -141,6 +143,7 @@ screen and which token is standing on a given square.
 | `drive-undo.mjs`   | The DM's undo reaching the table, and not rebuilding their page    | both     |
 | `drive-panels.mjs` | The initiative panel folding, and the DM's solo sight staying theirs | both     |
 | `drive-chat.mjs`   | Whisper and shout — and a whisper being absent from a *third* person's page | three    |
+| `drive-notes.mjs`  | The scratchpad — one person in two tabs, and the DM holding none of it | three    |
 
 The ones marked *both* open two browsers at once, and that is the point of them: almost everything
 they assert is a **difference** between what two people are holding, which one client cannot see.

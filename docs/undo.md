@@ -96,10 +96,22 @@ worse rather than better: it would take the drawing *and* the DM's last command 
 restore restores everything either way. Keeping a player's action as a step of its own is what makes
 undo chronological.
 
-**Milestone 24's scratchpads will not qualify**, and they are the case this rule was written for: one
+**Milestone 24's scratchpads do not qualify**, and they are the case this rule was written for: one
 box of text per person, private to its author. Restoring one from ten commands ago eats somebody's
-paragraph, with nothing on screen to say it happened and no way for them to get it back. When they
-land they come out of the snapshot. Milestone 23's log dodges it for free by never being persisted.
+paragraph, with nothing on screen to say it happened and no way for them to get it back. Milestone
+23's log dodges this for free by never being persisted; a scratchpad cannot, because surviving a
+restart is most of what it is worth.
+
+So the exemption is spelled out, in two places, and **both are needed**. `undid` returns `None` for
+`SetNotes`, which is the first disagreement between `undid` and `persists` in this file — everywhere
+else, worth saving and worth undoing are the same answer. And the `Undo` arm of `apply` takes the
+notes out and puts them back around `adopt`, which is the load-bearing half: a paragraph typed
+*between* two other commands is on the snapshot the second one pushed, whoever typed it, so keeping
+`SetNotes` off the ring is not on its own enough.
+
+`adopt` still restores them, because it is the one inverse and two field lists are the trap above.
+**Boot wants them back and a restore does not**, and saying so once at the call site that means it
+is what keeps this function the single answer to "what is a saved room". See `docs/notes.md`.
 
 ## It restores by re-sending the world
 

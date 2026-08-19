@@ -28,6 +28,8 @@ import type { TableTool } from './table.js';
 import { createTableTool } from './table.js';
 import type { Net } from './net.js';
 import { connect } from './net.js';
+import type { Notes } from './notes.js';
+import { createNotes } from './notes.js';
 import { overridesFromWire } from './overrides.js';
 import type { Panel } from './panel.js';
 import { createPanel } from './panel.js';
@@ -103,6 +105,10 @@ interface Ui {
     form: HTMLFormElement;
     text: HTMLInputElement;
     toast: HTMLElement;
+  };
+  notes: {
+    root: HTMLElement;
+    text: HTMLTextAreaElement;
   };
   undo: {
     root: HTMLElement;
@@ -239,6 +245,10 @@ function findUi(): Ui {
       text: need<HTMLInputElement>('#chat-text'),
       toast: need('#chat-toast'),
     },
+    notes: {
+      root: need('#notes'),
+      text: need<HTMLTextAreaElement>('#notes-text'),
+    },
     undo: {
       root: need('#undo'),
       button: need<HTMLButtonElement>('#undo-button'),
@@ -350,6 +360,7 @@ function boot(): void {
   // Both built on every connection, unlike everything above them: neither of
   // the dock's panels is the DM's.
   let chat: Chat | null = null;
+  let notes: Notes | null = null;
   let dock: Dock | null = null;
   // DM-only, like the three panels it shows. Null on a player connection, which
   // is why every use of it is optional-chained rather than guarded.
@@ -472,6 +483,12 @@ function boot(): void {
         // can arrive, which is why this reaches for it lazily.
         (count) => dock?.badge('chat', count),
       );
+      // The other panel everybody has, and the only state in this application
+      // that is nobody else's business — the room sends this client its own box
+      // and has no way to send it another. There is no identity branch here for
+      // the same reason: the DM's scratchpad is not different from anybody's.
+      notes = createNotes(ui.notes, welcome.state.notes, (msg) => net.send(msg));
+
       dock = createDock(ui.dock, [
         {
           tab: 'chat',
@@ -482,6 +499,15 @@ function boot(): void {
           // — the moment it comes on screen, where the log catches up and the
           // unread count goes.
           opened: () => chat?.opened(),
+        },
+        {
+          tab: 'notes',
+          label: 'notes',
+          root: ui.notes.root,
+          // Focus, and nothing else to catch up on: this panel has no unread
+          // state, because nothing ever arrives in it that this client did not
+          // type.
+          opened: () => notes?.opened(),
         },
       ]);
 
@@ -779,6 +805,11 @@ function boot(): void {
     // is predicted locally: a log is a sequence, and where a line lands in it is
     // the room's to decide.
     onSaid: (line) => chat?.said(line),
+
+    // Our own box, changed in another tab of ours — the only reason this frame
+    // exists. It is never anybody else's: nothing on the wire can carry one,
+    // which is what makes this the shortest handler in the file.
+    onNotesChanged: (text) => notes?.changed(text),
 
     // The whole list, replacing whatever we held. Nothing is predicted locally:
     // a shape's id is the server's to invent, and an erase is a click rather

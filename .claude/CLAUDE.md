@@ -10,7 +10,7 @@ deliberately, and neither is loaded for you:
 - **`ROADMAP.md`** — design for what is not built yet, and the milestone order. Read it when
   starting a milestone.
 - **`docs/maps.md`, `docs/tokens.md`, `docs/drawings.md`, `docs/walls.md`, `docs/fog.md`,
-  `docs/undo.md`, `docs/chat.md`** — why each
+  `docs/undo.md`, `docs/chat.md`, `docs/notes.md`** — why each
   built feature is the shape it is. Every section below that summarises a feature ends with a pointer
   to its file and the code that file covers.
 
@@ -31,6 +31,7 @@ them would load them into every session, which is what moving them out avoided.)
 - Lets the DM take back the last handful of things that changed the room
 - Lets anyone say something to the table, or whisper the DM — and the DM whisper any one player;
   two destinations and nothing else, kept for the evening and never written down
+- Gives everyone a box to write in that no other screen is ever sent, the DM's included
 
 ## Non-goals
 
@@ -48,10 +49,11 @@ unless explicitly asked:
   as milestone 23; its motivating case is six people posting initiative rolls without clogging
   voice, and the boundary above is the specification — see *Whisper and shout* below and
   `docs/chat.md`.
-- Compendiums, handouts, audio, and journals — **with one bounded exception**: a scratchpad,
-  scheduled as milestone 24. One box of text per person, private to whoever wrote it, and the DM's is
-  no different from anyone else's. **A second document makes it a journal.** No titles, no pages, no
-  sharing, no handout button.
+- Compendiums, handouts, audio, and journals — **with one bounded exception**: a scratchpad.
+  One box of text per person, private to whoever wrote it, and the DM's is no different from anyone
+  else's. **A second document makes it a journal.** No titles, no pages, no sharing, no handout
+  button. **Built**, as milestone 24, and the boundary above is the specification — see *The
+  scratchpad* below and `docs/notes.md`.
 - Module or plugin systems
 - User accounts, email, password reset, OAuth
 - Mobile-first design (desktop browser is the target; don't break touch, don't optimize for it)
@@ -173,6 +175,12 @@ struct RoomState {
     /// whispers off the disk *and* out of the undo ring, with neither of those
     /// having to name it — see `docs/chat.md`.
     chat: VecDeque<ChatLine>,
+    /// One box of text per person, private to whoever wrote it. **The first
+    /// state here Slate does not send the DM** — there is no `is_dm` in either
+    /// filter, because a box somebody else can open is not a scratchpad. On
+    /// disk, unlike `chat`, and exempt from the undo ring by hand rather than by
+    /// construction — see `docs/notes.md`.
+    notes: HashMap<Owner, String>,
     /// Identified clients, who are the only ones any event reaches, and the
     /// sockets that are connected but have not said who they are yet.
     clients: HashMap<ClientId, Client>,
@@ -285,15 +293,22 @@ that rule**, and for the same reason: it is what the DM authored, and the fog is
 **Undo is DM-only and is the one command that can take back somebody else's work** — a player's
 drawing is on the ring like everything else persisted, because a restore restores the room whole and
 skipping their shape would take it *and* the DM's last command together. The rule that decides what
-may go on the ring is **state the undoing hand wrote**; milestone 24's scratchpads are the case that
-will fail it. See `docs/undo.md`. The chat log is the first thing to test that rule and it passes
-without being named anywhere: a snapshot is a `Saved`, and the log is not on one.
+may go on the ring is **state the undoing hand wrote**; the scratchpads are the case it was written
+for and the only thing exempted by hand — `undid` says `None` and the `Undo` arm puts them back
+around `adopt`, and both halves are needed. See `docs/undo.md`. The chat log tested the same rule
+first and passes without being named anywhere: a snapshot is a `Saved`, and the log is not on one.
 
 **Saying something is the second exception to "everything else is DM-only", and it is a permission
 about a *destination* rather than about a role.** Anyone may say something; what a player may not
 do is name another player. `party_to` decides who sees a line, and it is the first filter in the
 project that draws its line between two players rather than between the DM and the table — it never
 asks `is_dm`. See `docs/chat.md`.
+
+**Writing in a scratchpad is the third exception, and it is the one with no permission at all.**
+`SetNotes` names no box — the only one it can reach is the sender's, because whose it is comes from
+the socket — so there is nothing to check but a length. What is new is on the way *out*:
+`notes_for` is the first filter in the project that gives the **DM** less than the room holds, and
+`is_owner` is the question both it and `party_to` ask. See `docs/notes.md`.
 
 Token creation, deletion, map changes, initiative edits, and whether the board writes token names
 under them are DM-only. That last one is the one whose *result* everybody is sent — see the wire
@@ -372,6 +387,13 @@ whisper only exists in the copies of the two people at either end of it. The del
 audience is a *pair of people* rather than a role — and it is **the one relayed frame the sender is
 echoed**, because a log is a sequence and where a line lands in it is the room's to decide, not a
 client's. See `docs/chat.md`.
+
+**`notes` is the second field that is per-recipient content, and the first that is narrower for
+the DM than for the room.** A client is sent its own box and there is no frame that can carry
+another — `ServerMsg::NotesChanged` reaches its author minus the socket that typed it, which is
+`Pinged`'s exclusion rather than `Said`'s echo: the text is already in that box, and writing it back
+a round trip later moves the caret. What is left is the author's second tab, and that is the whole
+audience it has.
 
 `roster` is the cast list, not who is connected. The DM never sees the identity picker, so this
 is the only way their token panel learns the names a token can be handed to; a player is sent it
@@ -671,11 +693,15 @@ swings with no tool in hand. `rail.ts` is short and holds the rest of the reason
 
 **The right edge is a second strip, `dock.ts`, and it is everybody's.** The initiative panel and
 the dock share a flex column for the reason the left rail is one — the panel's height is however
-many creatures are in the fight, so nothing under it can be pinned at an offset. Three things
-differ from the rail and are why it is a separate file rather than a generalised one: both its tabs
-are built on every connection, nothing behind it arms the canvas so there is no `stop`, and a tab
-here can carry an unread count. It grows *upward* from the bottom, so opening it never moves the
-initiative panel. See `docs/chat.md`.
+many creatures are in the fight, so nothing under it can be pinned at an offset. Four things differ
+from the rail and are why it is a separate file rather than a generalised one: both its tabs are
+built on every connection, nothing behind it arms the canvas so there is no `stop`, a tab here can
+carry an unread count, and **its panels stack**. That last one is milestone 24's: one rail panel is
+open at a time because rail panels are editing *modes*, and nothing in the dock is a mode — a log
+and a scratchpad are both read while something else is going on. It grows *upward* from the bottom,
+so opening it never moves the initiative panel — and **its strip is its last child** rather than its
+first, because the edge that grows is the top one and a tab that moves when you toggle its
+neighbour is the rail's argument aimed at the wrong end. See `docs/chat.md` and `docs/notes.md`.
 
 ## Maps
 
@@ -759,6 +785,39 @@ A line renders identically for both people party to it, so there is no "am I the
 
 → **`docs/chat.md`** before touching `chat.ts`, `dock.ts`, `party_to`, `chat_for`, `RoomState::chat`,
 or `Say`/`Said`/`ChatTo`/`ChatLine` on the server.
+
+## The scratchpad
+
+One box of text per person, private to whoever wrote it, and **the DM's is no different from
+anyone else's**. What it is worth over the Notepad window everybody already tabs to is one thing:
+it is in the window, and it persists with the room. That is the entire scope, and **a second
+document makes it a journal** — read the non-goal at the top of this file before adding anything.
+
+**It is the first state in this project Slate does not send the DM.** Every asymmetry before it
+runs the other way, so `snapshot_for` and `message_for` had only ever been asked to withhold
+*downward*; there is no `is_dm` in either arm here. A scratchpad the DM's client can open is not a
+scratchpad, it is a surveillance feature, and the reason it stays out is the reason it is worth
+having.
+
+**Be accurate about how far that goes and do not call it privacy.** The notes are in the save file
+and the DM hosts the server. What is guaranteed is that **no client is ever sent somebody else's**,
+which is the same guarantee the walls and the hit points get and the only kind this architecture
+makes about anything.
+
+**`SetNotes` carries no key**, because a key a client could name is a key it could name somebody
+else's with — whose box it is comes from the socket, exactly as `Say`'s sender does. So there is no
+permission to check, only a cap. **It sends on a pause, not on a keystroke**: a 500ms idle
+debounce, flushed on blur, and no "saved" indicator — that would be the first UI here that narrates
+the network, and it would make the box look like a document.
+
+**Persisted, and exempt from the undo by hand.** A snapshot is a `Saved`, so this being on disk put
+it on the ring by construction — which is exactly the case milestone 22's rule was written for.
+Two things say otherwise and both are needed: `undid` is `None` for `SetNotes`, and the `Undo` arm
+of `apply` takes the notes out and puts them back around `adopt`. The second is the load-bearing
+one, because a paragraph typed *between* two commands is on the snapshot the later one pushed.
+
+→ **`docs/notes.md`** before touching `notes.ts`, `RoomState::notes`, `notes_for`, `is_owner`, the
+`Undo` arm of `apply`, or `SetNotes`/`NotesChanged` on the server.
 
 ## Testing
 

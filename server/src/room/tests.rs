@@ -470,6 +470,7 @@ mod handshake;
 mod initiative;
 mod maps;
 mod movement;
+mod notes;
 mod persistence;
 mod tokens;
 mod undo;

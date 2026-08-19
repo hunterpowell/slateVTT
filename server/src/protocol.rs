@@ -42,7 +42,10 @@ impl PlayerId {
 /// Adjacently tagged: `{"kind":"dm"}` / `{"kind":"player","id":"saelyn"}`.
 /// Internal tagging cannot express a newtype variant wrapping a string, and
 /// serde's default external tagging would produce two different JSON shapes.
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+// `Hash` and `Ord` are here for the scratchpads: this keys `RoomState::notes`,
+// and the saved form of that table is sorted so the file does not churn on
+// every write — the reason `to_saved` sorts the tokens.
+#[derive(Debug, Clone, Default, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 #[serde(tag = "kind", content = "id", rename_all = "snake_case")]
 pub enum Owner {
     /// The default on purpose: a token restored from a schema that predates
@@ -855,6 +858,18 @@ pub struct RoomView {
     /// position.
     pub chat: Vec<ChatLine>,
     pub undo: Option<String>,
+    /// This client's own scratchpad, and never anybody else's.
+    ///
+    /// **The second field here that is per-recipient content rather than the
+    /// room's copy with rows dropped**, after `chat` above it — and the first
+    /// one where the DM's copy is narrower than the room's rather than wider.
+    /// Every other filter in this struct withholds downward; `notes_for` asks
+    /// only whose box it is, and the DM has exactly one like everybody else.
+    ///
+    /// Empty is both "you have written nothing" and, for a client that has not
+    /// claimed a slot, "there is no box to fill" — indistinguishable, and
+    /// nothing downstream cares which.
+    pub notes: String,
 }
 
 /// Inbound. Not `#[serde(default)]`: a malformed frame from a client should be
@@ -1064,6 +1079,20 @@ pub enum ClientMsg {
     /// a `by` on the wire is a field a client could lie in.
     Say {
         to: ChatTo,
+        text: String,
+    },
+
+    /// Replace this client's own scratchpad with `text`.
+    ///
+    /// **It carries no key, and that is the whole security of the feature.** A
+    /// key a client could name is a key it could name somebody *else's* with —
+    /// so whose box this is comes from the socket, exactly as `Say`'s sender
+    /// does, and there is no argument here for a server to validate.
+    ///
+    /// The whole box every time rather than an edit or a diff. It is one string
+    /// of a few thousand characters that changes when somebody stops typing, so
+    /// a patch format would be machinery bought with nothing.
+    SetNotes {
         text: String,
     },
 
@@ -1406,6 +1435,23 @@ pub enum ServerMsg {
     /// this is the first frame withheld from one *player* and sent to another.
     Said {
         line: ChatLine,
+    },
+
+    /// Your scratchpad now reads this.
+    ///
+    /// **The first message in this file the DM is not entitled to**, and it is
+    /// worth pausing on: every other rule here separates the DM from the table,
+    /// and this one has no `is_dm` in it at all. It reaches the author and
+    /// nobody — a scratchpad somebody else's client can open is not a
+    /// scratchpad.
+    ///
+    /// Not sent back to the socket that typed it, which is `Sketch`'s and
+    /// `Pinged`'s rule rather than `Said`'s: what would arrive is the text
+    /// already in the box, a round trip later, and writing it back mid-sentence
+    /// moves the caret. What it *is* for is the author's second tab, which holds
+    /// a box that would otherwise be showing a paragraph that no longer exists.
+    NotesChanged {
+        text: String,
     },
 
     /// The room was put back to an earlier state — take this as the truth for
