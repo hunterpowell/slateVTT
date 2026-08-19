@@ -10,6 +10,7 @@ import type {
   WireMapInfo,
   WireOverrides,
   WireShape,
+  WireChatLine,
   WireStaged,
   WireRoomView,
   WireToken,
@@ -46,6 +47,10 @@ export interface Handlers {
    *  Called on every connection and never filtered — a ping is relayed wherever
    *  it lands, unexplored ground included. */
   onPinged(ping: Extract<ServerMsg, { type: 'pinged' }>): void;
+  /** Somebody said something we are party to — including our own, which is the
+   *  one relayed frame in this protocol the sender is echoed. Nothing here is
+   *  filtered: the server decided we may hold this line. */
+  onSaid(line: WireChatLine): void;
   /** Every shape we may see, replacing whatever we held. */
   onShapesChanged(shapes: WireShape[]): void;
   /** Every wall on one board, and which board that is. Only ever called on a DM
@@ -138,6 +143,9 @@ export function connect(on: Handlers): Net {
         break;
       case 'pinged':
         on.onPinged(msg);
+        break;
+      case 'said':
+        on.onSaid(msg.line);
         break;
       case 'shapes_changed':
         on.onShapesChanged(msg.shapes);

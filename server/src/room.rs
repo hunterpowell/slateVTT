@@ -17,9 +17,9 @@ use uuid::Uuid;
 
 use crate::fog::{self, Cell, FogView, Override, OverrideView};
 use crate::protocol::{
-    Calibration, ClientId, ClientMsg, Diagonals, Hp, Initiative, InitiativeEntry, MapInfo, Origin,
-    Owner, PlayerId, Pos, Px, RoomView, RosterEntry, RosterSlot, ServerMsg, Shape, ShapeId,
-    ShapeKind, StagedView, Token, TokenId, TokenView, Wall, WallId, WallKind,
+    Calibration, ChatLine, ChatTo, ClientId, ClientMsg, Diagonals, Hp, Initiative, InitiativeEntry,
+    MapInfo, Origin, Owner, PlayerId, Pos, Px, RoomView, RosterEntry, RosterSlot, ServerMsg, Shape,
+    ShapeId, ShapeKind, StagedView, Token, TokenId, TokenView, Wall, WallId, WallKind,
 };
 use crate::store::{Saved, Store};
 
@@ -110,6 +110,18 @@ const MAX_WALL_POINTS: usize = 256;
 /// frame is the cost, and the refusal names the size so the DM knows to fill a
 /// smaller region rather than wondering what went wrong.
 const MAX_OVERRIDE_CELLS: usize = 50_000;
+
+/// How much of a session's talk the room keeps.
+///
+/// A cap and not a policy: the log is trimmed from the front so a browser
+/// hiccup mid-combat does not eat the initiative rolls somebody posted a minute
+/// ago. It is memory only — nothing here reaches the disk — so this bounds a
+/// `VecDeque` rather than a file, and 200 lines is an evening of six people
+/// calling out numbers.
+const MAX_CHAT_LINES: usize = 200;
+/// How long one thing somebody says may be. A sentence, generously — this is a
+/// table talking, not a journal, and the box is one line high on purpose.
+const MAX_CHAT_LEN: usize = 400;
 
 /// The table, plus the DM, who holds no slot.
 ///
@@ -339,6 +351,20 @@ enum Event {
     ///
     /// Carries its slot for the reason `WallsChanged` does.
     OverridesChanged { staged: bool },
+
+    /// Somebody said something, and the room has already written it down.
+    ///
+    /// Carries the whole line, like `Sketching` and `Pinged` and unlike the
+    /// payload-free events above — the text is the same for everyone allowed to
+    /// have it, so there is nothing here to rebuild per recipient. What
+    /// `message_for` does with it is decide *whether*, which is the walls' rule
+    /// arriving somewhere new: a whisper is withheld from one player and sent to
+    /// another, rather than withheld from every player.
+    ///
+    /// Unlike its two ephemeral neighbours the room does keep this — in memory,
+    /// capped, and out of `Saved`, which is what keeps it off the disk and out
+    /// of the undo ring without either of those having to name it.
+    Said { line: ChatLine },
 
     /// The DM undid something, and the room is now a state it held earlier.
     ///
@@ -663,6 +689,22 @@ pub struct RoomState {
     /// those from ten commands ago would silently eat somebody's paragraph with
     /// nothing on screen to say so. When they land, they come out of here.
     undo: VecDeque<Snapshot>,
+    /// What has been said this session, oldest first.
+    ///
+    /// **Memory only, and deliberately not on `Saved`.** Two things fall out of
+    /// that and neither needed a rule of its own: old whispers are never durable
+    /// on a disk somebody could read, and an undo cannot eat what the table said
+    /// — a snapshot is a `Saved`, so this is not in one, so `adopt` leaves it
+    /// exactly where it is. Milestone 22 wrote down that the ring may only hold
+    /// state the undoing hand wrote; this is the first thing to test it, and it
+    /// passes by not being persisted at all.
+    ///
+    /// A `VecDeque` because the cap trims from the front — the oldest line goes
+    /// when the newest arrives, which is what a cap on a conversation means.
+    ///
+    /// **Not filtered here.** The room holds every line; who may see which is
+    /// `chat_seen`, asked per recipient in `snapshot_for` and in `message_for`.
+    chat: VecDeque<ChatLine>,
     /// Identified clients. Only these receive events.
     clients: HashMap<ClientId, Client>,
     /// Connected but not yet identified. They hold a sender and nothing else.
@@ -848,9 +890,19 @@ fn persists(event: &Event) -> bool {
         // ring lives in memory and is not on `Saved` at all, so there is nothing
         // here for a write to capture. It rides beside events that do persist,
         // which is why this arm never suppresses a save that was wanted.
+        //
+        // A line of talk is the one thing here the room *does* keep and still
+        // does not write down, which makes it the odd arm in this list rather
+        // than another ephemeral one. It is session memory on purpose: what was
+        // whispered on a Tuesday is not something this project should be storing
+        // on a disk in somebody's front room, and an evening's initiative rolls
+        // are worth nothing the morning after. That one decision is also what
+        // keeps it out of the undo ring, since a snapshot is whatever `Saved`
+        // describes.
         Event::Sketching { .. }
         | Event::SketchEnded { .. }
         | Event::Pinged { .. }
+        | Event::Said { .. }
         | Event::UndoChanged => false,
     }
 }
@@ -915,7 +967,11 @@ fn undid(msg: &ClientMsg) -> Option<&'static str> {
         ClientMsg::Undo => None,
         ClientMsg::Hello { .. }
         | ClientMsg::Sketch { .. }
-        | ClientMsg::Ping { .. } => None,
+        | ClientMsg::Ping { .. }
+        // Nothing anybody said is the DM's to take back, and the exclusion is
+        // free rather than argued: this persists nothing, so the pair would
+        // never agree about it anyway.
+        | ClientMsg::Say { .. } => None,
     }
 }
 
@@ -986,6 +1042,9 @@ fn moves_sight(msg: &ClientMsg) -> bool {
         // tempting to write the other way round — a ping lands on unexplored
         // ground and stays a ring over black, deliberately.
         | ClientMsg::Ping { .. }
+        // Words are not on the board at all. The fog does not apply to them and
+        // they do not apply to it.
+        | ClientMsg::Say { .. }
         | ClientMsg::SetInitiative { .. }
         | ClientMsg::RemoveFromInitiative { .. }
         | ClientMsg::ClearInitiative
@@ -1133,6 +1192,38 @@ fn can_move(client: &Client, token: &Token) -> bool {
     }
 }
 
+/// Whether this identity is one of the two ends of a line somebody said.
+///
+/// **The whole visibility rule for the chat log, and it is a rule about two
+/// people rather than about a role.** A shout is everybody's. A whisper is in
+/// exactly two copies — the sender's and the recipient's — which is why this
+/// asks about `by` as well as about `to`: without the first half the DM's own
+/// whisper to Saelyn would be absent from the DM's log, and the person who said
+/// it would be the one person unable to see it.
+///
+/// It takes an `Identity` rather than a `Client` because both callers have one
+/// and neither has the other: `snapshot_for` is handed an identity, and
+/// `message_for` looks one up per recipient.
+///
+/// A free function beside `can_move` and `can_erase`, for the reason those two
+/// are: it needs nothing from the room. `shape_seen` is on `RoomState` because
+/// it has to ask where the party is standing; this asks nothing of the board at
+/// all, which is the difference between hiding a monster and hiding a sentence.
+fn party_to(identity: &Identity, line: &ChatLine) -> bool {
+    let is = |owner: &Owner| match (identity, owner) {
+        (Identity::Dm, Owner::Dm) => true,
+        (Identity::Player(me), Owner::Player(them)) => me == them,
+        _ => false,
+    };
+    match &line.to {
+        // Filtered by nothing at all. The fog does not apply to words, and this
+        // is the arm that says so.
+        ChatTo::Table => true,
+        ChatTo::Dm => matches!(identity, Identity::Dm) || is(&line.by),
+        ChatTo::Player(id) => matches!(identity, Identity::Player(me) if me == id) || is(&line.by),
+    }
+}
+
 /// The roster is not persisted: it is a constant, and a saved copy would only
 /// be able to disagree with it. It becomes state when the DM can edit it.
 fn default_roster() -> Vec<RosterEntry> {
@@ -1171,6 +1262,7 @@ impl RoomState {
             diagonals: Diagonals::Equal,
             calibrations: HashMap::new(),
             undo: VecDeque::new(),
+            chat: VecDeque::new(),
             clients: HashMap::new(),
             pending: HashMap::new(),
         }
@@ -1383,6 +1475,7 @@ impl RoomState {
             diagonals: Diagonals::Equal,
             calibrations: HashMap::new(),
             undo: VecDeque::new(),
+            chat: VecDeque::new(),
             clients: HashMap::new(),
             pending: HashMap::new(),
         };
@@ -1623,7 +1716,32 @@ impl RoomState {
             // player has no button for it to label, and `None` is also what an
             // untouched room says — indistinguishable, like an empty wall list.
             undo: if is_dm { self.undo_label() } else { None },
+            // And a rule none of the fields above uses, on the last one: this is
+            // filtered by *which person* rather than by whether they are the DM.
+            // `is_dm` is not enough to answer it and is not asked — a whisper
+            // between the DM and Saelyn is Saelyn's as much as it is theirs.
+            chat: self.chat_for(identity),
         }
+    }
+
+    /// This session's talk as this recipient may see it.
+    ///
+    /// **Two clients get two different conversations out of this, not one
+    /// conversation with rows missing.** Every other `*_for` on this impl
+    /// narrows the room's single copy of something; here the room's copy is a
+    /// pile of private exchanges that no client is ever entitled to whole, the
+    /// DM included — they see every whisper because they are one end of all of
+    /// them, not because they are the DM.
+    ///
+    /// Invariant 3 with the sharpest teeth in the project: filtering the deltas
+    /// and forgetting this would hand a joining player the whole evening's
+    /// whispers in one frame.
+    fn chat_for(&self, identity: &Identity) -> Vec<ChatLine> {
+        self.chat
+            .iter()
+            .filter(|line| party_to(identity, line))
+            .cloned()
+            .collect()
     }
 
     /// The drawings as this recipient may see them.
@@ -2153,6 +2271,53 @@ impl RoomState {
             ClientMsg::Sketch { at, to, color, .. } => {
                 finite(&[at.x, at.y])?;
                 shape_fields(*to, color)
+            }
+
+            // Anyone may say something, and the whole of the permission is
+            // *where it is going*. There is no `require_dm` here and there is no
+            // per-item rule underneath it either — what a player may not do is
+            // name another player, which is one arm of the match below rather
+            // than a rule about who they are.
+            //
+            // The refusals are worded as the boundary rather than as a
+            // restriction, because a player whose message bounces should learn
+            // that this is not a thing Slate does, not that they lack a
+            // permission somebody else has.
+            ClientMsg::Say { to, text } => {
+                let text = text.trim();
+                if text.is_empty() {
+                    return Err("there is nothing to say".to_owned());
+                }
+                if text.chars().count() > MAX_CHAT_LEN {
+                    return Err(format!("that is longer than {MAX_CHAT_LEN} characters"));
+                }
+                match (&client.identity, to) {
+                    // The two everybody has, and the two a player has.
+                    (_, ChatTo::Table) => Ok(()),
+                    (Identity::Player(_), ChatTo::Dm) => Ok(()),
+                    // The DM whispering one player, which is the only reason
+                    // this variant exists — and it names a real slot, so a
+                    // whisper cannot be addressed into nowhere.
+                    (Identity::Dm, ChatTo::Player(id)) => {
+                        if self.roster.iter().any(|entry| &entry.id == id) {
+                            Ok(())
+                        } else {
+                            Err("nobody by that name is at this table".to_owned())
+                        }
+                    }
+                    // Player to player, which is the line this feature is drawn
+                    // to not cross.
+                    (Identity::Player(_), ChatTo::Player(_)) => {
+                        Err("you can whisper the DM or shout to the table".to_owned())
+                    }
+                    // The DM whispering themselves. Refused rather than quietly
+                    // delivered, for the reason a promote with nothing staged is
+                    // refused: it means a client and the room disagree about what
+                    // the controls are.
+                    (Identity::Dm, ChatTo::Dm) => {
+                        Err("you are the DM — shout, or whisper a player".to_owned())
+                    }
+                }
             }
 
             // Anyone may ping, and there is nothing else to check. No bound, no
@@ -2876,6 +3041,36 @@ impl RoomState {
             // because the four steps are where permission and delivery live and
             // a command with its own path around them is how one of the two gets
             // forgotten.
+            // The one arm in this function that appends to a list nothing else
+            // in the room reads. `check` has already decided the destination is
+            // one this client may name, so all that is left is to write down who
+            // said it — from the socket, never from the frame.
+            ClientMsg::Say { to, text } => {
+                let by = match self.clients.get(&origin) {
+                    Some(client) => drawn_by(client),
+                    // `check` proved this is a client. `Ping`'s fallback and the
+                    // same reasoning: this decides whose name goes on it, and an
+                    // unattributable line is one nobody sent.
+                    None => return Vec::new(),
+                };
+                let line = ChatLine {
+                    by,
+                    to,
+                    // Trimmed here as well as in `check`, because `check` only
+                    // looked at a borrow — what goes in the log is what the room
+                    // decided was sayable, not what arrived.
+                    text: text.trim().to_owned(),
+                };
+                self.chat.push_back(line.clone());
+                // From the front: the cap is a cap on how much of the evening is
+                // still around, and the oldest of it is what nobody is looking
+                // for any more.
+                while self.chat.len() > MAX_CHAT_LINES {
+                    self.chat.pop_front();
+                }
+                vec![Event::Said { line }]
+            }
+
             ClientMsg::Ping { at } => {
                 let owner = match self.clients.get(&origin) {
                     Some(client) => drawn_by(client),
@@ -3120,6 +3315,7 @@ impl RoomState {
                 | Event::Sketching { .. }
                 | Event::SketchEnded { .. }
                 | Event::Pinged { .. }
+                | Event::Said { .. }
                 | Event::ShapesChanged
                 | Event::WallsChanged { .. }
                 | Event::FogChanged
@@ -3607,6 +3803,20 @@ impl RoomState {
                 by: owner.clone(),
                 at: *at,
             }),
+
+            // **The first frame in this function withheld from one player and
+            // sent to another.** Every filtered arm above draws its line between
+            // the DM and the table; this one draws it between two people at the
+            // same table, and the question it asks is not `is_dm` at all.
+            //
+            // The sender is sent their own, which no other relayed frame here
+            // does — see `ServerMsg::Said`. Nothing about a line of text is
+            // predicted on the client, because where it lands in the log is the
+            // room's to decide.
+            Event::Said { line } => {
+                let identity = &self.clients.get(&recipient)?.identity;
+                party_to(identity, line).then(|| ServerMsg::Said { line: line.clone() })
+            }
 
             // Built per recipient, like the initiative panel and for the same
             // reason: the DM's board and the table's genuinely differ, and this

@@ -25,7 +25,7 @@ Do not work ahead. Each milestone should run and be usable before starting the n
 6. Map upload and grid calibration UI.
 7. Package for Windows session hosting and deploy behind a Cloudflare Tunnel.
 
-Milestones 1–22 are done, and so are 25 and 26, which were never planned and are out of order for the
+Milestones 1–23 are done, and so are 25 and 26, which were never planned and are out of order for the
 reasons their own entries give. Everything from 8 on was planned after the original seven; 17 and 18 were
 workshopped after 16 landed, and 19–24 after 18:
 
@@ -610,8 +610,61 @@ workshopped after 16 landed, and 19–24 after 18:
     and fog together, and writing an inverse for that is most of a second state model. A snapshot
     restores it for free — and that case is also the one that makes undo worth having at all.
 
-23. **Whisper and shout.** Not chat, and the distinction is the whole design. **Two destinations and
-    no third** — a player whispers the DM, or shouts to the table.
+23. **Done.** Whisper and shout — not chat, and the distinction is the whole design. **Two
+    destinations and no third**: a player whispers the DM, or shouts to the table. See
+    `docs/chat.md`.
+
+    Every design decision below shipped as written, including the ones this file called out as
+    load-bearing — the two destinations, the session-memory log, the per-recipient snapshot, the
+    dock rather than a floating window, and the badge that does not auto-open anything. What is
+    worth recording is the one prediction that was half wrong, and three things the design did not
+    have.
+
+    **"The first message whose *content* is per-recipient" was true of the snapshot and false of
+    the delta.** `RoomView::chat` is genuinely different text per client, and it is what refusing
+    `tokio::sync::broadcast` finally bought. But `ServerMsg::Said` is withheld *whole* or sent
+    whole — `WallsChanged`'s shape, not a new one. What is actually new about it is smaller and
+    sharper than this file guessed: **it is the first filter in the project that draws its line
+    between two players.** Every other one separates the DM from the table and asks `is_dm`;
+    `party_to` never asks it, and the DM holds every whisper because they are one end of all of
+    them rather than because they are the DM. The general form worth keeping: *a filter that stops
+    asking about a role has to start asking about a pair, and the pair includes the sender* —
+    leaving that half out makes the person who said something the only person unable to see it.
+
+    **The sender is echoed their own, which nothing else in this project does.** `Sketch`, `Pinged`
+    and mid-drag `TokenMoved` all skip the originator, and every one of those was decided on the
+    same argument — the sender is already drawing it, so an echo restarts an animation. It does not
+    generalise, because **a log is a sequence**: where a line lands in it is the room's to decide,
+    and a client appending its own would have two orderings to reconcile the first time two people
+    typed at once. The tell that this was going to be different is that nothing here is predicted
+    locally at all.
+
+    **Not persisting it was one decision that paid three times**, and only one of the three was
+    planned. Old whispers stay off a disk in somebody's front room; a refresh mid-combat keeps the
+    initiative rolls; and **an undo cannot eat what the table said** — milestone 22 wrote down that
+    the ring may only hold state the undoing hand wrote, and this is the first thing to test the
+    rule. It passes without being named anywhere: a snapshot is a `Saved`, and the log is not on
+    one. Milestone 24's scratchpads *are* persisted and will not get this for free, which is the
+    thing to remember when they land.
+
+    **The sticky destination was chosen over two fire-and-forget buttons, and it cost a second
+    marker.** Enter sends where the box is pointed, which is one keystroke each way in a
+    back-and-forth and has exactly one failure — forgetting which way it points and shouting
+    something private. So the armed chip is not the only sign: the input itself takes the amber
+    border and says `whisper Torrin…` in its placeholder, because the thing somebody is looking at
+    while they type is the thing they are typing into. A control with state needs the state where
+    the eyes are, not only where the choice was made.
+
+    Two smaller things. **`stopPropagation` on the input's keydown** — every tool in this project
+    listens on `window`, four disarm on Escape and the calibration box applies on Enter, and none of
+    them should be reachable from a sentence somebody is typing; `undo.ts`'s `typingIn` is the same
+    argument from the other side and was the precedent. And **the driver needed three browsers**,
+    which is a first: the assertion is that a whisper is absent from *another player's* page, and no
+    two connections can show that. `drive-chat.mjs` also has to tag its lines per run — the log is
+    session memory rather than persisted, which sounds like it makes the driver idempotent and does
+    not, because the room lives in memory across runs and there is no command that clears a log.
+
+    The original design, kept because all of it held:
 
     The non-goal in CLAUDE.md was written on the premise that the group uses Discord. Half the table
     has a Discord account because the DM made them one, and tabbing out of the browser to send one
@@ -796,6 +849,12 @@ workshopped after 16 landed, and 19–24 after 18:
     exact name, are what keep a failed run from poisoning the next one.
 
 ### The right dock
+
+**Built in milestone 23, with one tab on it.** `dock.ts` is the strip; milestone 24's notes are a
+second entry in `DockTab` and a second entry in the array `main.ts` passes to `createDock`, which is
+what the rail's strip already costs a panel. Everything below held and is kept because 24 is the
+half that has not been built yet — including the argument for why this is not a generalised
+`createRail`, which is in `docs/chat.md`.
 
 Milestones 23 and 24 share one piece of client infrastructure and should be built with it rather
 than around it: **a collapsible dock on the right edge with a tab strip**, mirroring the left rail's

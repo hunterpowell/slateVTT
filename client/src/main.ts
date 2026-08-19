@@ -1,5 +1,9 @@
 import type { Camera, Vec2 } from './coords.js';
 import { gridToWorld, screenToWorld, worldToGrid } from './coords.js';
+import type { Chat } from './chat.js';
+import { createChat } from './chat.js';
+import type { Dock } from './dock.js';
+import { createDock } from './dock.js';
 import type { DrawTool } from './drawtool.js';
 import { createDrawTool } from './drawtool.js';
 import type { Fog } from './fog.js';
@@ -87,6 +91,18 @@ interface Ui {
   };
   rail: {
     tabs: HTMLElement;
+  };
+  dock: {
+    root: HTMLElement;
+    tabs: HTMLElement;
+  };
+  chat: {
+    root: HTMLElement;
+    log: HTMLElement;
+    destinations: HTMLElement;
+    form: HTMLFormElement;
+    text: HTMLInputElement;
+    toast: HTMLElement;
   };
   undo: {
     root: HTMLElement;
@@ -211,6 +227,18 @@ function findUi(): Ui {
     rail: {
       tabs: need('#rail-tabs'),
     },
+    dock: {
+      root: need('#dock'),
+      tabs: need('#dock-tabs'),
+    },
+    chat: {
+      root: need('#chat'),
+      log: need('#chat-log'),
+      destinations: need('#chat-to'),
+      form: need<HTMLFormElement>('#chat-form'),
+      text: need<HTMLInputElement>('#chat-text'),
+      toast: need('#chat-toast'),
+    },
     undo: {
       root: need('#undo'),
       button: need<HTMLButtonElement>('#undo-button'),
@@ -319,6 +347,10 @@ function boot(): void {
   let wallTool: WallTool | null = null;
   let fogTool: FogTool | null = null;
   let tableTool: TableTool | null = null;
+  // Both built on every connection, unlike everything above them: neither of
+  // the dock's panels is the DM's.
+  let chat: Chat | null = null;
+  let dock: Dock | null = null;
   // DM-only, like the three panels it shows. Null on a player connection, which
   // is why every use of it is optional-chained rather than guarded.
   let rail: Rail | null = null;
@@ -425,6 +457,33 @@ function boot(): void {
       drawTool = createDrawTool(ui.drawtool, identity.isDm, (msg) => net.send(msg), () =>
         wallTool?.stop(),
       );
+
+      // Built for everyone, like the draw tool above and unlike the rail
+      // below: neither of the dock's panels is the DM's. The log the room hands
+      // over here is already the one this client is party to — a whisper
+      // between two other people is not in it to be filtered.
+      chat = createChat(
+        ui.chat,
+        identity,
+        welcome.roster,
+        welcome.state.chat,
+        (msg) => net.send(msg),
+        // The dock does not exist yet on this line and does by the time a line
+        // can arrive, which is why this reaches for it lazily.
+        (count) => dock?.badge('chat', count),
+      );
+      dock = createDock(ui.dock, [
+        {
+          tab: 'chat',
+          label: 'chat',
+          root: ui.chat.root,
+          // No `stop` anywhere in this list, unlike the rail's: nothing in the
+          // dock arms the canvas. What a panel here needs is the opposite hook
+          // — the moment it comes on screen, where the log catches up and the
+          // unread count goes.
+          opened: () => chat?.opened(),
+        },
+      ]);
 
       // Built for the DM alone and before the rail, because it sits above the
       // strip rather than on it — undo is not an editing panel, it is what you
@@ -714,6 +773,12 @@ function boot(): void {
     // pointed. It is the one frame this client is handed that no filter on
     // either side of the wire has touched.
     onPinged: (ping) => pings?.add(ping.by, ping.at, performance.now()),
+
+    // Somebody said something we are party to — including ourselves, which is
+    // the one relayed frame the sender is echoed. Nothing about a line of text
+    // is predicted locally: a log is a sequence, and where a line lands in it is
+    // the room's to decide.
+    onSaid: (line) => chat?.said(line),
 
     // The whole list, replacing whatever we held. Nothing is predicted locally:
     // a shape's id is the server's to invent, and an erase is a click rather

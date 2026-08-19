@@ -611,6 +611,56 @@ impl Wall {
     }
 }
 
+/// Where something somebody typed is going.
+///
+/// **Two destinations for anyone, and never a third.** A player says it to the
+/// table or to the DM; the DM says it to the table or to one player. There is
+/// no player-to-player variant and adding one is what would turn this into
+/// chat — see the non-goal in `.claude/CLAUDE.md`, which is the specification.
+///
+/// `Owner`'s neighbour rather than `Owner` itself, and the difference is
+/// `Table`: an owner is a person, and this is a person *or* everybody. Reusing
+/// `Owner` would have meant either a `Table` variant on the type a token's
+/// ownership is written with, or a `None` meaning "everyone", and both of those
+/// are worse than one enum that says what it is.
+///
+/// Adjacently tagged like `Owner`, and for the same reason — a newtype variant
+/// wrapping a string cannot be internally tagged.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "kind", content = "id", rename_all = "snake_case")]
+pub enum ChatTo {
+    /// A shout: everybody, filtered by nothing at all. The fog does not apply
+    /// to words.
+    Table,
+    /// A whisper to the DM. What a player's second button says, and the only
+    /// destination on this list a player may name that is not the table.
+    Dm,
+    /// A whisper to one player, which only the DM may send.
+    Player(PlayerId),
+}
+
+/// One thing somebody said, as the room keeps it and as it goes out.
+///
+/// **Never `Deserialize`, and that is a fact about the feature rather than an
+/// omission**: the log is session memory, so nothing ever reads one of these
+/// back — not off the disk, because it is not written there, and not off the
+/// wire, because a client sends a `Say` and the room decides who said it.
+///
+/// It carries `to` as well as `by` because a whisper has to *look* like one on
+/// the screen of both people party to it, and neither of them can work that out
+/// from `by` alone — the DM sees their own whisper to Saelyn and Saelyn's
+/// whisper to them side by side in one log.
+#[derive(Debug, Clone, Serialize)]
+pub struct ChatLine {
+    /// Who said it. An `Owner` because that is what the roster resolves to a
+    /// name and a colour, exactly as `Pinged` carries one.
+    pub by: Owner,
+    pub to: ChatTo,
+    /// Trimmed and length-checked on the way in. Text and nothing else: no
+    /// formatting, no emotes, no commands, no dice.
+    pub text: String,
+}
+
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(default)]
 pub struct RosterEntry {
@@ -789,6 +839,21 @@ pub struct RoomView {
     /// The ring itself never leaves the room. A client cannot undo twice without
     /// being told what the second press would do, and it is told by the
     /// `UndoChanged` that rides on the first.
+    /// What has been said in this session that this client is party to.
+    ///
+    /// **The one field here that is genuinely different text per recipient
+    /// rather than the same text filtered.** Every list above is the room's own
+    /// with rows dropped out of it; two clients holding this hold two different
+    /// conversations, because a whisper is only ever in the copies of the two
+    /// people at either end of it. That is what refusing `tokio::sync::broadcast`
+    /// bought, and this is the first thing to spend it.
+    ///
+    /// Oldest first, capped, and never on disk: it is session memory, so a
+    /// browser hiccup mid-combat does not eat the initiative rolls and next game
+    /// night starts empty. Invariant 3 matters more here than anywhere else in
+    /// this struct — getting it wrong hands over somebody's words rather than a
+    /// position.
+    pub chat: Vec<ChatLine>,
     pub undo: Option<String>,
 }
 
@@ -984,6 +1049,22 @@ pub enum ClientMsg {
     /// silently does nothing. See *Ping* in `docs/drawings.md`.
     Ping {
         at: Pos,
+    },
+
+    /// Say something: to the table, or to one person.
+    ///
+    /// **One command for both, because a whisper and a shout differ only in
+    /// where they are going.** Two commands would be one field's worth of
+    /// difference and two permission checks to keep in step, and the destination
+    /// is exactly the thing the check is about: a player may name the table or
+    /// the DM, and the DM may name the table or a player. Nobody may name
+    /// another player, which is the whole boundary of the feature.
+    ///
+    /// It carries no sender. Who said it is what the socket already proved, and
+    /// a `by` on the wire is a field a client could lie in.
+    Say {
+        to: ChatTo,
+        text: String,
     },
 
     // Walls and doors. All DM-only, and unlike the drawings above, invisible to
@@ -1307,6 +1388,24 @@ pub enum ServerMsg {
     Pinged {
         by: Owner,
         at: Pos,
+    },
+
+    /// Somebody said something you are party to.
+    ///
+    /// **Sent to the sender as well**, which is where this parts company with
+    /// `Pinged` and `Sketch` directly above it. Those two are drawn on the
+    /// sender's own screen before the frame ever leaves, so an echo restarts an
+    /// animation; a line of text is not predicted locally at all, because the
+    /// log is a *sequence* and the room is what decides where in it this lands.
+    /// A client that appended its own would have two orderings to reconcile the
+    /// first time two people typed at once.
+    ///
+    /// Withheld whole from anyone not party to it — there is no redacted form of
+    /// a whisper, so this travels like `WallsChanged` rather than like
+    /// `FogChanged`. What is new is that the rule is no longer about identity:
+    /// this is the first frame withheld from one *player* and sent to another.
+    Said {
+        line: ChatLine,
     },
 
     /// The room was put back to an earlier state — take this as the truth for

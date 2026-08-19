@@ -21,11 +21,14 @@ replaces Foundry for one group that only needs a shared map, tokens, and turn or
   been — with a DM override to reveal or black out a room by hand
 - Two ways for a map to be lit: line of sight from each token, or the whole room a token is
   standing in, where an open door lets the light through and a shut one seals it
+- Whisper and shout: a player says something to the table or privately to the DM, the DM whispers
+  any one player, and nobody messages anybody else — kept for the evening and never written to disk
 - State is saved to a JSON file on disk and restored on restart
 
 See [CLAUDE.md](.claude/CLAUDE.md) for the architecture, invariants, and non-goals, and [docs/](docs/)
 for why each feature is the shape it is. This game does not include character sheets, dice rolling,
-chat, or accounts — the group uses physical dice and Discord for the rest.
+or accounts — the group uses physical dice and Discord for the rest. The text above is not chat and
+the distinction is the design: two destinations, no player-to-player, no history between sessions.
 
 ## Stack
 
@@ -137,9 +140,12 @@ screen and which token is standing on a given square.
 | `drive-staged.mjs` | Tracing and painting the next dungeon, and the table not being told | both     |
 | `drive-undo.mjs`   | The DM's undo reaching the table, and not rebuilding their page    | both     |
 | `drive-panels.mjs` | The initiative panel folding, and the DM's solo sight staying theirs | both     |
+| `drive-chat.mjs`   | Whisper and shout — and a whisper being absent from a *third* person's page | three    |
 
 The ones marked *both* open two browsers at once, and that is the point of them: almost everything
 they assert is a **difference** between what two people are holding, which one client cannot see.
+`drive-chat.mjs` opens three, because the thing it has to show is what one *player* is not sent
+about another — a line drawn between two people at the same table rather than between the DM and it.
 
 They need a server running with a **known** DM secret, and they change the room they connect to.
 Each takes an optional base URL, and the DM-side ones an optional secret after it — the defaults
@@ -158,7 +164,7 @@ Point them at a scratch `SLATE_STATE`, never at the room you are about to play i
 thing `drive-ui.mjs` does is erase every wall on the board, `drive-staged.mjs` throws away whatever
 was in the staged slot, and the fog, names, ruler and ping drivers each build a token or flip a
 switch that persists. Run them one at a time: they share debug ports (9333 for a DM, 9334 for a
-player), so two at once attach to each other's browser. Set `SLATE_BROWSER` if Chrome or Edge is
+player, 9335 for a second player), so two at once attach to each other's browser. Set `SLATE_BROWSER` if Chrome or Edge is
 somewhere unusual.
 
 **A scratch path with no file on it, and not a copy of a real room.** They are written against the
@@ -182,14 +188,14 @@ coordinates. Anything that clicks the board should go through it rather than rea
 
 ### Running the lot
 
-**All ten take about three minutes**, so run all of them whenever the client changes rather than
+**All twelve take about three minutes**, so run all of them whenever the client changes rather than
 picking the ones that look relevant. Picking is not worth the thought it costs: they all sit on
 `coords.ts`, `render.ts`, `input.ts` and `scene.ts`, and almost every client commit touches one of
 those, so any honest rule about which to skip says "none of them" nearly every time.
 
-| player | names | ui  | rail | undo | staged | fog | ruler | select | ping |
-| ------ | ----- | --- | ---- | ---- | ------ | --- | ----- | ------ | ---- |
-| 4s     | 6s    | 9s  | 12s  | 14s  | 22s    | 23s | 25s   | 30s    | 39s  |
+| player | names | ui  | rail | undo | chat | staged | fog | ruler | select | ping |
+| ------ | ----- | --- | ---- | ---- | ---- | ------ | --- | ----- | ------ | ---- |
+| 4s     | 6s    | 9s  | 12s  | 14s  | 16s  | 22s    | 23s | 25s   | 30s    | 39s  |
 
 `drive-ping.mjs` is the slowest and stays that way: most of its time is spent waiting for rings to
 expire, which is the feature.
@@ -205,7 +211,7 @@ SLATE_DM_SECRET=test-secret SLATE_STATE=scratch.json cargo run &
 until curl -sf http://127.0.0.1:3000/ >/dev/null; do sleep 1; done
 
 cd ..
-for d in player names ui rail undo panels staged fog ruler select ping; do node tools/drive-$d.mjs; done
+for d in player names ui rail undo panels chat staged fog ruler select ping; do node tools/drive-$d.mjs; done
 ```
 
 That whole block is 169 seconds on the machine it was written on, and the order in it is the cheap

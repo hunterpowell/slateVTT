@@ -276,6 +276,16 @@ export interface WireRoomView {
    *  all the button needs: with no redo, a press has to name its victim before
    *  it takes it. */
   undo: string | null;
+  /** What has been said this session that we are party to.
+   *
+   *  **The one field here that is different text per client rather than the
+   *  same text with rows dropped.** Two players hold two different
+   *  conversations, because a whisper only exists in the copies of the two
+   *  people at either end of it.
+   *
+   *  Session memory on the server: it is never written to disk, so it is empty
+   *  on the first join after a restart and never carries last week's game. */
+  chat: WireChatLine[];
 }
 
 /**
@@ -291,6 +301,35 @@ export interface WireRoomView {
  * geometry, and stay Euclidean on both settings.
  */
 export type Diagonals = 'equal' | 'alternating';
+
+/**
+ * Where something typed is going — `ChatTo` on the server.
+ *
+ * **Two destinations for anyone and never a third.** A player says it to the
+ * table or to the DM; the DM says it to the table or to one player. There is no
+ * player-to-player variant, which is the whole boundary of the feature and the
+ * reason the noun is "whisper and shout" rather than "chat".
+ *
+ * Adjacently tagged like `Owner`, which it deliberately is not: an owner is a
+ * person, and this is a person *or* everybody.
+ */
+export type ChatTo = { kind: 'table' } | { kind: 'dm' } | { kind: 'player'; id: string };
+
+/**
+ * One thing somebody said.
+ *
+ * It carries `to` as well as `by` because a whisper has to look like one on the
+ * screens of both people party to it — the DM's log holds their whisper to
+ * Saelyn and Saelyn's whisper back, and only `to` tells them apart.
+ *
+ * Never filtered on this side. What arrives is what we are party to; the server
+ * decided that, and the whole of what this client does with `to` is style it.
+ */
+export interface WireChatLine {
+  by: Owner;
+  to: ChatTo;
+  text: string;
+}
 
 export interface RosterSlot {
   id: string;
@@ -366,6 +405,13 @@ export type ServerMsg =
    *  ping lands wherever it was pointed, unexplored ground included. */
   | { type: 'pinged'; by: Owner; at: WirePos }
   /** Every shape we may see. The whole list, like the initiative panel. */
+  /** Somebody said something we are party to — a shout, or a whisper at whose
+   *  either end we stand.
+   *
+   *  **Including our own**, which is where this differs from `pinged` and
+   *  `sketch` above: a line of text is not drawn locally first, because where it
+   *  lands in the log is the room's to decide and two people type at once. */
+  | { type: 'said'; line: WireChatLine }
   | { type: 'shapes_changed'; shapes: WireShape[] }
   /** Every wall the DM has traced. DM connections only — a player is not sent
    *  this frame at all, not even an empty one, because a frame they cannot use
@@ -438,6 +484,13 @@ export type ClientMsg =
       lighting: Lighting;
       staged: boolean;
     }
+  /** Say something, to the table or to one person.
+   *
+   *  One command for a whisper and a shout, because they differ only in where
+   *  they are going — and the destination is exactly what the server's
+   *  permission check is about. It carries no sender: who said it is what the
+   *  socket already proved. */
+  | { type: 'say'; to: ChatTo; text: string }
   /** DM-only. The staged map becomes the board; tokens keep their cells. */
   | { type: 'promote_staged' }
   /** DM-only. Throw the staged map away. */

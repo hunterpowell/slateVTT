@@ -10,7 +10,7 @@ deliberately, and neither is loaded for you:
 - **`ROADMAP.md`** — design for what is not built yet, and the milestone order. Read it when
   starting a milestone.
 - **`docs/maps.md`, `docs/tokens.md`, `docs/drawings.md`, `docs/walls.md`, `docs/fog.md`,
-  `docs/undo.md`** — why each
+  `docs/undo.md`, `docs/chat.md`** — why each
   built feature is the shape it is. Every section below that summarises a feature ends with a pointer
   to its file and the code that file covers.
 
@@ -29,6 +29,8 @@ them would load them into every session, which is what moving them out avoided.)
   own tokens have line of sight on — or, on a map set that way, to the whole room each token is
   standing in — and lets the DM overrule either by hand, square by square or a room at a time
 - Lets the DM take back the last handful of things that changed the room
+- Lets anyone say something to the table, or whisper the DM — and the DM whisper any one player;
+  two destinations and nothing else, kept for the evening and never written down
 
 ## Non-goals
 
@@ -42,9 +44,10 @@ unless explicitly asked:
   whole of it** — a player may whisper the DM or shout to the table, and that is the entire feature.
   No player-to-player messages, no channels, no threads, no history between sessions, no formatting,
   no emotes, no commands, no dice. Two destinations, so a player's box needs no recipient picker;
-  the noun is "whisper and shout" rather than "chat" because chat is a thing that grows. Scheduled as
-  milestone 23 in `ROADMAP.md`, and its motivating case is six people posting initiative rolls
-  without clogging voice.
+  the noun is "whisper and shout" rather than "chat" because chat is a thing that grows. **Built**,
+  as milestone 23; its motivating case is six people posting initiative rolls without clogging
+  voice, and the boundary above is the specification — see *Whisper and shout* below and
+  `docs/chat.md`.
 - Compendiums, handouts, audio, and journals — **with one bounded exception**: a scratchpad,
   scheduled as milestone 24. One box of text per person, private to whoever wrote it, and the DM's is
   no different from anyone else's. **A second document makes it a journal.** No titles, no pages, no
@@ -104,6 +107,10 @@ subscriber, which makes per-recipient filtering impossible. Fog of war (see `doc
 that different clients receive different messages for the same underlying event. Per-client
 `mpsc` senders cost nothing at six clients and keep that door open.
 
+**The chat log is what finally walked through it.** `RoomView::chat` is genuinely different *text*
+per recipient rather than the room's one copy with rows dropped — two players hold two different
+conversations. See `docs/chat.md`.
+
 ### Command pipeline
 
 The room's inner loop is always these four steps, in this order:
@@ -161,11 +168,25 @@ struct RoomState {
     /// A snapshot is `Saved`, which is what keeps the two client tables below
     /// out of it by construction. Memory only; never on disk.
     undo: VecDeque<Snapshot>,
+    /// What has been said this session, oldest first, capped and trimmed from the
+    /// front. Memory only and pointedly not on `Saved` — which is what keeps old
+    /// whispers off the disk *and* out of the undo ring, with neither of those
+    /// having to name it — see `docs/chat.md`.
+    chat: VecDeque<ChatLine>,
     /// Identified clients, who are the only ones any event reaches, and the
     /// sockets that are connected but have not said who they are yet.
     clients: HashMap<ClientId, Client>,
     pending: HashMap<ClientId, mpsc::Sender<ServerMsg>>,
 }
+
+/// One thing somebody said. `to` is carried as well as `by` because a whisper has
+/// to look like one on the screens of *both* people party to it.
+struct ChatLine { by: Owner, to: ChatTo, text: String }
+
+/// Two destinations and never a third: a player names the table or the DM, the DM
+/// names the table or one player. `Owner`'s neighbour rather than `Owner` itself,
+/// because `Table` is everybody — see `docs/chat.md`.
+enum ChatTo { Table, Dm, Player(PlayerId) }
 
 /// One entry in the undo ring: a whole room, and what was done to arrive at it.
 struct Snapshot { did: String, state: Saved }
@@ -265,7 +286,14 @@ that rule**, and for the same reason: it is what the DM authored, and the fog is
 drawing is on the ring like everything else persisted, because a restore restores the room whole and
 skipping their shape would take it *and* the DM's last command together. The rule that decides what
 may go on the ring is **state the undoing hand wrote**; milestone 24's scratchpads are the case that
-will fail it. See `docs/undo.md`.
+will fail it. See `docs/undo.md`. The chat log is the first thing to test that rule and it passes
+without being named anywhere: a snapshot is a `Saved`, and the log is not on one.
+
+**Saying something is the second exception to "everything else is DM-only", and it is a permission
+about a *destination* rather than about a role.** Anyone may say something; what a player may not
+do is name another player. `party_to` decides who sees a line, and it is the first filter in the
+project that draws its line between two players rather than between the DM and the table — it never
+asks `is_dm`. See `docs/chat.md`.
 
 Token creation, deletion, map changes, initiative edits, and whether the board writes token names
 under them are DM-only. That last one is the one whose *result* everybody is sent — see the wire
@@ -336,6 +364,14 @@ it wrong. It is deliberately *not* a second `Welcome`: on the client that handle
 panels, the tools and the board once per socket, so a restore hands over state and nothing else — no
 identity, no roster. `UndoChanged` beside it reaches the DM or nobody, which is `WallsChanged`'s rule
 a fourth time and the first where what is withheld is a label rather than a secret. See `docs/undo.md`.
+
+**`chat` is the field that finally spent what per-client `mpsc` bought.** Every other list in a
+`RoomView` is the room's one copy with rows dropped; this is different text per recipient, because a
+whisper only exists in the copies of the two people at either end of it. The delta beside it,
+`ServerMsg::Said`, is withheld whole or sent whole — `WallsChanged`'s shape, except that its
+audience is a *pair of people* rather than a role — and it is **the one relayed frame the sender is
+echoed**, because a log is a sequence and where a line lands in it is the room's to decide, not a
+client's. See `docs/chat.md`.
 
 `roster` is the cast list, not who is connected. The DM never sees the identity picker, so this
 is the only way their token panel learns the names a token can be handed to; a player is sent it
@@ -633,6 +669,14 @@ The draw tool is deliberately *not* on the strip. It is the one panel everybody 
 in the middle of a fight, so it stays pinned to the bottom of the rail — the same reason a door
 swings with no tool in hand. `rail.ts` is short and holds the rest of the reasoning.
 
+**The right edge is a second strip, `dock.ts`, and it is everybody's.** The initiative panel and
+the dock share a flex column for the reason the left rail is one — the panel's height is however
+many creatures are in the fight, so nothing under it can be pinned at an offset. Three things
+differ from the rail and are why it is a separate file rather than a generalised one: both its tabs
+are built on every connection, nothing behind it arms the canvas so there is no `stop`, and a tab
+here can carry an unread count. It grows *upward* from the bottom, so opening it never moves the
+initiative panel. See `docs/chat.md`.
+
 ## Maps
 
 Two slots: `map`, and `staged: Option<StagedBoard>` — the map the DM is preparing while the table is
@@ -682,6 +726,39 @@ The button names what it would take, since with no redo an unpredictable press i
 
 → **`docs/undo.md`** before touching `RoomState::undo`, `remember`, `adopt`, `undid`,
 `Event::Restored`, `undo.ts`, or `adoptView` in `scene.ts`.
+
+## Whisper and shout
+
+**Two destinations and never a third** — that is `ChatTo`, and the missing case, one player to
+another, is the boundary the non-goal at the top of this file draws. Read it before changing
+anything here; it is the specification, and everything below is how it was built.
+
+**One command, `Say`, because a whisper and a shout differ only in where they are going** — and the
+destination is exactly what the permission check is about. It carries no sender: who said it is
+what the socket already proved.
+
+**`party_to` is the whole visibility rule and it never asks `is_dm`.** A shout is everybody's; a
+whisper is in exactly two copies, the sender's and the recipient's. That "or whoever sent it" half
+is what stops the DM's own whisper being absent from the DM's log. Both routes out go through it —
+`chat_for` in `snapshot_for` and the `Said` arm of `message_for` — which is invariant 3 on the first
+state where getting it wrong hands over somebody's words.
+
+**Session memory, never `Saved`.** One decision buying three things: a refresh mid-combat keeps the
+initiative rolls, old whispers are never durable on the disk, and an undo cannot take back what
+somebody said — a snapshot is a `Saved`, so the log is not in one and `undo.rs` never mentions it.
+Capped and trimmed from the front.
+
+**The sender is echoed their own**, alone among relayed frames, because a log is a sequence and
+where a line lands in it is the room's to decide. So nothing here is predicted locally.
+
+The client half: the dock is a strip like the rail's (see *Frontend*), the destination is **sticky**
+and shown twice — the armed chip and the input's own colour and placeholder, because forgetting
+which way the box points is the one failure a sticky destination has. An arriving line puts a count
+on a collapsed tab **and** surfaces beside the dock for a few seconds, and does not open anything.
+A line renders identically for both people party to it, so there is no "am I the sender" branch.
+
+→ **`docs/chat.md`** before touching `chat.ts`, `dock.ts`, `party_to`, `chat_for`, `RoomState::chat`,
+or `Say`/`Said`/`ChatTo`/`ChatLine` on the server.
 
 ## Testing
 

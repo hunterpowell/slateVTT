@@ -241,16 +241,265 @@
       /* Wider than it was: the portrait and the hit point bar both eat into the
          column the name used to have to itself, and a truncated name in the one
          panel that is always on screen is worth more than 40px of map. */
-      #initiative {
+      /* The left rail's mirror, and a flex column for the same reason that one
+         is: the initiative panel's height is however many creatures are in the
+         fight and whether it is folded, so the dock under it cannot be pinned at
+         a fixed offset. `bottom` keeps the pair clear of the hint line. */
+      #right-rail {
         position: fixed;
         top: 12px;
         right: 12px;
+        bottom: 46px;
+        display: flex;
+        flex-direction: column;
+        gap: 10px;
         width: 248px;
+        /* The gaps between these panels are still map, and still draggable. */
+        pointer-events: none;
+      }
+
+      #right-rail > * {
+        pointer-events: auto;
+      }
+
+      /* Shrinks and scrolls inside itself rather than pushing the dock off the
+         bottom — the rail's rule for a panel taller than the space it has, and
+         it needs `min-height: 0` because a flex item will not go below its own
+         content without it. Twelve creatures and an open dock is the case. */
+      #initiative {
+        flex: 0 1 auto;
+        min-height: 0;
+        overflow-y: auto;
+        box-sizing: border-box;
+        width: 100%;
         padding: 10px;
         border-radius: 6px;
         background: rgba(12, 14, 18, 0.88);
         color: #d8d2c4;
         font-size: 13px;
+        user-select: none;
+      }
+
+      /* --- the dock --------------------------------------------------------- */
+
+      /* Pinned to the bottom of the rail and growing upward, which is what
+         `margin-top: auto` buys: collapsed, the dock is its strip sitting at the
+         bottom of the screen, and opening a panel does not move the initiative
+         panel above it. */
+      #dock {
+        display: flex;
+        flex-direction: column;
+        gap: 10px;
+        margin-top: auto;
+        min-height: 0;
+      }
+
+      /* The rail's strip said again for the other edge — same grid, same
+         negative margin cancelling the parent's gap so an open tab sits on its
+         panel rather than floating above it. */
+      #dock-tabs {
+        display: grid;
+        grid-auto-flow: column;
+        grid-auto-columns: 1fr;
+        flex: 0 0 auto;
+        gap: 4px;
+        margin-bottom: -10px;
+      }
+
+      .dock-tab {
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        gap: 5px;
+        padding: 5px 0;
+        border: 1px solid #2b3038;
+        border-radius: 4px 4px 0 0;
+        background: #171a1f;
+        color: #8d939c;
+        font: inherit;
+        font-size: 11px;
+        cursor: pointer;
+      }
+
+      .dock-tab:hover {
+        color: #d8d2c4;
+      }
+
+      .dock-tab.is-open {
+        border-color: #3a4048;
+        border-bottom-color: transparent;
+        background: rgba(12, 14, 18, 0.88);
+        color: #e8e6e1;
+      }
+
+      /* What arrived while the panel was shut. Amber rather than the tab's own
+         colour, because the point of it is to be noticed from across a board
+         somebody is playing on. */
+      .dock-badge {
+        min-width: 15px;
+        padding: 0 4px;
+        border-radius: 8px;
+        background: #c8a34a;
+        color: #211a08;
+        font-size: 10px;
+        font-weight: 600;
+        line-height: 15px;
+      }
+
+      /* --- whisper and shout ------------------------------------------------ */
+
+      #chat {
+        display: flex;
+        flex-direction: column;
+        gap: 8px;
+        box-sizing: border-box;
+        width: 100%;
+        /* Tall enough for a round of initiative rolls, and the first thing to
+           give when the window is short — the board is what this is played on. */
+        height: 42vh;
+        min-height: 0;
+        padding: 10px;
+        border-radius: 6px;
+        background: rgba(12, 14, 18, 0.88);
+        color: #d8d2c4;
+        font-size: 13px;
+      }
+
+      #chat-log {
+        flex: 1 1 auto;
+        min-height: 0;
+        overflow-y: auto;
+        overflow-wrap: break-word;
+        line-height: 1.35;
+      }
+
+      #chat-log:empty::after {
+        content: 'nothing said yet';
+        display: block;
+        color: #5a616c;
+        font-size: 12px;
+      }
+
+      .chat-line {
+        margin-bottom: 3px;
+        font-size: 12px;
+      }
+
+      .chat-who {
+        font-weight: 600;
+      }
+
+      /* A whisper reads differently from a shout at a glance, and says who it is
+         between — the same line renders identically for both people party to it,
+         which is why there is no "am I the sender" case anywhere in `chat.ts`. */
+      .chat-line.is-whisper {
+        color: #c8a34a;
+      }
+
+      .chat-arrow {
+        opacity: 0.75;
+      }
+
+      #chat-to {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 4px;
+      }
+
+      .chat-chip {
+        padding: 2px 6px;
+        border: 1px solid #2b3038;
+        border-radius: 4px;
+        background: #171a1f;
+        color: #8d939c;
+        font: inherit;
+        font-size: 11px;
+        cursor: pointer;
+      }
+
+      .chat-chip:hover {
+        color: #d8d2c4;
+      }
+
+      .chat-chip.is-armed {
+        border-color: #4a525e;
+        background: #232830;
+        color: #e8e6e1;
+      }
+
+      #chat-form {
+        display: flex;
+        gap: 4px;
+      }
+
+      #chat-text {
+        flex: 1 1 auto;
+        min-width: 0;
+        box-sizing: border-box;
+        padding: 4px 6px;
+        border: 1px solid #2b3038;
+        border-radius: 4px;
+        background: #10131a;
+        color: #e8e6e1;
+        font: inherit;
+        font-size: 12px;
+      }
+
+      #chat-text:focus {
+        outline: none;
+        border-color: #4a525e;
+      }
+
+      /* Where the box is pointed, said a second time. The chip above is where
+         the choice was made and this is where the eyes are while a sentence is
+         being typed — a sticky destination has exactly one failure, forgetting
+         which way it points, and this is what makes that hard to do. Amber is
+         already this project's colour for "not what the table is seeing". */
+      #chat-form.is-whisper #chat-text,
+      #chat-form.is-whisper #chat-send {
+        border-color: #7a6428;
+      }
+
+      #chat-send {
+        padding: 4px 8px;
+        border: 1px solid #2b3038;
+        border-radius: 4px;
+        background: #171a1f;
+        color: #b6bcc6;
+        font: inherit;
+        font-size: 12px;
+        cursor: pointer;
+      }
+
+      #chat-send:hover {
+        border-color: #4a525e;
+        color: #e8e6e1;
+      }
+
+      /* A frozen board must not look like a live one, and neither must a box
+         that would swallow a sentence. */
+      body.offline #chat-form {
+        opacity: 0.45;
+        pointer-events: none;
+      }
+
+      /* Beside the dock rather than inside it, because this is what shows when
+         the panel does not. It never opens anything: a layout reflow under
+         whoever is mid-drag is what the ping arrow and the folded initiative
+         panel each declined to cause. */
+      #chat-toast {
+        position: fixed;
+        right: 272px;
+        bottom: 46px;
+        max-width: 320px;
+        padding: 6px 9px;
+        border: 1px solid #2b3038;
+        border-radius: 5px;
+        background: rgba(12, 14, 18, 0.92);
+        color: #d8d2c4;
+        font-size: 12px;
+        overflow-wrap: break-word;
+        pointer-events: none;
         user-select: none;
       }
 
@@ -1432,6 +1681,11 @@
         <div class="picker-list"></div>
       </div>
     </div>
+    <!-- The right edge, in normal flow for the reason the left rail is: the
+         initiative panel's height depends on how many creatures are in the
+         fight and whether it is folded, so any fixed offset for the thing under
+         it is a number a later feature makes wrong. -->
+    <div id="right-rail">
     <aside id="initiative" hidden>
       <div class="init-head">
         <!-- Collapses the list and never the turn. A panel that collapses to a
@@ -1455,6 +1709,37 @@
       </form>
       <button id="init-clear" type="button" hidden>clear order</button>
     </aside>
+      <!-- Everybody's, unlike the left rail: neither of the panels behind this
+           strip is the DM's, which is the first time the two sides of this
+           application have had the same furniture. It sits *under* the
+           initiative panel rather than becoming a third tab on it — the dock is
+           read-and-reply and initiative is glance-state.
+
+           Empty strip: the tabs are built in `dock.ts`, the way the rail's are.
+           Nothing in here arms the canvas, so unlike the rail there is no
+           `stop` to call as a panel closes. -->
+      <div id="dock" hidden>
+        <nav id="dock-tabs"></nav>
+        <section id="chat" hidden>
+          <div id="chat-log"></div>
+          <!-- Where the next thing typed is going. Built in `chat.ts`, because
+               which destinations exist depends on who is connected: a player
+               has the table and the DM, the DM has the table and each player,
+               and nobody has another player. -->
+          <div id="chat-to"></div>
+          <form id="chat-form">
+            <input
+              id="chat-text"
+              type="text"
+              maxlength="400"
+              autocomplete="off"
+              aria-label="Say something"
+            />
+            <button id="chat-send" type="submit">say</button>
+          </form>
+        </section>
+      </div>
+    </div>
     <div id="left-rail">
       <!-- DM only, and above the strip rather than on it: undo is not an editing
            panel, it is reached in the middle of using one. Same argument that
@@ -1689,6 +1974,13 @@
     <div id="hud"></div>
     <div id="preview-tag">NEXT MAP · not on the table</div>
     <div id="sight-tag">ONE CREATURE'S SIGHT · not the table's board</div>
+    <!-- Outside the dock in the document, because it is what shows when the
+         dock does not: a whisper nobody notices is the main way this feature
+         fails a table where half the players are not looking at the panel. It
+         does not open the dock — expanding a panel reflows the layout under
+         whoever is mid-drag, which the ping arrow and the initiative panel each
+         declined to do for the same reason. -->
+    <div id="chat-toast" hidden></div>
     <div id="hint">drag token to move · drag map or middle-drag to pan · wheel to zoom</div>
     <script type="module" src="/dist/main.js"></script>
   </body>
