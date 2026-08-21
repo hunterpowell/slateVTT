@@ -1,0 +1,224 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Spells</title>
+    <link
+      rel="icon"
+      href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'><circle cx='8' cy='8' r='6.5' fill='%236f7fc8' stroke='%231b1d22'/></svg>"
+    />
+    <style>
+      /* Slate's palette, because it is the other tab open on the same screen —
+         but deliberately no shared stylesheet. Nothing here imports anything
+         from the client, and that is the point. */
+      :root {
+        --bg: #0b0d10;
+        --panel: #14171c;
+        --line: #262b33;
+        --text: #d5dae2;
+        --dim: #8b93a1;
+        --accent: #6f7fc8;
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      body {
+        margin: 0;
+        min-height: 100vh;
+        background: var(--bg);
+        color: var(--text);
+        font-family: ui-sans-serif, system-ui, sans-serif;
+        font-size: 14px;
+      }
+
+      main {
+        max-width: 860px;
+        margin: 0 auto;
+        padding: 20px 16px 64px;
+      }
+
+      /* The box follows you down the list — with 319 spells the useful move is
+         refining the query, not scrolling back up to reach it. */
+      header {
+        position: sticky;
+        top: 0;
+        padding: 16px 0 10px;
+        background: linear-gradient(var(--bg) 78%, transparent);
+      }
+
+      #q {
+        width: 100%;
+        padding: 10px 12px;
+        border: 1px solid var(--line);
+        border-radius: 6px;
+        background: var(--panel);
+        color: var(--text);
+        font: inherit;
+        font-size: 15px;
+      }
+
+      #q:focus {
+        outline: none;
+        border-color: var(--accent);
+      }
+
+      #status {
+        padding: 7px 2px 0;
+        color: var(--dim);
+        font-size: 12px;
+      }
+
+      .count {
+        font-variant-numeric: tabular-nums;
+      }
+
+      /* A refused filter or a text-only match is the one thing here that must not
+         be missed — it is the difference between a short list and a wrong one. */
+      .note {
+        margin-top: 4px;
+        color: #d8a657;
+      }
+
+      .spell {
+        border-bottom: 1px solid var(--line);
+      }
+
+      summary {
+        display: flex;
+        gap: 10px;
+        align-items: baseline;
+        padding: 8px 4px;
+        cursor: pointer;
+        list-style: none;
+      }
+
+      summary::-webkit-details-marker {
+        display: none;
+      }
+
+      summary:hover {
+        background: var(--panel);
+      }
+
+      .name {
+        flex: 1;
+        font-weight: 600;
+      }
+
+      .classes {
+        color: var(--dim);
+        font-size: 12px;
+      }
+
+      /* The PHB name for a spell the SRD renamed. Quiet — it is a reassurance
+         that you found the right thing, not a second title. */
+      .alias {
+        color: var(--dim);
+        font-size: 12px;
+        font-style: italic;
+      }
+
+      .src {
+        min-width: 68px;
+        color: var(--accent);
+        font-size: 12px;
+        font-variant-numeric: tabular-nums;
+        text-align: right;
+      }
+
+      .body {
+        padding: 4px 4px 14px;
+      }
+
+      .facts {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 5px;
+        margin-bottom: 10px;
+      }
+
+      .chip {
+        padding: 2px 7px;
+        border: 1px solid var(--line);
+        border-radius: 10px;
+        color: var(--dim);
+        font-size: 11px;
+      }
+
+      /* Not yet checked against the book. A chip among the facts rather than a
+         tag on the row, and in the same grey as the facts rather than in the
+         amber this page keeps for a wrong answer — most of the hand-typed half
+         is unchecked and the entries are believed good, so gold would overstate
+         the doubt. The dashed border is the whole signal: provisional, at the
+         volume of a footnote. */
+      .chip.unverified {
+        border-style: dashed;
+        text-transform: uppercase;
+        letter-spacing: 0.04em;
+      }
+
+      .body p {
+        margin: 0 0 8px;
+        line-height: 1.5;
+      }
+
+      .material,
+      .trigger,
+      .higher {
+        color: var(--dim);
+      }
+
+      .lookup {
+        color: #d8a657;
+      }
+
+      footer {
+        max-width: 860px;
+        margin: 0 auto;
+        padding: 0 16px 28px;
+        color: var(--dim);
+        font-size: 11px;
+        line-height: 1.6;
+      }
+
+      footer a {
+        color: var(--dim);
+      }
+
+      kbd {
+        padding: 1px 4px;
+        border: 1px solid var(--line);
+        border-radius: 3px;
+        background: var(--panel);
+        font-size: 11px;
+      }
+    </style>
+  </head>
+  <body>
+    <main>
+      <header>
+        <input
+          id="q"
+          type="text"
+          autocomplete="off"
+          spellcheck="false"
+          placeholder="wiz 3 conc  ·  cleric 1 bonus  ·  sor 2 -conc  ·  &quot;difficult terrain&quot;"
+        />
+        <div id="status"></div>
+      </header>
+      <div id="results"></div>
+    </main>
+    <footer>
+      <p>
+        Type a class, a level, a school, a casting time, a book, a damage type or an ability save —
+        in any order. <kbd>conc</kbd> and <kbd>ritual</kbd> filter on those; a leading
+        <kbd>-</kbd> negates; anything else searches names and text, and
+        <kbd>"quoted words"</kbd> stay one phrase.
+      </p>
+    </footer>
+    <script type="module" src="spells.js"></script>
+  </body>
+</html>

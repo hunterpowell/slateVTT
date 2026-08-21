@@ -19,3 +19,11 @@ uploads/
 # An scp that lost its ":destination" and copied to a local file named
 # after the host instead. See deploy/pi/README.md.
 *@slate.local
+
+# The book dumps the spell index is built from, and the prose they carry.
+# `client/spells/srd.json` is committed because SRD 5.1 is CC-BY; Xanathar's,
+# Tasha's and the non-SRD half of the PHB are under no open licence, so the
+# header facts go in `extra.json` and the text stays here. The page fetches the
+# overlay and does without it. See client/spells/LICENSE-SRD.md.
+spells_tmp/
+client/spells/text.json

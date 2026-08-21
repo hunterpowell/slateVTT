@@ -58,6 +58,10 @@ unless explicitly asked:
   button. **Built**, as milestone 24, and the boundary above is the specification — see *The
   scratchpad* below and `docs/notes.md`.
 - Module or plugin systems
+- 5e reference lookup. The spell index at `/spells/` is **not an exception to this** — it is a
+  static page under `client/spells/` that imports nothing from `client/src/`, has no entry in
+  esbuild's build and touches no room state; it shares only the `ServeDir` fallback. Do not connect
+  it to Slate. See `client/spells/README.md`.
 - User accounts, email, password reset, OAuth
 - Mobile-first design (desktop browser is the target; don't break touch, don't optimize for it)
 
