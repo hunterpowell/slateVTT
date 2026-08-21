@@ -27,7 +27,7 @@ before Slate starts, the board sits around 166MB used of 905MB — there is room
 ```text
 /opt/slate/            root-owned, replaced by every deploy
   bin/slate-server
-  client/              index.html, dist/, assets/
+  client/              index.html, dist/, assets/, spells/
   maps/                the DM's map picker library
   portraits/           the DM's token art library
 
@@ -269,12 +269,18 @@ scp    server\target\aarch64-unknown-linux-gnu\release\slate-server <user>@slate
 scp    client\index.html <user>@slate.local:stage/client/
 scp -r client\dist       <user>@slate.local:stage/client/
 scp -r client\assets     <user>@slate.local:stage/client/
+scp -r client\spells     <user>@slate.local:stage/client/
 scp -r maps              <user>@slate.local:stage/
 scp -r portraits         <user>@slate.local:stage/
 ```
 
 `client\src` and `client\node_modules` are deliberately absent. The Pi serves the bundle, not
-the sources.
+the sources. **`client\spells` is not part of the bundle and has to be copied on its own** —
+esbuild never touches it, so it arrives only if that line does. The client links to `/spells/`
+from the bottom-right corner, and a missing copy is a 404 behind a button that looked fine on the
+build machine. `text.json` is gitignored and absent here as it is everywhere else; the page falls
+back to the row naming a page, which is the licensing decision in `client/spells/README.md` and
+not a broken deploy.
 
 Install into place, on the Pi. **Read the destinations carefully** — see *Common failures*:
 
@@ -297,11 +303,13 @@ sudo systemctl start slate
 ```bash
 systemctl is-active slate
 curl -sI http://127.0.0.1:3000/ | head -1
+curl -sI http://127.0.0.1:3000/spells/ | head -1
 journalctl -u slate -n 20 --no-pager
 ```
 
-You want `active`, `HTTP/1.1 200 OK`, and a `slate listening` line whose paths match the
-layout above. **No `no map library there` or `no portrait library there` warning** is the
+You want `active`, `HTTP/1.1 200 OK` from both, and a `slate listening` line whose paths match
+the layout above. The second one is the spell index, which the client links to and the bundle
+does not carry — a 404 there means the `client\spells` copy was missed. **No `no map library there` or `no portrait library there` warning** is the
 positive signal that both libraries were found.
 
 `/var/lib/slate` holding only `uploads/` is normal on a fresh install — the state file is not

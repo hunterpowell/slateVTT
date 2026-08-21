@@ -2,7 +2,16 @@
 
 A static page at `/spells/`. **Not part of Slate** — it imports nothing from `../src/`, has no
 entry in esbuild's build, and touches no room state. It is served by the same `ServeDir` fallback
-in `server/src/main.rs` that serves the client, and that is the whole of the coupling.
+in `server/src/main.rs` that serves the client, and the client carries one `<a href="/spells/">`
+in its bottom-right corner. Those two are the whole of the coupling.
+
+**The anchor opens a new tab on purpose.** In-window is either an iframe with a second stylesheet
+to keep in step or these files read from `../src/`, and both are the reference lookup the non-goal
+in `.claude/CLAUDE.md` refuses — read it before adding anything that points the other way.
+
+It also means this folder is **not part of the bundle and ships on its own line**: esbuild never
+touches it, so a deploy that copies `dist/` and `assets/` alone leaves a 404 behind a button that
+worked on the build machine. See `deploy/pi/README.md`.
 
 Everyone at the table owns the PHB, Xanathar's and Tasha's. A book is excellent at *"read me
 Fireball"* and useless at *"what 2nd-level bard spells are a bonus action and don't eat

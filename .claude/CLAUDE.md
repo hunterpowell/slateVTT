@@ -60,8 +60,12 @@ unless explicitly asked:
 - Module or plugin systems
 - 5e reference lookup. The spell index at `/spells/` is **not an exception to this** — it is a
   static page under `client/spells/` that imports nothing from `client/src/`, has no entry in
-  esbuild's build and touches no room state; it shares only the `ServeDir` fallback. Do not connect
-  it to Slate. See `client/spells/README.md`.
+  esbuild's build and touches no room state; it shares the `ServeDir` fallback and one anchor in
+  the client's bottom-right corner, and that is the whole of the coupling. **The anchor is the
+  boundary rather than a first step**: a link out costs no import, no build entry and no room
+  state, and anything that reads spell data *into* Slate — an in-window panel, a search box on the
+  board, a spell that places its own area — is the lookup this refuses. Do not connect it to
+  Slate. See `client/spells/README.md`.
 - User accounts, email, password reset, OAuth
 - Mobile-first design (desktop browser is the target; don't break touch, don't optimize for it)
 

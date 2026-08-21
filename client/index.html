@@ -48,14 +48,48 @@
         user-select: none;
       }
 
-      #hint {
+      /* The hint line and the spell link share the bottom-right corner as one
+         right-anchored row, and the link is the *last* child so that it stays
+         put: the hint grows leftward when a tool is armed (see
+         `body.drawing #hint::after`), and a link that slid sideways every time
+         somebody picked up the draw tool is the dock's objection to a moving
+         edge, one corner over. */
+      #corner {
         position: fixed;
         right: 12px;
         bottom: 12px;
+        display: flex;
+        align-items: baseline;
+        gap: 10px;
+        /* The gap between the two is still map, and still draggable. */
+        pointer-events: none;
+      }
+
+      #hint {
         color: #5a616c;
         font-size: 12px;
         pointer-events: none;
         user-select: none;
+      }
+
+      /* A link out and nothing more. `/spells/` is a static page that imports
+         nothing from `src/` and touches no room state, and an anchor is what
+         keeps it that way — it opens in its own tab on purpose, because
+         in-window means either an iframe to style or the spell data read into
+         the client, and that is the reference lookup the non-goal in
+         `.claude/CLAUDE.md` refuses. */
+      #spells-link {
+        pointer-events: auto;
+        color: #7d8590;
+        font-size: 12px;
+        text-decoration: none;
+        border-bottom: 1px solid #2b3038;
+        user-select: none;
+      }
+
+      #spells-link:hover {
+        color: #cfe6ff;
+        border-bottom-color: #4a525e;
       }
 
       #banner {
@@ -2230,7 +2264,13 @@
          the same moment. It sits above it for the same reason the dock grows
          upward — the bottom edge is the one that stays put. -->
     <div id="turn-toast" hidden></div>
-    <div id="hint">drag token to move · drag map or middle-drag to pan · wheel to zoom</div>
+    <div id="corner">
+      <div id="hint">drag token to move · drag map or middle-drag to pan · wheel to zoom</div>
+      <!-- Everybody's, and outside every panel: it arms nothing, so it is
+           neither a rail tab, which would owe a `stop`, nor a dock tab, which
+           would stack and carry a count. See `client/spells/README.md`. -->
+      <a id="spells-link" href="/spells/" target="_blank" rel="noopener">spells</a>
+    </div>
     <script type="module" src="/dist/main.js"></script>
   </body>
 </html>
