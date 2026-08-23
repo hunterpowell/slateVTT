@@ -288,6 +288,15 @@ export interface WireRoomView {
    *  joined without it would ship its own pointer at 30Hz into a room that has
    *  switched cursors off. */
   show_cursors: boolean;
+  /** The picture the table is looking at instead of the board, or null for the
+   *  board.
+   *
+   *  The fourth of these, and the same value for everyone for the plainest
+   *  version of the reason: the DM decides what is on the screens and there is
+   *  nothing here being kept from anybody. Not a `WireMapInfo` and never one —
+   *  there is no grid to draw on it, nothing standing on it and nothing traced
+   *  across it, which is exactly why the board underneath survives it. */
+  backdrop: string | null;
   /** Who is connected right now, the DM among them.
    *
    *  The same value for everyone, like the two fields above it: there is no
@@ -426,6 +435,13 @@ export type ServerMsg =
   /** The ruler charges diagonals differently now. `names_changed`'s neighbour,
    *  and echoed to the DM who set it for the same reason. */
   | { type: 'diagonals_changed'; diagonals: Diagonals }
+  /** There is a picture in front of the table now, or there is not.
+   *
+   *  `names_changed`'s neighbour again: identical for everyone, echoed to the DM
+   *  who put it up. **Nothing arrives with it** — the board is being covered
+   *  rather than changed, so the map, walls, shapes and fog we already hold are
+   *  still correct and no frame is owed for them. */
+  | { type: 'backdrop_changed'; url: string | null }
   /** The staged slot — map, walls and paint — or null once there is not one. DM
    *  connections only.
    *
@@ -637,6 +653,12 @@ export type ClientMsg =
    *  carries tokens, nameplates, bars, rulers, trails, shapes and fog is a real
    *  cost, and a switch that saved none of it would be a preference. */
   | { type: 'set_show_cursors'; show: boolean }
+  /** DM-only. Put a picture in front of the table, or null to take it away.
+   *
+   *  Room-wide and not on `set_map` for a sharper version of the reason above:
+   *  a `set_map` is a map *load*, which sweeps the walls, the drawings and
+   *  everywhere the party has explored. Not doing any of that is the command. */
+  | { type: 'set_backdrop'; url: string | null }
   /** A shape being swept out right now: relayed to everyone watching, stored by
    *  nobody. `drawing: false` is the release that ends it.
    *

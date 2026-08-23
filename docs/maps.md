@@ -1,11 +1,12 @@
 # Maps
 
-The two map slots, the map library, and the DM's preview mode.
+The two map slots, the map library, the DM's preview mode — and the backdrop, which is in this
+file because it is defined by not being a map.
 
 `.claude/CLAUDE.md` is loaded into every session; this file is not. **Read it before touching
-`maptool.ts`, `calibrate.ts`, `library.rs`, `library.ts`, or `SetMap` / `MapInfo` on the server** —
-the loading-versus-recalibrating rule below is depended on by three separate features and is the arm
-that gets missed.
+`maptool.ts`, `calibrate.ts`, `library.rs`, `library.ts`, `drawBackdrop`, `shownBackdrop`, or
+`SetMap` / `MapInfo` / `SetBackdrop` on the server** — the loading-versus-recalibrating rule below
+is depended on by three separate features and is the arm that gets missed.
 
 ## Maps and the map library
 
@@ -164,3 +165,80 @@ previewing — anything that should not happen there is the client declining to 
 
 Because preview is that invisible, the DM's own screen has to say so loudly:
 mistaking a staged map for the board is the one way this feature goes wrong.
+
+## Backdrop
+
+A picture the DM shows the table **instead of** the board — a forested clearing, a campsite, the
+inside of a tavern — for the stretches of an evening where there is nothing to move and nothing to
+measure. `backdrop: Option<String>` on `RoomState`, one command, one event, and nothing else.
+
+### Why it is not a map
+
+The problem it solves is not "there are only two slots". It is that **loading a map is
+destructive on purpose**. A `SetMap` whose URL changed sets `loading`, which calls `sweep_board`:
+the drawings go, the walls go, `forget_fog` takes everywhere the party had explored, and the DM's
+paint goes with them. That is right for a map — a new image is a new dungeon and a wall traced on
+the last one is a line across the middle of this one — and it makes showing a campfire between two
+fights cost half an hour of tracing with no way back.
+
+So the thing to notice is that **what the DM wants to show is not a map**. There is no grid on it,
+nothing stands on it, nothing is traced across it and nobody explores it. Building it as a second
+board would pay for all of that and use none of it, and a *list* of such boards is the scene
+concept the section above refuses — every `staged` flag becomes a scene id, token positions fork
+per scene, and `snapshot_for` multiplies.
+
+One field instead. `apply`'s arm is an assignment and an event, and **that arm staying short is the
+feature**: the board, its walls, its shapes and everywhere the party has been all go on existing
+untouched behind the picture, so taking it down puts the table back exactly where they were.
+`covering_the_board_leaves_the_encounter_exactly_where_it_was` in `room/tests/maps.rs` is that
+claim as a test, and it is deliberately the mirror of
+`undoing_a_map_load_gives_back_the_walls_the_shapes_and_the_fog_together` in `room/tests/undo.rs`:
+that one asserts a load destroys four things at once, this one asserts a backdrop destroys none.
+
+### The presets are the folder
+
+`backdrops/` is a third `Library` beside `maps/` and `portraits/`, sharing every line — the folder,
+the size cap, the noun in the refusals and what a copy's name is fingerprinted over are the whole
+of what a library differs by. It takes the **portraits'** answer on both axes it can choose: a
+`backdrop/` prefix, and a name fingerprinted by content, because nothing is keyed on a backdrop's
+URL and replacing the art in the folder should replace the picture. Maps' opt-out exists only
+because the calibration table is keyed on their names, and that reason does not reach here.
+
+That is also how "a few presets" costs nothing: **the collection is the folder**, and the room
+holds one field saying which of them is up. A list in the state model would be a scene manager
+wearing a different noun.
+
+### On the wire and on the screen
+
+Unfiltered — `BackdropChanged` sits beside `NamesChanged` and `FogChanged` rather than beside
+`WallsChanged`. Who may put a picture up is a permission; which picture it is is not a secret,
+since six people are looking at it. Echoed to the DM who sent it, like the switches beside it.
+**Nothing travels with it**: no map, wall, shape or fog frame accompanies it, and none is owed,
+because the board is being covered rather than changed.
+
+On the client it is drawn by `drawBackdrop` **instead of** `render`, not as a layer inside it —
+screen space, no camera, no grid, no hit test. `main.ts` returns from the frame before any of that
+runs, so there is nothing that could disagree with a board nobody can see. It is contained rather
+than covered, unlike a token's portrait: the DM picked this image to be looked at, so letterbox
+bars are correct and cropping is not.
+
+**`shownBackdrop` is `shownBoard`'s fourth twin**, and answers one question earlier than the other
+three: they pick *which* board, this decides whether a board is drawn at all. Its one branch is
+that **preview wins** — a backdrop is what the *table* is looking at, and a DM previewing the
+staged map is asking to see the next dungeon. That is the case it exists for: the party roleplays
+at the campfire while the DM traces the crypt they are about to walk into. Without it the DM would
+have to take the picture off six other screens to get any work done.
+
+The board stops responding through **one CSS rule** — `body.covered #stage { pointer-events: none }`
+— rather than a guard in each handler in `input.ts`. With no pointer events delivered there is no
+pan, no drag, no ping, no door swing, no sweep and no cursor relay, by construction rather than by
+remembering. The panels stay: the table can still roll initiative and talk while the picture is up,
+which is most of why it is worth having.
+
+The control is on the **table tab**, because a panel mirrors where its fields live and this is
+room-wide `RoomState` rather than `MapInfo`. It is the first thing on that panel to arm anything
+at all — a disclosure list rather than a canvas tool, so the `stop()` it gained is the map and
+token panels' tidiness rather than their rule.
+
+`drive-backdrop.mjs` is the browser half. Its last two checks are the point: the board's pixels
+before the picture went up and after it came down have to be the same.

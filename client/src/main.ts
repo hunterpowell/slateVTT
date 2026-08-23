@@ -48,7 +48,7 @@ import type {
   WireToken,
 } from './protocol.js';
 import type { Viewport } from './render.js';
-import { render } from './render.js';
+import { drawBackdrop, render } from './render.js';
 import type { Rulers } from './ruler.js';
 import { createRulers } from './ruler.js';
 import type { Board, Scene, Token } from './scene.js';
@@ -58,6 +58,7 @@ import {
   stagedFromWire,
   removeToken,
   sceneFromView,
+  shownBackdrop,
   shownBoard,
   shownPos,
   upsertToken,
@@ -208,6 +209,8 @@ interface Ui {
     names: HTMLInputElement;
     diagonals: HTMLSelectElement;
     cursors: HTMLInputElement;
+    backdrop: { button: HTMLButtonElement; list: HTMLElement };
+    backdropClear: HTMLButtonElement;
   };
 }
 
@@ -356,6 +359,11 @@ function findUi(): Ui {
       names: need<HTMLInputElement>('#table-names'),
       diagonals: need<HTMLSelectElement>('#table-diagonals'),
       cursors: need<HTMLInputElement>('#table-cursors'),
+      backdrop: {
+        button: need<HTMLButtonElement>('#table-backdrop'),
+        list: need('#table-backdrop-list'),
+      },
+      backdropClear: need<HTMLButtonElement>('#table-backdrop-clear'),
     },
   };
 }
@@ -618,6 +626,12 @@ function boot(): void {
             // No prompt to size the grid — a staged map was offered one when it
             // was staged, and the live map when it arrived.
             stage?.reloadMap();
+            // **Preview beats the backdrop**, so entering it puts the picture
+            // away on this screen alone and leaving it brings the picture back.
+            // The rule is `shownBackdrop`'s and this only tells the board the
+            // answer may have moved — which is why it is here beside the map's
+            // reload rather than expressed a second time.
+            stage?.reloadBackdrop();
           },
         );
         mapTool.update(room.scene);
@@ -660,10 +674,17 @@ function boot(): void {
         );
         fogTool.update(room.scene);
 
-        // The two room-wide settings. It arms nothing on the canvas and it is
-        // never inert, so unlike the four above it it needs neither a `stop()`
-        // nor a rule about greying its tab.
-        tableTool = createTableTool(ui.tabletool, (msg) => net.send(msg));
+        // The room-wide settings, and the backdrop, which is one of them: it
+        // belongs to neither board, and the board it covers is still there
+        // underneath with its walls and its fog. It is never inert, so unlike
+        // the four above it it needs no rule about greying its tab — but the
+        // picker means it does now owe a `stop()`.
+        tableTool = createTableTool(
+          ui.tabletool,
+          dmSecret,
+          (msg) => net.send(msg),
+          (message) => flash(ui.banner, message),
+        );
         tableTool.update(room.scene);
 
         // Last, because it owns whether the five above are on screen and has to
@@ -684,9 +705,10 @@ function boot(): void {
           },
           { tab: 'walls', label: 'walls', root: ui.walltool.root, stop: () => wallTool?.stop() },
           { tab: 'fog', label: 'fog', root: ui.fogtool.root, stop: () => fogTool?.stop() },
-          // Last on the strip: the least-touched panel during play. No `stop`,
-          // because two checkboxes arm nothing.
-          { tab: 'table', label: 'table', root: ui.tabletool.root },
+          // Last on the strip: the least-touched panel during play. The `stop`
+          // closes the backdrop list — nothing on the canvas is armed, so this
+          // is the map and token panels' tidiness rather than their rule.
+          { tab: 'table', label: 'table', root: ui.tabletool.root, stop: () => tableTool?.stop() },
         ]);
       }
 
@@ -828,6 +850,18 @@ function boot(): void {
     onDiagonalsChanged: (diagonals) => {
       if (room === null) return;
       room.scene.diagonals = diagonals;
+      tableTool?.update(room.scene);
+    },
+
+    // A picture went up in front of the table, or came down. **Nothing about
+    // the board is touched here and nothing needs to be** — the map, the walls,
+    // the drawings and everywhere the party has explored are all still exactly
+    // what they were, waiting behind it. That is the entire feature, and this
+    // handler being this short is what it looks like from the client.
+    onBackdropChanged: (url) => {
+      if (room === null) return;
+      room.scene.backdrop = url;
+      stage?.reloadBackdrop();
       tableTool?.update(room.scene);
     },
 
@@ -1039,6 +1073,8 @@ function boot(): void {
       // restored to was calibrated when it was first loaded, and the answer came
       // back in this very frame.
       afterBoardChanged(wasShowing, false);
+      // An undo can put a backdrop up or take one down like any other step.
+      stage?.reloadBackdrop();
     },
 
     // Only ever called on a DM connection.
@@ -1100,6 +1136,15 @@ interface Stage {
    * first moment its pixel dimensions are known.
    */
   reloadMap(onLoaded?: () => void): void;
+  /**
+   * Re-reads `shownBackdrop` and fetches the picture if it changed.
+   *
+   * Called wherever the answer could have moved rather than wherever a backdrop
+   * arrives, because two things decide it: the room's backdrop, and whether the
+   * DM is previewing the staged map. Like `reloadMap` it compares against what
+   * is on screen and does nothing when that has not changed.
+   */
+  reloadBackdrop(): void;
   /** Fetches art for any token whose image is not in hand yet. */
   loadArt(): void;
   /** Pixel size of the map image currently on screen. */
@@ -1157,6 +1202,23 @@ async function start(
     }
     return arriving;
   };
+
+  /**
+   * The picture in front of the board, once it has arrived, and the URL it came
+   * from.
+   *
+   * Two variables rather than one because they answer different questions and
+   * the gap between them is a real state: `backdropUrl` is what should be up,
+   * `backdrop` is what can actually be drawn. Between the DM's click and the
+   * download landing the board is still what is on screen, which is better than
+   * a black window.
+   *
+   * It shares `fetchMap`'s cache, since a backdrop is another large image
+   * fetched by URL and toggling one on and off twice in an evening should not
+   * fetch it twice.
+   */
+  let backdrop: HTMLImageElement | null = null;
+  let backdropUrl: string | null = null;
 
   // Keyed by URL rather than by token, so re-arting a token finds the new
   // picture and two goblins sharing a portrait share one download. Portraits
@@ -1235,6 +1297,28 @@ async function start(
         (err: unknown) => console.warn(err),
       );
     },
+    reloadBackdrop() {
+      const url = shownBackdrop(scene);
+      if (url === backdropUrl) return;
+      backdropUrl = url;
+      // Dropped rather than kept, so the frame loop cannot draw the *previous*
+      // picture during the moment between one being chosen and it arriving.
+      backdrop = null;
+      if (url === null) return;
+
+      fetchMap(url).then(
+        (img) => {
+          // A newer answer may have landed while this was downloading —
+          // including the DM taking it down again, which is `backdropUrl` back
+          // to null and this image no longer wanted.
+          if (shownBackdrop(scene) !== url) return;
+          backdrop = img;
+        },
+        // Leaves the board on screen, which is the honest failure: the DM can
+        // see their pick did not take, and the table never went black.
+        (err: unknown) => console.warn(err),
+      );
+    },
     loadArt,
     naturalSize: () => ({ width: map.width, height: map.height }),
     viewCentre: () => {
@@ -1253,6 +1337,8 @@ async function start(
   };
 
   let lastHud = '';
+  /** What the body class was last set to, so it is written only on a change. */
+  let lastCovered = false;
   /**
    * The solo wash, rebuilt only when the answer could have changed.
    *
@@ -1314,6 +1400,28 @@ async function start(
 
   const frame = (): void => {
     const view = syncCanvasSize(ui.canvas);
+
+    // **The picture, instead of the board — not over it.** Everything below is
+    // skipped: no world transform, no fog, no tokens, no rulers, no HUD, and
+    // therefore nothing that could disagree with a board nobody can see. Read
+    // from `backdrop` rather than from the scene, so the board stays up until
+    // the image is actually in hand.
+    //
+    // The class is what stops the canvas *responding*. One line here rather
+    // than a guard in every handler in `input.ts`: with pointer events off the
+    // canvas there is no pan, no drag, no ping, no door, no sweep and no cursor
+    // relay, by construction rather than by remembering.
+    const covered = backdrop !== null;
+    if (covered !== lastCovered) {
+      lastCovered = covered;
+      document.body.classList.toggle('covered', covered);
+    }
+    if (backdrop !== null) {
+      drawBackdrop(ui.ctx, view, backdrop);
+      requestAnimationFrame(frame);
+      return;
+    }
+
     // Read once and passed down, so the sweep below and the fade the renderer
     // draws cannot disagree about what time it is within one frame.
     const now = performance.now();
@@ -1389,6 +1497,9 @@ async function start(
 
   // The map may have been replaced while that first image was downloading.
   if (shownBoard(scene).mapUrl !== firstUrl) stage.reloadMap();
+  // And the room may have had a picture up all along, which is what a page
+  // joining mid-campfire finds.
+  stage.reloadBackdrop();
   return stage;
 }
 

@@ -279,6 +279,10 @@ enum Event {
     /// these, and identical to its two neighbours in every respect — including
     /// that the frame reaches the DM who flipped it.
     CursorsChanged,
+    /// There is a picture in front of the table now, or there is not. The fourth
+    /// of these and identical to the three above in every respect, including
+    /// that the frame reaches the DM who put it up.
+    BackdropChanged,
     /// Carries no payload on purpose: `message_for` has `&self` and builds the
     /// panel per recipient. That seam is now load-bearing — a hidden creature's
     /// row is dropped from the copy the table receives, and fog of war will hide
@@ -750,6 +754,15 @@ pub struct RoomState {
     /// this is the busiest message in the room, and a switch that saved nothing
     /// would be a preference rather than a dial.
     show_cursors: bool,
+    /// The picture the table is looking at instead of the board, or `None`.
+    ///
+    /// The fourth room-wide switch, and its three neighbours in every respect
+    /// bar one: it carries a URL rather than a flag. **Nothing else in this
+    /// struct reads it**, which is the feature — the board, its walls, its
+    /// shapes and everywhere the party has explored go on existing untouched
+    /// behind the picture, so taking it down puts the table back exactly where
+    /// they were. A backdrop is not a map: see `docs/maps.md`.
+    backdrop: Option<String>,
     /// How each map URL was last calibrated. Server-side only — it never enters
     /// a snapshot or a message, because the finished `MapInfo` already says
     /// everything a client needs.
@@ -975,6 +988,9 @@ fn persists(event: &Event) -> bool {
         | Event::NamesChanged
         | Event::DiagonalsChanged
         | Event::CursorsChanged
+        // And the picture the DM left up, for the same reason: a room reopened
+        // on Saturday should be looking at whatever it was looking at.
+        | Event::BackdropChanged
         | Event::InitiativeChanged
         | Event::MapChanged
         | Event::StagedChanged
@@ -1088,6 +1104,10 @@ fn undid(msg: &ClientMsg) -> Option<&'static str> {
         ClientMsg::SetShowNames { .. } => Some("the name switch"),
         ClientMsg::SetDiagonals { .. } => Some("the diagonal rule"),
         ClientMsg::SetShowCursors { .. } => Some("the cursor switch"),
+        // Named for what it does rather than for which way it went, like the
+        // map's label above: "the backdrop" is true whether the DM put one up
+        // or took one down.
+        ClientMsg::SetBackdrop { .. } => Some("the backdrop"),
         // Loading and recalibrating are one command, so this label has to cover
         // both without claiming which — "the map" is true either way.
         ClientMsg::SetMap { .. } => Some("the map"),
@@ -1199,6 +1219,10 @@ fn moves_sight(msg: &ClientMsg) -> bool {
         // every pointer off changes what is on a screen rather than what a ray
         // reaches.
         | ClientMsg::SetShowCursors { .. }
+        // A picture in front of the board is drawn over the light in the most
+        // literal sense available: the board is still there, still lit exactly
+        // as it was, with something in front of it.
+        | ClientMsg::SetBackdrop { .. }
         | ClientMsg::MoveCursor { .. }
         // A ruler is drawn over the light and never in it, and this only
         // changes what the ruler says.
@@ -1446,6 +1470,7 @@ impl RoomState {
             show_names: true,
             diagonals: Diagonals::Equal,
             show_cursors: true,
+            backdrop: None,
             calibrations: HashMap::new(),
             undo: VecDeque::new(),
             chat: VecDeque::new(),
@@ -1527,6 +1552,7 @@ impl RoomState {
         self.show_names = saved.show_names;
         self.diagonals = saved.diagonals;
         self.show_cursors = saved.show_cursors;
+        self.backdrop = saved.backdrop;
         self.calibrations = saved.calibrations;
         // Restored here like everything else, because this has one inverse and
         // two field lists would be the trap `docs/undo.md` names: a field read
@@ -1569,6 +1595,7 @@ impl RoomState {
             show_names: self.show_names,
             diagonals: self.diagonals,
             show_cursors: self.show_cursors,
+            backdrop: self.backdrop.clone(),
             calibrations: self.calibrations.clone(),
             // Sorted for the tokens' reason: `HashMap` order varies per process,
             // and an unsorted list would rewrite the whole file every time
@@ -1703,6 +1730,9 @@ impl RoomState {
             // there were no cursors at all before there was a switch. A feature
             // that ships off is a feature a table never discovers.
             show_cursors: true,
+            // Nothing in front of the table, which is what a fresh room and
+            // every room that predates this field are both looking at.
+            backdrop: None,
             calibrations: HashMap::new(),
             undo: VecDeque::new(),
             chat: VecDeque::new(),
@@ -1994,7 +2024,12 @@ impl RoomState {
             // would leave every fresh page shipping its pointer into a room that
             // has switched cursors off.
             show_cursors: self.show_cursors,
-            // And the same a fourth and fifth time. Neither is anybody's secret:
+            // And a fourth time, for the plainest version of the reason: the DM
+            // decides what is on the screens and there is nothing here to keep
+            // from anybody. A join that omitted it would put a fresh page back
+            // on the board while the rest of the table looked at the campfire.
+            backdrop: self.backdrop.clone(),
+            // And the same a fifth and sixth time. Neither is anybody's secret:
             // the point of one is that the table can see whether the DM is still
             // there, and the point of the other is that six other screens draw
             // your ring in the colour you chose.
@@ -2529,6 +2564,20 @@ impl RoomState {
             // is not one of the two variants, which is what a closed set is for.
             ClientMsg::SetDiagonals { .. } => require_dm(client, "set how diagonals count"),
             ClientMsg::SetShowCursors { .. } => require_dm(client, "set what the boards draw"),
+
+            // Bounded by the one rule `SetMap` bounds a URL with, and by no
+            // other: there is nothing else here to check. The picker only ever
+            // sends a path the pick route just handed back, so this is a bound
+            // on a hostile frame rather than on the panel.
+            ClientMsg::SetBackdrop { url } => {
+                require_dm(client, "put a picture in front of the table")?;
+                if let Some(url) = url
+                    && (url.is_empty() || url.len() > MAX_URL_LEN)
+                {
+                    return Err("that backdrop URL is not a usable length".to_owned());
+                }
+                Ok(())
+            }
 
             // Which slot this is for makes no difference here: a grid size or a
             // play area is no more or less usable for being staged, so both go
@@ -3134,6 +3183,17 @@ impl RoomState {
             ClientMsg::SetShowCursors { show } => {
                 self.show_cursors = show;
                 vec![Event::CursorsChanged]
+            }
+
+            // **The fourth, and the one arm here that must stay this short.**
+            // Everything a DM might expect to happen when the board is covered
+            // — sweeping the shapes, forgetting the fog, clearing the walls — is
+            // the thing this command exists not to do. One assignment and one
+            // event; the board is untouched, so taking the picture down puts the
+            // table back exactly where they were.
+            ClientMsg::SetBackdrop { url } => {
+                self.backdrop = url;
+                vec![Event::BackdropChanged]
             }
 
             // Tokens are deliberately untouched. They are stored in grid units,
@@ -3797,6 +3857,7 @@ impl RoomState {
                 Event::TokenMoved { .. }
                 | Event::NamesChanged
                 | Event::DiagonalsChanged
+                | Event::BackdropChanged
                 | Event::InitiativeChanged
                 | Event::MapChanged
                 | Event::StagedChanged
@@ -4288,6 +4349,15 @@ impl RoomState {
             // room that drops every frame.
             Event::CursorsChanged => Some(ServerMsg::CursorsChanged {
                 show: self.show_cursors,
+            }),
+
+            // And a fourth time, unfiltered like the three above it. What makes
+            // this one worth its own note is what is *not* beside it: covering
+            // the board changes no map, no wall, no shape and no cell of fog, so
+            // this frame travels alone and every recipient still holds the board
+            // it had.
+            Event::BackdropChanged => Some(ServerMsg::BackdropChanged {
+                url: self.backdrop.clone(),
             }),
 
             // The filter doing its actual job. Every arm above drops a message

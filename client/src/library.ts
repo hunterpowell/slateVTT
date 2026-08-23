@@ -1,9 +1,10 @@
 // A folder on the server's disk, listed in a panel and picked from.
 //
-// Two panels want this and they want exactly the same thing: the map panel over
-// `maps/`, the token panel over `portraits/`. What differs is the folder and the
-// word for what is in it — so both ride in, and everything below is shared. The
-// server side is the same shape for the same reason; see `Library` in `main.rs`.
+// Three panels want this and they want exactly the same thing: the map panel
+// over `maps/`, the token panel over `portraits/`, the table panel over
+// `backdrops/`. What differs is the folder and the word for what is in it — so
+// both ride in, and everything below is shared. The server side is the same
+// shape for the same reason; see `Library` in `main.rs`.
 //
 // A pick is not the end of anything. The endpoint copies the file into the
 // uploads directory and answers with the URL it is now served at, which is
@@ -45,12 +46,12 @@ export function createLibraryList(
   ui: LibraryUi,
   dmSecret: string,
   /** The path segment under `/api`, and the plural in every message. */
-  kind: 'maps' | 'portraits',
+  kind: 'maps' | 'portraits' | 'backdrops',
   /** What the panel does with the URL the copy is now served at. */
   onPicked: (url: string) => void,
   report: (message: string) => void,
 ): LibraryList {
-  /** "map" / "portrait" — both plurals lose exactly one letter. */
+  /** "map" / "portrait" / "backdrop" — every plural loses exactly one letter. */
   const noun = kind.slice(0, -1);
 
   let open = false;

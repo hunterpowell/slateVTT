@@ -1336,3 +1336,161 @@ fn a_map_change_is_worth_saving() {
     let _dm = join_as_dm(&mut state, ClientId(1));
     assert!(state.handle(ClientId(1), set_map("/uploads/cave.webp", 70.0, 1.0, 2.0)));
 }
+
+// --- the backdrop -------------------------------------------------------
+//
+// A picture shown *instead of* the board. It is in this file because it is
+// about what is on the screens, and it is not a map — which is the whole of
+// what these tests are here to hold down. See *Backdrop* in `docs/maps.md`.
+
+const CAMPFIRE: &str = "/uploads/backdrop-campfire-9f8e7d6c.jpg";
+
+fn show(url: Option<&str>) -> ClientMsg {
+    ClientMsg::SetBackdrop {
+        url: url.map(str::to_owned),
+    }
+}
+
+#[test]
+fn only_the_dm_can_put_a_picture_in_front_of_the_table() {
+    let mut state = room();
+    let mut saelyn = join_as_player(&mut state, ClientId(1), "saelyn");
+
+    state.handle(ClientId(1), show(Some(CAMPFIRE)));
+
+    assert!(
+        state.backdrop.is_none(),
+        "a player put a picture in front of five other people's boards"
+    );
+    // And the refusal is the only thing they got back, rather than a frame
+    // describing a room that did not change.
+    assert!(matches!(
+        drain(&mut saelyn).as_slice(),
+        [ServerMsg::Error { .. }]
+    ));
+}
+
+#[test]
+fn the_backdrop_reaches_the_table_and_the_dm_alike() {
+    // `NamesChanged`'s rule rather than `WallsChanged`'s: who may put a
+    // picture up is a permission, and which picture it is is not a secret —
+    // six people are looking at it.
+    let mut state = room();
+    let mut dm = join_as_dm(&mut state, ClientId(1));
+    let mut saelyn = join_as_player(&mut state, ClientId(2), "saelyn");
+
+    state.handle(ClientId(1), show(Some(CAMPFIRE)));
+
+    // Echoed to the DM who sent it, like the switches beside it: nothing here
+    // is predicted locally, so this frame is how their own panel settles.
+    assert!(
+        matches!(
+            drain(&mut dm).as_slice(),
+            [ServerMsg::BackdropChanged { url: Some(url) }] if url == CAMPFIRE
+        ),
+        "the DM was not told their own pick landed"
+    );
+    assert!(
+        matches!(
+            drain(&mut saelyn).as_slice(),
+            [ServerMsg::BackdropChanged { url: Some(url) }] if url == CAMPFIRE
+        ),
+        "the table was not shown the picture"
+    );
+}
+
+#[test]
+fn the_backdrop_is_in_every_snapshot() {
+    // Invariant 3 on a field with no filter: a join has to arrive at the same
+    // answer the delta gave, or a page refreshed mid-campfire comes back
+    // looking at the dungeon on its own.
+    let mut state = room();
+    let _dm = join_as_dm(&mut state, ClientId(1));
+    state.handle(ClientId(1), show(Some(CAMPFIRE)));
+
+    assert_eq!(
+        state.snapshot_for(&Identity::Dm).backdrop.as_deref(),
+        Some(CAMPFIRE)
+    );
+    assert_eq!(
+        state.snapshot_for(&as_player("saelyn")).backdrop.as_deref(),
+        Some(CAMPFIRE)
+    );
+}
+
+#[test]
+fn covering_the_board_leaves_the_encounter_exactly_where_it_was() {
+    // **The test the whole feature exists for**, and it is the exact contrast
+    // with `undoing_a_map_load_gives_back_the_walls_the_shapes_and_the_fog_together`
+    // in `undo.rs`: that one asserts a map load destroys four things at once,
+    // and this one asserts that showing a picture destroys none of them. A
+    // future refactor routing this through `SetMap` fails here.
+    let mut state = fog_room(60.0);
+    let dm = ClientId(1);
+    let mut dm_rx = join_as_dm(&mut state, dm);
+
+    state.handle(dm, trace(&[(0.0, 0.0), (64.0, 0.0), (64.0, 64.0)], false));
+    state.handle(
+        dm,
+        ClientMsg::AddShape {
+            kind: ShapeKind::Circle,
+            from: Origin::Point(Pos { x: 2.0, y: 2.0 }),
+            to: Pos { x: 3.0, y: 0.0 },
+            color: "#ff8c42e6".to_owned(),
+        },
+    );
+    state.handle(dm, paint(&[(9, 9), (9, 10)], Some(Override::Dark)));
+    let _ = drain_all(&mut dm_rx);
+
+    let before = (
+        state.walls.len(),
+        state.shapes.len(),
+        state.overrides.len(),
+        state.revealed.len(),
+        state.map.url.clone(),
+    );
+    assert!(before.0 > 0 && before.1 > 0 && before.2 > 0 && before.3 > 0);
+
+    state.handle(dm, show(Some(CAMPFIRE)));
+
+    // Nothing travelled with it, either. A `MapChanged`, a `WallsChanged` or a
+    // `FogChanged` here would be the room telling six clients that the board
+    // moved when the only thing that moved is what is in front of it.
+    assert!(
+        matches!(
+            drain(&mut dm_rx).as_slice(),
+            [ServerMsg::BackdropChanged { .. }]
+        ),
+        "covering the board sent something about the board"
+    );
+
+    // And back to it, which is the half a DM actually has to trust.
+    state.handle(dm, show(None));
+
+    let after = (
+        state.walls.len(),
+        state.shapes.len(),
+        state.overrides.len(),
+        state.revealed.len(),
+        state.map.url.clone(),
+    );
+    assert_eq!(
+        before, after,
+        "half an hour of tracing, the drawings, the paint and the party's memory \
+         have to still be there when the picture comes down"
+    );
+}
+
+#[test]
+fn a_backdrop_url_is_bounded_like_a_map_url() {
+    // The only bound there is to apply. The picker only ever sends a path the
+    // pick route just handed back, so this is about a hostile frame.
+    let mut state = room();
+    let dm = ClientId(1);
+    let _dm_rx = join_as_dm(&mut state, dm);
+
+    assert!(state.check(dm, &show(Some(&"x".repeat(513)))).is_err());
+    assert!(state.check(dm, &show(Some(""))).is_err());
+    // And `None` is not an empty URL — it is the board.
+    assert!(state.check(dm, &show(None)).is_ok());
+}

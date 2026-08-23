@@ -1240,9 +1240,28 @@
       }
 
       #maptool.is-busy .map-button,
-      #maptool.is-busy .map-library {
+      #maptool.is-busy .map-library,
+      #tabletool.is-busy .map-button,
+      #tabletool.is-busy .map-library {
         opacity: 0.5;
         pointer-events: none;
+      }
+
+      /* A picture is in front of the board, so the board is not a thing to
+         click on. One rule rather than a guard in every handler in `input.ts`:
+         with pointer events off there is no pan, no drag, no ping, no door and
+         no cursor relay, because none of those events is delivered. */
+      body.covered #stage {
+        pointer-events: none;
+      }
+
+      /* And the two readouts that describe the board go with it. A zoom
+         percentage and a cell coordinate floating over a campfire are the same
+         lie a panel describing an off-screen token would be — and the hint
+         below names three gestures that have just stopped working. */
+      body.covered #hud,
+      body.covered #hint {
+        display: none;
       }
 
       .map-button:disabled {
@@ -1302,10 +1321,11 @@
         font-size: 12px;
       }
 
-      /* Both panels' disclosure buttons. The list styles above are shared with
-         them, which is why they are on `.map-library` rather than an id. */
+      /* All three panels' disclosure buttons. The list styles above are shared
+         with them, which is why they are on `.map-library` rather than an id. */
       #map-library.is-active,
-      #token-library.is-active {
+      #token-library.is-active,
+      #table-backdrop.is-active {
         border-color: #4a525e;
         color: #e8e6e1;
       }
@@ -2236,6 +2256,19 @@
           </select>
         </label>
         <p class="map-hint">How the ruler charges a diagonal step. Everyone's ruler, not just yours.</p>
+        <!-- The same widget the map and token panels use, a third folder over.
+             It is on this panel and not the map one because a backdrop is not a
+             map: it belongs to the room rather than to either board, and the
+             board it covers is still sitting there untouched underneath. -->
+        <button id="table-backdrop" class="map-button" type="button">show a backdrop…</button>
+        <div id="table-backdrop-list" class="map-library" hidden></div>
+        <button id="table-backdrop-clear" class="map-subtle" type="button" hidden>
+          back to the board
+        </button>
+        <p class="map-hint">
+          A picture in front of everyone's board, for the parts of an evening with nothing to move.
+          The board keeps its walls, drawings and fog while it is up.
+        </p>
       </aside>
       <!-- The one panel everybody gets, and the one that is not behind a tab.
            Anyone may draw, so unlike the three above it is built on a player

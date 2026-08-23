@@ -865,6 +865,14 @@ pub struct RoomView {
     /// drawn — and a join that did not carry it would have every fresh page
     /// shipping cursors into a room that has switched them off.
     pub show_cursors: bool,
+    /// The picture the table is looking at instead of the board, or `None` when
+    /// they are looking at the board.
+    ///
+    /// **The fourth of these, and the same value for everyone**: the DM decides
+    /// what is on the screens and nobody is being kept from anything. It is not a
+    /// map and there is no `MapInfo` here — no grid, no walls, no fog, nothing to
+    /// stand on — which is the whole reason the board underneath survives it.
+    pub backdrop: Option<String>,
     /// Who is connected right now, the DM among them.
     ///
     /// **The same value for everyone**, which puts it with the two fields above
@@ -1046,6 +1054,22 @@ pub enum ClientMsg {
     /// save.
     SetShowCursors {
         show: bool,
+    },
+
+    /// Put a picture in front of the table, or take it away. DM-only.
+    ///
+    /// `SetShowNames`' neighbour for the fourth time — room-wide, about no
+    /// particular token, not a field on `SetMap` — and the fourth reason is the
+    /// sharpest of them. Riding on `SetMap` would make showing a picture a *map
+    /// load*, and a map load sweeps the walls, the drawings and everywhere the
+    /// party has explored. That none of that happens is the whole command.
+    ///
+    /// One field and not two. `None` is "put it away", and re-showing is two
+    /// clicks in the picker — a remembered URL beside a shown/hidden flag would
+    /// be a second thing to keep in step, for nothing.
+    SetBackdrop {
+        /// Where the picture is served, or `None` for the board.
+        url: Option<String>,
     },
 
     /// The map image and its grid, in one command. DM-only.
@@ -1431,6 +1455,16 @@ pub enum ServerMsg {
         diagonals: Diagonals,
     },
 
+    /// There is a picture in front of the table now, or there is not.
+    ///
+    /// `NamesChanged`'s neighbour for the reason it is `FogChanged`'s: identical
+    /// for every recipient, no filter, echoed to the DM who sent it. **Nothing
+    /// travels with it** — the board is not being changed, it is being covered,
+    /// so no map, wall, shape or fog frame accompanies this one and none is owed.
+    BackdropChanged {
+        url: Option<String>,
+    },
+
     /// Pointers are drawn on every board now, or they are not.
     ///
     /// The two frames above it in every respect: identical for every recipient,
@@ -1715,6 +1749,7 @@ mod tests {
             ClientMsg::SetShowNames { .. } => "set_show_names",
             ClientMsg::SetDiagonals { .. } => "set_diagonals",
             ClientMsg::SetShowCursors { .. } => "set_show_cursors",
+            ClientMsg::SetBackdrop { .. } => "set_backdrop",
             ClientMsg::SetMap { .. } => "set_map",
             ClientMsg::PromoteStaged => "promote_staged",
             ClientMsg::ClearStaged => "clear_staged",
@@ -1752,6 +1787,7 @@ mod tests {
             ServerMsg::MapChanged { .. } => "map_changed",
             ServerMsg::NamesChanged { .. } => "names_changed",
             ServerMsg::DiagonalsChanged { .. } => "diagonals_changed",
+            ServerMsg::BackdropChanged { .. } => "backdrop_changed",
             ServerMsg::CursorsChanged { .. } => "cursors_changed",
             ServerMsg::Presence { .. } => "presence",
             ServerMsg::ColoursChanged { .. } => "colours_changed",
@@ -1848,6 +1884,7 @@ mod tests {
         "remove_wall",
         "reset_fog",
         "say",
+        "set_backdrop",
         "set_colour",
         "set_diagonals",
         "set_fog_override",
@@ -1862,6 +1899,7 @@ mod tests {
         "update_token",
     ];
     const KNOWN_SERVER_TAGS: &[&str] = &[
+        "backdrop_changed",
         "choose_identity",
         "colours_changed",
         "cursor_moved",

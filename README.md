@@ -94,11 +94,12 @@ character is a change to the name alone and their tokens follow them.
 client/   TypeScript source, canvas rendering, esbuild config
 server/   axum server: room actor, wire protocol, JSON persistence
 tools/    check.mjs — every check that does not need a browser, in one command
-          gen-assets.mjs — placeholder map/token art for local dev
+          gen-assets.mjs — placeholder map/token/backdrop art for local dev
           audit-uploads.mjs — what is in uploads/ and what the room still points at
           cdp.mjs, board.mjs, drive-*.mjs — drive the real client in a headless browser
 maps/     the map library — the DM picks from these in-app during play
 portraits/ the token-art library — the same, for faces rather than floors
+backdrops/ pictures shown *instead of* the board, for the parts of an evening with nothing to move
 ```
 
 ## Testing
@@ -157,6 +158,7 @@ screen and which token is standing on a given square.
 | `drive-notes.mjs`  | The scratchpad — one person in two tabs, and the DM holding none of it | three    |
 | `drive-presence.mjs` | Who is connected, the colour a player picks, and being told it is your turn | three    |
 | `drive-cursors.mjs` | Everybody's pointer, and the DM's *not* reaching the table over unexplored ground | both     |
+| `drive-backdrop.mjs` | A picture in front of the table, and the board being the same board when it comes down | both     |
 
 The ones marked *both* open two browsers at once, and that is the point of them: almost everything
 they assert is a **difference** between what two people are holding, which one client cannot see.
@@ -240,7 +242,7 @@ SLATE_DM_SECRET=test-secret SLATE_STATE=scratch.json cargo run &
 until curl -sf http://127.0.0.1:3000/ >/dev/null; do sleep 1; done
 
 cd ..
-for d in player names ui rail undo panels chat notes presence staged fog ruler select ping cursors; do node tools/drive-$d.mjs; done
+for d in player names ui rail undo panels chat notes presence backdrop staged fog ruler select ping cursors; do node tools/drive-$d.mjs; done
 ```
 
 That whole block is a little over five minutes on the machine it was written on, and the order in it is the cheap

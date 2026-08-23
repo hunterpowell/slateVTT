@@ -348,3 +348,29 @@ fn a_players_drawing_is_a_step_the_dm_can_take_back() {
         "and only the drawing — the wall traced before it stayed"
     );
 }
+
+#[test]
+fn a_backdrop_is_a_step_the_dm_can_take_back() {
+    // On the ring for the ordinary reason — it persists, and `undid` names it —
+    // rather than needing either of the two exemptions the scratchpads and the
+    // colours got. It is the DM's own state: nobody else can write it, so
+    // taking it back reaches across nobody's work.
+    let mut state = room();
+    let dm = ClientId(1);
+    let mut dm_rx = join_as_dm(&mut state, dm);
+
+    state.handle(
+        dm,
+        ClientMsg::SetBackdrop {
+            url: Some("/uploads/backdrop-campfire-9f8e7d6c.jpg".to_owned()),
+        },
+    );
+    let _ = drain_all(&mut dm_rx);
+    assert_eq!(label(&state).as_deref(), Some("the backdrop"));
+
+    undo(&mut state, dm, &mut dm_rx);
+    assert!(
+        state.backdrop.is_none(),
+        "undoing the pick left the picture up"
+    );
+}

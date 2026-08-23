@@ -1132,6 +1132,86 @@ and 28 also overturned something *its own* design section said, which its entry 
     the assertion is that player A is sent a creature and player B is not, and no two connections can
     show that. Fixed debug ports, per milestone 26.
 
+30. **Done**, on 2026-08-22. The backdrop — a picture the DM shows the table *instead of* the
+    board. See *Backdrop* in `docs/maps.md`.
+
+    **The request was for scenes and the answer was not to build them**, which is the part worth
+    recording. The DM wanted a forested clearing or a campsite on everyone's screen during
+    dialogue-heavy stretches, and the obvious reading is "Slate needs more than two map slots".
+    What made that reading wrong is what `sweep_board` does: a `SetMap` whose URL changed clears
+    the drawings, clears the walls, calls `forget_fog` and drops the DM's paint. Showing a campfire
+    between two fights was not merely awkward, it cost the encounter — which is *why* it felt like
+    a scene system was missing.
+
+    **The thing being asked for is not a map.** No grid, nothing standing on it, nothing traced
+    across it, nobody exploring it. A scene system would have paid for all of that and used none of
+    it. One `Option<String>` on `RoomState` did the whole job, and `apply`'s arm is an assignment
+    and an event — *the arm staying that short is the feature*, because everything a scene concept
+    would have had to fork simply goes on existing behind the picture.
+
+    **Generalise it as: when a request seems to need a bigger version of something you have, check
+    whether it needs that thing at all.** Two other milestones read the same way in hindsight — the
+    chat that is two destinations, the journal that is one box.
+
+    Three things fell out cheaper than expected, and one cost more:
+
+    - **The presets are the folder.** "A few presets" sounded like a list in the state model and is
+      a third `Library` beside `maps/` and `portraits/` — the same code a third time, taking the
+      portraits' answer on both axes it chooses between. The room holds *which one is up* and
+      nothing else, which is the line that keeps this from being a scene manager under a new noun.
+    - **Unfiltered, so there was no filter to write.** `BackdropChanged` is `NamesChanged`'s
+      neighbour: who may put a picture up is a permission, which picture it is is not a secret.
+    - **The board stops responding through one CSS rule**, `body.covered #stage { pointer-events:
+      none }`, rather than a guard per handler in `input.ts`. No pointer events delivered means no
+      pan, no drag, no ping, no door, no sweep and no cursor relay, by construction. This is the
+      same shape as the fog and the walls being leak-proof by *absence* rather than by a check.
+    - **The one branch that had to be argued is `shownBackdrop`.** A backdrop is what the *table*
+      is looking at, so the DM previewing the staged map has to win — otherwise putting a campfire
+      up means the DM cannot prepare anything without taking it off six other screens. It is
+      `shownBoard`'s fourth twin and answers one question earlier than the other three: they pick
+      which board, this decides whether a board is drawn at all.
+
+31. **Not built.** Prepared maps, remembered per URL — so a DM can trace three dungeons on a
+    Tuesday and find all three still traced on Saturday.
+
+    **This is milestone 30's other half and came out of the same conversation**, where the ask was
+    "I'd like to save map states and prep a handful of maps before a session". Read 30 first: the
+    two look like one feature and are not, and the reason they split is that a backdrop is about
+    what is on the screens while this is about what the DM has already done to a map.
+
+    **Most of it already exists.** `Calibration` is "everything the DM learned about this map,
+    keyed by URL, persisted, never sent" — grid, offset, play area, and `fog`/`vision_ft`/
+    `lighting` too. The only prep it does not remember is the traced **walls** and the painted
+    **overrides**, which `store.rs` itself calls the one thing on `Saved` that would make the
+    feature unusable if it were not persisted — and which are persisted for the current board
+    alone.
+
+    So it is two `#[serde(default)]` fields inside a struct that exists:
+
+    - `sweep_board` records the outgoing board's walls and overrides under its URL before clearing
+    - the load arm of `SetMap` restores them, exactly as it already restores the grid
+
+    No new commands, no new events, no list in the state model, no panel UI, `staged: bool` on the
+    wire unchanged, and **no filter to widen** — walls already reach the DM or nobody, which is the
+    same thing that made milestone 20 cheap. The disk shape stays compatible and an old save loads
+    with empty walls per entry. **The shelf is the folder**, which is milestone 30's line again.
+
+    **Two deliberate omissions, and the second is the boundary.**
+
+    - **Token plans.** `staged_pos`/`staged_only` are on `Token`, singular, and stay bound to
+      whatever is in the staged slot. The DM preps *terrain* for many maps and *the encounter* for
+      the one they are about to run. Moving plans onto a prepared board is a real refactor and is
+      not what was asked for.
+    - **`revealed` is not remembered.** Returning to a dungeon means the party re-explores it.
+      Remembering it would make a map swap a partial scene restore, which immediately raises "why
+      not token positions too" — and that road ends at the feature `docs/maps.md` refuses. The
+      split to hold is **the DM's authoring is remembered; the party's play state is not.**
+
+    **The thing to watch when building it** is that this weakens the case `docs/undo.md` makes for
+    the undo ring — "the case that makes undo worth having is `sweep_board`". A load that gives the
+    walls back on the way in is a less catastrophic load. Undo is still right for the other nine
+    reasons; the doc's argument wants rewording rather than the ring wants deleting.
+
 ### The right dock
 
 **Built in milestone 23, and 24 put the second tab on it.** `dock.ts` is the strip; the notes were a

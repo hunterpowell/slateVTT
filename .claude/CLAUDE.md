@@ -23,6 +23,8 @@ them would load them into every session, which is what moving them out avoided.)
 - Shows tokens on that map; the DM moves any token, players move only their own
 - Tracks initiative order and the current turn
 - Lets the DM prepare the next map out of sight of the table, then promote it
+- Lets the DM put a picture in front of everyone's board — a campsite, a treeline — for the
+  stretches of an evening with nothing to move, without costing the encounter underneath it
 - Lets anyone measure a distance or draw a spell area on the board, or point at a spot on it so
   everyone else sees where
 - Lets the DM trace the walls and doors of a map, and limits what the table can see to what their
@@ -52,6 +54,15 @@ unless explicitly asked:
   as milestone 23; its motivating case is six people posting initiative rolls without clogging
   voice, and the boundary above is the specification — see *Whisper and shout* below and
   `docs/chat.md`.
+- **A scene system.** Several maps each owning their own walls, fog and token positions, switched
+  between during play. `docs/maps.md` refuses it and the refusal stands: it would turn every
+  `staged` flag into a scene id, fork token positions per scene and multiply `snapshot_for`. The
+  **backdrop** is not a first step toward it and is what makes it unnecessary for the case that
+  asked — a picture shown *instead of* the board, with no grid, no tokens, no walls, no fog, no
+  pan and no zoom, so there is nothing in it to switch between. **Built**, as milestone 30, and the
+  boundary is that the room holds **one** URL: a *list* of backdrops in the state model is the
+  scene manager this refuses, wearing a different noun. The collection is the `backdrops/` folder,
+  which costs the room nothing. See *Backdrop* below and `docs/maps.md`.
 - Compendiums, handouts, audio, and journals — **with one bounded exception**: a scratchpad.
   One box of text per person, private to whoever wrote it, and the DM's is no different from anyone
   else's. **A second document makes it a journal.** No titles, no pages, no sharing, no handout
@@ -196,6 +207,10 @@ struct RoomState {
     /// DM's to set — and the one such setting read *in the filter*: off, no cursor
     /// frame leaves the room. Defaults on; see `docs/presence.md`.
     show_cursors: bool,
+    /// The picture the table is looking at instead of the board, or `None`.
+    /// Room-wide, the DM's to set. **Nothing else in the room reads it** — the
+    /// board goes on existing untouched behind it — see `docs/maps.md`.
+    backdrop: Option<String>,
     /// Identified clients, who are the only ones any event reaches, and the
     /// sockets that are connected but have not said who they are yet.
     clients: HashMap<ClientId, Client>,
@@ -329,9 +344,9 @@ share is that *a key a client could name is a key it could name somebody else's 
 validates is a bound, like a token's size, because the palette is closed. **The DM is refused it
 outright** — their hue is the one ring at the table that is not a player's. See `docs/presence.md`.
 
-Token creation, deletion, map changes, initiative edits, and whether the board writes token names
-under them — or draws everybody's pointer — are DM-only. That last one is the one whose *result* everybody is sent — see the wire
-protocol below. So is reassigning a token's `owner`, which is how a player is handed a token the DM
+Token creation, deletion, map changes, initiative edits, whether the board writes token names
+under them — or draws everybody's pointer — and what picture is in front of the table are DM-only.
+Those last two are the ones whose *result* everybody is sent — see the wire protocol below. So is reassigning a token's `owner`, which is how a player is handed a token the DM
 built for them. So is planning
 where a token lands — a player may move their own token and may not plan for it, because the
 plan is a cell on a map they have not been shown.
@@ -376,8 +391,8 @@ every client's 256-slot mailbox is sized at the largest variant. Serde sees stra
 and the frame on the wire is unchanged.
 
 `fog` is the exception to all of that: it is the same value for every recipient. There is nothing
-per-client in a party-shared answer to build. **`show_names` and `diagonals` are unfiltered for a
-different reason** — the DM alone may flip them and everyone is told, because who may set a
+per-client in a party-shared answer to build. **`show_names`, `diagonals` and `backdrop` are
+unfiltered for a different reason** — the DM alone may flip them and everyone is told, because who may set a
 room-wide setting is a permission and what it says is not a secret. `NamesChanged` sits beside
 `FogChanged` for that reason and not beside `WallsChanged`, which is the frame it most resembles on
 paper. `diagonals` is the sharpest case: the server never counts a diagonal, so the only thing it is
@@ -391,7 +406,7 @@ here is *absent from the wire*, which shows up as the DM's own client missing a 
 than shipped to everyone, which shows up as nothing at all until somebody opens devtools.
 
 **`here`, `colours` and `show_cursors` are identical for every recipient too**, which puts them
-with `fog`, `show_names` and `diagonals` rather than with anything filtered. Neither of the first two
+with `fog`, `show_names`, `diagonals` and `backdrop` rather than with anything filtered. Neither of the first two
 is a secret: a table that cannot tell whether the DM is still connected is what `here` exists to fix,
 and a colour nobody else can see is not a colour. `Presence` is also the one frame no command
 produced — it is dispatched where the socket table changes. `show_cursors` is the only unfiltered
@@ -769,14 +784,23 @@ and confirm it resolves inside the library before opening it. **`portraits/` is 
 over token art** and shares every line of it; the folder, the size cap, the noun in the refusals
 and what a copy's name is fingerprinted over are the whole of what a library differs by.
 
+**A backdrop is a picture shown *instead of* the board, and it is not a map.** No grid, nothing
+standing on it, nothing traced across it — which is why `SetBackdrop` sweeps nothing where a
+`SetMap` sweeps the walls, the drawings and everywhere the party has explored. One `Option<String>`
+on the room, DM-only to set and unfiltered like `show_names`, so `BackdropChanged` sits beside
+`FogChanged`. The board is untouched underneath, so putting the picture away needs nothing from the
+server. `shownBackdrop` is `shownBoard`'s fourth twin and its one branch is that **preview wins** —
+the party roleplays at the campfire while the DM traces the crypt. The presets are the `backdrops/`
+folder, a third `Library`; **a list of them in the room would be the scene concept**.
+
 **Preview is client-only: the server does not know the DM is previewing and must not learn.**
 That is why intent rides on the command — `SetMap`, `MoveToken`, `CreateToken`, all four wall
 commands and `SetFogOverride` each carry `staged` — rather than on a mode. Everything that draws or
 hit-tests reads `shownBoard(scene)`, or its twins `shownWalls` and `shownOverrides`, never the live
 board directly.
 
-→ **`docs/maps.md`** before touching `maptool.ts`, `calibrate.ts`, `library.rs`, `library.ts`, or
-`SetMap`/`MapInfo` on the server.
+→ **`docs/maps.md`** before touching `maptool.ts`, `calibrate.ts`, `library.rs`, `library.ts`,
+`drawBackdrop`, `shownBackdrop`, or `SetMap`/`MapInfo`/`SetBackdrop` on the server.
 
 ## Undo
 

@@ -59,10 +59,11 @@ struct AppState {
     /// because an HTTP upload never reaches the room actor to be checked there.
     dm_secret: Arc<str>,
     uploads: Arc<Path>,
-    /// The two libraries the DM picks out of. Neither is served directly — a
+    /// The three libraries the DM picks out of. None is served directly — a
     /// pick copies into `uploads`, so there stays one kind of image URL.
     maps: Arc<Path>,
     portraits: Arc<Path>,
+    backdrops: Arc<Path>,
 }
 
 /// Which folder a listing or a pick is about.
@@ -76,6 +77,11 @@ struct AppState {
 enum Library {
     Maps,
     Portraits,
+    /// Pictures shown *instead of* the board, with no grid on them and nothing
+    /// standing on them. A third folder rather than a corner of `maps/` because
+    /// a picker over the maps is a list of things to play on, and mixing in the
+    /// things you cannot play on is what makes both lists worse.
+    Backdrops,
 }
 
 impl Library {
@@ -83,6 +89,7 @@ impl Library {
         match self {
             Self::Maps => state.maps.clone(),
             Self::Portraits => state.portraits.clone(),
+            Self::Backdrops => state.backdrops.clone(),
         }
     }
 
@@ -91,6 +98,7 @@ impl Library {
         match self {
             Self::Maps => "map",
             Self::Portraits => "portrait",
+            Self::Backdrops => "backdrop",
         }
     }
 
@@ -98,6 +106,10 @@ impl Library {
         match self {
             Self::Maps => MAX_MAP_BYTES,
             Self::Portraits => MAX_TOKEN_BYTES,
+            // A map's cap and not a portrait's: a backdrop fills the whole
+            // window, so it is the same kind of picture as a battle map with
+            // the grid left off.
+            Self::Backdrops => MAX_MAP_BYTES,
         }
     }
 
@@ -114,6 +126,7 @@ impl Library {
         match self {
             Self::Maps => "",
             Self::Portraits => "portrait/",
+            Self::Backdrops => "backdrop/",
         }
     }
 
@@ -140,6 +153,12 @@ impl Library {
         match self {
             Self::Maps => false,
             Self::Portraits => true,
+            // The portraits' answer, for the portraits' reason and with none of
+            // the maps' objection: nothing is keyed on a backdrop's URL — the
+            // room holds one, and holding a stale one is what a re-pick is for
+            // — so replacing the art in the folder can and should replace the
+            // picture the table is looking at.
+            Self::Backdrops => true,
         }
     }
 }
@@ -189,9 +208,10 @@ async fn main() {
     std::fs::create_dir_all(&uploads_dir)
         .unwrap_or_else(|err| panic!("could not create {uploads_dir}: {err}"));
 
-    // Deliberately not created if either is absent. They hold files someone put
+    // Deliberately not created if any is absent. They hold files someone put
     // there on purpose, so an empty one conjured at boot would hide a mistyped
-    // SLATE_MAPS or SLATE_PORTRAITS behind a picker that simply looks empty.
+    // SLATE_MAPS, SLATE_PORTRAITS or SLATE_BACKDROPS behind a picker that
+    // simply looks empty.
     let maps_dir = std::env::var("SLATE_MAPS").unwrap_or_else(|_| "../maps".to_owned());
     if !Path::new(&maps_dir).is_dir() {
         warn!(%maps_dir, "no map library there; the DM can still upload maps");
@@ -203,6 +223,12 @@ async fn main() {
         warn!(%portraits_dir, "no portrait library there; the DM can still upload token art");
     }
 
+    let backdrops_dir =
+        std::env::var("SLATE_BACKDROPS").unwrap_or_else(|_| "../backdrops".to_owned());
+    if !Path::new(&backdrops_dir).is_dir() {
+        warn!(%backdrops_dir, "no backdrop library there; the DM can show the board instead");
+    }
+
     let room = room::spawn(dm_secret.clone(), saved, store);
     let state = AppState {
         room: room.clone(),
@@ -210,6 +236,7 @@ async fn main() {
         uploads: Path::new(&uploads_dir).into(),
         maps: Path::new(&maps_dir).into(),
         portraits: Path::new(&portraits_dir).into(),
+        backdrops: Path::new(&backdrops_dir).into(),
     };
 
     let app = Router::new()
@@ -225,13 +252,15 @@ async fn main() {
             "/api/token",
             post(upload_image).layer(DefaultBodyLimit::max(MAX_TOKEN_BYTES)),
         )
-        // Two libraries behind four routes that are each one line of their own.
+        // Three libraries behind six routes that are each one line of their own.
         // The folder is the only thing that differs, so `Library` carries it and
         // the pair of handlers below is shared.
         .route("/api/maps", get(list_maps))
         .route("/api/maps/pick", post(pick_map))
         .route("/api/portraits", get(list_portraits))
         .route("/api/portraits/pick", post(pick_portrait))
+        .route("/api/backdrops", get(list_backdrops))
+        .route("/api/backdrops/pick", post(pick_backdrop))
         .nest_service("/uploads", ServeDir::new(&uploads_dir))
         .fallback_service(ServeDir::new(&client_dir).append_index_html_on_directories(true))
         .with_state(state);
@@ -355,6 +384,13 @@ async fn list_portraits(
     listing(&state, &headers, Library::Portraits).await
 }
 
+async fn list_backdrops(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+) -> Result<Json<Listing>, (StatusCode, String)> {
+    listing(&state, &headers, Library::Backdrops).await
+}
+
 #[derive(Deserialize)]
 struct PickRequest {
     /// Relative to the library root, exactly as the listing reported it.
@@ -472,6 +508,14 @@ async fn pick_portrait(
     Json(request): Json<PickRequest>,
 ) -> Result<Json<StoredImage>, (StatusCode, String)> {
     pick(&state, &headers, request, Library::Portraits).await
+}
+
+async fn pick_backdrop(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Json(request): Json<PickRequest>,
+) -> Result<Json<StoredImage>, (StatusCode, String)> {
+    pick(&state, &headers, request, Library::Backdrops).await
 }
 
 /// Stores an uploaded image — a map or a token's portrait — and reports the URL

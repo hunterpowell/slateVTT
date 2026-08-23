@@ -1,6 +1,8 @@
 // Generates the milestone-1 placeholder assets: one dungeon map and a disc per
-// token in the built-in room. Deliberately dependency-free — raw PNG encoding on top of node's
-// built-in zlib. Run with `node tools/gen-assets.mjs` from the repo root.
+// token in the built-in room, plus one placeholder backdrop so `backdrops/` is
+// not an empty folder behind a picker. Deliberately dependency-free — raw PNG
+// encoding on top of node's built-in zlib. Run with `node tools/gen-assets.mjs`
+// from the repo root.
 //
 // Everything here is deterministic (seeded hash noise, no Math.random) so
 // re-running produces byte-identical files.
@@ -12,6 +14,7 @@ import { fileURLToPath } from 'node:url';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 const ASSETS = join(ROOT, 'client', 'assets');
+const BACKDROPS = join(ROOT, 'backdrops');
 
 // ---------------------------------------------------------------- PNG encoder
 
@@ -274,6 +277,40 @@ const TOKENS = [
   { file: 'wraith.png', hue: 178, sat: 0.3 },
 ];
 
+/**
+ * A placeholder backdrop: a wide, gridless dusk gradient with a low horizon.
+ *
+ * It is here so a fresh clone has *something* behind the picker, and so
+ * `drive-backdrop.mjs` has something to pick. Deliberately not art and
+ * deliberately not square — the whole point of a backdrop is that it is looked
+ * at rather than played on, and a 16:9 image is what exercises the letterbox.
+ */
+function generateBackdrop() {
+  const w = 960;
+  const h = 540;
+  const rgba = Buffer.alloc(w * h * 4);
+  const horizon = h * 0.68;
+
+  for (let y = 0; y < h; y++) {
+    for (let x = 0; x < w; x++) {
+      const i = (y * w + x) * 4;
+      // Sky above the horizon, ground below it, with a warm glow low and
+      // centred so the fit is obvious when the image is letterboxed.
+      const t = y / h;
+      const glow = Math.max(
+        0,
+        1 - Math.hypot((x - w / 2) / (w * 0.42), (y - horizon) / (h * 0.3)),
+      );
+      const sky = y < horizon;
+      rgba[i] = Math.round((sky ? 26 + t * 60 : 30) + glow * 150);
+      rgba[i + 1] = Math.round((sky ? 30 + t * 46 : 34) + glow * 90);
+      rgba[i + 2] = Math.round((sky ? 48 + t * 28 : 30) + glow * 40);
+      rgba[i + 3] = 255;
+    }
+  }
+  return encodePng(w, h, rgba);
+}
+
 // ------------------------------------------------------------------------ run
 
 mkdirSync(join(ASSETS, 'tokens'), { recursive: true });
@@ -287,3 +324,8 @@ for (const t of TOKENS) {
   writeFileSync(join(ASSETS, 'tokens', t.file), png);
   console.log(`tokens/${t.file.padEnd(11)}${TOKEN_SIZE}x${TOKEN_SIZE}${' '.repeat(11)}${(png.length / 1024).toFixed(0)} KB`);
 }
+
+mkdirSync(BACKDROPS, { recursive: true });
+const backdrop = generateBackdrop();
+writeFileSync(join(BACKDROPS, 'dusk.png'), backdrop);
+console.log(`backdrops/dusk.png 960x540${' '.repeat(14)}${(backdrop.length / 1024).toFixed(0)} KB`);

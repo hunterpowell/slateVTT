@@ -324,6 +324,41 @@ export interface Frame {
   solo: Fog | null;
 }
 
+/**
+ * Draws a picture over the whole canvas, instead of the board.
+ *
+ * **Screen space, not world space** — and that is the entire design of it. It
+ * never touches the camera, so there is no pan, no zoom, no grid, no hit test
+ * and nothing to keep in step with `coords.ts`; `main.ts` calls this *instead
+ * of* `render` rather than as a layer inside it. A board drawn under a picture
+ * nobody can see would only be a way for the two to disagree.
+ *
+ * Contained rather than covered, unlike a token's portrait: the DM picked this
+ * image to be looked at, so cropping the top off a treeline to fill a wide
+ * window is the one thing it must not do. Letterbox bars are `VOID`, which is
+ * what surrounds a map too, so the window does not change colour when the
+ * picture goes up.
+ */
+export function drawBackdrop(
+  ctx: CanvasRenderingContext2D,
+  view: Viewport,
+  img: HTMLImageElement,
+): void {
+  const w = view.width * view.dpr;
+  const h = view.height * view.dpr;
+
+  ctx.setTransform(1, 0, 0, 1, 0, 0);
+  ctx.fillStyle = VOID;
+  ctx.fillRect(0, 0, w, h);
+
+  // A zero-sized image is a broken one; `drawImage` would throw on the divide.
+  if (img.width === 0 || img.height === 0) return;
+
+  const scale = Math.min(w / img.width, h / img.height);
+  const drawn = { w: img.width * scale, h: img.height * scale };
+  ctx.drawImage(img, (w - drawn.w) / 2, (h - drawn.h) / 2, drawn.w, drawn.h);
+}
+
 export function render(ctx: CanvasRenderingContext2D, view: Viewport, frame: Frame): void {
   const { cam, map } = frame;
   // The staged map while the DM is previewing, the live one otherwise. Read

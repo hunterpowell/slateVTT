@@ -156,6 +156,18 @@ pub struct Saved {
     /// second thing on this file a *player* wrote, after the notes, and the
     /// second the undo ring is told to leave alone.
     pub colours: Colours,
+    /// The picture in front of the table, or `None` for the board.
+    ///
+    /// **The one field here that names an image and is not a map**, which is the
+    /// whole of why it is a field rather than a second `MapInfo`: there is
+    /// nothing to calibrate, nothing to trace and nothing to explore, so none of
+    /// the six fields above it fork.
+    ///
+    /// It needs no default of its own, unlike `show_names` and `show_cursors`
+    /// two fields up. The container's `None` *is* "whatever the room was already
+    /// doing" — a file written before this existed came from a room with no
+    /// backdrop, and that is exactly what it loads as.
+    pub backdrop: Option<String>,
 }
 
 /// One person's scratchpad as it is written down.
@@ -440,6 +452,11 @@ mod tests {
             // it too: this one is a JSON *object* keyed by the slug, which only
             // works because `PlayerId` is a newtype over `String`.
             colours: Colours::from([(PlayerId::new("cleodara"), 4), (PlayerId::new("saelyn"), 1)]),
+            // Set, which is not the default, for the reason `show_names` is off
+            // above — and here it is the whole of the field: `None` is what a
+            // dropped one decodes to, so a round trip that lost this entirely
+            // would look exactly like a DM who had put the picture away.
+            backdrop: Some("/uploads/backdrop-campfire-9f8e7d6c.jpg".to_owned()),
         }
     }
 
@@ -530,6 +547,13 @@ mod tests {
         assert!(
             !loaded.show_names,
             "the DM turned the names off, and a restart is not them turning them back on"
+        );
+
+        // The box is always on, so a picture the DM left up on Tuesday is what
+        // the table should find on Saturday.
+        assert_eq!(
+            loaded.backdrop.as_deref(),
+            Some("/uploads/backdrop-campfire-9f8e7d6c.jpg")
         );
         assert!(
             !loaded.show_cursors,
@@ -671,6 +695,11 @@ mod tests {
         assert!(
             loaded.staged.is_none(),
             "a save predating staging has no next map waiting"
+        );
+        assert!(
+            loaded.backdrop.is_none(),
+            "a save predating backdrops is a room looking at its board, which is \
+             what the container's default already says"
         );
         assert!(
             loaded.show_names,

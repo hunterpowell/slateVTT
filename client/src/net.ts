@@ -41,6 +41,10 @@ export interface Handlers {
    *  connection, like the two above — and unlike them it changes what this
    *  client *sends*, because with it off the room relays nothing. */
   onCursorsChanged(show: boolean): void;
+  /** There is a picture in front of the table now, or there is not. Called on
+   *  every connection, like the three above. Nothing about the board arrives
+   *  with it and nothing needs to — the board is being covered, not changed. */
+  onBackdropChanged(url: string | null): void;
   /** The staged slot whole — map, walls and paint. Only ever called on a DM
    *  connection; the server sends no such frame to a player. Null means the slot
    *  is now empty, indistinguishably from not being the DM. */
@@ -216,6 +220,9 @@ export function connect(on: Handlers): Net {
         break;
       case 'cursors_changed':
         on.onCursorsChanged(msg.show);
+        break;
+      case 'backdrop_changed':
+        on.onBackdropChanged(msg.url);
         break;
       case 'staged_changed':
         on.onStagedChanged(msg.board);

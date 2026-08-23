@@ -156,6 +156,16 @@ export interface Scene {
    *  off the room relays nothing, so a client that went on sending its own
    *  pointer would be paying the whole cost of a feature nobody can see. */
   showCursors: boolean;
+  /** The picture in front of the table, or null when they are looking at the
+   *  board.
+   *
+   *  Room-wide and the same for every client like the three switches above it,
+   *  and here rather than on `Board` for a stronger version of their reason:
+   *  it is not a property of either board, it is what is being shown *instead*
+   *  of one. Everything on `Board` — the grid, the walls, the fog, the tokens
+   *  standing on it — is still exactly as it was while this is set, which is
+   *  why putting the picture away needs nothing from the server. */
+  backdrop: string | null;
 }
 
 /**
@@ -196,6 +206,23 @@ export function shownWalls(scene: Scene): Wall[] {
 
 export function shownOverrides(scene: Scene): Overrides {
   return scene.previewing && scene.staged !== null ? scene.staged.overrides : scene.overrides;
+}
+
+/**
+ * The picture to draw instead of the board, or null to draw the board.
+ *
+ * `shownBoard`'s fourth twin, and the one that answers a question one step
+ * earlier than the other three: they pick *which* board, this decides whether a
+ * board is drawn at all.
+ *
+ * **Preview wins**, which is the whole of the branch. A backdrop is what the
+ * *table* is looking at, and the DM previewing the staged map is asking to see
+ * the next dungeon — so the party can roleplay at the campfire while the DM
+ * traces the crypt they are about to walk into. Without this line the DM would
+ * have to take the picture off six other screens to get any work done.
+ */
+export function shownBackdrop(scene: Scene): string | null {
+  return showingStaged(scene) ? null : scene.backdrop;
 }
 
 /**
@@ -241,6 +268,7 @@ function fromView(view: WireRoomView, isDm: boolean): Omit<Scene, 'previewing'> 
     showNames: view.show_names,
     diagonals: view.diagonals,
     showCursors: view.show_cursors,
+    backdrop: view.backdrop,
   };
 }
 

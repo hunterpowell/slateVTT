@@ -33,6 +33,7 @@
     "remove_wall",
     "reset_fog",
     "say",
+    "set_backdrop",
     "set_colour",
     "set_diagonals",
     "set_fog_override",
@@ -47,6 +48,7 @@
     "update_token"
   ],
   "server": [
+    "backdrop_changed",
     "choose_identity",
     "colours_changed",
     "cursor_moved",

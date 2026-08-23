@@ -17,12 +17,23 @@
 // Every control here is DM-only to *set* and identical for everyone to hold,
 // which is why the frames that carry them sit beside `FogChanged` rather than beside
 // `WallsChanged` — who may set a thing is a permission, and what it says is not
-// a secret. This panel arms nothing on the canvas, so the rail needs no `stop()`
-// for it, and it is never inert, so its tab never greys.
+// a secret. It is never inert, so its tab never greys.
+//
+// **It arms nothing on the canvas and still owes a `stop()`.** The backdrop
+// picker is a disclosure list, so what the rail closes on is a half-finished
+// browse rather than a live tool — `LibraryList.close`'s own note calls that
+// tidiness rather than a rule, and the map and token panels already do it.
+//
+// The backdrop is on *this* panel and not the map one, which is the same
+// question `MapInfo` / `Token` / room-wide answers everywhere else: a backdrop
+// is not a map. There is no grid on it, nothing stands on it, and the board it
+// covers is still sitting there with its walls and its fog, which is exactly
+// why putting one up costs the encounter nothing.
 //
 // Players never see it. It is only built for a DM connection, and the server
 // re-checks every command regardless.
 
+import { createLibraryList, type LibraryUi } from './library.js';
 import type { ClientMsg, Diagonals } from './protocol.js';
 import type { Scene } from './scene.js';
 
@@ -31,15 +42,29 @@ export interface TableToolUi {
   names: HTMLInputElement;
   diagonals: HTMLSelectElement;
   cursors: HTMLInputElement;
+  /** The backdrop picker's disclosure button and list. `root` above is the
+   *  panel the widget dims while a pick is in flight. */
+  backdrop: Pick<LibraryUi, 'button' | 'list'>;
+  /** Takes the picture down. Hidden when there is not one up, because a button
+   *  that would do nothing is a button that says something is up. */
+  backdropClear: HTMLButtonElement;
 }
 
 export interface TableTool {
   /** Called on Welcome and whenever any of the settings changes — which may have
    *  been this DM on another tab. */
   update(scene: Scene): void;
+  /** Closes the library list, so the tab reopens on the panel rather than
+   *  mid-browse. Nothing on the canvas is armed; see the note at the top. */
+  stop(): void;
 }
 
-export function createTableTool(ui: TableToolUi, send: (msg: ClientMsg) => void): TableTool {
+export function createTableTool(
+  ui: TableToolUi,
+  dmSecret: string,
+  send: (msg: ClientMsg) => void,
+  report: (message: string) => void,
+): TableTool {
   // Sent rather than applied, which is the same bargain every other panel in
   // this rail makes: what is on screen moves when the server says so. The
   // control is put back by `update` below rather than by the click, so a refused
@@ -71,6 +96,26 @@ export function createTableTool(ui: TableToolUi, send: (msg: ClientMsg) => void)
     send({ type: 'set_show_cursors', show: ui.cursors.checked });
   });
 
+  // The same bargain a fourth time, through the widget the map and token panels
+  // already use. A pick has copied the file into the uploads directory by the
+  // time this runs, so what goes on the wire is the URL it is served at —
+  // byte-for-byte what an uploaded map or portrait would be, which is why
+  // nothing downstream can tell a library pick from anything else.
+  const library = createLibraryList(
+    { root: ui.root, button: ui.backdrop.button, list: ui.backdrop.list },
+    dmSecret,
+    'backdrops',
+    (url) => send({ type: 'set_backdrop', url }),
+    report,
+  );
+
+  // Null rather than an empty string, which is the same value the room holds
+  // and the same one `shownBackdrop` answers with. There is no second command
+  // and no "hidden" flag: the picture is either up or it is not.
+  ui.backdropClear.addEventListener('click', () => {
+    send({ type: 'set_backdrop', url: null });
+  });
+
   return {
     update(scene) {
       // Unconditionally: none of these is something the DM is halfway through
@@ -79,6 +124,13 @@ export function createTableTool(ui: TableToolUi, send: (msg: ClientMsg) => void)
       ui.names.checked = scene.showNames;
       ui.diagonals.value = scene.diagonals;
       ui.cursors.checked = scene.showCursors;
+      // Read off the room rather than remembered from the click, so the DM's
+      // second tab agrees with their first — and so an undo that takes a
+      // backdrop down is reflected here without a line of its own.
+      ui.backdropClear.hidden = scene.backdrop === null;
+    },
+    stop() {
+      library.close();
     },
   };
 }
