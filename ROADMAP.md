@@ -25,8 +25,8 @@ Do not work ahead. Each milestone should run and be usable before starting the n
 6. Map upload and grid calibration UI.
 7. Package for Windows session hosting and deploy behind a Cloudflare Tunnel.
 
-**Everything through 28 is built; 29 is not.** 25 and 26 were never planned and are out of
-order for the reasons their own entries give. Everything from 8 on was planned after the original
+**Everything through 28 is built, and so are 30, 31 and 32; 29 is not.** 25 and 26 were never
+planned and are out of order for the reasons their own entries give. Everything from 8 on was planned after the original
 seven; 17 and 18 were workshopped after 16 landed, 19–24 after 18, and 27–29 on 2026-08-18 after 26.
 That batch was the first one written down while nothing in it existed; 27 and 28 both landed on
 2026-08-19 and their entries are now records like the rest, while 29 is still design. All three
@@ -1171,8 +1171,8 @@ and 28 also overturned something *its own* design section said, which its entry 
       `shownBoard`'s fourth twin and answers one question earlier than the other three: they pick
       which board, this decides whether a board is drawn at all.
 
-31. **Not built.** Prepared maps, remembered per URL — so a DM can trace three dungeons on a
-    Tuesday and find all three still traced on Saturday.
+31. **Done**, on 2026-08-22. Prepared maps, remembered per URL — so a DM can trace three dungeons
+    on a Tuesday and find all three still traced on Saturday. See *The shelf* in `docs/maps.md`.
 
     **This is milestone 30's other half and came out of the same conversation**, where the ask was
     "I'd like to save map states and prep a handful of maps before a session". Read 30 first: the
@@ -1186,15 +1186,57 @@ and 28 also overturned something *its own* design section said, which its entry 
     feature unusable if it were not persisted — and which are persisted for the current board
     alone.
 
-    So it is two `#[serde(default)]` fields inside a struct that exists:
+    So it was one table entry growing, and two write sites — three, once `ClearStaged` was counted:
 
-    - `sweep_board` records the outgoing board's walls and overrides under its URL before clearing
+    - the outgoing board's walls and overrides are recorded under **its** URL as it is swept
     - the load arm of `SetMap` restores them, exactly as it already restores the grid
 
     No new commands, no new events, no list in the state model, no panel UI, `staged: bool` on the
     wire unchanged, and **no filter to widen** — walls already reach the DM or nobody, which is the
     same thing that made milestone 20 cheap. The disk shape stays compatible and an old save loads
     with empty walls per entry. **The shelf is the folder**, which is milestone 30's line again.
+
+    **A wrapper, not two more fields on `Calibration`.** This entry originally said to put `walls`
+    and `overrides` inside `Calibration` itself, and reading the code says not to:
+
+    ```rust
+    struct Prepared { calibration: Calibration, walls: Vec<Wall>, overrides: OverrideView }
+
+    // Field name kept, so `#[serde(rename)]` holds the disk shape unchanged.
+    calibrations: HashMap<String, Prepared>
+    ```
+
+    `Calibration` is **what the client sent**, and the room builds one as a bare struct literal
+    from the `SetMap` fields — `given`, in the arm. Growing that type conflates "what the DM typed
+    into the panel" with "what the room has learned", and the three costs below are all that
+    conflation showing up. Keep the wrapper and every one of them disappears.
+
+    **Three traps, all read out of the code on 2026-08-22 rather than remembered.** The first is
+    silent, which is why the wrapper is worth the extra type.
+
+    - **The recalibration clobber.** `self.calibrations.insert(url.clone(), given.clone())` in the
+      `SetMap` arm fires on **every recalibration**, not only on a first load. With walls inside
+      `Calibration` the struct literal above it stops compiling, the obvious fix is
+      `..Default::default()`, and that inserts *empty* walls — so nudging the grid on a traced
+      dungeon quietly erases what the room remembered about it. The board keeps its walls (a
+      recalibration does not sweep), so nothing looks wrong until the DM loads away and back. With
+      a wrapper the insert cannot reach the walls at all.
+    - **`sweep_board` cannot ask which map it is sweeping.** Its two call sites order the map
+      assignment *opposite* ways round: `SetMap` does `self.map = finished` and **then** sweeps,
+      while `PromoteStaged` sweeps and **then** assigns. So `self.map.url` inside `sweep_board` is
+      the incoming map on a load and the outgoing one on a promote — recording against it files a
+      dungeon's masonry under the name of the map that replaced it, and the walls come back on the
+      wrong image. **Pass the URL in.** `showing` is already computed at the top of the `SetMap`
+      arm, before anything is assigned, and is exactly the outgoing URL.
+    - **The staged slot is a second write site with a different shape.** Staged walls never reach
+      `sweep_board`; they die in the `carried` match at `self.staged.take()`, where the load arm
+      discards the old board. Easier than the live one — `board.map.url` is in hand right there —
+      but it is a separate edit and exactly the kind that gets missed. "The arm that gets missed"
+      is already written into six places across `room.rs`, `docs/maps.md` and `docs/walls.md`;
+      this milestone adds a seventh unless both sites land together.
+
+    Also: `Calibration` derives `PartialEq` and `Wall` does not, so the two cannot be combined
+    without one of them changing. Another thing the wrapper settles by not arising.
 
     **Two deliberate omissions, and the second is the boundary.**
 
@@ -1211,6 +1253,111 @@ and 28 also overturned something *its own* design section said, which its entry 
     the undo ring — "the case that makes undo worth having is `sweep_board`". A load that gives the
     walls back on the way in is a less catastrophic load. Undo is still right for the other nine
     reasons; the doc's argument wants rewording rather than the ring wants deleting.
+
+    **Two smaller consequences.** There is **no frame-cap question** here, which is worth saying
+    out loud because the "a command carrying a collection has two bounds" rule in `CLAUDE.md` looks
+    like it should apply: this table never reaches the wire, so `MAX_WALLS` is the only bound and
+    nothing new needs a `largest_..._fits_in_a_frame` test. And **`drive-staged.mjs` gets more
+    order-sensitive** — it asserts `the staged map is untraced` after picking library map #1, which
+    stops being true on any second run against a persisted scratch state once walls come back with
+    a map. The driver notes already say to start from a fresh `SLATE_STATE`; this makes that
+    load-bearing rather than advisory, and the check wants rewording to say what it means.
+
+    **What building it found.** The three traps above were read out of the code before a line was
+    written and all three were real; the wrapper made the first one unsayable rather than merely
+    avoided, which is what it was for. Four things beyond them are worth recording:
+
+    - **`ClearStaged` is a third write site, and it is the rule rather than an extra.** The shelf
+      is keyed by image and not by slot, so which of the slot's two exits the DM took must not
+      change what next week's load finds. Throwing the *prep* away is `ClearWalls`; this throws the
+      slot away. That also settles what gets filed in general: **whatever the board was actually
+      holding, empty included** — filing only non-empty lists would make starting a bad trace again
+      unsayable.
+    - **A fourth ordering trap, and it is the one this entry missed.** The live arm cleared the
+      overrides in its `reshaped` branch *before* the sweep ran, so on a load the DM's paint would
+      have gone onto the shelf as nothing. The two arms are now exclusive — `if loading { … } else
+      if reshaped { … }` — which is behaviour-identical because a load clears everything the
+      reshape arm clears, and the comment there says why the order is not free.
+    - **Two frames wanted deduplicating.** A load between two traced maps fires both the sweep's
+      `WallsChanged` gate and the restore's, and both are materialised at *dispatch* against
+      whatever the room holds then — so the second names the same list as the first.
+      `swapping_between_two_traced_maps_names_the_walls_once` holds it.
+    - **The client needed nothing at all.** `scene.walls` is on the `Scene` and not on the `Board`,
+      so `MapChanged` replacing the board does not touch it and the `WallsChanged` behind it lands
+      normally. Driven in a real browser: trace a map, load another, load the first back, and the
+      masonry is on screen.
+
+    `drive-staged.mjs` was the one thing that needed changing, and it needed more than a reword:
+    its *staged* slot now comes back holding the door it hung last run, so it clears the slot's
+    walls the way it already clears the board's, and the check below that says what it is really
+    asserting — that the board's own masonry did not follow the map into the slot.
+
+32. **Done**, on 2026-08-22. The libraries are writable — the DM adds an image to `maps/`,
+    `portraits/` or `backdrops/` from the panel, and removes one from the list. See *Adding and
+    removing* in `docs/maps.md`.
+
+    **Milestone 31's other half, and it came out of using it.** The shelf makes a map remember
+    what was traced on it, which is only worth anything for a map that is *in* the library — and
+    the only way to put one there was an `scp` onto the Pi. An uploaded map landed in `uploads/`
+    under a fresh UUID: a one-off that could not be found again next session, and that a second
+    upload of the same file duplicated under a second URL with a second set of walls under it.
+
+    **So uploading became adding, rather than a second button beside it.** The upload control each
+    panel already had now belongs to the library widget: it writes into the folder and then *picks
+    what it wrote*, so an uploaded map is a library map in every respect because it is one. Three
+    things fell out of that:
+
+    - **The two upload routes went.** `/api/map` and `/api/token` had one handler between them and
+      no callers left, and `uploads/` went back to being purely the serving directory rather than
+      a second library. `docs/maps.md` had a paragraph defending "an uploaded map gets a fresh
+      UUID" as a deliberate asymmetry; it was deliberate while the folder was read-only and was
+      not worth defending once it was not.
+    - **The backdrop panel gained an upload it never had.** Not because anybody asked for a fourth
+      button, but because the widget grew adding and all three panels are the widget. That is the
+      argument for putting it there rather than in each panel.
+    - **Twelve operations, four handlers.** Three libraries times list/pick/add/remove was going to
+      be twelve one-line wrappers on top of the six that existed, so the folder became a path
+      segment: `/api/{library}`, with `Library::named` refusing anything else. Fewer lines than
+      before the milestone.
+
+    **The two rules that carry the risk.** A client-supplied path reaches the filesystem in exactly
+    two places now, and they are guarded differently on purpose: a **pick** may name a
+    subdirectory, so it is normalised and then checked against the canonicalised root; an **add**
+    must be a single component, so it *cannot* leave the folder rather than being proven not to
+    have — taking the last segment of `../../evil.png` would accept a traversal by quietly meaning
+    something else. The rest is Windows, which is a deployment target: the characters it reserves,
+    the device names it resolves ahead of files, and the trailing dots it strips, since a file
+    written as something other than what the DM typed is one they cannot then remove.
+
+    And a **remove deletes the library file and nothing else** — not the copy in `uploads/`, so the
+    board keeps working and the calibration and the walls stay on the shelf. Re-adding the same
+    name later lands on the same URL and finds all of it. That is what makes the destructive button
+    safe, and it is a property of a pick being a copy rather than anything new.
+
+    **What building it found, and one of them was a bug this milestone caused.**
+
+    - **A row grew a second button and a driver was one index off.** `drive-backdrop.mjs` staged a
+      map with `querySelectorAll('#map-library-list button')[1]`, which had been the second row and
+      became the *first row's remove* — and `cdp.mjs` stubs `confirm` to `true`, so it deleted a
+      map from `maps/` and then failed two checks about staging. Recovered with `git checkout`,
+      because the libraries are in git. The fix is a class of its own on the pick button rather
+      than three corrected selectors: `.map-library-pick` cannot be off by one. **The general
+      lesson is `board.mjs`'s, one layer up** — a driver may not assume the map it was written
+      against, and it may not assume the shape of a widget either.
+    - **`ProtectSystem=strict` would have refused every add on the Pi.** The libraries lived under
+      `/opt/slate`, which is outside `ReadWritePaths` and root-owned, so the feature would have
+      worked on Windows and failed on the actual deployment. They moved to `/var/lib/slate`
+      alongside `uploads/` — which fixes the permission, the ownership, *and* the deploy wiping
+      them, all three of which had to be solved anyway. The repo's folders became seed content
+      copied in once at install.
+    - **`backdrops/` was missing from the Pi deploy entirely**, never added when milestone 30
+      landed. It did not matter while nothing wrote there; it does now.
+
+    **Not built, deliberately: renaming, and folders.** An add lands one file directly in the
+    library root, so there are no directories to create and none to tidy up after a remove — the
+    picker still *lists* subdirectories, because a DM who arranges the folder by hand should see
+    it. Renaming is remove-then-add, which is also how replacing a portrait's art works, and both
+    are two-step for the same reason: the one-step version is a silent overwrite with no undo.
 
 ### The right dock
 

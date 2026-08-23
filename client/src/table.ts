@@ -44,7 +44,7 @@ export interface TableToolUi {
   cursors: HTMLInputElement;
   /** The backdrop picker's disclosure button and list. `root` above is the
    *  panel the widget dims while a pick is in flight. */
-  backdrop: Pick<LibraryUi, 'button' | 'list'>;
+  backdrop: Pick<LibraryUi, 'button' | 'list' | 'file' | 'fileText'>;
   /** Takes the picture down. Hidden when there is not one up, because a button
    *  that would do nothing is a button that says something is up. */
   backdropClear: HTMLButtonElement;
@@ -102,7 +102,17 @@ export function createTableTool(
   // byte-for-byte what an uploaded map or portrait would be, which is why
   // nothing downstream can tell a library pick from anything else.
   const library = createLibraryList(
-    { root: ui.root, button: ui.backdrop.button, list: ui.backdrop.list },
+    {
+      root: ui.root,
+      button: ui.backdrop.button,
+      list: ui.backdrop.list,
+      // The panel that had no upload of its own. It gets one because the widget
+      // grew adding, not because anybody asked for a fourth upload button — and
+      // the DM who wants tonight's campfire in the room no longer has to put it
+      // in `backdrops/` by hand first.
+      file: ui.backdrop.file,
+      fileText: ui.backdrop.fileText,
+    },
     dmSecret,
     'backdrops',
     (url) => send({ type: 'set_backdrop', url }),

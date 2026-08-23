@@ -54,6 +54,18 @@ directory is `SLATE_PORTRAITS`, defaulting to `../portraits`. The reasoning for 
 *Maps and the map library* in `docs/maps.md`; this is that feature one folder over, and both sides
 of it are shared code rather than a copy — `Library` in `main.rs`, `library.ts` on the client.
 
+**Uploading art is adding it to `portraits/`, since milestone 32** — the "upload art…" button
+belongs to the library widget now, so the picture a DM drags in for one monster is in the folder
+for the next one, and the token panel has one code path instead of two. Removing is on each row of
+the list, and it deletes the file in `portraits/` and not the copy the token is wearing; see
+*Adding and removing* in `docs/maps.md`, which is where the rules for all three folders live.
+
+**Note what that does to the rule below.** A portrait is fingerprinted by its *bytes*, so replacing
+art in the folder gives a new copy under a new URL — and an add refuses a name that is already
+taken, so replacing it through the panel is two steps: remove, then add. That is deliberate rather
+than an oversight. A silent overwrite is the one outcome here with no undo, and the two-step
+version is the one where the DM sees the file leave.
+
 **The second library added two rules, and they are the same rule twice: what a copy's name is
 derived from decides what a re-pick resolves to.**
 

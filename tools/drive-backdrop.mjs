@@ -96,12 +96,12 @@ note(`the board reads ${dmBoard.lit} lit / mean ${dmBoard.mean}`);
 await dm.evaluate('document.getElementById("table-backdrop").click(); "ok"');
 await dm.wait(700); // the listing request
 const files = await dm.evaluate(
-  `document.querySelectorAll('#table-backdrop-list button').length`,
+  `document.querySelectorAll('#table-backdrop-list .map-library-pick').length`,
 );
 note(`${files} backdrop(s) in the library`);
 check('the library listed something to pick', files > 0, true);
 
-await dm.evaluate(`document.querySelector('#table-backdrop-list button').click(); "ok"`);
+await dm.evaluate(`document.querySelector('#table-backdrop-list .map-library-pick').click(); "ok"`);
 await dm.wait(1800); // the pick, the round trip, the image, a frame on both
 
 const dmUp = await fingerprint(dm);
@@ -152,7 +152,7 @@ if (stagedItHere) {
   await dm.evaluate('document.querySelector("#map-library").click(); "ok"');
   await dm.wait(1200);
   const staged = await dm.evaluate(`(() => {
-    const b = document.querySelectorAll('#map-library-list button')[1];
+    const b = document.querySelectorAll('#map-library-list .map-library-pick')[1];
     if (b === undefined) return null;
     const name = b.textContent;
     b.click();

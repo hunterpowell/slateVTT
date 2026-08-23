@@ -182,10 +182,12 @@ struct RoomState {
     /// applied after the raycast, never a write into the two above. DM-only,
     /// whole, like the walls — and staged like them.
     overrides: HashMap<Cell, Override>,
-    /// How each map URL was last calibrated. Server-side only — it never enters a
-    /// snapshot or a message, because the finished `MapInfo` already says
-    /// everything a client needs — see `docs/maps.md`.
-    calibrations: HashMap<String, Calibration>,
+    /// Everything the DM has prepared on each map, keyed by its URL: the grid
+    /// they calibrated, the walls they traced and the fog they painted. Server-
+    /// side only — it never enters a snapshot or a message. **The shelf, not a
+    /// scene list**: the DM's authoring is remembered and the party's play
+    /// state is not — see `docs/maps.md`.
+    calibrations: HashMap<String, Prepared>,
     /// The last ten states of the room, for the DM's undo. Post-state, so the
     /// back of it is the present and an undo pops it — see `docs/undo.md`.
     /// A snapshot is `Saved`, which is what keeps the two client tables below
@@ -351,9 +353,9 @@ built for them. So is planning
 where a token lands — a player may move their own token and may not plan for it, because the
 plan is a cell on a map they have not been shown.
 
-The DM uploads all token art, and picks it out of `portraits/`. Both endpoints authenticate with
-the DM secret, and a player has no credential to offer either — giving them one would be the
-authentication this project does not build.
+The DM owns all three libraries — listing, picking, adding and removing. Every route under `/api`
+authenticates with the DM secret, and a player has no credential to offer any of them; giving them
+one would be the authentication this project does not build.
 
 Identity: the DM joins with a secret in the URL. Players join with a plain room link and
 claim a name from a roster the DM defined. `player_id` persists in `localStorage` so a
@@ -636,7 +638,8 @@ wins, a click that moved was a pan, and any armed tool takes the button first.
 `snapshot_for` carries an empty list, indistinguishable from an untraced map, and
 `Event::WallsChanged` produces *no message at all* for them — a frame they cannot use still says the
 DM did something. A load into the live slot sweeps the walls and a recalibration must not; that is
-`sweep_board`, shared with the shapes.
+`sweep_board`, shared with the shapes — and the sweep is a **move** rather than a destruction, since
+what was traced on the outgoing image is filed under its URL on the way out. See *Maps* above.
 
 **The staged map has walls of its own, and fog overrides beside them.** The next dungeon is traced
 before the table is shown it — every wall and override command carries a `staged` flag, like
@@ -777,12 +780,22 @@ remembered calibration table, the staged token plans, the board's shapes and eac
 walls all branch on it, and a recalibration must sweep away none of them. The fog overrides are the
 exception that proves it: they are cells, so a recalibration *does* clear them, on both boards.
 
-The DM picks maps out of the repository's `maps/` folder rather than re-uploading; **a pick is a
-copy into the uploads directory, not a second way to serve files.** Listing and picking are
-DM-only. This is the only place a client-supplied path reaches the filesystem — canonicalise it
-and confirm it resolves inside the library before opening it. **`portraits/` is the same feature
-over token art** and shares every line of it; the folder, the size cap, the noun in the refusals
-and what a copy's name is fingerprinted over are the whole of what a library differs by.
+The DM picks maps out of the `maps/` folder rather than re-uploading; **a pick is a copy into the
+uploads directory, not a second way to serve files.** Listing, picking, adding and removing are
+DM-only, behind one route family — `/api/{library}` — and one client widget. **`portraits/` and
+`backdrops/` are the same feature over other folders** and share every line of it; the folder, the
+size cap, the noun in the refusals and what a copy's name is fingerprinted over are the whole of
+what a library differs by.
+
+**The DM adds and removes images from the panel, and uploading is how you add.** There is no
+separate upload route: the button writes into the folder and then picks what it wrote, so an
+uploaded map is a library map. Two rules bind it. A client-supplied path reaches the filesystem in
+exactly two places and they are guarded differently — a **pick** may name a subdirectory, so it is
+canonicalised and confirmed inside the library; an **add** must be a single component, so it cannot
+leave the folder at all, and it is also refused the names Windows reserves or rewrites. And a
+**remove deletes the library file and nothing else** — not the copy in `uploads/`, so the board,
+the calibration and the shelf survive, and re-adding the same name later finds them. A name already
+taken is refused rather than overwritten: there is no undo on a filesystem.
 
 **A backdrop is a picture shown *instead of* the board, and it is not a map.** No grid, nothing
 standing on it, nothing traced across it — which is why `SetBackdrop` sweeps nothing where a
@@ -792,6 +805,16 @@ on the room, DM-only to set and unfiltered like `show_names`, so `BackdropChange
 server. `shownBackdrop` is `shownBoard`'s fourth twin and its one branch is that **preview wins** —
 the party roleplays at the campfire while the DM traces the crypt. The presets are the `backdrops/`
 folder, a third `Library`; **a list of them in the room would be the scene concept**.
+
+**A map remembers what the DM prepared on it.** `Calibration` grew into `Prepared` — the grid, the
+walls and the fog overrides, keyed by URL and never on the wire — so tracing three dungeons on a
+Tuesday leaves all three traced on Saturday. **What is filed is what a board was holding as it
+stopped being held**: `sweep_board` takes the outgoing URL as an argument because its two callers
+assign the map on opposite sides of it, and a staged board never reaches it at all, so the load arm
+and `ClearStaged` are two more write sites. A recalibration writes the calibration and nothing
+else, which is what the wrapper makes unsayable rather than merely avoided. **The boundary is that
+the DM's authoring is remembered and the party's play state is not** — no `revealed`, no token
+plans; remembering either is the scene system this file refuses.
 
 **Preview is client-only: the server does not know the DM is previewing and must not learn.**
 That is why intent rides on the command — `SetMap`, `MoveToken`, `CreateToken`, all four wall

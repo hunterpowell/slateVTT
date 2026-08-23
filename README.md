@@ -159,6 +159,7 @@ screen and which token is standing on a given square.
 | `drive-presence.mjs` | Who is connected, the colour a player picks, and being told it is your turn | three    |
 | `drive-cursors.mjs` | Everybody's pointer, and the DM's *not* reaching the table over unexplored ground | both     |
 | `drive-backdrop.mjs` | A picture in front of the table, and the board being the same board when it comes down | both     |
+| `drive-library.mjs` | Adding an image to a library and removing it again — the one driver whose subject is the disk | DM       |
 
 The ones marked *both* open two browsers at once, and that is the point of them: almost everything
 they assert is a **difference** between what two people are holding, which one client cannot see.
@@ -194,7 +195,13 @@ node tools/drive-player.mjs http://127.0.0.1:3000
 Point them at a scratch `SLATE_STATE`, never at the room you are about to play in — the first
 thing `drive-ui.mjs` does is erase every wall on the board, `drive-staged.mjs` throws away whatever
 was in the staged slot, and the fog, names, ruler, ping and cursor drivers each build a token or flip
-a switch that persists. Run them one at a time: they share debug ports (9333 for a DM, 9334 for a
+a switch that persists.
+
+**`drive-library.mjs` is the one that writes outside the room**: it adds a file to `portraits/` and
+one to `backdrops/` and removes both again, so it is a scratch `SLATE_STATE` *and* a checkout you do
+not mind it touching. A run that dies partway leaves a `slate-driver-probe.png` behind, which is safe
+to delete by hand. Those folders are in git, so `git status` is the check that a run put them back —
+and `git checkout -- maps/` is the way back if one did not. Run them one at a time: they share debug ports (9333 for a DM, 9334 for a
 player, 9335 for a second player), so two at once attach to each other's browser. Set `SLATE_BROWSER` if Chrome or Edge is
 somewhere unusual.
 
@@ -204,6 +211,12 @@ traced and nothing staged — and several of them assert against that directly, 
 that has been played in fails checks that have nothing to do with what they drive. Deleting the
 scratch file is what resets them, and because the room lives in memory and is only read at boot,
 that means **restarting the server** rather than just deleting the file.
+
+Since milestone 31 that matters more than it did: a map now remembers the walls and the fog paint
+it was last left with, so a driver that traces something and then loads another map finds its own
+tracing waiting the next time it picks the same map. `drive-staged.mjs` clears both slots' walls
+before it asserts they are untraced, for that reason — a driver that wants a blank board has to say
+so rather than assume one.
 
 **They may be run in any order**, and that is worth stating because for a while they could not be.
 `drive-staged.mjs` ends by promoting a different map onto the board, on purpose, and four other
@@ -219,7 +232,7 @@ coordinates. Anything that clicks the board should go through it rather than rea
 
 ### Running the lot
 
-**All fifteen take about five minutes**, so run all of them whenever the client changes rather than
+**All seventeen take about five minutes**, so run all of them whenever the client changes rather than
 picking the ones that look relevant. Picking is not worth the thought it costs: they all sit on
 `coords.ts`, `render.ts`, `input.ts` and `scene.ts`, and almost every client commit touches one of
 those, so any honest rule about which to skip says "none of them" nearly every time.

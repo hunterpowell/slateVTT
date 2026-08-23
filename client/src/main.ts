@@ -209,7 +209,12 @@ interface Ui {
     names: HTMLInputElement;
     diagonals: HTMLSelectElement;
     cursors: HTMLInputElement;
-    backdrop: { button: HTMLButtonElement; list: HTMLElement };
+    backdrop: {
+      button: HTMLButtonElement;
+      list: HTMLElement;
+      file: HTMLInputElement;
+      fileText: HTMLElement;
+    };
     backdropClear: HTMLButtonElement;
   };
 }
@@ -362,6 +367,8 @@ function findUi(): Ui {
       backdrop: {
         button: need<HTMLButtonElement>('#table-backdrop'),
         list: need('#table-backdrop-list'),
+        file: need<HTMLInputElement>('#table-backdrop-file'),
+        fileText: need('#table-backdrop-upload-text'),
       },
       backdropClear: need<HTMLButtonElement>('#table-backdrop-clear'),
     },

@@ -590,6 +590,15 @@ on again.
 have just moved out from under them. That is both places: `sweep_board` for a load and a promote, and
 the `reshaped` branch of `SetMap` for a recalibration.
 
+**Since milestone 31 the paint is filed rather than destroyed on a load, and `revealed` is not.**
+The DM's mask is authoring, so it goes onto the shelf with the walls of the image it was painted on
+and comes back when that image does; where the party has *explored* is play, so returning to a
+dungeon means re-exploring it. That split — the DM's authoring is remembered, the party's play state
+is not — is what keeps a map load from becoming a partial scene restore. Two orderings hold it up:
+the shelf is written before the sweep clears anything, and on a load the `reshaped` branch above is
+skipped entirely, because emptying the overrides first would file the DM's paint as nothing. See
+*The shelf* in `docs/maps.md`.
+
 `sweep_board` emits no event of its own for the three sets. `refresh_fog` runs afterwards and
 compares against a reading taken before any of it, so the clear is already in the difference it
 reports. **The overrides do need one**, and that asymmetry is the point of them: nothing recomputes

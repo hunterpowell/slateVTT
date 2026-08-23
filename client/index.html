@@ -1239,10 +1239,14 @@
         color: #cfe6ff;
       }
 
+      /* The token panel joins the two that were already here: it grew a control
+         that talks to the server when the upload button became the library's. */
       #maptool.is-busy .map-button,
       #maptool.is-busy .map-library,
       #tabletool.is-busy .map-button,
-      #tabletool.is-busy .map-library {
+      #tabletool.is-busy .map-library,
+      #tokentool.is-busy .map-button,
+      #tokentool.is-busy .map-library {
         opacity: 0.5;
         pointer-events: none;
       }
@@ -1285,28 +1289,63 @@
         background: #12151a;
       }
 
-      .map-library button {
-        display: block;
+      /* A row is the name and a way to delete it. The name takes everything
+         but the last few pixels, because picking is what the list is for and
+         removing is the thing you do once. */
+      .map-library-row {
+        display: flex;
+        align-items: stretch;
+      }
+
+      /* Both buttons in a row, and named rather than reached as `.map-library
+         button`: a descendant selector outranks a lone class, so the shared rule
+         setting a width beat the remove button's own 22px and took the whole
+         row, leaving one letter of every name. */
+      .map-library-pick,
+      .map-library-remove {
         box-sizing: border-box;
-        width: 100%;
         padding: 4px 7px;
         border: 0;
         background: none;
         color: #b6bcc6;
         font: inherit;
         font-size: 12px;
-        text-align: left;
         cursor: pointer;
+      }
+
+      .map-library-pick {
+        flex: 1;
         /* Map names are longer than this panel is wide. One line each keeps the
-           list scannable; the full path is on the tooltip. */
+           list scannable; the full path is on the tooltip. The zero minimum is
+           what lets that ellipsis happen rather than the row growing past the
+           panel, since a flex item will not shrink below its own content unless
+           it is told it may. */
+        min-width: 0;
+        text-align: left;
         white-space: nowrap;
         overflow: hidden;
         text-overflow: ellipsis;
       }
 
-      .map-library button:hover {
+      .map-library-remove {
+        flex: none;
+        width: 22px;
+        padding: 0;
+        color: #6f7681;
+        text-align: center;
+      }
+
+      .map-library-pick:hover {
         background: #1c2027;
         color: #e8e6e1;
+      }
+
+      /* Red only on the way to being clicked. A delete that is red at rest
+         makes the list look dangerous to browse, which is the opposite of what
+         it is for. */
+      .map-library-remove:hover {
+        background: #3a2226;
+        color: #ffb4b4;
       }
 
       /* Dimmed, so the folder reads as context and the name reads as the map. */
@@ -2260,6 +2299,15 @@
              It is on this panel and not the map one because a backdrop is not a
              map: it belongs to the room rather than to either board, and the
              board it covers is still sitting there untouched underneath. -->
+        <label class="map-button">
+          <input
+            id="table-backdrop-file"
+            type="file"
+            accept="image/png,image/jpeg,image/webp"
+            hidden
+          />
+          <span id="table-backdrop-upload-text">upload a backdrop…</span>
+        </label>
         <button id="table-backdrop" class="map-button" type="button">show a backdrop…</button>
         <div id="table-backdrop-list" class="map-library" hidden></div>
         <button id="table-backdrop-clear" class="map-subtle" type="button" hidden>

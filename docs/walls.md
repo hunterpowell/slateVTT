@@ -108,6 +108,17 @@ Walls are **persisted**. Half an hour of tracing belongs to a map that will stil
 next week, and this is the one thing on `Saved` that would make its feature unusable if it were left
 in memory.
 
+**And since milestone 31 the sweep is a move rather than a destruction.** What was traced on the
+outgoing image is filed under its URL on the way out and comes back when that image is loaded
+again — one table entry per map, keyed the way the grid calibration already was. Nothing above
+changes: a load still sweeps the board and a recalibration still must not, and the walls that
+arrive are the ones traced on the image arriving. Two things are worth carrying over here. The
+outgoing URL is **passed into** `sweep_board` rather than read off `self.map`, because its two
+callers assign the map on opposite sides of the call. And the staged slot does not pass through
+`sweep_board` at all — a staged board is filed where the load arm takes the slot and again in
+`ClearStaged`, which is the arm-that-gets-missed rule for the seventh time. See *The shelf* in
+`docs/maps.md`.
+
 ## The staged map has walls of its own
 
 This section used to say there were none, and that the DM had to promote a map before they could

@@ -134,6 +134,15 @@ three for nothing. `undoing_a_map_load_gives_back_the_walls_the_shapes_and_the_f
 test that records this, and it is the one to read before anybody proposes an inverse-per-command
 undo.
 
+**Milestone 31 weakened this argument and did not overturn it.** A map load now files the walls and
+the paint under the outgoing map's URL and hands back whatever was traced on the one arriving, so
+the disaster this paragraph was written about is a smaller disaster: the tracing is on the shelf,
+and loading the map back is the other way to reach it. What a load still destroys outright is the
+drawings and everywhere the party had explored — and the *shape* of the argument is untouched, since
+writing an inverse for a command that replaces three collections at once is still most of a second
+state model. Read this as "undo is right and this is no longer its sharpest example" rather than as
+a reason to delete the ring.
+
 ### `UndoChanged`, and the frame that rides along
 
 `ServerMsg::UndoChanged { label }` reaches **the DM or nobody** — the fourth message with that rule,

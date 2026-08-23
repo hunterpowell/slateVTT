@@ -249,7 +249,7 @@ fn a_map_nobody_has_calibrated_keeps_what_the_client_sent() {
         state
             .calibrations
             .get("/uploads/new.png")
-            .map(|c| c.grid_px),
+            .map(|c| c.calibration.grid_px),
         Some(77.0),
         "a first sighting is worth remembering too"
     );
@@ -288,7 +288,7 @@ fn the_calibration_table_is_saved() {
         saved
             .calibrations
             .get("/uploads/cave.png")
-            .map(|c| c.grid_px),
+            .map(|c| c.calibration.grid_px),
         Some(82.0)
     );
 
@@ -299,7 +299,7 @@ fn the_calibration_table_is_saved() {
         restored
             .calibrations
             .get("/uploads/cave.png")
-            .map(|c| c.grid_px),
+            .map(|c| c.calibration.grid_px),
         Some(82.0)
     );
 }
@@ -317,6 +317,368 @@ fn a_refused_calibration_is_not_remembered() {
 
     assert!(state.calibrations.is_empty());
     assert_ne!(state.map.url, "/uploads/cave.png");
+}
+
+// --- the shelf ------------------------------------------------------------
+
+/// The ids of what is traced on one board or the other.
+fn traced(state: &RoomState, staged: bool) -> Vec<WallId> {
+    state
+        .walls_in(staged)
+        .iter()
+        .map(|w| w.id.clone())
+        .collect()
+}
+
+/// What the room remembers having been traced on one image.
+fn shelved(state: &RoomState, url: &str) -> Vec<WallId> {
+    state
+        .calibrations
+        .get(url)
+        .map(|p| p.walls.iter().map(|w| w.id.clone()).collect())
+        .unwrap_or_default()
+}
+
+#[test]
+fn a_map_traced_on_a_tuesday_is_still_traced_on_saturday() {
+    // The whole milestone: the DM walls a dungeon, runs something else, and
+    // finds the dungeon still walled when they come back to it.
+    let mut state = room();
+    let _dm = join_as_dm(&mut state, ClientId(1));
+
+    state.handle(ClientId(1), set_map("/uploads/cave.png", 64.0, 0.0, 0.0));
+    state.handle(ClientId(1), trace(&[(0.0, 0.0), (128.0, 0.0)], false));
+    let traced_in_the_cave = traced(&state, false);
+    assert_eq!(traced_in_the_cave.len(), 1);
+
+    state.handle(ClientId(1), set_map("/uploads/keep.png", 64.0, 0.0, 0.0));
+    assert!(
+        state.walls.is_empty(),
+        "the keep is a different dungeon and none of the cave's masonry is in it"
+    );
+
+    state.handle(ClientId(1), set_map("/uploads/cave.png", 64.0, 0.0, 0.0));
+    assert_eq!(traced(&state, false), traced_in_the_cave);
+}
+
+#[test]
+fn the_paint_comes_back_with_the_tracing() {
+    // The DM's overrides are authoring like the walls are, and they are filed
+    // and restored beside them rather than by a second mechanism.
+    let mut state = room();
+    let _dm = join_as_dm(&mut state, ClientId(1));
+
+    // Fogged, because paint on a map with no fog on it is refused rather than
+    // stored — the shelf can only remember what the room would hold.
+    state.handle(
+        ClientId(1),
+        fogged(set_map("/uploads/cave.png", 64.0, 0.0, 0.0), 60.0),
+    );
+    state.handle(ClientId(1), paint(&[(3, 4)], Some(Override::Dark)));
+
+    state.handle(ClientId(1), set_map("/uploads/keep.png", 64.0, 0.0, 0.0));
+    assert!(state.overrides.is_empty());
+
+    state.handle(ClientId(1), set_map("/uploads/cave.png", 64.0, 0.0, 0.0));
+    assert_eq!(state.overrides.get(&(3, 4)), Some(&Override::Dark));
+}
+
+#[test]
+fn walls_are_filed_under_the_map_they_were_traced_on() {
+    // The trap that reads as a bug in the wall editor. `sweep_board` is called
+    // *after* the assignment on this path, so a version that asked `self.map`
+    // which board it was sweeping would file the cave's masonry under the
+    // keep — and the DM would find it laid across the keep next week.
+    let mut state = room();
+    let _dm = join_as_dm(&mut state, ClientId(1));
+
+    state.handle(ClientId(1), set_map("/uploads/cave.png", 64.0, 0.0, 0.0));
+    state.handle(ClientId(1), trace(&[(0.0, 0.0), (128.0, 0.0)], false));
+    state.handle(ClientId(1), set_map("/uploads/keep.png", 64.0, 0.0, 0.0));
+
+    assert_eq!(shelved(&state, "/uploads/cave.png").len(), 1);
+    assert!(
+        shelved(&state, "/uploads/keep.png").is_empty(),
+        "nothing has ever been traced on the keep"
+    );
+}
+
+#[test]
+fn nudging_the_grid_does_not_erase_what_the_room_remembers() {
+    // The silent one. A recalibration writes the calibration and must not be
+    // able to reach the tracing beside it — and because the board keeps its
+    // walls through a recalibration, a version that filed empty ones here would
+    // look perfectly correct until the DM loaded away and back.
+    let mut state = room();
+    let _dm = join_as_dm(&mut state, ClientId(1));
+
+    state.handle(
+        ClientId(1),
+        calibrate("/uploads/cave.png", 64.0, 0.0, "#11223344"),
+    );
+    state.handle(ClientId(1), trace(&[(0.0, 0.0), (128.0, 0.0)], false));
+    // The board is filed onto the shelf only as it leaves, so the entry is
+    // empty until then — which is exactly what makes the clobber invisible.
+    state.handle(
+        ClientId(1),
+        calibrate("/uploads/cave.png", 96.0, 3.0, "#99887766"),
+    );
+    assert_eq!(state.walls.len(), 1, "a recalibration keeps the walls");
+
+    state.handle(
+        ClientId(1),
+        calibrate("/uploads/keep.png", 51.0, 2.0, "#aabbccdd"),
+    );
+    state.handle(
+        ClientId(1),
+        calibrate("/uploads/cave.png", 64.0, 0.0, "#ffffff52"),
+    );
+    assert_eq!(state.walls.len(), 1, "and so does the round trip");
+    assert_eq!(
+        state.map.grid_px, 96.0,
+        "the correction is still what was remembered"
+    );
+}
+
+#[test]
+fn clearing_the_walls_and_loading_away_means_they_are_cleared() {
+    // The shelf holds what the board was actually holding, empty included.
+    // Filing only non-empty lists would make "I traced that badly and started
+    // again" unsayable — the bad trace would come back next week.
+    let mut state = room();
+    let _dm = join_as_dm(&mut state, ClientId(1));
+
+    state.handle(ClientId(1), set_map("/uploads/cave.png", 64.0, 0.0, 0.0));
+    state.handle(ClientId(1), trace(&[(0.0, 0.0), (128.0, 0.0)], false));
+    state.handle(ClientId(1), clear_walls());
+    state.handle(ClientId(1), set_map("/uploads/keep.png", 64.0, 0.0, 0.0));
+    state.handle(ClientId(1), set_map("/uploads/cave.png", 64.0, 0.0, 0.0));
+
+    assert!(state.walls.is_empty());
+}
+
+#[test]
+fn a_promote_files_the_board_it_covered() {
+    // The second call site, and the one whose assignment is on the other side
+    // of the sweep. The board being covered is the live one, and its masonry
+    // belongs to the image it was traced on rather than to the image arriving
+    // on top of it.
+    let mut state = room();
+    let _dm = join_as_dm(&mut state, ClientId(1));
+
+    state.handle(ClientId(1), set_map("/uploads/cave.png", 64.0, 0.0, 0.0));
+    state.handle(ClientId(1), trace(&[(0.0, 0.0), (128.0, 0.0)], false));
+    let traced_in_the_cave = traced(&state, false);
+
+    stage(&mut state, ClientId(1), "/uploads/keep.png");
+    state.handle(ClientId(1), ClientMsg::PromoteStaged);
+    assert_eq!(state.map.url, "/uploads/keep.png");
+    assert!(state.walls.is_empty());
+
+    state.handle(ClientId(1), set_map("/uploads/cave.png", 64.0, 0.0, 0.0));
+    assert_eq!(traced(&state, false), traced_in_the_cave);
+}
+
+#[test]
+fn a_staged_map_is_filed_and_comes_back_staged() {
+    // The write site that gets missed: a staged board never passes through
+    // `sweep_board`, it dies where the load arm takes the slot. Three dungeons
+    // prepped on a Tuesday is what the milestone was asked for, and all three
+    // are prepped in this slot rather than on the board.
+    let mut state = room();
+    let _dm = join_as_dm(&mut state, ClientId(1));
+
+    // Fogged, so that the paint below is a command the room accepts — a staged
+    // map may be painted while the unfogged live board under it may not.
+    state.handle(
+        ClientId(1),
+        staged(fogged(set_map("/uploads/cave.png", 64.0, 0.0, 0.0), 60.0)),
+    );
+    state.handle(
+        ClientId(1),
+        staged(trace(&[(0.0, 0.0), (128.0, 0.0)], false)),
+    );
+    state.handle(ClientId(1), staged(paint(&[(2, 2)], Some(Override::Lit))));
+    let traced_in_the_cave = traced(&state, true);
+    assert_eq!(traced_in_the_cave.len(), 1);
+
+    stage(&mut state, ClientId(1), "/uploads/keep.png");
+    assert!(state.walls_in(true).is_empty(), "the keep is untraced");
+
+    stage(&mut state, ClientId(1), "/uploads/cave.png");
+    assert_eq!(traced(&state, true), traced_in_the_cave);
+    let board = state.staged.as_ref().expect("the staged board");
+    assert_eq!(board.overrides.get(&(2, 2)), Some(&Override::Lit));
+}
+
+#[test]
+fn discarding_the_staged_slot_keeps_what_was_traced_on_the_map() {
+    // The slot's other exit. The shelf is keyed by image and not by slot, so
+    // which of the two buttons the DM pressed cannot change what next week's
+    // load finds — throwing the *prep* away is `ClearWalls`.
+    let mut state = room();
+    let _dm = join_as_dm(&mut state, ClientId(1));
+
+    stage(&mut state, ClientId(1), "/uploads/cave.png");
+    state.handle(
+        ClientId(1),
+        staged(trace(&[(0.0, 0.0), (128.0, 0.0)], false)),
+    );
+    state.handle(ClientId(1), ClientMsg::ClearStaged);
+
+    assert!(state.staged.is_none());
+    assert_eq!(shelved(&state, "/uploads/cave.png").len(), 1);
+}
+
+#[test]
+fn the_party_re_explores_a_dungeon_they_return_to() {
+    // The boundary, and what keeps this from being a scene restore: the DM's
+    // authoring is remembered and the party's play state is not. A `revealed`
+    // that came back with the walls would immediately raise "why not the token
+    // positions too", and that road ends at the feature `docs/maps.md` refuses.
+    let mut state = fog_room(30.0);
+    let _dm = join_as_dm(&mut state, ClientId(1));
+    state.handle(
+        ClientId(1),
+        fogged(set_map("/uploads/cave.png", 64.0, 0.0, 0.0), 30.0),
+    );
+    // Out along the row and back again, so that what the party has *explored*
+    // is strictly more than what they can see from where they end up. Without
+    // the round trip the two sets are the same and the assertion below would
+    // hold whether or not the shelf remembered them.
+    walk(&mut state, 9.5);
+    walk(&mut state, 1.5);
+    assert!(
+        !state.revealed.is_subset(&state.visible),
+        "the party has been somewhere they cannot see from here"
+    );
+
+    state.handle(
+        ClientId(1),
+        fogged(set_map("/uploads/keep.png", 64.0, 0.0, 0.0), 30.0),
+    );
+    state.handle(
+        ClientId(1),
+        fogged(set_map("/uploads/cave.png", 64.0, 0.0, 0.0), 30.0),
+    );
+
+    // Whatever the tokens can see from where they are standing, and nothing
+    // more: `recompute_sight` runs on the way out, so what is left is sight
+    // rather than memory. No cell out of reach came back with the walls.
+    assert!(
+        state.revealed.is_subset(&state.visible),
+        "returning to a dungeon is not remembering having walked it"
+    );
+}
+
+#[test]
+fn the_walls_coming_back_is_the_dms_news_and_nobody_elses() {
+    // A load now emits `WallsChanged` and `OverridesChanged` where it used to
+    // emit only the sweep's. Both reach the DM or nobody, which is the rule
+    // they have always had — a player is not told the DM traced something, and
+    // is not told the room remembered it either.
+    let mut state = room();
+    let mut dm = join_as_dm(&mut state, ClientId(1));
+    let mut player = join_as_player(&mut state, ClientId(2), "saelyn");
+
+    state.handle(
+        ClientId(1),
+        fogged(set_map("/uploads/cave.png", 64.0, 0.0, 0.0), 60.0),
+    );
+    state.handle(ClientId(1), trace(&[(0.0, 0.0), (128.0, 0.0)], false));
+    state.handle(ClientId(1), paint(&[(3, 4)], Some(Override::Dark)));
+    state.handle(ClientId(1), set_map("/uploads/keep.png", 64.0, 0.0, 0.0));
+    drain(&mut dm);
+    drain(&mut player);
+
+    state.handle(ClientId(1), set_map("/uploads/cave.png", 64.0, 0.0, 0.0));
+
+    let to_dm = drain(&mut dm);
+    assert!(
+        to_dm.iter().any(|m| matches!(
+            m,
+            ServerMsg::WallsChanged {
+                walls,
+                staged: false
+            } if walls.len() == 1
+        )),
+        "the DM is holding the masonry that just came back: {to_dm:?}"
+    );
+    assert!(
+        to_dm
+            .iter()
+            .any(|m| matches!(m, ServerMsg::OverridesChanged { .. })),
+        "and the paint: {to_dm:?}"
+    );
+
+    let to_player = drain(&mut player);
+    assert!(
+        !to_player.iter().any(|m| matches!(
+            m,
+            ServerMsg::WallsChanged { .. } | ServerMsg::OverridesChanged { .. }
+        )),
+        "a player holds no walls and is told of none: {to_player:?}"
+    );
+    assert!(
+        to_player
+            .iter()
+            .any(|m| matches!(m, ServerMsg::MapChanged { .. })),
+        "the map itself is everybody's: {to_player:?}"
+    );
+}
+
+#[test]
+fn swapping_between_two_traced_maps_names_the_walls_once() {
+    // Both gates would fire on this load — the sweep's, because the board it
+    // left was traced, and the restore's, because the board arriving is. A
+    // `WallsChanged` carries whatever the room holds when it is *dispatched*,
+    // so the second would name the same list as the first and say nothing.
+    let mut state = room();
+    let mut dm = join_as_dm(&mut state, ClientId(1));
+
+    state.handle(ClientId(1), set_map("/uploads/cave.png", 64.0, 0.0, 0.0));
+    state.handle(ClientId(1), trace(&[(0.0, 0.0), (128.0, 0.0)], false));
+    state.handle(ClientId(1), set_map("/uploads/keep.png", 64.0, 0.0, 0.0));
+    state.handle(ClientId(1), trace(&[(64.0, 64.0), (64.0, 192.0)], false));
+    drain(&mut dm);
+
+    state.handle(ClientId(1), set_map("/uploads/cave.png", 64.0, 0.0, 0.0));
+
+    let framed: Vec<ServerMsg> = drain(&mut dm)
+        .into_iter()
+        .filter(|m| matches!(m, ServerMsg::WallsChanged { .. }))
+        .collect();
+    assert_eq!(framed.len(), 1, "one frame, naming what is there now");
+    let Some(ServerMsg::WallsChanged { walls, .. }) = framed.first() else {
+        unreachable!("filtered above")
+    };
+    assert_eq!(walls.len(), 1);
+    assert_eq!(
+        walls.first().expect("the cave's segment").to,
+        Px { x: 128.0, y: 0.0 },
+        "the cave's masonry, not the keep's"
+    );
+}
+
+#[test]
+fn the_shelf_never_reaches_a_client() {
+    // `a_remembered_calibration_never_reaches_a_client`'s twin, and worth
+    // asserting again now that an entry carries a dungeon's masonry rather than
+    // four numbers. There is no `RoomView` field and no message.
+    let mut state = room();
+    let _dm = join_as_dm(&mut state, ClientId(1));
+    let _player = join_as_player(&mut state, ClientId(2), "saelyn");
+
+    state.handle(ClientId(1), set_map("/uploads/cave.png", 64.0, 0.0, 0.0));
+    state.handle(ClientId(1), trace(&[(0.0, 0.0), (128.0, 0.0)], false));
+    state.handle(ClientId(1), set_map("/uploads/keep.png", 64.0, 0.0, 0.0));
+
+    let view = state.snapshot_for(&as_player("saelyn"));
+    let json = serde_json::to_string(&view).expect("a serialisable view");
+    assert!(
+        !json.contains("cave"),
+        "the cave is on the shelf and nowhere a player can read: {json}"
+    );
 }
 
 // --- the staged map -------------------------------------------------------
@@ -514,7 +876,7 @@ fn a_calibration_made_while_staged_is_remembered() {
         state
             .calibrations
             .get("/uploads/next.png")
-            .map(|c| c.grid_px),
+            .map(|c| c.calibration.grid_px),
         Some(91.0)
     );
 
@@ -567,7 +929,7 @@ fn the_staged_map_can_still_be_recalibrated() {
         state
             .calibrations
             .get("/uploads/next.png")
-            .map(|c| c.grid_px),
+            .map(|c| c.calibration.grid_px),
         Some(96.0),
         "and the correction is what gets remembered"
     );

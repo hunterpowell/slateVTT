@@ -13,7 +13,7 @@ use tokio::fs;
 
 use crate::fog::{FogView, OverrideView};
 use crate::protocol::{
-    Calibration, Colours, Diagonals, Initiative, MapInfo, Owner, Shape, StagedView, Token, Wall,
+    Colours, Diagonals, Initiative, MapInfo, Owner, Prepared, Shape, StagedView, Token, Wall,
 };
 
 /// What actually goes to disk.
@@ -114,17 +114,21 @@ pub struct Saved {
     /// it has one checkbox, where the DM who never learns it exists has nothing.
     #[serde(default = "shown")]
     pub show_cursors: bool,
-    /// Remembered grid calibrations, keyed by map URL.
+    /// Everything the DM has prepared, keyed by map URL: the grid they
+    /// calibrated, the walls they traced and the fog they painted.
     ///
     /// The first thing here that is not part of any client's view of the room.
     /// It is persisted because Slate only runs while the group is playing — an
     /// in-memory table would be empty at the start of every session, which is
     /// exactly when re-picking last week's map wants to find one.
     ///
-    /// It grows by an entry per distinct map ever set and is never pruned. At a
-    /// hundred bytes an entry that is not worth a cap; a DM would have to load
-    /// tens of thousands of maps before this rivalled a single token image.
-    pub calibrations: HashMap<String, Calibration>,
+    /// It grows by an entry per distinct map ever set and is never pruned. A
+    /// calibration is a hundred bytes; an entry carrying a fully traced dungeon
+    /// is nearer a couple of hundred kilobytes, so this is no longer free — and
+    /// it is still not worth a cap, because the thing a cap would drop is the
+    /// half-hour of tracing this milestone exists to keep. The bound that
+    /// matters is `MAX_WALLS`, applied where a wall is traced.
+    pub calibrations: HashMap<String, Prepared>,
     /// Everybody's scratchpad, the DM's among them.
     ///
     /// **A list of pairs rather than the `HashMap<Owner, String>` the room
@@ -272,8 +276,8 @@ mod tests {
     use super::*;
     use crate::fog::Override;
     use crate::protocol::{
-        Hp, InitiativeEntry, Lighting, Origin, Owner, PlayerId, Pos, Px, Rect, ShapeId, ShapeKind,
-        TokenId, WallId, WallKind,
+        Calibration, Hp, InitiativeEntry, Lighting, Origin, Owner, PlayerId, Pos, Px, Rect,
+        ShapeId, ShapeKind, TokenId, WallId, WallKind,
     };
 
     static NEXT: AtomicU32 = AtomicU32::new(0);
@@ -423,15 +427,31 @@ mod tests {
             show_cursors: false,
             calibrations: HashMap::from([(
                 "/uploads/digital-goblin-camp-1a2b3c4d.jpg".to_owned(),
-                Calibration {
-                    grid_px: 82.0,
-                    offset_x: 11.0,
-                    offset_y: -6.0,
-                    grid_color: "#00ff00ff".to_owned(),
-                    play_area: None,
-                    fog: true,
-                    vision_ft: 30.0,
-                    lighting: Lighting::Room,
+                Prepared {
+                    calibration: Calibration {
+                        grid_px: 82.0,
+                        offset_x: 11.0,
+                        offset_y: -6.0,
+                        grid_color: "#00ff00ff".to_owned(),
+                        play_area: None,
+                        fog: true,
+                        vision_ft: 30.0,
+                        lighting: Lighting::Room,
+                    },
+                    // A map the DM prepared and then loaded away from. The
+                    // calibration above rides on a flattened struct, so these
+                    // two sit beside its fields rather than under a key of their
+                    // own — which is the whole of why an older save still loads.
+                    walls: vec![Wall {
+                        id: WallId("w2".to_owned()),
+                        from: Px { x: 8.0, y: 8.0 },
+                        to: Px { x: 8.0, y: 200.0 },
+                        kind: WallKind::Solid,
+                    }],
+                    overrides: crate::fog::pack_overrides(&HashMap::from([(
+                        (4, 4),
+                        Override::Dark,
+                    )])),
                 },
             )]),
             // Two of them, one the DM's and one a player's, because the pair is
@@ -540,9 +560,27 @@ mod tests {
             .calibrations
             .get("/uploads/digital-goblin-camp-1a2b3c4d.jpg")
             .expect("the remembered calibration");
-        assert_eq!(remembered.grid_px, 82.0);
-        assert_eq!((remembered.offset_x, remembered.offset_y), (11.0, -6.0));
-        assert_eq!(remembered.grid_color, "#00ff00ff");
+        assert_eq!(remembered.calibration.grid_px, 82.0);
+        assert_eq!(
+            (
+                remembered.calibration.offset_x,
+                remembered.calibration.offset_y
+            ),
+            (11.0, -6.0)
+        );
+        assert_eq!(remembered.calibration.grid_color, "#00ff00ff");
+        // And the rest of the shelf. The tracing is what makes this table worth
+        // keeping across a restart at all — a calibration is a minute's work and
+        // a walled dungeon is an evening's.
+        assert_eq!(remembered.walls.len(), 1);
+        assert_eq!(
+            remembered.walls.first().expect("the remembered wall").to,
+            Px { x: 8.0, y: 200.0 }
+        );
+        assert_eq!(
+            crate::fog::unpack_overrides(&remembered.overrides).get(&(4, 4)),
+            Some(&Override::Dark)
+        );
 
         assert!(
             !loaded.show_names,
@@ -690,7 +728,7 @@ mod tests {
 
         assert!(
             loaded.calibrations.is_empty(),
-            "a save predating the table means nothing has been calibrated yet"
+            "a save predating the table means nothing has been prepared yet"
         );
         assert!(
             loaded.staged.is_none(),
@@ -711,6 +749,48 @@ mod tests {
             "a save predating cursors was drawing none, so this one cannot argue \
              from what the room was already doing — it defaults on because a \
              feature switched off in every existing room is one nobody finds"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_calibration_saved_before_the_shelf_loads_beside_empty_walls() {
+        // Invariant 2 on the one field milestone 31 changed the shape of, and it
+        // is worth its own test because the failure is total and silent: every
+        // map the DM has ever calibrated lives in this table, and an entry that
+        // stopped deserializing would empty all of it on an upgrade.
+        //
+        // The entry here is what the room wrote before there was a shelf — the
+        // calibration's own fields, with no `walls` or `overrides` beside them.
+        // It loads because `Prepared` flattens the calibration rather than
+        // nesting it under a key, which is `StagedView`'s trick for the same
+        // reason.
+        let file = TempFile::new();
+        std::fs::write(
+            &file.0,
+            br#"{"tokens":[],"calibrations":{"/uploads/cave.png":{"grid_px":82,"offset_x":11,"offset_y":-6,"fog":true,"vision_ft":30}}}"#,
+        )
+        .expect("write");
+
+        let loaded = file.store().load().await.expect("loads").expect("a room");
+        let remembered = loaded
+            .calibrations
+            .get("/uploads/cave.png")
+            .expect("the calibration is still there");
+
+        assert_eq!(remembered.calibration.grid_px, 82.0);
+        assert_eq!(
+            (
+                remembered.calibration.offset_x,
+                remembered.calibration.offset_y
+            ),
+            (11.0, -6.0)
+        );
+        assert!(remembered.calibration.fog);
+        assert_eq!(remembered.calibration.vision_ft, 30.0);
+        assert!(
+            remembered.walls.is_empty(),
+            "a map prepared before the shelf existed had nothing traced on it, \
+             which is exactly what an empty list says"
         );
     }
 

@@ -25,7 +25,7 @@
 import type { Box, Calibration } from './calibrate.js';
 import { gridFromBox, MAX_CELLS, MIN_GRID_PX, playAreaFromBox } from './calibrate.js';
 import type { GridSpec, Rect } from './coords.js';
-import { createLibraryList, urlFrom } from './library.js';
+import { createLibraryList } from './library.js';
 import type { ClientMsg, Lighting } from './protocol.js';
 import type { Board, Scene } from './scene.js';
 
@@ -424,39 +424,24 @@ export function createMapTool(
 
   // --- upload ---------------------------------------------------------------
 
-  ui.file.addEventListener('change', () => {
-    const file = ui.file.files?.[0];
-    // Cleared so that picking the same file twice still fires a change event.
-    ui.file.value = '';
-    if (file !== undefined) void upload(file);
-  });
-
-  async function upload(file: File): Promise<void> {
-    if (scene === null) return;
-
-    ui.root.classList.add('is-busy');
-    ui.uploadText.textContent = 'uploading…';
-    try {
-      const response = await fetch('/api/map', {
-        method: 'POST',
-        headers: { 'x-slate-dm-secret': dmSecret },
-        body: file,
-      });
-      showNewMap(await urlFrom(response, 'upload failed'));
-    } catch (err) {
-      report(err instanceof Error ? err.message : 'could not upload that map');
-    } finally {
-      ui.root.classList.remove('is-busy');
-      ui.uploadText.textContent = 'upload image…';
-    }
-  }
-
   // --- the library ----------------------------------------------------------
 
   // `showNewMap` guards on the scene being there, so a pick landing before the
   // first frame does nothing rather than half a load.
+  //
+  // **The upload button is the library's now.** It used to POST to `/api/map`,
+  // which wrote the bytes into `uploads/` under a fresh UUID — a map that could
+  // not be found again next session, and whose calibration a second upload of
+  // the same file would not match. Handing the input to the widget makes an
+  // uploaded map a library map, and there is one code path instead of two.
   const library = createLibraryList(
-    { root: ui.root, button: ui.library, list: ui.libraryList },
+    {
+      root: ui.root,
+      button: ui.library,
+      list: ui.libraryList,
+      file: ui.file,
+      fileText: ui.uploadText,
+    },
     dmSecret,
     'maps',
     showNewMap,

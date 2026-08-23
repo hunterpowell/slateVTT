@@ -28,15 +28,26 @@ before Slate starts, the board sits around 166MB used of 905MB — there is room
 /opt/slate/            root-owned, replaced by every deploy
   bin/slate-server
   client/              index.html, dist/, assets/, spells/
-  maps/                the DM's map picker library
-  portraits/           the DM's token art library
 
 /var/lib/slate/        slate-owned, never touched by a deploy
   slate-state.json
   uploads/
+  maps/                the DM's map picker library
+  portraits/           the DM's token art library
+  backdrops/           the DM's backdrop library
 
 /etc/slate/slate.env   root-only, holds the DM secret
 ```
+
+**The three libraries are data, not deploy artifacts, and that changed in milestone 32.** They
+used to sit under `/opt/slate` and be wiped and re-copied by every deploy, which was right while
+the only way to get a map into one was an `scp`. The DM adds and removes images from the panel
+now, so a folder the deploy replaces would throw that away on the next build — and, more bluntly,
+`ProtectSystem=strict` makes everything outside `ReadWritePaths` read-only to the service, so an
+add under `/opt/slate` would not have worked at all. Moving them beside `uploads/` fixes the
+permission, the ownership and the wipe together, and puts them inside what *5. Backups* already
+copies. The repo's own `maps/` and `portraits/` are seed content: copied in once at install, and
+never again.
 
 The split is the backup boundary. **`/var/lib/slate` is the only directory worth backing
 up**, and a deploy never writes there. Everything under `/opt/slate` is reproducible from a
@@ -124,8 +135,8 @@ root.
 ```bash
 sudo adduser --system --group --no-create-home --home /var/lib/slate --shell /usr/sbin/nologin slate
 
-sudo mkdir -p /opt/slate/{bin,client,maps,portraits}
-sudo mkdir -p /var/lib/slate/uploads
+sudo mkdir -p /opt/slate/{bin,client}
+sudo mkdir -p /var/lib/slate/{uploads,maps,portraits,backdrops}
 
 sudo chown -R root:root /opt/slate
 sudo chown -R slate:slate /var/lib/slate
@@ -138,8 +149,9 @@ SECRET=$(openssl rand -hex 16)
 sudo tee /etc/slate/slate.env >/dev/null <<EOF
 SLATE_ADDR=127.0.0.1:3000
 SLATE_CLIENT_DIR=/opt/slate/client
-SLATE_MAPS=/opt/slate/maps
-SLATE_PORTRAITS=/opt/slate/portraits
+SLATE_MAPS=/var/lib/slate/maps
+SLATE_PORTRAITS=/var/lib/slate/portraits
+SLATE_BACKDROPS=/var/lib/slate/backdrops
 SLATE_STATE=/var/lib/slate/slate-state.json
 SLATE_UPLOADS=/var/lib/slate/uploads
 SLATE_DM_SECRET=$SECRET
@@ -213,7 +225,10 @@ sudo systemctl enable --now slate
 `Restart=always` is the self-healing half of an unattended box: a crash, or an OOM kill, is a
 five-second gap rather than a dead evening. `ProtectSystem=strict` makes the whole filesystem
 read-only to the service except the one path named in `ReadWritePaths`, which costs nothing
-because Slate only ever writes its state file and `uploads/`.
+because everything Slate writes — its state file, `uploads/`, and the three libraries the DM adds
+to from the panel — is under `/var/lib/slate`. **That is the reason the libraries live there**: a
+map added from the map panel is a write, and a write anywhere else is refused by systemd before it
+reaches the filesystem.
 
 `systemctl stop` sends `SIGTERM`, which `server/src/main.rs` handles — so a stop flushes a
 change still inside the two-second save debounce, exactly as Ctrl+C does on Windows.
@@ -270,8 +285,11 @@ scp    client\index.html <user>@slate.local:stage/client/
 scp -r client\dist       <user>@slate.local:stage/client/
 scp -r client\assets     <user>@slate.local:stage/client/
 scp -r client\spells     <user>@slate.local:stage/client/
+# Only needed for a first install — see the seeding step below. A routine
+# deploy does not touch the libraries at all.
 scp -r maps              <user>@slate.local:stage/
 scp -r portraits         <user>@slate.local:stage/
+scp -r backdrops         <user>@slate.local:stage/
 ```
 
 `client\src` and `client\node_modules` are deliberately absent. The Pi serves the bundle, not
@@ -288,13 +306,41 @@ Install into place, on the Pi. **Read the destinations carefully** — see *Comm
 sudo systemctl stop slate
 
 sudo install -o root -g root -m 755 ~/stage/slate-server /opt/slate/bin/slate-server
-sudo rm -rf /opt/slate/client/* /opt/slate/maps/* /opt/slate/portraits/*
+sudo rm -rf /opt/slate/client/*
 sudo cp -r ~/stage/client/.     /opt/slate/client/
-sudo cp -r ~/stage/maps/.       /opt/slate/maps/
-sudo cp -r ~/stage/portraits/.  /opt/slate/portraits/
 sudo chown -R root:root /opt/slate
 sudo chmod -R a+rX /opt/slate
 
+sudo systemctl start slate
+```
+
+**The libraries are not in that list, deliberately.** The client is replaced wholesale because
+every byte of it comes from the build; `maps/`, `portraits/` and `backdrops/` are the DM's own
+folders and a deploy has nothing to say about them. Seeding them is a one-off, on the first
+install only:
+
+```bash
+# once, at install time — and never again, or a removed map comes back
+sudo -u slate cp -rn ~/stage/maps/.       /var/lib/slate/maps/
+sudo -u slate cp -rn ~/stage/portraits/.  /var/lib/slate/portraits/
+sudo -u slate cp -rn ~/stage/backdrops/.  /var/lib/slate/backdrops/
+```
+
+`-n` rather than a plain copy: it never overwrites, so running this again by mistake cannot
+replace art the DM has since changed. It will still put back a file they *removed*, which is why
+this is an install step and not part of the deploy.
+
+Upgrading a Pi that predates milestone 32 means moving what is already there, once:
+
+```bash
+sudo systemctl stop slate
+sudo mkdir -p /var/lib/slate/{maps,portraits,backdrops}
+sudo cp -rn /opt/slate/maps/.       /var/lib/slate/maps/
+sudo cp -rn /opt/slate/portraits/.  /var/lib/slate/portraits/
+sudo chown -R slate:slate /var/lib/slate
+sudo rm -rf /opt/slate/maps /opt/slate/portraits
+# then update SLATE_MAPS / SLATE_PORTRAITS and add SLATE_BACKDROPS in
+# /etc/slate/slate.env, and start it again
 sudo systemctl start slate
 ```
 
@@ -606,6 +652,11 @@ Two things the proxy imposes that loopback did not:
 `/var/lib/slate` is the only thing on this box worth keeping, for the reason *Layout* gives:
 everything else is reproducible from a build, and this is not. Without a copy, an SD card
 failure costs the game rather than an evening.
+
+Since milestone 32 that now includes the three libraries, which moved here from `/opt/slate` when
+the DM gained the ability to add to them. The script needed no change — it archives the whole
+directory — but the thing being archived got more valuable: a map added from the panel exists
+nowhere else, unlike one that came out of the repo.
 
 [`Backup-Slate.ps1`](Backup-Slate.ps1) runs **on the Windows machine** and pulls:
 

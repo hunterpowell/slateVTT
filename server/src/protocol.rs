@@ -263,6 +263,44 @@ impl Calibration {
     }
 }
 
+/// Everything the DM has prepared on one map, keyed by that map's URL.
+///
+/// The shelf. `Calibration` above is *what the client sent* — the room builds
+/// one as a struct literal out of the `SetMap` fields — and this is what the
+/// room has learned about that image since. Keeping them apart is not
+/// bookkeeping: a recalibration overwrites the calibration and must not be able
+/// to reach the tracing, and with one type the obvious way to write that arm
+/// files empty walls over half an hour's work. Here the insert cannot reach
+/// them.
+///
+/// Server-side only, like the calibration it wraps: nothing here is on
+/// `RoomView` and no `ServerMsg` carries it, because the finished `MapInfo` and
+/// the board's own `walls` already say everything a client needs.
+///
+/// `Calibration` is flattened, so the disk shape is what it always was with two
+/// keys added beside it — `StagedView`'s trick, and for the same reason: a save
+/// written before this milestone loads as a calibrated map with nothing traced
+/// on it, which is exactly what it was.
+///
+/// No `PartialEq`, unlike `Calibration`. `Wall` does not derive it, and a
+/// comparison of two shelves is not something anything here wants.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(default)]
+pub struct Prepared {
+    #[serde(flatten)]
+    pub calibration: Calibration,
+    /// Traced over this image and filed under it as the map leaves the board,
+    /// so a dungeon walled on a Tuesday is still walled on Saturday. Bounded
+    /// where it is traced — `MAX_WALLS` — and never on the wire, so there is no
+    /// frame-cap question here.
+    pub walls: Vec<Wall>,
+    /// Painted over this image, and remembered beside the walls because both
+    /// are the DM's authoring. Packed like every other override list that goes
+    /// to disk, and for the same reason: `Cell` is a tuple and JSON has no key
+    /// shaped like one.
+    pub overrides: OverrideView,
+}
+
 /// What the DM is counting down on a creature. Not a stat block: nothing here
 /// knows what a hit point *means*, only that the DM wrote two numbers down.
 ///

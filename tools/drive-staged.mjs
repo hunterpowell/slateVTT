@@ -154,7 +154,7 @@ async function trace(session, corners) {
  */
 const pickMap = (session, n) =>
   session.evaluate(`(() => {
-    const list = [...document.querySelectorAll('#map-library-list button')];
+    const list = [...document.querySelectorAll('#map-library-list .map-library-pick')];
     const b = list[${n}];
     if (b === undefined) return null;
     const name = b.textContent;
@@ -274,8 +274,18 @@ check(
   await text(dm, '#wall-hint'),
   'Tracing the map being prepared. Click any door to swing it.',
 );
+// **The one check in this script a re-run can change, since milestone 31.** The
+// shelf hands a staged map back whatever was last traced on *it*, so a second
+// run against a state file this script has already touched finds the door it
+// hung last time. That is the feature rather than a fault, and it is why the
+// README's "start from a fresh SLATE_STATE" is now load-bearing rather than
+// advisory. Cleared here the way the board was cleared above, so that what is
+// asserted below is the thing that must never be true on any run: the board's
+// own masonry did not follow the map into the slot.
+await dm.evaluate('document.querySelector("#wall-clear").click(); "ok"');
+await dm.wait(400);
 check(
-  'the staged map is untraced, which is not the board it just left',
+  'the staged map is untraced — the board it just left did not come with it',
   await text(dm, '#wall-readout'),
   'nothing traced',
 );

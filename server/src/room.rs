@@ -18,9 +18,9 @@ use uuid::Uuid;
 use crate::fog::{self, Cell, FogView, Override, OverrideView};
 use crate::protocol::{
     Calibration, ChatLine, ChatTo, ClientId, ClientMsg, Colours, Diagonals, Hp, Initiative,
-    InitiativeEntry, MapInfo, Origin, Owner, PALETTE, PlayerId, Pos, Px, RoomView, RosterEntry,
-    RosterSlot, ServerMsg, Shape, ShapeId, ShapeKind, StagedView, Token, TokenId, TokenView, Wall,
-    WallId, WallKind,
+    InitiativeEntry, MapInfo, Origin, Owner, PALETTE, PlayerId, Pos, Prepared, Px, RoomView,
+    RosterEntry, RosterSlot, ServerMsg, Shape, ShapeId, ShapeKind, StagedView, Token, TokenId,
+    TokenView, Wall, WallId, WallKind,
 };
 use crate::store::{Saved, SavedNote, Store};
 
@@ -763,10 +763,15 @@ pub struct RoomState {
     /// behind the picture, so taking it down puts the table back exactly where
     /// they were. A backdrop is not a map: see `docs/maps.md`.
     backdrop: Option<String>,
-    /// How each map URL was last calibrated. Server-side only — it never enters
-    /// a snapshot or a message, because the finished `MapInfo` already says
-    /// everything a client needs.
-    calibrations: HashMap<String, Calibration>,
+    /// Everything the DM has prepared on each map, keyed by its URL: the grid
+    /// they calibrated, the walls they traced and the fog they painted.
+    ///
+    /// Server-side only — it never enters a snapshot or a message, because the
+    /// finished `MapInfo` and the board's own `walls` already say everything a
+    /// client needs. **The shelf, not a scene list**: it holds what the DM
+    /// authored on an image and nothing about play — no tokens, no initiative,
+    /// and pointedly no `revealed`. See `docs/maps.md`.
+    calibrations: HashMap<String, Prepared>,
     /// The last few states of the room, oldest first, for the DM's undo.
     ///
     /// **Post-state, so the back of it is always the room as it is now.** An
@@ -3244,10 +3249,28 @@ impl RoomState {
                     Some(&self.map.url)
                 };
                 let loading = showing != Some(&url);
-                let calibration = match self.calibrations.get(&url) {
-                    Some(remembered) if loading => remembered.clone(),
-                    _ => {
-                        self.calibrations.insert(url.clone(), given.clone());
+                //
+                // **A recalibration writes the calibration and nothing else.**
+                // The entry also holds the walls and the paint prepared on this
+                // image, and they are not the client's to send — an insert of a
+                // whole `Prepared` here would file empty walls over half an hour
+                // of tracing every time the DM nudged the grid, and the board
+                // would go on showing them until the map was next loaded away
+                // from. Assigning the one field is what makes that unsayable.
+                let calibration = match self.calibrations.get_mut(&url) {
+                    Some(prepared) if loading => prepared.calibration.clone(),
+                    Some(prepared) => {
+                        prepared.calibration = given.clone();
+                        given
+                    }
+                    None => {
+                        self.calibrations.insert(
+                            url.clone(),
+                            Prepared {
+                                calibration: given.clone(),
+                                ..Prepared::default()
+                            },
+                        );
                         given
                     }
                 };
@@ -3255,7 +3278,7 @@ impl RoomState {
                 // One table, keyed by URL, for both slots. Calibrating a map
                 // while it is staged is what makes it arrive on the board
                 // already calibrated when it is promoted.
-                let finished = calibration.into_map(url);
+                let finished = calibration.into_map(url.clone());
                 if staged {
                     // Staged token state belongs to the staged map and dies with
                     // it. `loading` is what tells the two cases apart, and it is
@@ -3292,7 +3315,22 @@ impl RoomState {
                             finished.play_area,
                         )
                     });
-                    let carried = match self.staged.take() {
+                    let previous = self.staged.take();
+                    // **The second write site, and the one that gets missed.**
+                    // A staged board never passes through `sweep_board`; it dies
+                    // right here, where a load discards whatever was in the slot.
+                    // The rule is the live board's — what a board had traced on
+                    // it is filed under *its* URL as it stops being held — and
+                    // the only difference is that the URL and the walls are both
+                    // in hand rather than on `self`.
+                    if loading && let Some(board) = &previous {
+                        self.shelve(
+                            &board.map.url,
+                            board.walls.clone(),
+                            fog::pack_overrides(&board.overrides),
+                        );
+                    }
+                    let carried = match previous {
                         Some(board) if !loading => StagedBoard {
                             map: finished,
                             walls: board.walls,
@@ -3302,12 +3340,19 @@ impl RoomState {
                                 board.overrides
                             },
                         },
-                        // A load, or the first map into an empty slot. Either way
-                        // there is nothing to carry.
-                        _ => StagedBoard {
-                            map: finished,
-                            ..StagedBoard::default()
-                        },
+                        // A load, or the first map into an empty slot. Nothing is
+                        // carried *across* — but whatever the DM last prepared on
+                        // this image comes back off the shelf with it, which is
+                        // what lets three dungeons be traced on a Tuesday and
+                        // found still traced on Saturday.
+                        _ => {
+                            let (walls, overrides) = self.prepared(&url);
+                            StagedBoard {
+                                map: finished,
+                                walls,
+                                overrides,
+                            }
+                        }
                     };
                     self.staged = Some(carried);
 
@@ -3349,27 +3394,66 @@ impl RoomState {
                     // Deliberately not cleared here. A plan describes a cell on
                     // the staged map, which this command has not touched — the
                     // plans are still about the map they were made on.
-                    self.map = finished;
+                    //
+                    // The URL of the board being left, read before the
+                    // assignment overwrites it. `sweep_board` files what was
+                    // traced on it under this, and it cannot work the name out
+                    // for itself — see the note on that function.
+                    let outgoing = std::mem::replace(&mut self.map, finished).url;
                     let mut events = vec![Event::MapChanged];
-                    if reshaped {
+                    // The drawings and the walls are the opposite case from the
+                    // plans, and turn on `loading`: they describe this image, and
+                    // a new one is a new dungeon where none of it means anything.
+                    // A recalibration must leave them alone, exactly as it leaves
+                    // the plans alone — this is the arm that gets missed.
+                    //
+                    // **The two arms are exclusive and that ordering is
+                    // load-bearing since milestone 31.** A load clears
+                    // everything the reshaped arm below clears, so running that
+                    // arm first would be harmless — except that it would empty
+                    // the overrides *before* the sweep files them, and the DM's
+                    // painted fog would go on the shelf as nothing. Whatever a
+                    // board is remembered by has to be read while the board
+                    // still holds it.
+                    if loading {
+                        // What the sweep is about to gate its own two events on.
+                        // Read here because both events are materialised at
+                        // *dispatch* against whatever the board holds then, so a
+                        // frame the sweep already pushed will carry the restored
+                        // list and a second naming the same one says nothing.
+                        let swept = (!self.walls.is_empty(), !self.overrides.is_empty());
+                        events.append(&mut self.sweep_board(&outgoing));
+
+                        // And the other half of the shelf: whatever the DM last
+                        // traced and painted on the image that just arrived
+                        // comes back with it. After the sweep, never before it —
+                        // the sweep clears exactly these two.
+                        let (walls, overrides) = self.prepared(&url);
+                        self.walls = walls;
+                        self.overrides = overrides;
+                        if !self.walls.is_empty() && !swept.0 {
+                            events.push(Event::WallsChanged { staged: false });
+                        }
+                        if !self.overrides.is_empty() && !swept.1 {
+                            events.push(Event::OverridesChanged { staged: false });
+                        }
+                    } else if reshaped {
                         self.forget_fog();
                         // And the DM's overrides, by the identical argument: they
                         // are cells, and the squares they name have just moved
                         // out from under them. This one needs its own event —
                         // nothing recomputes it, so the DM's panel would go on
                         // drawing a mask the room no longer holds.
+                        //
+                        // The shelf is deliberately not written here: a
+                        // recalibration is not the map leaving. What gets filed
+                        // is whatever the board is holding when it does leave,
+                        // which after this is nothing — the same answer the
+                        // board has just given the DM on screen.
                         if !self.overrides.is_empty() {
                             self.overrides.clear();
                             events.push(Event::OverridesChanged { staged: false });
                         }
-                    }
-                    // The drawings and the walls are the opposite case, and turn
-                    // on the same `loading`: they describe this image, and a new
-                    // one is a new dungeon where none of it means anything. A
-                    // recalibration must leave them alone, exactly as it leaves
-                    // the plans alone — this is the arm that gets missed.
-                    if loading {
-                        events.append(&mut self.sweep_board());
                     }
                     events
                 }
@@ -3401,7 +3485,13 @@ impl RoomState {
                 // land in their place rather than nothing landing — which is the
                 // whole feature, and the reason `sweep_board` is called before
                 // the assignment rather than after it.
-                events.append(&mut self.sweep_board());
+                //
+                // The URL passed in is the *outgoing* board's, and here that is
+                // simply `self.map` — the assignment is on the line below rather
+                // than above, which is the whole reason `sweep_board` cannot
+                // read it for itself.
+                let outgoing = self.map.url.clone();
+                events.append(&mut self.sweep_board(&outgoing));
                 self.map = board.map;
                 self.walls = board.walls;
                 self.overrides = board.overrides;
@@ -3427,7 +3517,23 @@ impl RoomState {
 
             ClientMsg::ClearStaged => {
                 let mut events = self.clear_staged_tokens();
-                self.staged = None;
+                // The staged slot's other exit, and it files what it is throwing
+                // away for the reason the load arm does: the shelf is keyed by
+                // image, not by slot, so which of the two buttons the DM pressed
+                // must not change what next week's load finds. Discarding the
+                // *prep* is `ClearWalls`, which is a step on the ring; this
+                // discards the slot.
+                //
+                // The plans go the other way and are gone — they are on the
+                // tokens, not on the map. See *Two deliberate omissions* in
+                // `docs/maps.md`.
+                if let Some(board) = self.staged.take() {
+                    self.shelve(
+                        &board.map.url,
+                        board.walls,
+                        fog::pack_overrides(&board.overrides),
+                    );
+                }
                 events.push(Event::StagedChanged);
                 events
             }
@@ -3924,6 +4030,46 @@ impl RoomState {
         events
     }
 
+    /// Files what was traced and painted on one image under that image's URL.
+    ///
+    /// **The shelf's only write.** Four paths reach it — a load into the live
+    /// slot and a promote, both through `sweep_board`, and the two ways a staged
+    /// board leaves its slot — and they hand over different boards, which is why
+    /// the walls and the paint are arguments rather than read off `self`. The
+    /// rule they share is that a board's authoring is filed whenever that board
+    /// stops being held, so which of them the DM triggered cannot change what
+    /// the shelf remembers.
+    ///
+    /// Whatever the board actually holds, including nothing: a DM who cleared
+    /// the walls and then loaded away has cleared them, and filing only
+    /// non-empty lists would make that unsayable.
+    ///
+    /// Nothing is filed about the blank map a fresh room starts on: `check`
+    /// refuses an empty map URL, so that string names no map anyone could load
+    /// back.
+    ///
+    /// The read is not here. `Prepared` is looked up in the one arm that loads a
+    /// map, beside the calibration it has always looked up.
+    fn shelve(&mut self, url: &str, walls: Vec<Wall>, overrides: OverrideView) {
+        if url.is_empty() {
+            return;
+        }
+        let prepared = self.calibrations.entry(url.to_owned()).or_default();
+        prepared.walls = walls;
+        prepared.overrides = overrides;
+    }
+
+    /// What was last traced and painted on an image, ready to go back onto a
+    /// board. Empty for a map nothing has ever been prepared on, which is what
+    /// an untraced map looks like anyway.
+    fn prepared(&self, url: &str) -> (Vec<Wall>, HashMap<Cell, Override>) {
+        self.calibrations
+            .get(url)
+            .map_or_else(Default::default, |p| {
+                (p.walls.clone(), fog::unpack_overrides(&p.overrides))
+            })
+    }
+
     /// Everything drawn or traced over the map image, thrown away because that
     /// image is being replaced.
     ///
@@ -3942,7 +4088,25 @@ impl RoomState {
     /// happened to a board that had nothing on it — the same gate the initiative
     /// panel uses, for the third time. `WallsChanged` reaches the DM alone, who
     /// is the one doing this, so the gate there is merely honest.
-    fn sweep_board(&mut self) -> Vec<Event> {
+    ///
+    /// **The outgoing map's URL is passed in rather than read off `self.map`,
+    /// and that is not a style choice.** The two call sites order the map
+    /// assignment opposite ways round — a `SetMap` assigns and then sweeps,
+    /// while a promote sweeps and then assigns — so `self.map.url` in here is
+    /// the *incoming* map on one path and the outgoing one on the other. Filing
+    /// a dungeon's masonry under the name of the map that replaced it puts the
+    /// walls back on the wrong image, and nothing about it looks wrong until
+    /// the DM loads away and back.
+    fn sweep_board(&mut self, outgoing: &str) -> Vec<Event> {
+        // Onto the shelf before any of it is cleared. What follows is the same
+        // destruction it always was; what changed in milestone 31 is that the
+        // map keeps a copy of what was on it, so loading away is no longer
+        // half an hour of tracing gone.
+        self.shelve(
+            outgoing,
+            self.walls.clone(),
+            fog::pack_overrides(&self.overrides),
+        );
         let mut events = Vec::new();
         if !self.shapes.is_empty() {
             self.shapes.clear();

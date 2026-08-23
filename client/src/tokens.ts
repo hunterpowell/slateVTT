@@ -22,7 +22,7 @@
 // server re-checks every command regardless.
 
 import type { Vec2 } from './coords.js';
-import { createLibraryList, urlFrom } from './library.js';
+import { createLibraryList } from './library.js';
 import type { ClientMsg, Hp, Owner, RosterEntry } from './protocol.js';
 import type { Scene, Token } from './scene.js';
 import { shownPos } from './scene.js';
@@ -289,35 +289,18 @@ export function createTokenTool(
     if (selected() !== null) save();
   };
 
-  ui.art.addEventListener('change', () => {
-    const file = ui.art.files?.[0];
-    // Cleared so that picking the same file twice still fires a change event.
-    ui.art.value = '';
-    if (file !== undefined) void upload(file);
-  });
-
-  async function upload(file: File): Promise<void> {
-    ui.root.classList.add('is-busy');
-    ui.artText.textContent = 'uploading…';
-    try {
-      const response = await fetch('/api/token', {
-        method: 'POST',
-        headers: { 'x-slate-dm-secret': dmSecret },
-        body: file,
-      });
-      useArt(await urlFrom(response, 'upload failed'));
-    } catch (err) {
-      report(err instanceof Error ? err.message : 'could not upload that image');
-    } finally {
-      ui.root.classList.remove('is-busy');
-      ui.artText.textContent = 'upload art…';
-    }
-  }
-
   // The party's portraits are the same six files every session, so uploading
-  // them once per token is work the folder can do instead.
+  // them once per token is work the folder can do instead — and since the
+  // upload button became the library's, uploading one *is* putting it in the
+  // folder. The art a DM drags in for one monster is there for the next one.
   const library = createLibraryList(
-    { root: ui.root, button: ui.library, list: ui.libraryList },
+    {
+      root: ui.root,
+      button: ui.library,
+      list: ui.libraryList,
+      file: ui.art,
+      fileText: ui.artText,
+    },
     dmSecret,
     'portraits',
     useArt,

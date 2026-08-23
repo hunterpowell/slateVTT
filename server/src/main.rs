@@ -10,7 +10,7 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use axum::body::Bytes;
-use axum::extract::{DefaultBodyLimit, State, WebSocketUpgrade};
+use axum::extract::{DefaultBodyLimit, Path as UrlPath, Query, State, WebSocketUpgrade};
 use axum::http::{HeaderMap, StatusCode};
 use axum::response::Response;
 use axum::routing::{get, post};
@@ -85,6 +85,17 @@ enum Library {
 }
 
 impl Library {
+    /// The folder named by the `{library}` segment of an `/api` path, which is
+    /// also the plural the client's `createLibraryList` is built around.
+    fn named(segment: &str) -> Option<Self> {
+        match segment {
+            "maps" => Some(Self::Maps),
+            "portraits" => Some(Self::Portraits),
+            "backdrops" => Some(Self::Backdrops),
+            _ => None,
+        }
+    }
+
     fn dir(self, state: &AppState) -> Arc<Path> {
         match self {
             Self::Maps => state.maps.clone(),
@@ -241,26 +252,27 @@ async fn main() {
 
     let app = Router::new()
         .route("/ws", get(ws_handler))
-        // One handler, two routes. A map and a token portrait are the same
-        // operation — prove some bytes are an image, give them a name of ours —
-        // and differ only in how large they are allowed to be.
+        // **Three libraries and four things to do to one**, so the folder is a
+        // path segment rather than twelve routes each a line of their own. It
+        // was six wrappers when there were two verbs; `Library::named` is what
+        // replaced them, and an unknown segment is a 404 rather than the client
+        // fallback it used to fall through to.
+        //
+        // There is no separate upload route any more. Adding an image *is*
+        // putting it in the library — see `add`, which ends by picking the file
+        // it just wrote, so an upload and a pick answer with the same URL for
+        // the same bytes.
+        .route("/api/{library}", get(listing))
+        .route("/api/{library}/pick", post(pick))
+        // The body limit is the largest any library allows, because one route
+        // serves all three; the per-library cap is checked inside the handler,
+        // where it can be refused with a sentence instead of a dropped
+        // connection.
         .route(
-            "/api/map",
-            post(upload_image).layer(DefaultBodyLimit::max(MAX_MAP_BYTES)),
+            "/api/{library}/add",
+            post(add).layer(DefaultBodyLimit::max(MAX_MAP_BYTES)),
         )
-        .route(
-            "/api/token",
-            post(upload_image).layer(DefaultBodyLimit::max(MAX_TOKEN_BYTES)),
-        )
-        // Three libraries behind six routes that are each one line of their own.
-        // The folder is the only thing that differs, so `Library` carries it and
-        // the pair of handlers below is shared.
-        .route("/api/maps", get(list_maps))
-        .route("/api/maps/pick", post(pick_map))
-        .route("/api/portraits", get(list_portraits))
-        .route("/api/portraits/pick", post(pick_portrait))
-        .route("/api/backdrops", get(list_backdrops))
-        .route("/api/backdrops/pick", post(pick_backdrop))
+        .route("/api/{library}/remove", post(remove))
         .nest_service("/uploads", ServeDir::new(&uploads_dir))
         .fallback_service(ServeDir::new(&client_dir).append_index_html_on_directories(true))
         .with_state(state);
@@ -351,48 +363,50 @@ struct Listing {
     files: Vec<String>,
 }
 
-/// Everything in a library, as paths to hand back to the matching pick route.
+/// **Neither of the two routes that hand back a URL touches the room.** The DM's
+/// client follows one with a `set_map`, a `create_token` or a `set_backdrop`, so
+/// the change players actually see goes through the same permission check, event
+/// pipeline and visibility filter as everything else, rather than getting a
+/// private back door into `RoomState`.
+/// Which library a request is about, or a 404 saying there is no such folder.
+///
+/// Every handler below starts here, and none of them is reachable without the
+/// secret: the DM's credential is the only one Slate has, and a player
+/// enumerating the maps folder is the next dungeon in devtools.
+fn library_named(
+    state: &AppState,
+    headers: &HeaderMap,
+    segment: &str,
+    doing: &str,
+) -> Result<Library, (StatusCode, String)> {
+    let Some(which) = Library::named(segment) else {
+        return Err((StatusCode::NOT_FOUND, "there is no such library".to_owned()));
+    };
+    if !is_dm(state, headers) {
+        return Err(not_the_dm(&format!("{doing} the {} library", which.noun())));
+    }
+    Ok(which)
+}
+
+/// Everything in a library, as paths to hand back to the routes below.
 ///
 /// DM-only. No room state is involved, so this is not invariant 4 in the strict
 /// sense, but a player reading off the names of every map the DM has prepared is
 /// the same problem wearing a different hat.
 async fn listing(
-    state: &AppState,
-    headers: &HeaderMap,
-    which: Library,
+    State(state): State<AppState>,
+    UrlPath(segment): UrlPath<String>,
+    headers: HeaderMap,
 ) -> Result<Json<Listing>, (StatusCode, String)> {
-    if !is_dm(state, headers) {
-        return Err(not_the_dm(&format!("browse the {} library", which.noun())));
-    }
+    let which = library_named(&state, &headers, &segment, "browse")?;
 
     Ok(Json(Listing {
-        files: library::list(&which.dir(state)).await,
+        files: library::list(&which.dir(&state)).await,
     }))
 }
 
-async fn list_maps(
-    State(state): State<AppState>,
-    headers: HeaderMap,
-) -> Result<Json<Listing>, (StatusCode, String)> {
-    listing(&state, &headers, Library::Maps).await
-}
-
-async fn list_portraits(
-    State(state): State<AppState>,
-    headers: HeaderMap,
-) -> Result<Json<Listing>, (StatusCode, String)> {
-    listing(&state, &headers, Library::Portraits).await
-}
-
-async fn list_backdrops(
-    State(state): State<AppState>,
-    headers: HeaderMap,
-) -> Result<Json<Listing>, (StatusCode, String)> {
-    listing(&state, &headers, Library::Backdrops).await
-}
-
 #[derive(Deserialize)]
-struct PickRequest {
+struct LibraryPath {
     /// Relative to the library root, exactly as the listing reported it.
     path: String,
 }
@@ -400,24 +414,33 @@ struct PickRequest {
 /// Copies a file out of a library into the uploads directory and reports the
 /// URL it is now served at.
 ///
-/// The response is deliberately the same shape `upload_image` returns: from the
-/// client's point of view a pick and an upload differ only in where the bytes
-/// came from, and both are followed by an ordinary `set_map` or `update_token`.
+/// The response is deliberately the same shape an add returns: from the client's
+/// point of view a pick and an add differ only in whether the bytes were already
+/// on the disk, and both are followed by an ordinary `set_map` or `update_token`.
 async fn pick(
+    State(state): State<AppState>,
+    UrlPath(segment): UrlPath<String>,
+    headers: HeaderMap,
+    Json(request): Json<LibraryPath>,
+) -> Result<Json<StoredImage>, (StatusCode, String)> {
+    let which = library_named(&state, &headers, &segment, "pick out of")?;
+    copy_out(&state, which, &request.path).await
+}
+
+/// The pick itself, without the extraction — so that `add` can finish by picking
+/// the file it has just written rather than working out the same URL a second
+/// way. There is one path from "a file in the library" to "a URL it is served
+/// at", which is what makes an add and a later pick of the same file agree.
+async fn copy_out(
     state: &AppState,
-    headers: &HeaderMap,
-    request: PickRequest,
     which: Library,
+    requested: &str,
 ) -> Result<Json<StoredImage>, (StatusCode, String)> {
     let noun = which.noun();
-    if !is_dm(state, headers) {
-        return Err(not_the_dm(&format!("pick a {noun}")));
-    }
-
     let dir = which.dir(state);
-    let pick = library::resolve(&dir, &request.path).map_err(|err| match err {
+    let pick = library::resolve(&dir, requested).map_err(|err| match err {
         library::PickError::Rejected => {
-            warn!(path = %request.path, %noun, "refused a path that left the library");
+            warn!(path = %requested, %noun, "refused a path that left the library");
             (
                 StatusCode::BAD_REQUEST,
                 format!("that is not a {noun} in the library"),
@@ -453,7 +476,7 @@ async fn pick(
         )
     })?;
 
-    // Sniffed rather than taken from the name, for the same reason an upload is:
+    // Sniffed rather than taken from the name, for the same reason an add is:
     // the extension decides the `Content-Type` the copy is later served with, and
     // a file's name is not evidence of what is inside it.
     let Some(extension) = image_format(&bytes) else {
@@ -494,44 +517,44 @@ async fn pick(
     }))
 }
 
-async fn pick_map(
-    State(state): State<AppState>,
-    headers: HeaderMap,
-    Json(request): Json<PickRequest>,
-) -> Result<Json<StoredImage>, (StatusCode, String)> {
-    pick(&state, &headers, request, Library::Maps).await
+#[derive(Deserialize)]
+struct AddRequest {
+    /// What the DM called the file on their own machine. A name and never a
+    /// path — `library::destination` refuses anything with a separator in it,
+    /// rather than taking the last segment and quietly meaning something else.
+    name: String,
 }
 
-async fn pick_portrait(
-    State(state): State<AppState>,
-    headers: HeaderMap,
-    Json(request): Json<PickRequest>,
-) -> Result<Json<StoredImage>, (StatusCode, String)> {
-    pick(&state, &headers, request, Library::Portraits).await
-}
-
-async fn pick_backdrop(
-    State(state): State<AppState>,
-    headers: HeaderMap,
-    Json(request): Json<PickRequest>,
-) -> Result<Json<StoredImage>, (StatusCode, String)> {
-    pick(&state, &headers, request, Library::Backdrops).await
-}
-
-/// Stores an uploaded image — a map or a token's portrait — and reports the URL
-/// it is now served at.
+/// Writes an image into a library folder, then picks it.
 ///
-/// It deliberately does not touch the room. The DM's client follows this with a
-/// `set_map` or a `create_token`, so the change that players actually see goes
-/// through the same permission check, event pipeline and visibility filter as
-/// everything else, rather than getting a private back door into `RoomState`.
-async fn upload_image(
+/// **This is what the upload button does now, and there is no second route.**
+/// An image the DM uploads used to land in `uploads/` under a fresh UUID, which
+/// made it a one-off: it could not be found again next session and a second
+/// upload of the same file was a second URL, so the remembered calibration and
+/// the walls traced on it belonged to nobody. Adding to the library first makes
+/// an uploaded map exactly as durable as one that came out of the folder,
+/// because it *is* one.
+///
+/// The bytes are sniffed before anything is written, so what lands in the folder
+/// is an image with the extension it actually has.
+async fn add(
     State(state): State<AppState>,
+    UrlPath(segment): UrlPath<String>,
     headers: HeaderMap,
+    Query(request): Query<AddRequest>,
     body: Bytes,
 ) -> Result<Json<StoredImage>, (StatusCode, String)> {
-    if !is_dm(&state, &headers) {
-        return Err(not_the_dm("upload images"));
+    let which = library_named(&state, &headers, &segment, "add to")?;
+    let noun = which.noun();
+
+    // The route's own limit is the largest of the three, so this is where a
+    // portrait-sized cap is actually applied. Refused with a sentence rather
+    // than by dropping the connection, which is what the layer would do.
+    if body.len() > which.max_bytes() {
+        return Err((
+            StatusCode::PAYLOAD_TOO_LARGE,
+            format!("that {noun} is too large"),
+        ));
     }
 
     let Some(extension) = image_format(&body) else {
@@ -541,23 +564,87 @@ async fn upload_image(
         ));
     };
 
-    // The name is ours, never the client's: an uploaded filename is attacker
-    // input and would have to be sanitised before it could touch a path.
-    let name = format!("{}.{extension}", Uuid::new_v4().simple());
-    let path = state.uploads.join(&name);
+    let dir = which.dir(&state);
+    let path = library::destination(&dir, &request.name, extension).map_err(|err| match err {
+        library::AddError::Rejected => {
+            warn!(name = %request.name, %noun, "refused a name a library could not hold");
+            (
+                StatusCode::BAD_REQUEST,
+                format!("that is not a name a {noun} can have"),
+            )
+        }
+        library::AddError::Taken => (
+            StatusCode::CONFLICT,
+            format!("there is already a {noun} called that"),
+        ),
+    })?;
 
     fs::write(&path, &body).await.map_err(|err| {
-        error!(%err, path = %path.display(), "could not store the uploaded image");
+        error!(%err, path = %path.display(), "could not add that {noun}");
         (
             StatusCode::INTERNAL_SERVER_ERROR,
-            "could not store that image".to_owned(),
+            format!("could not add that {noun} to the library"),
         )
     })?;
 
-    info!(%name, bytes = body.len(), "stored an uploaded image");
-    Ok(Json(StoredImage {
-        url: format!("/uploads/{name}"),
-    }))
+    // `destination` proved this is one plain component directly in the folder,
+    // so the file's own name is the path a pick asks for.
+    let Some(name) = path.file_name().and_then(|name| name.to_str()) else {
+        return Err((
+            StatusCode::INTERNAL_SERVER_ERROR,
+            format!("could not add that {noun} to the library"),
+        ));
+    };
+    info!(%name, %noun, bytes = body.len(), "added a file to a library");
+
+    copy_out(&state, which, name).await
+}
+
+/// Deletes a file from a library folder.
+///
+/// **The copy in `uploads/` is deliberately left alone**, and so is everything
+/// keyed on the URL it is served at. Removing a map from the picker is saying
+/// "stop offering me this", not "erase this from the room" — a map currently on
+/// the board goes on being served, and the grid, the walls and the paint the DM
+/// prepared on it stay on the shelf. Re-adding a file under the same name later
+/// lands on the same URL and finds all of it waiting.
+///
+/// Only ever a file: `library::resolve` refuses a directory, so there is nothing
+/// here that can empty a folder.
+async fn remove(
+    State(state): State<AppState>,
+    UrlPath(segment): UrlPath<String>,
+    headers: HeaderMap,
+    Json(request): Json<LibraryPath>,
+) -> Result<StatusCode, (StatusCode, String)> {
+    let which = library_named(&state, &headers, &segment, "remove from")?;
+    let noun = which.noun();
+
+    let dir = which.dir(&state);
+    let pick = library::resolve(&dir, &request.path).map_err(|err| match err {
+        library::PickError::Rejected => {
+            warn!(path = %request.path, %noun, "refused a path that left the library");
+            (
+                StatusCode::BAD_REQUEST,
+                format!("that is not a {noun} in the library"),
+            )
+        }
+        library::PickError::Missing => (
+            StatusCode::NOT_FOUND,
+            format!("there is no such {noun} in the library"),
+        ),
+    })?;
+
+    fs::remove_file(&pick.path).await.map_err(|err| {
+        error!(%err, path = %pick.path.display(), "could not remove that {noun}");
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            format!("could not remove that {noun}"),
+        )
+    })?;
+
+    info!(path = %pick.key, %noun, "removed a file from a library");
+    Ok(StatusCode::NO_CONTENT)
 }
 
 /// Identifies the format from its magic bytes, and deliberately not from the
@@ -579,6 +666,22 @@ fn image_format(bytes: &[u8]) -> Option<&'static str> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn only_the_three_libraries_are_named() {
+        // The path segment is what routes twelve operations through four
+        // handlers, so an unknown one has to be a 404 rather than something the
+        // fallback quietly serves an index page for.
+        assert!(Library::named("maps").is_some());
+        assert!(Library::named("portraits").is_some());
+        assert!(Library::named("backdrops").is_some());
+        for nonsense in ["map", "Maps", "uploads", "..", ""] {
+            assert!(
+                Library::named(nonsense).is_none(),
+                "{nonsense} is not a library"
+            );
+        }
+    }
 
     #[test]
     fn formats_are_recognised_by_their_magic_bytes() {

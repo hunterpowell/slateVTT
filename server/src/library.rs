@@ -24,6 +24,9 @@ const MAX_PATH_LEN: usize = 256;
 /// after it is what actually keeps the name unique, so this only trades
 /// readability against length.
 const MAX_SLUG_LEN: usize = 60;
+/// How long a name the DM may give a file they are adding, before the sniffed
+/// extension is put back on it. Shorter than a path because it is one segment.
+const MAX_STEM_LEN: usize = 80;
 /// A library is a folder of maps, not a tree worth crawling. Both caps bound the
 /// work one request can ask for.
 const MAX_DEPTH: usize = 8;
@@ -102,6 +105,111 @@ pub fn resolve(maps_dir: &Path, requested: &str) -> Result<Pick, PickError> {
     }
 
     Ok(Pick { path, key })
+}
+
+/// Why a file could not be added to a library under the name the DM gave it.
+#[derive(Debug, PartialEq, Eq)]
+pub enum AddError {
+    /// Not a plain filename this library could hold. Like `PickError::Rejected`,
+    /// never reported in more detail than that.
+    Rejected,
+    /// Well-formed, and something is already called that.
+    Taken,
+}
+
+/// Where a file the DM is adding should be written, from the name they sent and
+/// the format its bytes turned out to be.
+///
+/// **The second place a client-supplied path reaches the filesystem, and it is
+/// guarded more tightly than the first.** A pick may name a file in a
+/// subdirectory, so it is normalised and then checked against the canonicalised
+/// root. An add may not: the name has to be a *single* component, which makes
+/// the result unable to leave the library at all rather than merely proven not
+/// to have. Nothing is created except one file directly in the folder, so there
+/// are no directories to make and none to tidy up after a remove.
+///
+/// **The extension is the sniffed one, never the supplied one.** The DM's name
+/// decides what the picker reads and what the copy's key is derived from; what
+/// is actually in the file decides how it is served. A `.png` holding a JPEG
+/// would otherwise be copied out under a name that lies about it.
+pub fn destination(dir: &Path, supplied: &str, extension: &str) -> Result<PathBuf, AddError> {
+    let name = filename(supplied, extension).ok_or(AddError::Rejected)?;
+    let path = dir.join(&name);
+    // Refused rather than overwritten. Silently replacing a map is the one
+    // outcome the DM cannot undo, and for a map it would not even work the way
+    // it looks: a copy is named from its path, so the old bytes would go on
+    // being served under the same URL — the wart *The calibration table is why a
+    // map is named from its path* describes, arrived at by a different road.
+    if path.exists() {
+        return Err(AddError::Taken);
+    }
+    Ok(path)
+}
+
+/// The single filename an add may write, or `None`.
+///
+/// Windows is a deployment target and the Pi is the other one, so this refuses
+/// what either would mishandle rather than what only Unix cares about: the
+/// characters Windows reserves, its device names, and the trailing dots and
+/// spaces it strips on the way to disk — a name that arrives as `nul` or that
+/// silently becomes a different one is a file the DM cannot then remove by
+/// asking for the name they gave.
+fn filename(supplied: &str, extension: &str) -> Option<String> {
+    if supplied.is_empty() || supplied.len() > MAX_PATH_LEN {
+        return None;
+    }
+
+    // Exactly one plain component. A separator, a `..` or a drive prefix is
+    // refused rather than having its last segment taken — taking it would accept
+    // `../../evil.png` by quietly meaning something else.
+    let mut components = Path::new(supplied).components();
+    let Some(Component::Normal(only)) = components.next() else {
+        return None;
+    };
+    if components.next().is_some() {
+        return None;
+    }
+    let only = only.to_str()?;
+
+    // Dropped if it is one this library would list anyway, so `cave.png` does
+    // not land as `cave.png.png`. Any other suffix is part of the name.
+    let stem = only
+        .rsplit_once('.')
+        .filter(|(_, ext)| IMAGE_EXTENSIONS.contains(&ext.to_ascii_lowercase().as_str()))
+        .map_or(only, |(stem, _)| stem);
+
+    // Windows strips these on the way to disk, so a name ending in one would be
+    // written as something other than what the listing later reports.
+    let stem = stem.trim_matches(|ch: char| ch == '.' || ch == ' ');
+    if stem.is_empty() || stem.len() > MAX_STEM_LEN {
+        return None;
+    }
+    if stem.chars().any(|ch| {
+        ch.is_control() || matches!(ch, '<' | '>' | ':' | '"' | '/' | '\\' | '|' | '?' | '*')
+    }) {
+        return None;
+    }
+    if is_reserved(stem) {
+        return None;
+    }
+
+    Some(format!("{stem}.{extension}"))
+}
+
+/// The DOS device names, which Windows still resolves ahead of any file of the
+/// same name — with or without an extension, in any case.
+fn is_reserved(stem: &str) -> bool {
+    const DEVICES: [&str; 4] = ["con", "prn", "aux", "nul"];
+    let lower = stem.to_ascii_lowercase();
+    if DEVICES.contains(&lower.as_str()) {
+        return true;
+    }
+    let numbered = |prefix: &str| {
+        lower
+            .strip_prefix(prefix)
+            .is_some_and(|rest| matches!(rest, "1" | "2" | "3" | "4" | "5" | "6" | "7" | "8" | "9"))
+    };
+    numbered("com") || numbered("lpt")
 }
 
 /// FNV-1a. Not a cryptographic hash and does not need to be — it distinguishes
@@ -363,6 +471,132 @@ mod tests {
         let library = TempLibrary::new();
         library.with("Digital/map.jpg");
         assert_eq!(resolve(library.path(), "Digital"), Err(PickError::Missing));
+    }
+
+    // --- what may be written into one ----------------------------------------
+
+    #[test]
+    fn a_plain_name_lands_directly_in_the_folder() {
+        let library = TempLibrary::new();
+
+        let path = destination(library.path(), "Cragmaw Hideout.png", "png").expect("a place");
+        assert_eq!(path.parent(), Some(library.path()));
+        assert_eq!(
+            path.file_name().and_then(|n| n.to_str()),
+            Some("Cragmaw Hideout.png"),
+            "the DM's capitals and spaces are what they will read in the picker"
+        );
+    }
+
+    #[test]
+    fn the_sniffed_extension_wins_over_the_one_the_dm_sent() {
+        // A `.png` holding a JPEG would otherwise be copied out under a name
+        // that lies about it, and the copy's `Content-Type` comes from that name.
+        let library = TempLibrary::new();
+
+        let path = destination(library.path(), "cave.png", "jpg").expect("a place");
+        assert_eq!(path.file_name().and_then(|n| n.to_str()), Some("cave.jpg"));
+    }
+
+    #[test]
+    fn a_name_that_is_not_an_image_name_keeps_all_of_itself() {
+        // Only an extension this library would have listed is dropped. A map
+        // called `cave.v2` is a map called `cave.v2`, not one called `cave`.
+        let library = TempLibrary::new();
+
+        let path = destination(library.path(), "cave.v2", "png").expect("a place");
+        assert_eq!(
+            path.file_name().and_then(|n| n.to_str()),
+            Some("cave.v2.png")
+        );
+    }
+
+    #[test]
+    fn an_added_name_may_not_be_a_path_at_all() {
+        // Tighter than a pick, which may name a file in a subdirectory. An add
+        // writes one file directly into the folder, so anything with a separator
+        // in it is refused rather than having its last segment taken — taking it
+        // would accept a traversal by quietly meaning something else.
+        let library = TempLibrary::new();
+
+        for attempt in [
+            "../secret.png",
+            "../../secret.png",
+            "digital/cave.png",
+            "digital\\cave.png",
+            "/etc/passwd.png",
+            "C:\\Windows\\evil.png",
+            "",
+            ".",
+            "..",
+            "   ",
+            "...png",
+        ] {
+            assert_eq!(
+                destination(library.path(), attempt, "png"),
+                Err(AddError::Rejected),
+                "{attempt} should not be a name a library can hold"
+            );
+        }
+    }
+
+    #[test]
+    fn windows_reserved_names_and_characters_are_refused() {
+        // The deployment target is a Pi and the fallback is a Windows box, so
+        // this refuses what either would mishandle. A file written as `nul` is
+        // one the DM can never remove by asking for the name they gave.
+        let library = TempLibrary::new();
+
+        for attempt in [
+            "nul", "CON", "com1", "LPT9", "aux.png", "map:1", "what?", "a*b", "a|b",
+        ] {
+            assert_eq!(
+                destination(library.path(), attempt, "png"),
+                Err(AddError::Rejected),
+                "{attempt} should not be a name a library can hold"
+            );
+        }
+
+        // And the ones that only look like devices are fine.
+        for allowed in ["console", "com10", "nul2", "auxiliary"] {
+            assert!(
+                destination(library.path(), allowed, "png").is_ok(),
+                "{allowed} is an ordinary name"
+            );
+        }
+    }
+
+    #[test]
+    fn a_name_already_taken_is_refused_rather_than_overwritten() {
+        // Silently replacing a map is the one outcome the DM cannot undo — and
+        // for a map it would not even do what it looks like, since the copy is
+        // named from the path and the old bytes would go on being served.
+        let library = TempLibrary::new();
+        library.with("cave.png");
+
+        assert_eq!(
+            destination(library.path(), "cave.png", "png"),
+            Err(AddError::Taken)
+        );
+        // Same file, named the way the DM might type it a second time.
+        assert_eq!(
+            destination(library.path(), "cave", "png"),
+            Err(AddError::Taken)
+        );
+    }
+
+    #[test]
+    fn an_added_name_is_one_a_pick_can_ask_for() {
+        // The property the whole add path rests on: it finishes by picking the
+        // file it just wrote, so what `destination` produces has to resolve.
+        let library = TempLibrary::new();
+
+        let path = destination(library.path(), "Cragmaw Hideout.jpeg", "jpg").expect("a place");
+        std::fs::write(&path, b"not really an image").expect("write it");
+        let name = path.file_name().and_then(|n| n.to_str()).expect("a name");
+
+        let pick = resolve(library.path(), name).expect("resolves");
+        assert_eq!(pick.key, "cragmaw hideout.jpg");
     }
 
     // --- the key, and the name derived from it -------------------------------

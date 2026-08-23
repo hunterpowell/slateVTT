@@ -1,10 +1,16 @@
 // What is in `uploads/`, and what the room still points at.
 //
-// Every direct upload gets a fresh UUID name and nothing ever deletes one, so
-// the directory only grows — a map is capped at 25 MB, the Pi backs the whole
-// folder up, and re-uploading the same battle map five times keeps five copies.
-// A library *pick* is fingerprinted and so lands on one file however many times
-// it is picked; an upload is not, deliberately (see `docs/maps.md`).
+// Nothing ever deletes one, so the directory only grows — a map is capped at
+// 25 MB and the Pi backs the whole folder up.
+//
+// **It grows more slowly than it used to.** There were direct uploads once, each
+// landing under a fresh UUID, so re-uploading the same battle map five times
+// kept five copies. Milestone 32 made the upload button add to the library
+// instead, and everything in here is now a *pick* — fingerprinted, so one file
+// however many times it is picked. What still accumulates is a copy per distinct
+// library file ever picked, and a file whose library original the DM has since
+// removed, which is deliberate: the board goes on being served (see
+// `docs/maps.md`).
 //
 // **This deletes nothing and takes no arguments that could make it.** It reads
 // the save file and the directory and prints what it found; removing anything is

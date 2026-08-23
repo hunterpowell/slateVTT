@@ -5,8 +5,10 @@ file because it is defined by not being a map.
 
 `.claude/CLAUDE.md` is loaded into every session; this file is not. **Read it before touching
 `maptool.ts`, `calibrate.ts`, `library.rs`, `library.ts`, `drawBackdrop`, `shownBackdrop`, or
-`SetMap` / `MapInfo` / `SetBackdrop` on the server** — the loading-versus-recalibrating rule below
-is depended on by three separate features and is the arm that gets missed.
+`SetMap` / `MapInfo` / `SetBackdrop` / `Prepared` on the server, or `RoomState::shelve` or
+`library::destination`** — the
+loading-versus-recalibrating rule below is depended on by four separate features now and is the arm
+that gets missed.
 
 ## Maps and the map library
 
@@ -53,10 +55,21 @@ recalibrated twice.
 The table is persisted with the room. Slate runs only while the group is playing, so an in-memory
 one would be empty every game night and the feature would never fire. It is the first thing on
 `Saved` that is not part of any client's view of the room, and it stays off `RoomView` for the
-same reason walls will.
+same reason walls do. Since milestone 31 it remembers the walls and the paint as well — see *The
+shelf* below.
 
-An uploaded map gets a fresh UUID each time and so will not match an earlier calibration — that
-asymmetry is deliberate, and content-hashing uploads to close it is not worth the change.
+**Uploading is adding to the library, since milestone 32.** It used to be its own route: the bytes
+went into `uploads/` under a fresh UUID, so an uploaded map matched no earlier calibration, could
+not be found again next session, and a second upload of the same file was a second URL with a
+second set of walls under it. The asymmetry used to be written down here as deliberate and it was
+not worth defending once the folder could be written to — the upload button now writes into
+`maps/` and then picks what it wrote, which makes an uploaded map a library map in every respect
+because it *is* one. The wart that remains is the one below, about names: the copy is named from
+the path, so replacing art still does nothing.
+
+There is one route family now — `/api/{library}` with `pick`, `add` and `remove` under it — and
+one client widget behind all three panels. `Library::named` turns the path segment into the folder,
+which is what collapsed twelve operations into four handlers.
 
 **The calibration table is why a map is named from its path, and it is load-bearing.** Replacing a
 map's art in `maps/` therefore does nothing: the pick recomputes the same name, finds the copy
@@ -76,6 +89,125 @@ copy's name is derived from a **prefixed** key, or the same filename in both fol
 one file; and it is fingerprinted by **content**, or replaced art keeps resolving to the copy it
 replaced. **Maps opt out of both**, because the calibration table above is keyed on the URL their
 names produce.
+
+### Adding and removing
+
+**Two rules, and the first is where the risk is.** An add's name is a *single component* — refused
+outright if it holds a separator, rather than having its last segment taken, because taking it
+would accept `../../evil.png` by quietly meaning something else. That is tighter than a pick, which
+may name a file in a subdirectory and is checked against the canonicalised root; an add cannot
+leave the folder rather than being proven not to have. The rest of the rule is Windows: the
+characters it reserves, the device names it still resolves ahead of files, and the trailing dots
+and spaces it strips — a file written as something other than what the DM typed is one they cannot
+then remove by asking for the name they gave.
+
+**The extension is the sniffed one, never the supplied one.** The name decides what the picker
+reads and what the copy's key comes from; the bytes decide how it is served.
+
+**A name already taken is refused, not overwritten.** There is no undo on a filesystem, and for a
+map an overwrite would not even do what it looks like — the copy is named from the path, so the old
+bytes would go on being served under the same URL.
+
+**A remove deletes the library file and nothing else.** Not the copy in `uploads/`, and so not the
+map on the board, not the remembered calibration, and not the walls or the paint on the shelf.
+Removing something from the picker is saying "stop offering me this", and re-adding a file under
+the same name later lands on the same URL and finds all of it waiting. That is the property that
+makes the destructive-sounding button safe, and it falls out of a pick being a copy rather than a
+second way to serve files.
+
+`add` finishes by calling `pick` on the file it just wrote. One path from "a file in the library"
+to "a URL it is served at" is what guarantees an add and a later pick of the same file agree, which
+matters more than the wasted re-read: everything keyed on that URL is keyed on both.
+
+## The shelf
+
+**Milestone 31, and it is the calibration table above growing two fields rather than a new
+subsystem.** The ask was "I'd like to save map states and prep a handful of maps before a
+session": the DM traces three dungeons on a Tuesday and finds all three still traced on Saturday.
+
+`Calibration` already answered most of it — grid, offset, play area, fog, radius and lighting,
+keyed by URL, persisted, never sent. The only prep it did not remember was the traced **walls** and
+the painted **overrides**, both of which a map load threw away. So the feature is one table entry
+growing and two things to get right:
+
+- the outgoing board's walls and paint are filed under **its** URL as it stops being held
+- the load arm restores them, exactly as it already restores the grid
+
+No new command, no new event, no list in the state model, no panel UI, no `staged` flag on the
+wire, and **no filter to widen** — walls already reach the DM or nobody, which is what made
+milestone 20 cheap too. **The shelf is the folder**, which is the backdrop's line again: the
+collection of prepared maps is `maps/`, and the room holds only what it has learned about each.
+
+### A wrapper, not two more fields on `Calibration`
+
+```rust
+struct Prepared { calibration: Calibration, walls: Vec<Wall>, overrides: OverrideView }
+calibrations: HashMap<String, Prepared>
+```
+
+`Calibration` is **what the client sent** — the room builds one as a bare struct literal out of the
+`SetMap` fields. What the room has *learned* about an image is a different thing, and keeping them
+apart is what makes the trap below unsayable rather than merely avoided. The calibration is
+`#[serde(flatten)]`ed, so the disk shape is what it always was with two keys beside it and a save
+written before this milestone loads as a calibrated map with nothing traced on it — `StagedView`'s
+trick, for the same reason. (`Calibration` derives `PartialEq` and `Wall` does not, so the two
+could not have been merged without one of them changing anyway.)
+
+### Three traps, and the first is silent
+
+- **The recalibration clobber.** `SetMap`'s record step fires on **every** recalibration, not only
+  on a first load. With the walls inside `Calibration` the obvious way to write that arm files
+  *empty* walls, so nudging the grid on a traced dungeon quietly erases what the room remembered
+  about it — and the board keeps its walls, because a recalibration does not sweep, so nothing
+  looks wrong until the DM loads away and back. With the wrapper the record step assigns
+  `prepared.calibration` and cannot reach the rest. `nudging_the_grid_does_not_erase_what_the_room_remembers`
+  holds it.
+- **`sweep_board` cannot ask which map it is sweeping**, so the URL is passed in. Its two call
+  sites order the map assignment opposite ways round — a `SetMap` assigns and then sweeps, a
+  promote sweeps and then assigns — so `self.map.url` in there is the *incoming* map on one path
+  and the outgoing one on the other. Filing a dungeon's masonry under the name of the map that
+  replaced it puts the walls back on the wrong image.
+- **The staged slot is a second write site with a different shape.** Staged walls never reach
+  `sweep_board`; they die where the load arm takes the slot, and again in `ClearStaged`. Both are
+  `RoomState::shelve`, which takes the board's walls and paint as arguments precisely because the
+  three callers hand over different boards.
+
+**What is filed is whatever the board actually holds, empty included.** A DM who cleared a bad
+trace and then loaded away has cleared it; filing only non-empty lists would make starting a trace
+again unsayable, and `ClearWalls` is the way to throw prep away.
+
+**`ClearStaged` files too, and that is the rule rather than an extra.** The shelf is keyed by
+image, not by slot, so which of the two exits the DM took must not change what next week's load
+finds.
+
+### Two deliberate omissions, and the second is the boundary
+
+- **Token plans.** `staged_pos` / `staged_only` are on `Token`, singular, and stay bound to
+  whatever is in the staged slot. The DM preps *terrain* for many maps and *the encounter* for the
+  one they are about to run.
+- **`revealed` is not remembered.** Returning to a dungeon means the party re-explores it. The
+  split to hold is **the DM's authoring is remembered; the party's play state is not** — remembering
+  where they had walked would make a map swap a partial scene restore, which immediately raises
+  "why not the token positions too", and that road ends at the scene system this file refuses.
+  `the_party_re_explores_a_dungeon_they_return_to` is that boundary written down.
+
+### Two consequences worth knowing
+
+**There is no frame-cap question here**, which is worth saying because `CLAUDE.md`'s "a command
+carrying a collection has two bounds" rule looks like it should apply. This table never reaches the
+wire. `MAX_WALLS`, applied where a wall is traced, is the only bound, and nothing here needs a
+`largest_..._fits_in_a_frame` test.
+
+**Staging the map that is already live reads off the shelf, not off the board.** The staged slot
+holds no URL, so filling it is always a load, and a load restores what was last *filed* for that
+image — which is older than what the live board is holding, since the shelf is written as a board
+leaves. It is an odd thing to do and it is not worth a special case; the walls the DM is looking
+at are the live board's and are untouched.
+
+**The undo ring's motivating case is weaker now**, and `docs/undo.md` says so: "the case that makes
+undo worth having is `sweep_board`" was written when a map load destroyed half an hour of tracing,
+and a load that gives the walls back on the way in is a less catastrophic load. The ring is still
+right for its other reasons.
 
 ## Staged maps
 
