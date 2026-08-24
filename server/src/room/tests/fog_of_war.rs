@@ -458,7 +458,7 @@ fn the_fog_survives_the_save_file() {
     let _dm = join_as_dm(&mut state, ClientId(1));
     let explored = state.revealed.clone();
 
-    let restored = RoomState::restored(state.to_saved(), SECRET.to_owned());
+    let restored = reboot(state.to_saved());
 
     assert_eq!(restored.revealed, explored, "explored terrain is on disk");
     assert!(
@@ -737,7 +737,7 @@ fn the_fringe_is_derived_and_never_reaches_the_save_file() {
     let (state, _dm) = walled_room();
     assert!(state.known.contains(&(4, 1)));
 
-    let restored = RoomState::restored(state.to_saved(), SECRET.to_owned());
+    let restored = reboot(state.to_saved());
 
     assert!(
         !restored.revealed.contains(&(4, 1)),
@@ -1146,7 +1146,7 @@ fn the_overrides_survive_the_save_file() {
     );
     state.handle(ClientId(1), paint(&[(2, 2)], Some(Override::Lit)));
 
-    let restored = RoomState::restored(state.to_saved(), SECRET.to_owned());
+    let restored = reboot(state.to_saved());
 
     assert_eq!(restored.overrides, state.overrides);
     assert!(

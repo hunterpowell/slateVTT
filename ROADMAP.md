@@ -25,8 +25,9 @@ Do not work ahead. Each milestone should run and be usable before starting the n
 6. Map upload and grid calibration UI.
 7. Package for Windows session hosting and deploy behind a Cloudflare Tunnel.
 
-**Everything through 28 is built, and so are 30, 31 and 32; 29 is not.** 25 and 26 were never
-planned and are out of order for the reasons their own entries give. Everything from 8 on was planned after the original
+**Everything through 28 is built, and so are 30, 31, 32 and 33; 29 is not.** 25 and 26 were never
+planned and are out of order for the reasons their own entries give. 33 is *Multi-room*, which was
+unscheduled until a Halloween one-shot became the second room it was waiting for. Everything from 8 on was planned after the original
 seven; 17 and 18 were workshopped after 16 landed, 19–24 after 18, and 27–29 on 2026-08-18 after 26.
 That batch was the first one written down while nothing in it existed; 27 and 28 both landed on
 2026-08-19 and their entries are now records like the rest, while 29 is still design. All three
@@ -1432,36 +1433,73 @@ Everyone's pointer drawn on everyone's board. What was already settled, kept as 
   the benefit — which is what scheduled it. The cost is still real and is the thing to watch when
   it lands: if the board is unreadable with seven pointers on it, the decay is the dial.)*
 
-## Multi-room — unscheduled
+## Multi-room
 
-More than one campaign on one server, and the screen that lists them. **Real but far off**, written
-down so the decisions are settled cheaply rather than re-derived, which is the treatment *Cursors*
-above got for the same reason.
+**Built**, as milestone 33 — see *Room actor* in `.claude/CLAUDE.md` and `docs/rooms.md`. A Halloween
+one-shot was the second room this section was waiting for.
+
+Everything below is what was written down in advance. Three of the six items landed as designed;
+three were overturned, and the corrections are marked inline in the same style *Cursors* above uses
+for its own.
 
 **Do not build the screen first.** It is the cheap half of a feature whose expensive half is a room
 registry, and CLAUDE.md is explicit that the registry does not get built before there is a second
 room. A campaign picker in front of one hardcoded room is scaffolding for a feature that does not
-exist, which the working agreement forbids by name.
+exist, which the working agreement forbids by name. *(Held, and it is the reason this waited at all.
+The screen took an afternoon; the half worth arguing about was where the save files go.)*
 
 What it costs, so the size of it is known rather than guessed:
 
 - **`RwLock<HashMap<RoomId, RoomHandle>>` replacing `AppState.room`**, touched on connect and
   disconnect only and never on a token move. This is the one piece CLAUDE.md has already designed;
   everything above it in the architecture was built to allow this and none of it is waiting for it.
+  *(**Overturned, and cheaper than this.** `ROOMS` is a const, so the rooms exist before the first
+  socket opens and the map is built once and only ever read — a plain `Arc<HashMap<..>>` with no
+  lock. A lock guards a table that changes. The `RwLock` is what a room the DM could create at
+  runtime would need, and that is not built. The rest of the sentence held exactly: the connect path
+  was the only thing that changed, and nothing on the hot path knows rooms are plural.)*
 - **`SLATE_STATE` becomes a directory**, where today it is the single path `Store::new` takes. One
   save file per room, and the Pi's backup procedure in `deploy/pi/README.md` changes shape with it.
+  *(**Overturned.** `SLATE_STATE` still names the primary room's file and every other room's is a
+  sibling `<id>.json`, because that needs no migration: the Pi's env file is unchanged, the live
+  campaign save keeps working, and the backup that greps the tar for `slate-state.json` keeps
+  passing. `store.rs` did not change at all. The cost is that the rule is a sentence rather than a
+  shape — `save_path` carries it and two tests pin it. A directory is a migration to do on purpose
+  if there are ever enough rooms to want one.)*
 - **A `dm_secret` per room**, rather than one for the process. A DM running two campaigns wants two
   links, and a link that opens every room is worse than one that opens one.
+  *(**Overturned.** One secret for the process. This paragraph's case is a DM running campaigns for
+  *different groups*; this is one DM, one group, one tunnel, and two links to keep straight is worse
+  than one. The right answer if a link ever goes to somebody who should not reach the other
+  campaign, and not before.)*
 - **A room id in the WebSocket URL, and in `localStorage` beside `player_id`.** That second one is
   the fiddly part: `player_id` is currently one value for one room, and a player in two campaigns is
   two slugs.
+  *(Held, both halves, and it was the right thing to call fiddly — though the fiddliness turned out
+  to be on the client and not in the key: `boot` had to be split so the room is settled before
+  `connect`. The key itself is `slate.player_id.<roomId>` and took four lines. Nothing would have
+  leaked with one key, since `hello` refuses a slug from another room's roster — it would just have
+  sent a switching player back to the picker every time.)*
 - **`maps/`, `portraits/` and the uploads directory stay shared.** It is the same DM with the same
   art, and splitting them buys nothing and costs a copy of every goblin.
+  *(Held, and it had one consequence worth recording: `audit-uploads.mjs` had to start reading every
+  room's save. Shared libraries with unshared boards means a portrait on a one-shot token is
+  referenced by a file the campaign's save has never heard of, and reading one room alone printed an
+  `rm` for every other room's art.)*
 
 **The roster becoming per-room is the actual point.** A second campaign is a different cast, and
 every other item above is machinery in service of that one. If a request ever arrives that is
 satisfied by something smaller — a second roster, say, on one room — that is the smaller change and
 this section is not the answer to it.
+
+*(**Half wrong, and the escape hatch was tried first.** The request that arrived was a Halloween
+one-shot, and it did propose exactly the smaller change this paragraph invites: two rosters on one
+room. That does not work, and the reason is what this paragraph got backwards. The roster is the
+cast list; swapping it leaves `tokens`, `map`, `staged`, `initiative`, `walls`, `revealed`,
+`overrides` and `shapes` exactly where they were — and those are the fields the one-shot needed
+cleared. The board is what makes a second room work; the roster is what makes it pleasant. The
+paragraph's instinct was still right in the way that mattered: check for the smaller change before
+building this. It was checked, and it lost on the merits.)*
 
 ## Drawings
 

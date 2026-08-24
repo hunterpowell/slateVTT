@@ -40,7 +40,7 @@ const [, , base = 'http://127.0.0.1:3000', secret = 'test-secret'] = process.arg
 /** Cells the party's torches reach while the interesting checks run. */
 const NEAR_FT = '40';
 
-const dm = await open(`${base}/?dm=${secret}`);
+const dm = await open(`${base}/?room=campaign&dm=${secret}`);
 const { check, note, verdict } = checks();
 
 await dm.wait(2500); // the map image, the socket, and the first frame
@@ -180,14 +180,14 @@ check(
 
 // --- a player, joining into the dark --------------------------------------
 
-const player = await open(base, { port: 9334 });
+const player = await open(`${base}/?room=campaign`, { port: 9334 });
 await player.wait(2000);
 await player.evaluate(`[...document.querySelectorAll('.picker-list button')]
   .find(b => b.textContent.includes('Saelyn')).click(); "ok"`);
 await player.wait(2000);
 check(
   'joined as a player',
-  await player.evaluate('document.querySelector("#whoami-name").textContent'),
+  await player.evaluate('document.querySelector("#whoami-name").textContent.split(" · ")[0]'),
   'Saelyn',
 );
 
@@ -297,7 +297,7 @@ check('the table is handed the whole dungeon', litUp > 8, true);
 // same mask the deltas did. That is invariant 3 asked of the override — filter
 // every delta correctly and then hand over the whole world on connect is the
 // most common way this goes wrong.
-const latecomer = await open(base, { port: 9335 });
+const latecomer = await open(`${base}/?room=campaign`, { port: 9335 });
 await latecomer.wait(2000);
 await latecomer.evaluate(`[...document.querySelectorAll('.picker-list button')]
   .find(b => b.textContent.includes('Cleodara')).click(); "ok"`);

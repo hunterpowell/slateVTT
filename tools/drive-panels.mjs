@@ -27,8 +27,8 @@ import { latticeOrBail } from './board.mjs';
 
 const [, , base = 'http://127.0.0.1:3000', secret = 'test-secret'] = process.argv;
 
-const dm = await open(`${base}/?dm=${secret}`, { port: 9333 });
-const player = await open(base, { port: 9334 });
+const dm = await open(`${base}/?room=campaign&dm=${secret}`, { port: 9333 });
+const player = await open(`${base}/?room=campaign`, { port: 9334 });
 const { check, note, verdict } = checks();
 
 await dm.wait(2500);
@@ -184,7 +184,7 @@ check('the table was not folded along with the DM', playerRows.length > 1, true)
 // left reconnects as a player and there is no DM panel left to assert about.
 // localStorage is per origin and survives the navigation either way, which is
 // the thing actually under test.
-await dm.evaluate(`location.href = ${JSON.stringify(`${base}/?dm=${secret}`)}; "ok"`);
+await dm.evaluate(`location.href = ${JSON.stringify(`${base}/?room=campaign&dm=${secret}`)}; "ok"`);
 await dm.wait(3500);
 check('the fold survived a reload', (await onScreen(dm)).length, 1);
 

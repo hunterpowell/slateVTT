@@ -294,7 +294,7 @@ fn the_calibration_table_is_saved() {
 
     // And survives the trip back, which is when it actually matters — the
     // group is not playing between sessions.
-    let restored = RoomState::restored(saved, SECRET.to_owned());
+    let restored = reboot(saved);
     assert_eq!(
         restored
             .calibrations
@@ -951,7 +951,7 @@ fn a_staged_map_is_worth_saving_and_survives_the_trip() {
 
     let json = serde_json::to_vec(&state.to_saved()).expect("encodes");
     let saved: Saved = serde_json::from_slice(&json).expect("decodes");
-    let restored = RoomState::restored(saved, SECRET.to_owned());
+    let restored = reboot(saved);
 
     assert_eq!(
         restored.staged.as_ref().map(|b| b.map.url.as_str()),
@@ -1490,7 +1490,7 @@ fn a_plan_is_worth_saving_and_survives_the_trip() {
 
     let json = serde_json::to_vec(&state.to_saved()).expect("encodes");
     let saved: Saved = serde_json::from_slice(&json).expect("decodes");
-    let restored = RoomState::restored(saved, SECRET.to_owned());
+    let restored = reboot(saved);
 
     assert_eq!(
         token(&restored, "t1").staged_pos,

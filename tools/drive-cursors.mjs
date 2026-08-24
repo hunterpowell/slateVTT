@@ -29,8 +29,8 @@ const [, , base = 'http://127.0.0.1:3000', secret = 'test-secret'] = process.arg
 
 // Fixed, like every other driver's: two of these running at once would attach to
 // each other's browser, and milestone 26 spent a day on exactly that.
-const dm = await open(`${base}/?dm=${secret}`, { port: 9333 });
-const player = await open(base, { port: 9334 });
+const dm = await open(`${base}/?room=campaign&dm=${secret}`, { port: 9333 });
+const player = await open(`${base}/?room=campaign`, { port: 9334 });
 const { check, note, verdict } = checks();
 
 await dm.wait(2500); // the map image, the socket, and the first frame
@@ -40,7 +40,7 @@ await player.evaluate(`[...document.querySelectorAll('.picker-list button')]
 await player.wait(1500);
 check(
   'the player is on the board',
-  await player.evaluate('document.querySelector("#whoami-name").textContent'),
+  await player.evaluate('document.querySelector("#whoami-name").textContent.split(" · ")[0]'),
   'Saelyn',
 );
 

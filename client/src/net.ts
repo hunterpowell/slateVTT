@@ -143,9 +143,15 @@ const BACKOFF_MS = [500, 1000, 2000, 4000, 8000, 8000, 10000, 10000, 10000];
  * The banner that used to be the immediate answer is still here — it is what
  * `onClose` means now, which is the backoff having given up.
  */
-export function connect(on: Handlers): Net {
+export function connect(roomId: string, on: Handlers): Net {
   const scheme = location.protocol === 'https:' ? 'wss:' : 'ws:';
-  const url = `${scheme}//${location.host}/ws`;
+  // **The room is named here and nowhere else on the wire.** A socket belongs
+  // to exactly one room actor from the moment the server registers it, so the
+  // choice has to be made before the connection rather than in a frame after
+  // it — which is what leaves `ClientMsg` and `ServerMsg` untouched by
+  // multi-room. The probe below reuses this URL, so a reconnect returns to the
+  // same room without knowing there is more than one.
+  const url = `${scheme}//${location.host}/ws?room=${encodeURIComponent(roomId)}`;
   const socket = new WebSocket(url);
 
   let attempt = 0;

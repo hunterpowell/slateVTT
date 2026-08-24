@@ -159,6 +159,95 @@ const ROSTER: [(&str, &str); 6] = [
     ("ignacio", "Ignacio"),
 ];
 
+/// The cast of the Halloween one-shot.
+///
+/// A separate array rather than a second column on the one above, because the
+/// two casts are independent — a different length, and no slug in common unless
+/// one is written twice on purpose. A player who plays in both rooms holds two
+/// slugs, which is what makes their tokens, their colour and their scratchpad
+/// separate in each.
+const HALLOWEEN_ROSTER: [(&str, &str); 6] = [
+    ("player-1", "Player 1"),
+    ("player-2", "Player 2"),
+    ("player-3", "Player 3"),
+    ("player-4", "Player 4"),
+    ("player-5", "Player 5"),
+    ("player-6", "Player 6"),
+];
+
+/// The map a room that has never been given one stands on.
+///
+/// Shipped in `client/assets`, so it is there on a fresh checkout with no
+/// library and no uploads. Both `hardcoded` and `blank` start here and the DM's
+/// first map load replaces it.
+const BUILT_IN_MAP: &str = "/assets/map.png";
+
+/// One room on this server: a board, a save file and a cast of its own.
+///
+/// **The id is the load-bearing field.** It names the save file on disk, the
+/// `localStorage` key a player's claimed slot is remembered under, and the
+/// `?room=` a link carries — so changing one after a room has been played in
+/// orphans all three at once. It is a slug for the reason a roster id is, and
+/// there is a test below that says so, because a room id with a slash in it
+/// would be a path.
+struct RoomDef {
+    id: &'static str,
+    /// What the room picker shows. Free text, and the only field here nothing
+    /// is keyed on — renaming a campaign is safe at any point.
+    name: &'static str,
+    /// A slice rather than a fixed array, so two casts may differ in size.
+    roster: &'static [(&'static str, &'static str)],
+}
+
+/// Every room, fixed at boot.
+///
+/// **A const rather than a registry**, which is the whole shape of this feature:
+/// the rooms are known before the first socket opens, so `AppState` holds a map
+/// that is built once and only ever read. `ROADMAP.md` budgeted an
+/// `RwLock<HashMap<..>>` here; a lock guards a table that changes, and nothing
+/// changes this one. Adding a campaign is an edit to this array and a redeploy,
+/// which is the same act as editing a roster.
+///
+/// **The first entry is the primary room.** Two things follow from that and
+/// nothing else does: it is the one whose save file is `SLATE_STATE` verbatim
+/// rather than a sibling named after its id, and it is the one a fresh checkout
+/// boots into `RoomState::hardcoded` rather than an empty board. Both are
+/// answers to "which room did the single-room server become", so neither
+/// generalises to a third room and neither should.
+const ROOMS: [RoomDef; 2] = [
+    RoomDef {
+        id: "campaign",
+        name: "Campaign",
+        roster: &ROSTER,
+    },
+    RoomDef {
+        id: "halloween",
+        name: "Halloween One-Shot",
+        roster: &HALLOWEEN_ROSTER,
+    },
+];
+
+/// The rooms, in the order the picker shows them.
+pub fn rooms() -> impl Iterator<Item = (&'static str, &'static str)> {
+    ROOMS.iter().map(|def| (def.id, def.name))
+}
+
+/// The cast of one room, or `None` if there is no such room.
+///
+/// The lookup every caller outside this module wants: `main.rs` spawns a room
+/// per id and has no business holding a `RoomDef`.
+pub fn roster_of(id: &str) -> Option<Vec<RosterEntry>> {
+    ROOMS
+        .iter()
+        .find(|def| def.id == id)
+        .map(|def| roster_from(def.roster))
+}
+
+/// Whether this room is the one the single-room server became. See `ROOMS`.
+pub fn is_primary(id: &str) -> bool {
+    ROOMS.first().is_some_and(|def| def.id == id)
+}
+
 pub enum RoomCmd {
     /// Socket opened. No identity yet, so this client is told nothing.
     Connected {
@@ -876,10 +965,23 @@ struct Snapshot {
     state: Saved,
 }
 
-pub fn spawn(dm_secret: String, saved: Option<Saved>, store: Store) -> RoomHandle {
-    let mut state = match saved {
-        Some(saved) => RoomState::restored(saved, dm_secret),
-        None => RoomState::hardcoded(dm_secret),
+/// Starts one room's actor and hands back the handle sockets reach it through.
+///
+/// `roster` is the room's cast and `demo` says whether a missing save file means
+/// the built-in board or an empty one — both come from `ROOMS`, and both are the
+/// caller's to look up so that this function knows about a room rather than
+/// about the table of them.
+pub fn spawn(
+    dm_secret: String,
+    roster: Vec<RosterEntry>,
+    saved: Option<Saved>,
+    store: Store,
+    demo: bool,
+) -> RoomHandle {
+    let mut state = match (saved, demo) {
+        (Some(saved), _) => RoomState::restored(saved, dm_secret, roster),
+        (None, true) => RoomState::hardcoded(dm_secret),
+        (None, false) => RoomState::blank(dm_secret, roster),
     };
     // `known` and `visible` are derived and neither is on disk, so a room that
     // has just booted holds neither and the first client to join would be told
@@ -1440,8 +1542,15 @@ fn is_owner(identity: &Identity, owner: &Owner) -> bool {
 
 /// The roster is not persisted: it is a constant, and a saved copy would only
 /// be able to disagree with it. It becomes state when the DM can edit it.
-fn default_roster() -> Vec<RosterEntry> {
-    ROSTER
+///
+/// **Which constant is now the room's to say**, which is the only thing
+/// multi-room changed about the cast list: a `RoomState` is handed its roster
+/// rather than reaching for the one there used to be, so a slug that names a
+/// slot in one room names nothing in another. `hello` already refuses a
+/// `player_id` that is not in `self.roster`, so that isolation costs no new
+/// line — see the handshake tests.
+fn roster_from(slots: &[(&str, &str)]) -> Vec<RosterEntry> {
+    slots
         .iter()
         .map(|(id, name)| RosterEntry {
             id: PlayerId::new(id),
@@ -1458,10 +1567,10 @@ impl RoomState {
     /// The fields here are exactly those a `Saved` does not describe: who the DM
     /// is, the cast list, the undo ring and the two client tables. Everything
     /// else is placeholder, and `adopt` writes over all of it.
-    fn empty(dm_secret: String) -> Self {
+    fn empty(dm_secret: String, roster: Vec<RosterEntry>) -> Self {
         Self {
             dm_secret,
-            roster: default_roster(),
+            roster,
             map: MapInfo::default(),
             staged: None,
             tokens: HashMap::new(),
@@ -1486,9 +1595,35 @@ impl RoomState {
         }
     }
 
-    fn restored(saved: Saved, dm_secret: String) -> Self {
-        let mut state = Self::empty(dm_secret);
+    fn restored(saved: Saved, dm_secret: String, roster: Vec<RosterEntry>) -> Self {
+        let mut state = Self::empty(dm_secret, roster);
         state.adopt(saved);
+        state.floor();
+        state
+    }
+
+    /// A room with no save on disk and no demo content: an empty board with a
+    /// cast standing by.
+    ///
+    /// `restored` with nothing to adopt, and the third constructor rather than a
+    /// flag on one of the other two because it is the answer to a different
+    /// question. `hardcoded` is what a *fresh checkout* looks like, so that there
+    /// is something on the screen; this is what a *new room* looks like, and
+    /// seeding a Halloween one-shot with the campaign's party is worse than
+    /// seeding it with nothing. Ends in `floor` for the reason both its
+    /// neighbours do.
+    ///
+    /// **It keeps the built-in map, which is the one thing `empty` gives it that
+    /// an empty room does not want to be without.** `MapInfo::default` has no
+    /// URL at all, and a client handed one cannot load an image, never builds
+    /// its stage and draws nothing — a new room would open as a black page with
+    /// a working rail on it. This is not demo content: it is the placeholder the
+    /// DM's first `SetMap` replaces, exactly as it is in the room that predates
+    /// this one. Everything that would need clearing — tokens, walls, fog,
+    /// initiative — is still empty.
+    fn blank(dm_secret: String, roster: Vec<RosterEntry>) -> Self {
+        let mut state = Self::empty(dm_secret, roster);
+        state.map.url = BUILT_IN_MAP.to_owned();
         state.floor();
         state
     }
@@ -1655,6 +1790,12 @@ impl RoomState {
 
     /// The room a first boot starts from, with no save on disk yet. Milestone 6
     /// replaces the map from the browser.
+    ///
+    /// **The primary room's first boot alone**, and it names `ROSTER` directly
+    /// rather than being handed a cast: the tokens below *are* that roster
+    /// written out, so a version of this that took any roster would put six
+    /// tokens called Cleodara and Saelyn on somebody else's board. Every other
+    /// room starts at `blank`.
     fn hardcoded(dm_secret: String) -> Self {
         // The art is named separately rather than derived from the name: a
         // character called "Captain Bronzebeard" is a file called
@@ -1693,9 +1834,9 @@ impl RoomState {
 
         let mut state = Self {
             dm_secret,
-            roster: default_roster(),
+            roster: roster_from(&ROSTER),
             map: MapInfo {
-                url: "/assets/map.png".to_owned(),
+                url: BUILT_IN_MAP.to_owned(),
                 ..MapInfo::default()
             },
             staged: None,

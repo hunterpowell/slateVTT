@@ -36,7 +36,7 @@ import { open, checks } from './cdp.mjs';
 
 const [, , base = 'http://127.0.0.1:3000', secret = 'test-secret'] = process.argv;
 
-const dm = await open(`${base}/?dm=${secret}`);
+const dm = await open(`${base}/?room=campaign&dm=${secret}`);
 const { check, note, verdict } = checks();
 
 await dm.wait(2500); // the map image, the socket, and the first frame
@@ -202,7 +202,7 @@ await press(dm, 'wall', '#wall-tools'); // put it down before switching slots
 // catch would then produce no request to see, and the check would pass by
 // having nothing to look at.
 
-const player = await open(base, { port: 9334 });
+const player = await open(`${base}/?room=campaign`, { port: 9334 });
 await player.wait(2000);
 await player.evaluate(`[...document.querySelectorAll('.picker-list button')]
   .find(b => b.textContent.includes('Saelyn')).click(); "ok"`);

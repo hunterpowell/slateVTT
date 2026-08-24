@@ -22,6 +22,16 @@ fn room() -> RoomState {
     RoomState::hardcoded(SECRET.to_owned())
 }
 
+/// A room booted from a save, with the primary room's cast.
+///
+/// `room()`'s neighbour, for the tests that prove something survives a restart.
+/// The roster is named here rather than at each call site because none of those
+/// tests is about the cast — what they are about is `adopt`, and a room with two
+/// rosters to choose from would otherwise make every one of them say so.
+fn reboot(saved: Saved) -> RoomState {
+    RoomState::restored(saved, SECRET.to_owned(), roster_from(&ROSTER))
+}
+
 /// Opens a connection and returns its outbound receiver.
 fn connect(state: &mut RoomState, client: ClientId) -> mpsc::Receiver<ServerMsg> {
     let (tx, rx) = mpsc::channel(16);
@@ -504,6 +514,7 @@ mod movement;
 mod notes;
 mod persistence;
 mod presence;
+mod rooms;
 mod tokens;
 mod undo;
 mod walls;

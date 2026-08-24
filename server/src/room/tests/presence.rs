@@ -401,7 +401,7 @@ fn a_colour_survives_a_restart() {
     let _saelyn = join_as_player(&mut state, ClientId(2), "saelyn");
     state.handle(ClientId(2), pick(2));
 
-    let booted = RoomState::restored(state.to_saved(), SECRET.to_owned());
+    let booted = reboot(state.to_saved());
     assert_eq!(booted.colours.get(&PlayerId::new("saelyn")), Some(&2));
 }
 

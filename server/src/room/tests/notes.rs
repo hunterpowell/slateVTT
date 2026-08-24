@@ -256,7 +256,7 @@ fn a_scratchpad_is_worth_writing_down() {
     );
     let _ = drain(&mut saelyn);
 
-    let reloaded = RoomState::restored(state.to_saved(), SECRET.to_owned());
+    let reloaded = reboot(state.to_saved());
     assert_eq!(
         box_for(&reloaded, &as_player("saelyn")),
         "ask about the sigil"

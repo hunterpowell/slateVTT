@@ -207,13 +207,25 @@
         color: #d8d2c4;
       }
 
-      #picker {
+      /* Both overlays. The room picker comes first and the character picker
+         follows it, and they look identical on purpose — picking a room is the
+         same kind of act as picking a character, and the only thing that
+         changes between the two screens is the question at the top. */
+      #picker,
+      #room-picker {
         position: fixed;
         inset: 0;
         display: flex;
         align-items: center;
         justify-content: center;
         background: #0b0d10;
+      }
+
+      /* Above the character picker, which is built and hidden at the same time.
+         Nothing shows both at once, but a z-index costs nothing and a stacking
+         accident here is a black screen. */
+      #room-picker {
+        z-index: 1;
       }
 
       .picker-panel {
@@ -1956,6 +1968,15 @@
     <div id="whoami" hidden>
       <span id="whoami-name"></span>
       <button id="whoami-switch" type="button">switch</button>
+    </div>
+    <!-- Before the character picker in the document as it is in the sequence:
+         a slot is claimed in a room, so the room is chosen first. -->
+    <div id="room-picker" hidden>
+      <div class="picker-panel">
+        <h1>Which room?</h1>
+        <p>This browser will remember your choice.</p>
+        <div class="picker-list"></div>
+      </div>
     </div>
     <div id="picker" hidden>
       <div class="picker-panel">

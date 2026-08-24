@@ -27,7 +27,7 @@ import { open, checks } from './cdp.mjs';
 
 const [, , base = 'http://127.0.0.1:3000', secret = 'test-secret'] = process.argv;
 
-const dm = await open(`${base}/?dm=${secret}`);
+const dm = await open(`${base}/?room=campaign&dm=${secret}`);
 const { check, note, verdict } = checks();
 
 await dm.wait(2500); // the map image, the socket, and the first frame

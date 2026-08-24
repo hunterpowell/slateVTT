@@ -41,10 +41,15 @@ $final = Join-Path $Destination "slate-$stamp.tar.gz"
 # that cannot be mistaken for a good backup.
 $part = "$final.part"
 
-# --exclude drops the save's own temp file. It is renamed over the real one
+# --exclude drops each save's own temp file. It is renamed over the real one
 # atomically, so the copy here is always a whole save -- but a .tmp caught
 # mid-write would restore as a truncated file sitting next to a good one.
-$remote = 'sudo -n tar -czf - -C /var/lib/slate --exclude=./slate-state.json.tmp .'
+#
+# A glob rather than `slate-state.json.tmp` by name: there is one save file per
+# room now and each writes its own temp beside it, so naming one would let every
+# other room's slip in. tar's --exclude is a pattern, and the leading ./ matches
+# how the members are listed from `-C /var/lib/slate .`.
+$remote = 'sudo -n tar -czf - -C /var/lib/slate --exclude=./*.json.tmp .'
 $ssh = "ssh -o BatchMode=yes -o ConnectTimeout=10 $PiHost ""$remote"""
 
 Write-Host "Pulling /var/lib/slate from $PiHost ..."

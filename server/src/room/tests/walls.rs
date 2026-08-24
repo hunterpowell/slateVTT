@@ -425,7 +425,7 @@ fn a_traced_dungeon_survives_the_save_file() {
 
     let json = serde_json::to_vec(&state.to_saved()).expect("encodes");
     let saved: Saved = serde_json::from_slice(&json).expect("decodes");
-    let restored = RoomState::restored(saved, SECRET.to_owned());
+    let restored = reboot(saved);
 
     assert_eq!(restored.walls.len(), 3);
     let reopened = restored.walls.last().expect("the door");
@@ -440,7 +440,7 @@ fn a_room_saved_before_walls_existed_still_loads() {
     // beyond loading: a segment that defaulted to an open door would quietly
     // stop blocking anything the moment fog arrives.
     let saved: Saved = serde_json::from_str("{}").expect("an empty room decodes");
-    let restored = RoomState::restored(saved, SECRET.to_owned());
+    let restored = reboot(saved);
     assert!(restored.walls.is_empty());
     assert_eq!(WallKind::default(), WallKind::Solid);
 }

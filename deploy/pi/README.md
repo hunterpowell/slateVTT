@@ -30,7 +30,8 @@ before Slate starts, the board sits around 166MB used of 905MB — there is room
   client/              index.html, dist/, assets/, spells/
 
 /var/lib/slate/        slate-owned, never touched by a deploy
-  slate-state.json
+  slate-state.json     the primary room
+  halloween.json       one file per other room — see `docs/rooms.md`
   uploads/
   maps/                the DM's map picker library
   portraits/           the DM's token art library
@@ -160,8 +161,15 @@ EOF
 sudo chmod 600 /etc/slate/slate.env
 ```
 
-Four of those deserve a note:
+Five of those deserve a note:
 
+- **`SLATE_STATE` names the *primary* room's save file**, which is why it did not have to change
+  when Slate gained a second room. Every other room's save is a sibling in the same directory,
+  named after its id — `halloween.json` beside `slate-state.json`. There is nothing to migrate and
+  nothing here to edit when a room is added; see `docs/rooms.md` for why it is a sibling rule rather
+  than a directory.
+- **`SLATE_DM_SECRET` is one secret for the whole server** and opens whichever room is picked. There
+  is no per-room secret and the DM link carries no room, so the same link reaches both.
 - **`SLATE_ADDR` is loopback.** `cloudflared` runs on this same box and connects locally, so
   Slate never listens on the LAN. To see it in a browser, forward the port rather than
   rebinding it — see *Seeing it in a browser* below.
@@ -680,10 +688,16 @@ Three things it does that are worth not undoing:
   the gzip is whole, and checked for `slate-state.json` before being renamed into place —
   the same write-then-rename shape `Store::save` uses, so an interrupted run leaves something
   that cannot be mistaken for a good backup. Old backups are only deleted after a new one has
-  passed all of that.
+  passed all of that. **The check still names the primary room's file and that is enough**: it is
+  proving the archive is a Slate backup rather than enumerating rooms, and `SLATE_STATE` is that
+  path whatever else is in the directory. Nothing here needed changing for multi-room, which is the
+  point of the sibling rule — but note that a room whose save has never been written is absent from
+  the backup, correctly, because there is nothing in it yet.
 - **It excludes `slate-state.json.tmp`.** The save is renamed over atomically, so what lands
   here is always a whole room; a `.tmp` caught mid-write would restore as a truncated file
-  sitting beside a good one.
+  sitting beside a good one. **The exclusion is a glob, `*.json.tmp`, and not one filename** — there
+  is one save per room and each writes its own temp beside it, so naming a single one would let every
+  other room's slip in.
 - **It redirects through `cmd`.** PowerShell re-encodes a native command's stdout as text,
   which silently corrupts a tarball — measured on this data, `ssh ... > file.tar.gz` produced
   9,527,080 bytes that `gzip -t` rejects outright, against 5,248,529 that it accepts. This is

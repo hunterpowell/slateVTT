@@ -160,6 +160,7 @@ screen and which token is standing on a given square.
 | `drive-cursors.mjs` | Everybody's pointer, and the DM's *not* reaching the table over unexplored ground | both     |
 | `drive-backdrop.mjs` | A picture in front of the table, and the board being the same board when it comes down | both     |
 | `drive-library.mjs` | Adding an image to a library and removing it again — the one driver whose subject is the disk | DM       |
+| `drive-rooms.mjs`  | Two rooms on one server — the picker, and one board's tokens being absent from the other | both     |
 
 The ones marked *both* open two browsers at once, and that is the point of them: almost everything
 they assert is a **difference** between what two people are holding, which one client cannot see.
@@ -192,10 +193,16 @@ node tools/drive-ui.mjs     http://127.0.0.1:3000 test-secret
 node tools/drive-player.mjs http://127.0.0.1:3000
 ```
 
+**Every driver appends `?room=campaign` to the URL it opens**, because a page that names no room
+shows the room picker and there is no board behind it to click. That is the whole of what
+multi-room cost the drivers — the room is in the URL rather than on the wire, so nothing else about
+them changed. `drive-rooms.mjs` is the one that does not, since the picker is its subject.
+
 Point them at a scratch `SLATE_STATE`, never at the room you are about to play in — the first
 thing `drive-ui.mjs` does is erase every wall on the board, `drive-staged.mjs` throws away whatever
 was in the staged slot, and the fog, names, ruler, ping and cursor drivers each build a token or flip
-a switch that persists.
+a switch that persists. **A scratch `SLATE_STATE` covers every room**: the primary room's save is
+that path and the others are its siblings, so one scratch directory holds them all.
 
 **`drive-library.mjs` is the one that writes outside the room**: it adds a file to `portraits/` and
 one to `backdrops/` and removes both again, so it is a scratch `SLATE_STATE` *and* a checkout you do

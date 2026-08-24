@@ -467,7 +467,7 @@ fn a_new_token_survives_the_save_file() {
 
     let json = serde_json::to_vec(&state.to_saved()).expect("encodes");
     let saved: Saved = serde_json::from_slice(&json).expect("decodes");
-    let restored = RoomState::restored(saved, SECRET.to_owned());
+    let restored = reboot(saved);
 
     let wolf = made(&restored, "Dire Wolf");
     assert_eq!(wolf.size, 2.0);
@@ -532,7 +532,7 @@ fn the_switch_is_in_every_snapshot_and_survives_the_save_file() {
 
     let json = serde_json::to_vec(&state.to_saved()).expect("encodes");
     let saved: Saved = serde_json::from_slice(&json).expect("decodes");
-    let restored = RoomState::restored(saved, SECRET.to_owned());
+    let restored = reboot(saved);
 
     assert!(
         !restored.show_names,
@@ -982,7 +982,7 @@ fn a_hidden_token_and_its_hit_points_survive_the_save_file() {
 
     let json = serde_json::to_vec(&state.to_saved()).expect("encodes");
     let saved: Saved = serde_json::from_slice(&json).expect("decodes");
-    let restored = RoomState::restored(saved, SECRET.to_owned());
+    let restored = reboot(saved);
 
     assert!(
         made(&restored, "Ambusher").hidden,

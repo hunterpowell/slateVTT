@@ -5,6 +5,7 @@ mod room;
 mod store;
 mod ws;
 
+use std::collections::HashMap;
 use std::path::Path;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -12,7 +13,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use axum::body::Bytes;
 use axum::extract::{DefaultBodyLimit, Path as UrlPath, Query, State, WebSocketUpgrade};
 use axum::http::{HeaderMap, StatusCode};
-use axum::response::Response;
+use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
 use axum::{Json, Router};
 use serde::{Deserialize, Serialize};
@@ -49,12 +50,20 @@ const MAX_TOKEN_BYTES: usize = 4 * 1024 * 1024;
 pub(crate) const MAX_WS_MESSAGE_BYTES: usize = 128 * 1024;
 const DM_SECRET_HEADER: &str = "x-slate-dm-secret";
 
-/// Milestone 2 is one hardcoded room, so the handle lives directly in app
-/// state. The `RwLock<HashMap<RoomId, RoomHandle>>` registry arrives with the
-/// second room; until then it would guard a lookup with one possible answer.
+/// Every room's handle, keyed by the id in `room::ROOMS`.
+///
+/// **No lock**, which is the shape of the whole feature: the rooms are known
+/// before the first socket opens, so this map is built once in `main` and only
+/// ever read. `ROADMAP.md` budgeted an `RwLock` here — a lock guards a table
+/// that changes, and nothing changes this one. It would arrive with a room the
+/// DM could create at runtime, which is not built and is not wanted.
+///
+/// Read on connect only, and never on a token move: a socket resolves its room
+/// once in `ws_handler` and then talks to that actor's `mpsc` directly, exactly
+/// as it did when there was one handle in this struct.
 #[derive(Clone)]
 struct AppState {
-    room: RoomHandle,
+    rooms: Arc<HashMap<String, RoomHandle>>,
     /// The room holds its own copy for the WebSocket handshake. This one exists
     /// because an HTTP upload never reaches the room actor to be checked there.
     dm_secret: Arc<str>,
@@ -197,23 +206,12 @@ async fn main() {
         generated
     });
 
+    // No room in it: the DM picks one on the screen the same way a player does,
+    // and a link that named a room would go stale the moment they wanted the
+    // other one. `?room=` is honoured if you want to skip the picker.
     info!("DM link: http://{addr}/?dm={dm_secret}");
 
     let state_path = std::env::var("SLATE_STATE").unwrap_or_else(|_| "slate-state.json".to_owned());
-    let store = store::Store::new(state_path.clone());
-
-    // Startup, so a panic is the right answer here — and refusing to boot is the
-    // safe answer. Starting a fresh room on top of a save we could not read
-    // would destroy the group's game with the first token move.
-    let saved = store
-        .load()
-        .await
-        .unwrap_or_else(|err| panic!("could not load {state_path}: {err}"));
-
-    match &saved {
-        Some(_) => info!(%state_path, "restored the room from disk"),
-        None => info!(%state_path, "no save found; starting from the built-in room"),
-    }
 
     let uploads_dir = std::env::var("SLATE_UPLOADS").unwrap_or_else(|_| "uploads".to_owned());
     std::fs::create_dir_all(&uploads_dir)
@@ -240,9 +238,43 @@ async fn main() {
         warn!(%backdrops_dir, "no backdrop library there; the DM can show the board instead");
     }
 
-    let room = room::spawn(dm_secret.clone(), saved, store);
+    let mut rooms = HashMap::new();
+    for (id, name) in room::rooms() {
+        let path = save_path(&state_path, id);
+        let store = store::Store::new(path.clone());
+
+        // Startup, so a panic is the right answer here — and refusing to boot is
+        // the safe answer. Starting a fresh room on top of a save we could not
+        // read would destroy the group's game with the first token move. One
+        // unreadable room stops the whole process rather than the others
+        // carrying on without it, for the same reason: a server that is
+        // *partly* up is one the DM finds out about mid-session.
+        let saved = store
+            .load()
+            .await
+            .unwrap_or_else(|err| panic!("could not load {}: {err}", path.display()));
+
+        let demo = room::is_primary(id);
+        match (&saved, demo) {
+            (Some(_), _) => info!(%id, path = %path.display(), "restored a room from disk"),
+            (None, true) => info!(%id, "no save found; starting from the built-in room"),
+            (None, false) => info!(%id, "no save found; starting an empty room"),
+        }
+
+        // `ROOMS` is a const and its ids are unique — there is a test for it —
+        // so this cannot silently drop a room.
+        let roster =
+            room::roster_of(id).unwrap_or_else(|| panic!("{id} is in ROOMS but has no roster"));
+        info!(%id, %name, slots = roster.len(), "room ready");
+        rooms.insert(
+            id.to_owned(),
+            room::spawn(dm_secret.clone(), roster, saved, store, demo),
+        );
+    }
+    let rooms = Arc::new(rooms);
+
     let state = AppState {
-        room: room.clone(),
+        rooms: rooms.clone(),
         dm_secret: dm_secret.into(),
         uploads: Path::new(&uploads_dir).into(),
         maps: Path::new(&maps_dir).into(),
@@ -252,6 +284,18 @@ async fn main() {
 
     let app = Router::new()
         .route("/ws", get(ws_handler))
+        // **The one route under `/api` that is not the DM's**, and it has to be:
+        // it is what the room picker is built from, and a player has no
+        // credential to offer. What it discloses is the room names, which are
+        // not secrets in the way the map library's contents are — a name on a
+        // picker against a list of every dungeon the DM has prepared. The
+        // unguessable subdomain is the access control here as it is everywhere
+        // else in this project.
+        //
+        // Static segments outrank `{library}` in axum's router, and
+        // `Library::named("rooms")` is `None` regardless, so this is safe twice
+        // over. There is a test for the second half.
+        .route("/api/rooms", get(room_listing))
         // **Three libraries and four things to do to one**, so the folder is a
         // path segment rather than twelve routes each a line of their own. It
         // was six wrappers when there were two verbs; `Library::named` is what
@@ -288,21 +332,90 @@ async fn main() {
     axum::serve(listener, app)
         .with_graceful_shutdown(async move {
             shutdown_signal().await;
-            // Closing the room drops its per-client senders, which closes the
+            // Closing a room drops its per-client senders, which closes the
             // WebSockets and lets axum finish draining its active connections.
-            if !room.shutdown().await {
-                error!("room shutdown completed without saving its last change");
+            // Every room, and none of them skipped on a failure: the one that
+            // could not save is the one whose message matters, and the others
+            // still have their own last change to flush.
+            for (id, room) in rooms.iter() {
+                if !room.shutdown().await {
+                    error!(%id, "room shutdown completed without saving its last change");
+                }
             }
         })
         .await
         .expect("server stopped unexpectedly");
 }
 
-async fn ws_handler(ws: WebSocketUpgrade, State(state): State<AppState>) -> Response {
+/// Where one room's save file lives.
+///
+/// **`SLATE_STATE` still names the primary room's file, exactly as it always
+/// has; every other room's sits beside it as `<id>.json`.** That is the whole
+/// rule, and it was chosen over making `SLATE_STATE` a directory because it
+/// needs no migration: the Pi's env file is unchanged, the live
+/// `/var/lib/slate/slate-state.json` keeps being the campaign, and the backup
+/// that greps the tar for that filename keeps passing. See `docs/rooms.md`.
+///
+/// A room id is a slug — there is a test — so it cannot climb out of the
+/// directory it is joined onto.
+fn save_path(state_path: &str, id: &str) -> std::path::PathBuf {
+    let primary = Path::new(state_path);
+    if room::is_primary(id) {
+        return primary.to_path_buf();
+    }
+    match primary.parent().filter(|p| !p.as_os_str().is_empty()) {
+        Some(dir) => dir.join(format!("{id}.json")),
+        None => std::path::PathBuf::from(format!("{id}.json")),
+    }
+}
+
+#[derive(Serialize)]
+struct RoomEntry {
+    id: &'static str,
+    name: &'static str,
+}
+
+/// The rooms a client may pick between.
+///
+/// The picker cannot be drawn without it and the picker comes before the
+/// socket, which is why this is HTTP rather than a `ServerMsg`: a frame
+/// carrying the room list would have to arrive on a connection that has not
+/// chosen a room yet, and every connection in this server belongs to exactly
+/// one room actor from the moment it is registered. Keeping the choice in the
+/// URL is what leaves the wire protocol untouched — see `docs/rooms.md`.
+async fn room_listing() -> Json<Vec<RoomEntry>> {
+    Json(
+        room::rooms()
+            .map(|(id, name)| RoomEntry { id, name })
+            .collect(),
+    )
+}
+
+#[derive(Deserialize)]
+struct WhichRoom {
+    room: String,
+}
+
+async fn ws_handler(
+    ws: WebSocketUpgrade,
+    State(state): State<AppState>,
+    Query(which): Query<WhichRoom>,
+) -> Response {
+    // Resolved before the upgrade, so a socket only ever exists attached to a
+    // room. A client builds this from `/api/rooms`, so an id that is not here is
+    // a stale link or a hand-typed one — 404 rather than an upgrade, because a
+    // socket that opened and then said "no such room" would be indistinguishable
+    // to `net.ts` from the server restarting, and it would reconnect forever.
+    let Some(room) = state.rooms.get(&which.room) else {
+        warn!(room = %which.room, "rejected a socket for a room that does not exist");
+        return (StatusCode::NOT_FOUND, "there is no such room").into_response();
+    };
+    let room = room.clone();
+
     let client = ClientId(NEXT_CLIENT_ID.fetch_add(1, Ordering::Relaxed));
     ws.max_message_size(MAX_WS_MESSAGE_BYTES)
         .max_frame_size(MAX_WS_MESSAGE_BYTES)
-        .on_upgrade(move |socket| ws::handle(socket, state.room, client))
+        .on_upgrade(move |socket| ws::handle(socket, room, client))
 }
 
 async fn shutdown_signal() {
@@ -681,6 +794,46 @@ mod tests {
                 "{nonsense} is not a library"
             );
         }
+    }
+
+    #[test]
+    fn the_primary_rooms_save_file_is_slate_state_itself() {
+        // The whole of why `SLATE_STATE` did not become a directory. Change
+        // this and the Pi's env file, the live campaign save and the backup
+        // that greps the tar for this filename all need a migration.
+        let primary = room::rooms()
+            .map(|(id, _)| id)
+            .find(|id| room::is_primary(id))
+            .expect("a primary room");
+        assert_eq!(
+            save_path("/var/lib/slate/slate-state.json", primary),
+            Path::new("/var/lib/slate/slate-state.json")
+        );
+    }
+
+    #[test]
+    fn every_other_rooms_save_file_sits_beside_it() {
+        for (id, _) in room::rooms().filter(|(id, _)| !room::is_primary(id)) {
+            assert_eq!(
+                save_path("/var/lib/slate/slate-state.json", id),
+                Path::new("/var/lib/slate").join(format!("{id}.json"))
+            );
+            // A bare filename has no parent directory to join onto, which is
+            // what the drivers and a plain `cargo run` both pass.
+            assert_eq!(
+                save_path("slate-state.json", id),
+                Path::new(&format!("{id}.json"))
+            );
+        }
+    }
+
+    #[test]
+    fn rooms_is_not_a_library() {
+        // `/api/rooms` is the one route under `/api` without the DM secret in
+        // front of it. Static segments outrank `{library}` in axum's router, so
+        // this is belt and braces — but if that ever changed, a `rooms` library
+        // would put the room list behind the secret the picker cannot offer.
+        assert!(Library::named("rooms").is_none());
     }
 
     #[test]

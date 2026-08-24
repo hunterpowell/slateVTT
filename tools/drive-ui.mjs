@@ -17,7 +17,7 @@ import { open, checks } from './cdp.mjs';
 
 const [, , base = 'http://127.0.0.1:3000', secret = 'test-secret'] = process.argv;
 
-const session = await open(`${base}/?dm=${secret}`);
+const session = await open(`${base}/?room=campaign&dm=${secret}`);
 const { evaluate, click, move, drag, key, wait } = session;
 const { check, note, verdict } = checks();
 

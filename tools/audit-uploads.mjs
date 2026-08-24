@@ -23,9 +23,15 @@
 //
 // Defaults match the server's own: `SLATE_STATE` or `server/slate-state.json`,
 // and `server/uploads`.
+//
+// **It reads every room's save, not only the one it was pointed at.** The
+// libraries and the uploads directory are shared between rooms and the boards
+// are not, so a portrait on a one-shot token is referenced by a file the
+// campaign's save has never heard of. Reading one room alone would print an `rm`
+// for every other room's art.
 
 import { readFileSync, readdirSync, statSync } from 'node:fs';
-import { dirname, join } from 'node:path';
+import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
@@ -33,12 +39,51 @@ const statePath =
   process.argv[2] ?? process.env.SLATE_STATE ?? join(ROOT, 'server', 'slate-state.json');
 const uploadsDir = process.argv[3] ?? join(ROOT, 'server', 'uploads');
 
-let saved;
-try {
-  saved = JSON.parse(readFileSync(statePath, 'utf8'));
-} catch (err) {
-  console.error(`could not read the save file at ${statePath}: ${err.message}`);
-  process.exit(1);
+/**
+ * Every room's save file, not just the one named.
+ *
+ * **The libraries are shared and the boards are not**, so a portrait on a
+ * one-shot token is referenced by a save file the campaign's has never heard of
+ * — and reading one room alone would list every other room's art as
+ * unreferenced and print an `rm` for it. That is the one way this tool could do
+ * damage, so it reads all of them.
+ *
+ * Every `.json` beside the primary save *is* a room save, which is the sibling
+ * rule from `docs/rooms.md` read backwards. It cannot ask the server for the
+ * list, because this runs with the service stopped — which is when the `rm`s
+ * below are safe. A `.tmp` is a write in progress and is not matched.
+ */
+const saveFiles = () => {
+  const dir = dirname(statePath) || '.';
+  // Resolved before comparing, or the primary is read twice: the path we were
+  // handed may use one separator and `join` produces the platform's.
+  const primary = resolve(statePath);
+  try {
+    const siblings = readdirSync(dir)
+      .filter((name) => name.endsWith('.json'))
+      .map((name) => resolve(dir, name))
+      .filter((path) => path !== primary);
+    return [primary, ...siblings];
+  } catch {
+    // No directory to scan — fall back to the one path we were given.
+    return [primary];
+  }
+};
+
+const rooms = [];
+for (const path of saveFiles()) {
+  try {
+    rooms.push({ path, saved: JSON.parse(readFileSync(path, 'utf8')) });
+  } catch (err) {
+    if (path === resolve(statePath)) {
+      console.error(`could not read the save file at ${path}: ${err.message}`);
+      process.exit(1);
+    }
+    // A sibling that is not a room, or is half-written. It means the list below
+    // may be missing references, so it is said out loud rather than skipped
+    // quietly.
+    console.error(`warning: ignoring ${path}: ${err.message}`);
+  }
 }
 
 /** `/uploads/abc.png` is the only shape the room stores; anything else — a
@@ -46,28 +91,37 @@ try {
 const fileOf = (url) =>
   typeof url === 'string' && url.startsWith('/uploads/') ? url.slice('/uploads/'.length) : null;
 
-// What the board is actually showing. `staged` is `#[serde(flatten)]`ed, so its
-// map fields sit directly on it rather than under a `map` key.
+// **Unions across every room**, which is the only safe way to fold them: a file
+// in use in one room and unreferenced in another is in use. `remembered` is
+// filtered against `inUse` afterwards rather than as it is built, so a map on
+// the campaign's board that the one-shot has merely calibrated does not come out
+// as merely remembered.
 const inUse = new Set();
-for (const url of [saved.map?.url, saved.staged?.url]) {
-  const name = fileOf(url);
-  if (name) inUse.add(name);
-}
-// One token collection and not two: a token planned for the staged board is the
-// same token with a `staged_pos` on it, so its art is already counted here.
-for (const token of saved.tokens ?? []) {
-  const name = fileOf(token.img);
-  if (name) inUse.add(name);
+const calibrated = new Set();
+
+for (const { saved } of rooms) {
+  // What that board is actually showing. `staged` is `#[serde(flatten)]`ed, so
+  // its map fields sit directly on it rather than under a `map` key.
+  for (const url of [saved.map?.url, saved.staged?.url]) {
+    const name = fileOf(url);
+    if (name) inUse.add(name);
+  }
+  // One token collection and not two: a token planned for the staged board is
+  // the same token with a `staged_pos` on it, so its art is already counted.
+  for (const token of saved.tokens ?? []) {
+    const name = fileOf(token.img);
+    if (name) inUse.add(name);
+  }
+  // Every map the DM has ever calibrated keeps an entry keyed on its URL, so
+  // this is the pile that grows: art nothing is showing, that the room would
+  // still recognise if it were loaded again.
+  for (const url of Object.keys(saved.calibrations ?? {})) {
+    const name = fileOf(url);
+    if (name) calibrated.add(name);
+  }
 }
 
-// Every map the DM has ever calibrated keeps an entry keyed on its URL, so this
-// is the pile that grows: art nothing is showing, that the room would still
-// recognise if it were loaded again.
-const remembered = new Set();
-for (const url of Object.keys(saved.calibrations ?? {})) {
-  const name = fileOf(url);
-  if (name && !inUse.has(name)) remembered.add(name);
-}
+const remembered = new Set([...calibrated].filter((name) => !inUse.has(name)));
 
 let files;
 try {
@@ -94,6 +148,9 @@ const total = rows.reduce((sum, r) => sum + r.bytes, 0);
 const group = (kind) => rows.filter((r) => r.kind === kind).sort((a, b) => b.bytes - a.bytes);
 
 console.log(`${uploadsDir}`);
+console.log(
+  `against ${rooms.length} room${rooms.length === 1 ? '' : 's'}: ${rooms.map((r) => r.path).join(', ')}`,
+);
 console.log(`${rows.length} files, ${mb(total)} total\n`);
 
 for (const [kind, blurb] of [

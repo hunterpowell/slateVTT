@@ -27,8 +27,8 @@ import { latticeOrBail, tokenAt, findToken, emptyCell } from './board.mjs';
 
 const [, , base = 'http://127.0.0.1:3000', secret = 'test-secret'] = process.argv;
 
-const dm = await open(`${base}/?dm=${secret}`, { port: 9333 });
-const player = await open(base, { port: 9334 });
+const dm = await open(`${base}/?room=campaign&dm=${secret}`, { port: 9333 });
+const player = await open(`${base}/?room=campaign`, { port: 9334 });
 const { check, note, verdict } = checks();
 
 await dm.evaluate('window.confirm = () => true; "ok"');
@@ -39,7 +39,7 @@ await player.evaluate(`[...document.querySelectorAll('.picker-list button')]
 await player.wait(1500);
 check(
   'the player is on the board',
-  await player.evaluate('document.querySelector("#whoami-name").textContent'),
+  await player.evaluate('document.querySelector("#whoami-name").textContent.split(" · ")[0]'),
   'Saelyn',
 );
 

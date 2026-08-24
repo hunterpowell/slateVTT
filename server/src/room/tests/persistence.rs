@@ -99,7 +99,15 @@ async fn shutdown_flushes_a_change_still_inside_the_debounce_window() {
         std::process::id(),
         uuid::Uuid::new_v4().simple()
     ));
-    let room = spawn(SECRET.to_owned(), None, Store::new(path.clone()));
+    // `demo: true`, so this is the built-in board rather than an empty one —
+    // the test moves a token that has to already be there.
+    let room = spawn(
+        SECRET.to_owned(),
+        roster_from(&ROSTER),
+        None,
+        Store::new(path.clone()),
+        true,
+    );
     let (out, mut replies) = mpsc::channel(CLIENT_MAILBOX);
 
     assert!(
@@ -268,7 +276,7 @@ fn a_restored_room_is_the_room_that_was_saved() {
     // contract, and a field that fails to serialize would pass otherwise.
     let json = serde_json::to_vec(&state.to_saved()).expect("encodes");
     let saved: Saved = serde_json::from_slice(&json).expect("decodes");
-    let restored = RoomState::restored(saved, SECRET.to_owned());
+    let restored = reboot(saved);
 
     assert_eq!(restored.tokens.len(), state.tokens.len());
     let ogre = restored
@@ -329,7 +337,7 @@ fn a_save_written_before_the_staged_slot_held_walls_still_loads_its_map() {
     assert!(staged.walls.is_empty(), "nothing was traced on it yet");
 
     // And through the room, which is what actually has to hold up.
-    let restored = RoomState::restored(saved, SECRET.to_owned());
+    let restored = reboot(saved);
     assert_eq!(restored.map.url, "/uploads/cave.png");
     let staged = restored.staged.as_ref().expect("the staged slot survived");
     assert_eq!(staged.map.url, "/uploads/crypt.png");
@@ -360,7 +368,7 @@ fn a_staged_dungeon_survives_a_restart_with_its_walls_and_its_paint() {
     // Through JSON, because the file is the contract.
     let json = serde_json::to_vec(&state.to_saved()).expect("encodes");
     let saved: Saved = serde_json::from_slice(&json).expect("decodes");
-    let restored = RoomState::restored(saved, SECRET.to_owned());
+    let restored = reboot(saved);
 
     let staged = restored.staged.as_ref().expect("still staged");
     assert_eq!(staged.map.url, "/uploads/crypt.png");
@@ -376,7 +384,7 @@ fn a_staged_dungeon_survives_a_restart_with_its_walls_and_its_paint() {
 fn a_restored_room_still_enforces_ownership() {
     // The point of persisting `owner`: a player who reconnects after a
     // restart gets their token back and no one else's.
-    let mut state = RoomState::restored(room().to_saved(), SECRET.to_owned());
+    let mut state = reboot(room().to_saved());
     let _saelyn = join_as_player(&mut state, ClientId(1), "saelyn");
     let client = state.clients.get(&ClientId(1)).expect("joined");
 

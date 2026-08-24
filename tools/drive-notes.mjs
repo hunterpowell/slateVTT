@@ -22,9 +22,9 @@ const [, , base = 'http://127.0.0.1:3000', secret = 'test-secret'] = process.arg
 
 // The usual three ports. Two drivers at once would attach to each other's
 // browser, so this one runs alone like the rest.
-const dm = await open(`${base}/?dm=${secret}`, { port: 9333 });
-const saelyn = await open(base, { port: 9334 });
-const otherTab = await open(base, { port: 9335 });
+const dm = await open(`${base}/?room=campaign&dm=${secret}`, { port: 9333 });
+const saelyn = await open(`${base}/?room=campaign`, { port: 9334 });
+const otherTab = await open(`${base}/?room=campaign`, { port: 9335 });
 const { check, note, verdict } = checks();
 
 await dm.wait(2500); // the map image, the socket, and the first frame
@@ -33,7 +33,7 @@ const claim = async (session, name) => {
   await session.evaluate(`[...document.querySelectorAll('.picker-list button')]
     .find(b => b.textContent.includes(${JSON.stringify(name)})).click(); "ok"`);
   await session.wait(1200);
-  return session.evaluate('document.querySelector("#whoami-name").textContent');
+  return session.evaluate('document.querySelector("#whoami-name").textContent.split(" · ")[0]');
 };
 
 check('Saelyn is on the board', await claim(saelyn, 'Saelyn'), 'Saelyn');

@@ -442,7 +442,7 @@ fn a_drawing_survives_the_save_file() {
 
     let json = serde_json::to_vec(&state.to_saved()).expect("encodes");
     let saved: Saved = serde_json::from_slice(&json).expect("decodes");
-    let restored = RoomState::restored(saved, SECRET.to_owned());
+    let restored = reboot(saved);
 
     let shape = only_shape(&restored);
     assert_eq!(shape.kind, ShapeKind::Cone);
@@ -455,7 +455,7 @@ fn a_room_saved_before_drawings_existed_still_loads() {
     // Invariant 2, checked on the field this milestone added rather than
     // trusted: an older save carries no `shapes` at all.
     let saved: Saved = serde_json::from_str("{}").expect("an empty room decodes");
-    let restored = RoomState::restored(saved, SECRET.to_owned());
+    let restored = reboot(saved);
     assert!(restored.shapes.is_empty());
 }
 

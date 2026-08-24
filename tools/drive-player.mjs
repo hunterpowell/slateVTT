@@ -14,7 +14,7 @@ import { open, checks } from './cdp.mjs';
 
 const [, , base = 'http://127.0.0.1:3000'] = process.argv;
 
-const session = await open(base, { port: 9334 });
+const session = await open(`${base}/?room=campaign`, { port: 9334 });
 const { evaluate, wait } = session;
 const { check, verdict } = checks();
 
@@ -25,7 +25,7 @@ await evaluate(`[...document.querySelectorAll('.picker-list button')]
   .find(b => b.textContent.includes('Saelyn')).click(); "ok"`);
 await wait(1500);
 
-check('joined as a player', await evaluate('document.querySelector("#whoami-name").textContent'), 'Saelyn');
+check('joined as a player', await evaluate('document.querySelector("#whoami-name").textContent.split(" · ")[0]'), 'Saelyn');
 
 // The DM's panels are not built on this connection at all — they are not
 // styled away, they were never created.

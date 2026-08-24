@@ -115,10 +115,38 @@ locks on room state and there is no `Arc<Mutex<RoomState>>` anywhere. Clients se
 into the room over an `mpsc` channel; the room sends messages back to each client over that
 client's own `mpsc` sender.
 
-**There is one room and it is hardcoded**, so its `RoomHandle` lives directly on `AppState` and
-there is no registry and no `RoomId`. A second room would add a `RwLock<HashMap<RoomId, RoomHandle>>`
-touched on connect and disconnect only — never on a token move — which is the shape everything above
-is built to allow and none of it is waiting for. Do not build it before there is a second room.
+**There is more than one room, and they are fixed at boot.** `ROOMS` is a const — an id, a display
+name and a roster each — so `AppState` holds an `Arc<HashMap<String, RoomHandle>>` built once in
+`main` and only ever read, and **there is still no lock**: a lock guards a table that changes, and
+nothing changes this one. The `RwLock` this file used to budget for is what a room the DM could
+*create at runtime* would need. Do not build it before there is a reason.
+
+Two rooms share no field, no channel and no lock — which is why this is **not the scene system**
+refused above, and why there is no cross-room leak to filter: a reference that does not exist cannot
+be written wrongly. A socket resolves its room once in `ws_handler` and then talks to that actor's
+`mpsc` directly, exactly as it did when there was one handle here; nothing on the hot path knows
+rooms are plural.
+
+**The room is named in the WebSocket URL, not on the wire.** No `ClientMsg` or `ServerMsg` variant
+was added and `protocol-tags.json` is untouched — that one decision is where the feature's smallness
+comes from. `/api/rooms` is the one route under `/api` without the DM secret in front of it, because
+the picker comes before the socket and a player has no credential; what it discloses is room names,
+which are not the map library's contents.
+
+**The first entry is the primary room** and exactly two things hang off that, both answering "which
+room did the single-room server become": its save file is `SLATE_STATE` verbatim, where every other
+room's is a sibling `<id>.json`, and a missing save boots it from `hardcoded` where every other room
+boots `blank`. Neither generalises to a third room. The sibling rule was chosen over making
+`SLATE_STATE` a directory because it needs no migration.
+
+**A room id names a save file, a `localStorage` key and a `?room=` link**, so changing one after a
+room has been played in orphans all three. It is a slug and ids are unique, both tested. A room's
+roster is its own: `hello` refuses a `player_id` that names no slot in *this* room, so a player in
+two campaigns holds two slugs under two keys.
+
+→ **`docs/rooms.md`** before touching `ROOMS`/`RoomDef`, `roster_from`, `RoomState::blank`,
+`room::spawn`, `save_path`, `room_listing` or `ws_handler` on the server, or `rooms.ts`,
+`chooseRoom` in `main.ts`, the storage keys in `identity.ts`, or the room in `connect`.
 
 Per WebSocket connection, split the socket and spawn two tasks:
 - recv task: reads the WS stream, deserializes, pushes `(ClientId, ClientMsg)` into the room's `mpsc::Sender`

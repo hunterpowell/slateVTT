@@ -212,7 +212,7 @@ fn the_convention_is_in_every_snapshot_and_survives_the_save_file() {
 
     let json = serde_json::to_vec(&state.to_saved()).expect("encodes");
     let saved: Saved = serde_json::from_slice(&json).expect("decodes");
-    let restored = RoomState::restored(saved, SECRET.to_owned());
+    let restored = reboot(saved);
 
     assert_eq!(
         restored.diagonals,
@@ -238,7 +238,7 @@ fn a_save_written_before_the_field_existed_counts_the_old_way() {
         .expect("the field is there to remove");
 
     let saved: Saved = serde_json::from_value(json).expect("decodes without it");
-    let restored = RoomState::restored(saved, SECRET.to_owned());
+    let restored = reboot(saved);
 
     assert_eq!(
         restored.diagonals,

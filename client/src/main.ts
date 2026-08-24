@@ -14,9 +14,13 @@ import type { Identity } from './identity.js';
 import {
   ANONYMOUS,
   forgetPlayerId,
+  forgetRoom,
   readStoredPlayerId,
+  readStoredRoom,
   storePlayerId,
+  storeRoom,
   takeDmSecretFromUrl,
+  takeRoomFromUrl,
 } from './identity.js';
 import { attachInput } from './input.js';
 import type { MapTool } from './maptool.js';
@@ -34,6 +38,8 @@ import { overridesFromWire } from './overrides.js';
 import type { Panel } from './panel.js';
 import { createPanel } from './panel.js';
 import { createPicker } from './picker.js';
+import type { RoomChoice } from './rooms.js';
+import { createRoomPicker, fetchRooms } from './rooms.js';
 import type { Cursors } from './cursors.js';
 import { createCursors } from './cursors.js';
 import type { Pings } from './pings.js';
@@ -82,6 +88,7 @@ interface Ui {
   hud: HTMLElement;
   banner: HTMLElement;
   picker: HTMLElement;
+  roomPicker: HTMLElement;
   whoami: HTMLElement;
   whoamiName: HTMLElement;
   whoamiSwitch: HTMLButtonElement;
@@ -237,6 +244,7 @@ function findUi(): Ui {
     hud: need('#hud'),
     banner: need('#banner'),
     picker: need('#picker'),
+    roomPicker: need('#room-picker'),
     whoami: need('#whoami'),
     whoamiName: need('#whoami-name'),
     whoamiSwitch: need<HTMLButtonElement>('#whoami-switch'),
@@ -381,9 +389,57 @@ interface Room {
   initiative: Initiative;
 }
 
-function boot(): void {
+/**
+ * Works out which room this browser is opening, then hands over to `boot`.
+ *
+ * **Everything after this function is unchanged by multi-room** — it takes the
+ * room as an argument and never asks again. The split is here because a socket
+ * belongs to one room from the moment it opens, so the choice has to be settled
+ * before `connect`, and the list it is settled against comes over HTTP.
+ *
+ * Three ways to arrive, in order: a `?room=` in the link, the room this browser
+ * was last in, or the picker. The first two are checked against the list rather
+ * than trusted, so a stale bookmark or a renamed room falls back to the picker
+ * instead of a socket the server 404s.
+ */
+async function chooseRoom(): Promise<void> {
   const ui = findUi();
 
+  let rooms: RoomChoice[];
+  try {
+    rooms = await fetchRooms();
+  } catch (err) {
+    // There is no room to connect to and nothing to show, so this is the one
+    // failure the page cannot work around.
+    console.error(err);
+    ui.banner.textContent = 'could not reach the server — refresh to try again';
+    ui.banner.hidden = false;
+    return;
+  }
+
+  const known = (id: string | null): RoomChoice | undefined =>
+    id === null ? undefined : rooms.find((candidate) => candidate.id === id);
+
+  const chosen = known(takeRoomFromUrl()) ?? known(readStoredRoom());
+  if (chosen !== undefined) {
+    // A link that named a room replaces the remembered one; a remembered one
+    // rewrites itself, which costs nothing.
+    storeRoom(chosen.id);
+    boot(ui, chosen);
+    return;
+  }
+
+  const roomPicker = createRoomPicker(ui.roomPicker, (roomId) => {
+    const picked = known(roomId);
+    if (picked === undefined) return; // not offered; nothing to do
+    storeRoom(picked.id);
+    roomPicker.hide();
+    boot(ui, picked);
+  });
+  roomPicker.show(rooms);
+}
+
+function boot(ui: Ui, choice: RoomChoice): void {
   // Read and strip the DM secret before anything else can screenshot the URL.
   const dmSecret = takeDmSecretFromUrl();
 
@@ -435,8 +491,18 @@ function boot(): void {
   });
 
   ui.whoamiSwitch.addEventListener('click', () => {
-    forgetPlayerId();
-    location.reload();
+    // **Both**, and the room first, because they are one act: the room decides
+    // which slots exist, so being asked which character you are without being
+    // asked which room you are in offers a cast you may not want. It reloads
+    // into the room picker and then the character picker, which is the same
+    // sequence a first visit takes.
+    forgetPlayerId(choice.id);
+    forgetRoom();
+    // The link's own `?room=` would beat the forgetting and put us straight
+    // back where we were, so it goes too.
+    const url = new URL(location.href);
+    url.searchParams.delete('room');
+    location.replace(`${url.pathname}${url.search}${url.hash}`);
   });
 
   /**
@@ -466,14 +532,14 @@ function boot(): void {
     stage?.reloadMap(newImage ? () => mapTool?.proposeWholeMap() : undefined);
   };
 
-  const net: Net = connect({
+  const net: Net = connect(choice.id, {
     onOpen: () => {
       // A DM link wins over any remembered slot: it is an explicit, deliberate
       // act, and the DM may well have played as a character before.
       net.send({
         type: 'hello',
         dm_secret: dmSecret,
-        player_id: dmSecret === null ? readStoredPlayerId() : null,
+        player_id: dmSecret === null ? readStoredPlayerId(choice.id) : null,
       });
     },
 
@@ -482,8 +548,8 @@ function boot(): void {
     onWelcome: (welcome) => {
       picker.hide();
       identity = { isDm: welcome.is_dm, playerId: welcome.player_id };
-      if (welcome.player_id !== null) storePlayerId(welcome.player_id);
-      showWhoami(ui, identity, welcome.state.tokens);
+      if (welcome.player_id !== null) storePlayerId(choice.id, welcome.player_id);
+      showWhoami(ui, identity, choice, welcome.state.tokens);
 
       // Built here rather than beside the rulers, because it is the first thing
       // on the client that has to know *who we are* to work at all: every ring
@@ -1122,16 +1188,23 @@ function boot(): void {
   });
 }
 
-function showWhoami(ui: Ui, identity: Identity, tokens: WireToken[]): void {
+function showWhoami(ui: Ui, identity: Identity, choice: RoomChoice, tokens: WireToken[]): void {
   if (identity.isDm) {
-    ui.whoamiName.textContent = 'DM';
-    ui.whoamiSwitch.hidden = true;
+    ui.whoamiName.textContent = `DM · ${choice.name}`;
   } else {
     // Prefer the character's display name over the raw slot id.
     const own = tokens.find((t) => t.owner.kind === 'player' && t.owner.id === identity.playerId);
-    ui.whoamiName.textContent = own?.name ?? identity.playerId ?? '—';
-    ui.whoamiSwitch.hidden = false;
+    ui.whoamiName.textContent = `${own?.name ?? identity.playerId ?? '—'} · ${choice.name}`;
   }
+  // **Still hidden for the DM**, and multi-room is a reason to keep it that way
+  // rather than the reason to change it. A reload is how this button works, and
+  // the DM's secret does not survive one: `takeDmSecretFromUrl` strips it from
+  // the address bar on boot and it lives in a closure from then on, so a
+  // reloaded DM comes back anonymous and lands on the character picker. A
+  // button that silently demotes them is worse than no button — they switch
+  // rooms by opening their own link, which may carry `?room=` and skip the
+  // picker entirely.
+  ui.whoamiSwitch.hidden = identity.isDm;
   ui.whoami.hidden = false;
 }
 
@@ -1569,4 +1642,5 @@ function loadImage(url: string): Promise<HTMLImageElement> {
   });
 }
 
-boot();
+// Floating: nothing awaits the page. `chooseRoom` handles its own one failure.
+void chooseRoom();
