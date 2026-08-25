@@ -265,67 +265,110 @@ straightforward, and because it can pin the glibc version explicitly.
 ## Every deploy
 
 ```powershell
-cd c:\Users\Hunter\source\repos\slateVTT\client
-npm ci
-npm run check
+cd c:\Users\Hunter\source\repos\slateVTT
+.\deploy\pi\Deploy-Slate.ps1
+```
 
-cd ..\server
-cargo test
+That is the whole of it. The script builds, checks what it built, ships it to `~/stage` on
+the Pi, and hands off to [`install.sh`](install.sh), which does the swap. `-PiHost` overrides
+the default of `hunter@slate.local`; `-SkipBuild` reships the artifacts already on disk, for a
+re-run after a network failure, and refuses if either artifact is older than a source file.
+
+**The name is resolved once, in the preflight, and the address it produces is what every `ssh`
+and `scp` below is handed.** That is not a micro-optimisation. mDNS is the least reliable link
+in this chain — from the build machine roughly one `slate.local` lookup in four times out with
+no answer at all — and each of the seven remote commands used to resolve the name for itself, so
+a deploy rolled that dice seven times and died half way through the uploads with `Could not
+resolve hostname`. Resolving once also settles which *interface* the deploy uses: a Pi on
+ethernet and wifi at the same time answers to one name on two addresses, and a lookup per command
+means consecutive uploads can take different paths. The preflight tries each address that came
+back, twice round, and the first to answer `sudo -n true` carries the whole run — so an interface
+that has gone to sleep costs one connect timeout instead of a stalled upload. Pass
+`-PiHost <user>@<address>` to skip all of it and pin the deploy to one route.
+
+**Nothing in it writes to `/var/lib/slate`.** The saved rooms, the uploads and the three
+libraries are the DM's, and a deploy has nothing to say about them — seeding those is the
+one-off below, run by hand at install time.
+
+### What it runs
+
+The two halves are worth knowing separately, because the failure messages name them.
+
+On this machine:
+
+```text
+npm ci                                                   in client\
+npm run check                                            typecheck, test, build -> dist/main.js
+cargo test                                               in server\, natively on x86
 cargo zigbuild --release --target aarch64-unknown-linux-gnu.2.36
 ```
 
-`npm run check` is typecheck, test and build, and produces `dist/main.js`. `cargo test` runs
-natively on x86 because cross-compiled tests cannot run on the build machine — test first,
-then cross-build.
+`cargo test` runs natively because a cross-compiled test binary cannot run on the build
+machine — test first, then cross-build. **The `.2.36` suffix targets glibc 2.36 rather than
+whatever is newest.** Building against an *older* glibc than the Pi's is the safe direction:
+old symbols exist on new systems, not the reverse. The Pi currently has 2.41 (`ldd --version`).
 
-**The `.2.36` suffix targets glibc 2.36 rather than whatever is newest.** Building against an
-*older* glibc than the Pi's is the safe direction: old symbols exist on new systems, not the
-reverse. The Pi currently has 2.41 (`ldd --version`).
+Then six `scp`s, **one source per command** — `scp -r` with several sources and a
+trailing-slash destination flattens them a level up, silently, which is why the script keeps
+them in a table rather than leaving the rule to be remembered:
 
-Then ship it. **One source per `scp`** — `scp -r` with several sources and a trailing-slash
-destination flattens them a level up, silently:
-
-```powershell
-cd c:\Users\Hunter\source\repos\slateVTT
-ssh <user>@slate.local "mkdir -p stage/client"
-scp    server\target\aarch64-unknown-linux-gnu\release\slate-server <user>@slate.local:stage/slate-server
-scp    client\index.html <user>@slate.local:stage/client/
-scp -r client\dist       <user>@slate.local:stage/client/
-scp -r client\assets     <user>@slate.local:stage/client/
-scp -r client\spells     <user>@slate.local:stage/client/
-# Only needed for a first install — see the seeding step below. A routine
-# deploy does not touch the libraries at all.
-scp -r maps              <user>@slate.local:stage/
-scp -r portraits         <user>@slate.local:stage/
-scp -r backdrops         <user>@slate.local:stage/
+```text
+server\target\aarch64-unknown-linux-gnu\release\slate-server  ->  stage/slate-server
+client\index.html                                             ->  stage/client/
+client\dist                                                   ->  stage/client/
+client\assets                                                 ->  stage/client/
+client\spells                                                 ->  stage/client/
+deploy\pi\install.sh                                          ->  stage/install.sh
 ```
 
 `client\src` and `client\node_modules` are deliberately absent. The Pi serves the bundle, not
-the sources. **`client\spells` is not part of the bundle and has to be copied on its own** —
-esbuild never touches it, so it arrives only if that line does. The client links to `/spells/`
-from the bottom-right corner, and a missing copy is a 404 behind a button that looked fine on the
-build machine. `text.json` is gitignored and absent here as it is everywhere else; the page falls
-back to the row naming a page, which is the licensing decision in `client/spells/README.md` and
-not a broken deploy.
+the sources. **`client\spells` is not part of the bundle and is copied on its own** — esbuild
+never touches it, so it arrives only if that line does. The client links to `/spells/` from the
+bottom-right corner, and a missing copy is a 404 behind a button that looked fine on the build
+machine. `text.json` is gitignored and absent here as it is everywhere else; the page falls back
+to the row naming a page, which is the licensing decision in `client/spells/README.md` and not a
+broken deploy.
 
-Install into place, on the Pi. **Read the destinations carefully** — see *Common failures*:
+Then, on the Pi, `sudo bash stage/install.sh stage`.
+
+### How it fails
+
+One rule: **refuse before the service stops.** Everything knowable from a file on disk is
+checked on the build machine before a byte is uploaded, and checked again on the Pi before Slate
+is stopped — the binary's ELF header (64-bit, `EM_AARCH64`), every file the bundle needs by
+name, and that the client tree holds nothing but `index.html`, `dist`, `assets` and `spells`.
+That last one is not tidiness: the client directory is served statically, so a map that lands in
+it is downloadable by URL, which routes around the DM-only picker entirely.
+
+A refusal at any of those points has stopped nothing and moved nothing. Slate is still up on the
+old build.
+
+Past that, `install.sh` builds the replacement tree at `/opt/slate/client.new` *beside* the live
+one and only then stops the service, so the swap is two renames and the outage is a second or
+two. The previous build is kept at `client.old` and `bin/slate-server.old` across it.
+
+The one failure left is a new build that installs and then will not serve. `install.sh` waits up
+to 20s for `systemctl is-active` plus a 200 from both `/` and `/spells/`, and if it does not get
+them it **puts the old build back and restarts it**, keeping what failed at `client.failed` and
+`bin/slate-server.failed` for you to look at. `/spells/` is in that check deliberately: a missed
+`client\spells` is a 404 the build machine cannot show you.
+
+Two preflight checks on the Windows side are worth knowing about because they fail early and
+their message is short. `ssh -o BatchMode=yes … sudo -n true` runs before anything is built: it
+proves the key works and that `sudo` on the Pi will not sit waiting for a password, which over a
+non-interactive `ssh` is a *hang* rather than an error. And `cargo zigbuild --version` is checked
+before `npm ci`, so a missing cross-compiler costs a message rather than five minutes.
+
+### Seeding the libraries — install time only
+
+`maps/`, `portraits/` and `backdrops/` are the DM's own folders and the deploy does not touch
+them. Seed them once, on the first install:
 
 ```bash
-sudo systemctl stop slate
-
-sudo install -o root -g root -m 755 ~/stage/slate-server /opt/slate/bin/slate-server
-sudo rm -rf /opt/slate/client/*
-sudo cp -r ~/stage/client/.     /opt/slate/client/
-sudo chown -R root:root /opt/slate
-sudo chmod -R a+rX /opt/slate
-
-sudo systemctl start slate
+scp -r maps      <user>@slate.local:stage/
+scp -r portraits <user>@slate.local:stage/
+scp -r backdrops <user>@slate.local:stage/
 ```
-
-**The libraries are not in that list, deliberately.** The client is replaced wholesale because
-every byte of it comes from the build; `maps/`, `portraits/` and `backdrops/` are the DM's own
-folders and a deploy has nothing to say about them. Seeding them is a one-off, on the first
-install only:
 
 ```bash
 # once, at install time — and never again, or a removed map comes back
@@ -352,7 +395,17 @@ sudo rm -rf /opt/slate/maps /opt/slate/portraits
 sudo systemctl start slate
 ```
 
+### Doing it by hand
+
+`install.sh` is a plain shell script and reads top to bottom; if you need to do a deploy without
+the PowerShell half — from a machine that is not the build machine, say — the `scp` table above
+and `sudo bash stage/install.sh stage` are the whole of it.
+
 ## Verify
+
+`Deploy-Slate.ps1` already does the first three of these and rolls back if they do not come
+good, so this is for checking a box you did not just deploy to — or for reading the log after
+one that did roll back.
 
 ```bash
 systemctl is-active slate
@@ -766,17 +819,58 @@ so a restore under a running server is overwritten by whatever that server saves
 
 # Common failures
 
+Most of the deploy failures this README used to list are now refusals from
+`Deploy-Slate.ps1` or `install.sh`, which say what is wrong and leave the running Slate alone.
+They are kept below because a hand deploy can still hit them.
+
+**From the deploy script:**
+
+- **`Could not resolve <name> from this machine`** — the lookup, not the Pi. An mDNS name is
+  unreliable from Windows rather than broken, and the preflight already retries it, so a failure
+  here means several attempts in a row came back empty. Find the address in the router's DHCP
+  table and pass `-PiHost <user>@<address>`. Nothing has been built.
+- **`Could not reach <host> with a key at <addresses>, or passwordless sudo is not available
+  there`** — the preflight, before anything is built. The name resolved and nothing at those
+  addresses answered: either `ssh` does not work with a key from this machine, or `sudo -n true`
+  on the Pi wants a password. The second one matters more than it looks: over a non-interactive
+  `ssh` a password prompt is a *hang*, not an error.
+- **`cargo zigbuild is not available`** — the cross-compiler was never installed, or `zig` is not
+  on `PATH` because the terminal was not restarted. See *Once, to set up the cross-compiler*.
+- **`… is not aarch64`** or **`is not an ELF binary`** — the wrong `--target`, caught on the build
+  machine before the upload. If you see this from `install.sh` instead, the staged binary is not
+  the one that was just built.
+- **`main.js is older than <source file>. Drop -SkipBuild.`** — exactly what it says. `-SkipBuild`
+  is for re-running a deploy whose upload failed, not for a code change.
+- **`unexpected entries in the staged client tree, which is served statically`** — something that
+  is not `index.html`, `dist`, `assets` or `spells` is in `client\`. This matters beyond tidiness:
+  the client directory is served statically, so a map sitting in it is downloadable by URL, which
+  routes around the DM-only map picker entirely.
+- **`slate did not serve within 20s`** — the new build installed and would not answer. It has been
+  rolled back and the old one is running again; what failed is kept at `/opt/slate/client.failed`
+  and `/opt/slate/bin/slate-server.failed`. Start with `journalctl -u slate -n 50`. A 200 from `/`
+  but not `/spells/` is the missed `client\spells` copy.
+- **`COULD NOT RESTART SLATE`** — the rollback ran and `systemctl start` still failed. This is the
+  one message here that means the board is down. `journalctl -u slate -n 50`, and
+  `/opt/slate/client.old` and `bin/slate-server.old` may still be there to put back by hand.
+- **`/opt/slate/bin is missing — run the first-time setup`** — the deploy script installs onto a
+  box that has already been set up. It does not create the layout, the service account or the env
+  file; that is *First-time setup* above.
+
+**From a hand deploy:**
+
 - **`install: cannot stat '~/stage/slate-server'`** — the `scp` of the binary did not run or
   did not resolve its local path. Check that
   `server\target\aarch64-unknown-linux-gnu\release\slate-server` exists on the build machine
   and re-run that one command with an absolute path, watching its exit code.
 - **Client files land in `~/stage` instead of `~/stage/client`** — `scp -r` with multiple
   sources and a trailing-slash destination. One source per command.
-- **Map images appear in `/opt/slate/client`** — a `cp` destination typo. This one matters
-  beyond tidiness: the client directory is *served statically*, so a map sitting in it is
-  downloadable by URL, which routes around the DM-only map picker entirely. Move them with
-  `sudo mv /opt/slate/client/*.jpg /opt/slate/maps/` and check that `/opt/slate/client` holds
-  exactly `assets`, `dist` and `index.html`.
+- **`$'\r': command not found` from `install.sh`** — the script arrived with CRLF line endings.
+  `.gitattributes` marks `*.sh` as `eol=lf` and `Deploy-Slate.ps1` strips them again on the way
+  out, so this needs a clone that predates the first or an upload that skipped the second. Fix
+  with `tr -d '\r' < install.sh > install.lf.sh` on the Pi.
+
+**From either:**
+
 - **`Permission denied (publickey)` when forwarding the port** — the `ssh -L` command was run
   on the Pi rather than on Windows. The private key lives on the build machine.
 - **`cannot execute binary file: Exec format error`** — wrong architecture. `file` on the

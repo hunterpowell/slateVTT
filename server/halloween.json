@@ -1,0 +1,43 @@
+{
+  "map": {
+    "url": "/assets/map.png",
+    "grid_px": 64.0,
+    "offset_x": 0.0,
+    "offset_y": 0.0,
+    "grid_color": "#ffffff52",
+    "play_area": null,
+    "fog": false,
+    "vision_ft": 60.0,
+    "lighting": "dynamic"
+  },
+  "staged": null,
+  "tokens": [],
+  "initiative": {
+    "entries": [],
+    "current": null,
+    "round": 1
+  },
+  "shapes": [],
+  "walls": [],
+  "revealed": {
+    "x": 0,
+    "y": 0,
+    "w": 0,
+    "h": 0,
+    "cells": ""
+  },
+  "overrides": {
+    "x": 0,
+    "y": 0,
+    "w": 0,
+    "h": 0,
+    "cells": ""
+  },
+  "show_names": true,
+  "diagonals": "equal",
+  "show_cursors": true,
+  "calibrations": {},
+  "notes": [],
+  "colours": {},
+  "backdrop": null
+}

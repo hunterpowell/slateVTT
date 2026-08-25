@@ -1,0 +1,5 @@
+# install.sh is executed by bash on the Pi, and core.autocrlf is true on the
+# build machine. A CR at the end of a line makes bash fail on the wrong line
+# number. Deploy-Slate.ps1 strips them again on the way out; this keeps them
+# from arriving in the first place.
+*.sh text eol=lf
