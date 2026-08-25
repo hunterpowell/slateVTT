@@ -23,6 +23,7 @@ import {
   takeRoomFromUrl,
 } from './identity.js';
 import { attachInput } from './input.js';
+import { asTable } from './mirror.js';
 import type { MapTool } from './maptool.js';
 import { createMapTool } from './maptool.js';
 import type { Rail } from './rail.js';
@@ -190,6 +191,7 @@ interface Ui {
     gesture: HTMLButtonElement;
     clear: HTMLButtonElement;
     sight: HTMLButtonElement;
+    view: HTMLButtonElement;
   };
   tokentool: {
     root: HTMLElement;
@@ -346,6 +348,7 @@ function findUi(): Ui {
       gesture: need<HTMLButtonElement>('#fog-gesture'),
       clear: need<HTMLButtonElement>('#fog-clear'),
       sight: need<HTMLButtonElement>('#fog-sight'),
+      view: need<HTMLButtonElement>('#fog-view'),
     },
     tokentool: {
       root: need('#tokentool'),
@@ -744,6 +747,11 @@ function boot(ui: Ui, choice: RoomChoice): void {
             drawTool?.stop();
             wallTool?.stop();
           },
+          // The board reads the mirror for itself every frame; the initiative
+          // panel is redrawn only when something arrives, so it is told. One
+          // line rather than a mirrored scene threaded through the four places
+          // that call `panel.update` — the fifth would be the one forgotten.
+          () => panel?.mirror(fogTool?.playerView ?? false),
         );
         fogTool.update(room.scene);
 
@@ -1505,9 +1513,17 @@ async function start(
     // Read once and passed down, so the sweep below and the fade the renderer
     // draws cannot disagree about what time it is within one frame.
     const now = performance.now();
+    // The mirror, read per frame like everything else here. Narrowed on the way
+    // into the renderer rather than held as a second scene, because a copy that
+    // outlived a frame would be a second thing to keep in step with the deltas —
+    // and the thing it is a copy of changes on every drag frame. Everything
+    // outside this call, `input.ts` included, goes on reading the room's own:
+    // the mirror is what the DM is looking at, not what they are working on.
+    const playerView = fogTool?.playerView ?? false;
     render(ui.ctx, view, {
       cam,
-      scene,
+      scene: playerView ? asTable(scene) : scene,
+      playerView,
       identity,
       map,
       now,

@@ -25,8 +25,8 @@ Do not work ahead. Each milestone should run and be usable before starting the n
 6. Map upload and grid calibration UI.
 7. Package for Windows session hosting and deploy behind a Cloudflare Tunnel.
 
-**Everything through 28 is built, and so are 30, 31, 32 and 33; 29 is not.** 25 and 26 were never
-planned and are out of order for the reasons their own entries give. 33 is *Multi-room*, which was
+**Everything through 28 is built, and so are 30, 31, 32, 33 and 34; 29 is not.** 25, 26 and 34 were
+never planned and are out of order for the reasons their own entries give. 33 is *Multi-room*, which was
 unscheduled until a Halloween one-shot became the second room it was waiting for. Everything from 8 on was planned after the original
 seven; 17 and 18 were workshopped after 16 landed, 19–24 after 18, and 27–29 on 2026-08-18 after 26.
 That batch was the first one written down while nothing in it existed; 27 and 28 both landed on
@@ -1079,6 +1079,14 @@ and 28 also overturned something *its own* design section said, which its entry 
     they ask about one creature. That stays true under either setting, so the tool built instead of
     this feature is now the thing that makes it defensible.
 
+    **Building this means turning the sight check back on** — `SOLO_SIGHT` in `fogtool.ts`, which
+    milestone 34 switched off. That is not an obstacle, it is the same argument arriving from the
+    other end: the check went off because player view answers *what is the table looking at* for the
+    whole party at once, and the moment `visible` is per-player there is no single answer for it to
+    mirror. Player view then has to name somebody, and asking about one creature stops being the
+    narrow version of anything. The two controls are each redundant exactly while the other is the
+    honest one.
+
     What has *not* been answered is the objection under *Fog of war* below — "five people narrating
     to each other on Discord get nothing out of per-player fog but confusion and five times the
     state." That is why this is a **switch and not a replacement**, and why it is the middle of three
@@ -1359,6 +1367,49 @@ and 28 also overturned something *its own* design section said, which its entry 
     picker still *lists* subdirectories, because a DM who arranges the folder by hand should see
     it. Renaming is remove-then-add, which is also how replacing a portrait's art works, and both
     are two-step for the same reason: the one-step version is a silent overwrite with no undo.
+
+34. **Done**, on 2026-08-25. Player view — the DM's own board, redrawn as the board the table is
+    looking at. One button on the fog panel; see *Player view* in `docs/fog.md`.
+
+    **Unplanned, like 25 and 26, and it comes from the same place they did: playing.** The DM holds
+    more of the room than anybody else by design, and the cost of that is the one thing every other
+    screen has for free — knowing what it is showing. Before this the only way to check was to open
+    a second browser and claim a player's slot.
+
+    **It exists because the fog is party-shared**, which is the whole argument for its smallness.
+    There is one answer to "what can the table see", so the mirror is a fact rather than a choice
+    between six — and `asTable` is a pure function over a scene the DM's client already holds. No
+    command, no event, no filter, nothing on the wire: milestone 26's shape for the second time, and
+    the second feature to be leak-proof by construction rather than by a check.
+
+    **Milestone 29 is the entry this one talks to.** If `visible` ever becomes per-player, `asTable`
+    is where a name has to go and this feature needs a defence it does not need today. 26 answered
+    the objection that killed per-player fog; this one is the reason to want it *less*, since the
+    question a DM actually asks — what is on their screens — now has a button.
+
+    **What building it found:**
+
+    - **The initiative panel had to mirror too, and that was not obvious.** A mirrored scene alone
+      leaves a hidden creature's row drawing as a raw id, which is exactly the failure
+      `initiative_for` exists to prevent — the server's filter, rediscovered by removing it. It is
+      *told* rather than handed a narrowed scene, because it redraws on arrival and the board
+      redraws every frame.
+    - **The fog is not filtered, it is drawn darker**, so it needed a second canvas rather than a
+      second answer. `Fog` grew `table`, built only on the DM's client, and `drawFog` picks between
+      them on one line that resolves all four cases without asking who is reading.
+    - **`Fog` had to keep its packed `cells`.** The canvas answers how dark a square is; the mirror
+      has to ask whether the table can see what is standing on it, which is the same characters read
+      for a different question.
+    - **Editing is deliberately untouched.** The DM can drag and click through the mirror. Refusing
+      would have made it a second opinion about permissions, which is a thing this project has
+      exactly one of and wants to keep that way.
+
+    **And then it took the sight check off the panel**, days later and on the strength of using it:
+    a DM reaching for *can the rogue see it* was nearly always asking what the table's board looks
+    like, which is now one button. `SOLO_SIGHT` in `fogtool.ts` is the whole of the suspension —
+    `solo.ts`, its tests and the render path are untouched, and milestone 29 is what turns it back
+    on, for the reason that entry now gives. `drive-panels.mjs` lost its solo half and gained the
+    check that fails when the const flips.
 
 ### The right dock
 

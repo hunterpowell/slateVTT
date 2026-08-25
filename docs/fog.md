@@ -4,8 +4,8 @@ What the party can see, and what they remember seeing. The walls arrived in mile
 nothing read them; this is what reads them.
 
 `.claude/CLAUDE.md` is loaded into every session; this file is not. **Read it before touching
-`fog.rs`, `fog.ts`, `solo.ts`, `overrides.ts`, `fogtool.ts`, `unseen_by_table`, `with_fringe`,
-`recompute_sight`, `refresh_fog`, or the `moves_sight` gate** — six of those ten are the places a leak would go
+`fog.rs`, `fog.ts`, `solo.ts`, `mirror.ts`, `overrides.ts`, `fogtool.ts`, `unseen_by_table`,
+`with_fringe`, `recompute_sight`, `refresh_fog`, or the `moves_sight` gate** — six of those ten are the places a leak would go
 unnoticed, and the coordinate story in the first is the thing that looks like a mistake and is not.
 
 This covers the whole of milestone 16: automatic line of sight in 16a, and the DM's manual override
@@ -438,6 +438,44 @@ with the movement ruler, where a diagonal step costs one cell and "within 20 ft"
 the same disagreement *Distance* in `docs/drawings.md` already names and leaves standing, for the
 same reason: different questions. A radius of light is a circle.
 
+### The radius is measured in cells, and that is why the sweeps take grid units
+
+`sources` arrives in **grid units** where every other coordinate in this file is image pixels, and
+the conversion happens once per source inside the loop. That looks backwards, and it is the one part
+of the coordinate story that is not "walls are pixels, so rays are pixels". It is there because of a
+tie.
+
+A radius set in feet is a whole number of cells — `vision_ft` is a multiple of five and a cell is
+five feet — and an odd-sized token stands on a cell centre, so the cells due north, south, east and
+west at exactly that distance sit **exactly on the circle**. At twenty-five feet the two ends of
+every 3-4-5 triangle do as well. That is the same kind of event as the wall ties above, and the same
+rule decides it: *a tie is answered the same way from both ends.*
+
+Measured in pixels it was not. `(c + 0.5) * grid_px - x * grid_px` and `radius_cells * grid_px` are
+two roundings of one number and they disagree in the last bit, so the cell six east of the torch
+landed inside the circle and the cell six west of it outside. The circle grew a nub on one edge and a
+bite out of the other, **and which edge it was changed as the token walked**, because the answer
+depended on the absolute pixel numbers rather than on the distance. A power-of-two grid is exact and
+hides the whole thing; a map calibrated to 35.65 pixels a cell is not, and about a fifth of
+(grid, offset, position, radius) combinations showed it.
+
+Measured in cells the arithmetic is exact for the numbers involved — `13.5 - 9.5` is `4.0`, and
+`sqrt(16.0)` is `4.0` — so both sides of a tie answer together and the circle is symmetric by
+construction rather than by luck. **It is not a precision problem, and widening to `f64` does not fix
+it**: a tie is decided in whichever space the comparison is made, so it has to be made in the space
+where the numbers are exact.
+
+The pixel radius stays for the two things that are genuinely pixel questions: culling the walls to
+the viewer's reach, and clipping the sweep window. Both are bounds rather than the answer, so a cell
+either way costs a little work and never a wrong picture.
+
+`lit_cells` takes the same split — cells for the step test, pixels for the cull — and `solo.ts` and
+`fillFrom`'s `withinCells` carry the change to the client, because the DM's sight check has to agree
+with the fog it is previewing. The regression tests are
+`the_circle_is_the_same_on_both_sides_of_the_viewer` in both languages: they sweep the awkward grid
+sizes and assert the lit set is its own mirror, which is the assertion that fails on the pixel
+version and cannot be made to fail on this one.
+
 **A monster is visible if any cell it covers is.** A four-cell ogre leaning into a lit corridor is an
 ogre the party can see, and asking only about its centre would hide half of it behind the wall it is
 standing beside. That is `covered_cells`, which uses the same lattice `snap_to_cell` settles onto.
@@ -816,6 +854,18 @@ answer is already on screen.
 
 ## Solo sight: what one creature can see
 
+> **Not offered right now.** Milestone 34 hid the button — `SOLO_SIGHT` in `fogtool.ts` is the whole
+> of the suspension — because player view answers the question a DM was actually reaching for it
+> with, and answers it for the whole table at once. Asking about one creature became the narrow
+> version of a question with a better button beside it.
+>
+> **Nothing else was taken out.** `solo.ts`, `solo.test.ts`, `frame.solo` and `drawFog`'s branch are
+> untouched and still correct; what is switched off is the way in, and everything below is still the
+> design. **Milestone 29 is what brings it back**: the day `visible` is per-player there is no single
+> table's board to mirror, player view has to name somebody, and *can the rogue see it* stops being
+> the narrow version of anything. `drive-panels.mjs` asserts the button is unreachable, which is the
+> check that fails on the day the const flips.
+
 Milestone 26, and `solo.ts` is the whole of it. The DM arms *sight check* in the fog panel, clicks a
 creature, and their own board stops showing the table's wash and starts showing that creature's line
 of sight. It answers the question that actually gets asked at a table — *can the rogue see it* — and
@@ -842,8 +892,9 @@ It reuses the pieces rather than inventing any:
 - **`crossesWall` for `Dynamic`**, which already filters to solid walls and shut doors, over walls
   culled to the radius once per source — the same bound `fog.rs` takes, and for the same reason.
 - **`fillFrom` for `Room`, unioned with the rays**, which is *The doorway carries sight, not light*
-  said again on the client. `fillFrom` grew an optional `within` circle for it, defaulting to
-  unbounded so the DM's reveal preview is unchanged.
+  said again on the client. `fillFrom` grew an optional `withinCells` radius for it, measured from
+  the seed and defaulting to unbounded so the DM's reveal preview is unchanged — in cells, for the
+  reason *The radius is measured in cells* gives.
 - **`fogFromWire` for the picture.** `soloSight` returns a `WireFog`, packed exactly as the server
   packs one, so there is no second rendering path to keep in step and the wash is guaranteed to look
   like the one it stands in for. It draws at the **table's** strength rather than the DM's faint one:
@@ -872,6 +923,86 @@ can account for. Meanwhile the board says so with the preview tag's treatment in
 player's moves by nothing at all**. It is worth knowing that the first version of that check opened
 both browsers on the same debug port, so "the player" was the DM's own page — the two numbers came
 back identical and it read as a leak. The ports are fixed and they are not a detail.
+
+## Player view: the whole table's board
+
+Milestone 34, and `mirror.ts` is the whole of it. The DM clicks *player view* in the fog panel and
+their own board becomes the one the table is looking at: the party's fog at the party's strength, no
+walls, no painted squares, no hit points, no plans, and nothing standing anywhere they cannot see.
+Clicking it again gives them their board back.
+
+**Solo sight's sibling, and the broad half of the same question.** `solo.ts` asks whether one
+creature can see something; this asks what the six screens are showing. Both are the fog panel's,
+because the fog is what makes either worth asking — and **the broad half turned out to be the one
+worth offering**: the sight check went behind `SOLO_SIGHT` days after this landed, because a DM
+reaching for *can the rogue see it* was nearly always asking what the table's board looks like. See
+the note at the top of *Solo sight* below; that is the version this replaced, not a version that was
+wrong.
+
+**It earns its keep because the fog is party-shared.** There is exactly one answer to "what can the
+table see", so a mirror of it is a fact rather than a pick between six of them — which is also the
+line that would have to be re-argued if milestone 29 ever made `visible` per-player. `asTable` is
+where the name would have to go, and the feature would need a defence it does not need today.
+
+**Client-only, and nothing goes in the room.** No command, no event, no filter; the server does not
+know the DM is looking at this and must not learn. That is `solo.ts`'s rule and `previewing`'s before
+it. The difference from both is worth saying plainly: **nothing here is a security boundary.** It
+*removes* things the DM is entitled to and is entitled to put back, so every line of `mirror.ts`
+could be wrong without a player learning anything. What it is is a reading aid, and its failure mode
+is a DM who believes they got away with something.
+
+`asTable` is the **client-side twin of `snapshot_for`**, and each line names its counterpart:
+
+- Tokens go through `unseenByTable`, which is `unseen_by_table` — all three reasons, composed the
+  same way, including `in_sight`'s shortcut that a player's own token is a vision source. `footprint`
+  is `fog::covered_cells` with the same nudge, so an ogre leaning into a lit corridor stays.
+- What survives is `redact`, which is `Token::view_for(false)` field for field.
+- Shapes go through `shape_seen`'s two arms, anchored and not, with a port of `line_cells` for the
+  kind that encloses nothing.
+- Walls and overrides are emptied, which is `WallsChanged`'s rule: what the table gets of them is the
+  fog they cast, already on the board underneath.
+- `staged` is `None` and `previewing` is false, which is the one bundle a player is never sent.
+
+**The fog itself is not filtered, and that is the point.** It is already the table's own answer; what
+differs is how faintly it *draws*. So `Fog` carries a second canvas, `table`, built at the party's
+strength beside the DM's — only on the DM's client, since a player switching to it would be switching
+to what they are already looking at — and `drawFog` picks between them on one line. Four cases fall
+out of that line with nothing asking who is reading: the DM playing, the DM mirroring, the DM
+checking one creature, and a player. `Fog` also keeps the packed `cells` it was built from, because a
+canvas answers "how dark is this square" and the mirror has to ask "can the table see what is
+standing on it".
+
+**The initiative panel mirrors too, and it has to.** The panel names its rows by looking each token
+up in the scene, so a mirrored scene without `tableInitiative` leaves a row drawing as a raw id — a
+monster the DM hid, advertised by the one panel that is always on screen, which is the exact failure
+`initiative_for` exists to prevent. It is told rather than handed a narrowed scene, because it is
+redrawn only when something arrives while the board is redrawn every frame.
+
+**It is a mirror, so it does not annotate.** Nothing is marked as withheld or outlined. A board that
+says "and here is what they cannot see" is the DM's board again, which is one click away — the same
+argument `docs/tokens.md` makes about the live board refusing to mark a planned token.
+
+**It arms nothing and refuses nothing.** The DM can still drag, click and edit through it, exactly as
+they can through one creature's sight; only the drawing changes, and `input.ts` goes on reading the
+room's own scene. What that buys is that the mirror never has to be a second opinion about
+permissions.
+
+Three things put it down. Picking up a fog brush, because the tint is the DM's hand and the mirror is
+where their hand is absent; arming the sight check, because two answers on one board answer neither —
+unreachable while `SOLO_SIGHT` is off, and kept because it is the rule rather than the wiring that
+matters; and `stop()`, which is the rail's rule that closing a tab puts down whatever the panel armed
+— a wash nobody can account for is worse than a click nobody can account for. A preview starting takes it down
+from the other side, in `update`: `asTable` answers about the live board, so a mirror over a preview
+would be showing the table's board to a DM who believes they are looking at the next dungeon. The
+board wears the preview tag's treatment in green, which is the third of three and the last one
+available.
+
+**Testing it.** `mirror.test.ts` owns the filter — twelve assertions, every one of them something the
+DM holds that is *not* in what comes back, which is the server suite's rule for a filter applied on
+this side. `tools/drive-mirror.mjs` owns the wiring, in one browser rather than two: this is a
+difference between two boards on the same screen, so a second session would have nothing to say. Its
+pixel check is a difference against a remembered frame *and* against a control frame where nothing
+was touched, since how much of a canvas is even board depends on the framing.
 
 ## Drawings on ground the party cannot see
 

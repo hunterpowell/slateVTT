@@ -18,7 +18,7 @@ use uuid::Uuid;
 use crate::fog::{self, Cell, FogView, Override, OverrideView};
 use crate::protocol::{
     Calibration, ChatLine, ChatTo, ClientId, ClientMsg, Colours, Diagonals, Hp, Initiative,
-    InitiativeEntry, MapInfo, Origin, Owner, PALETTE, PlayerId, Pos, Prepared, Px, RoomView,
+    InitiativeEntry, MapInfo, Origin, Owner, PALETTE, PlayerId, Pos, Prepared, RoomView,
     RosterEntry, RosterSlot, ServerMsg, Shape, ShapeId, ShapeKind, StagedView, Token, TokenId,
     TokenView, Wall, WallId, WallKind,
 };
@@ -2417,7 +2417,7 @@ impl RoomState {
         self.known.contains(&fog::cell_of(&self.map, px))
     }
 
-    /// Where the party is looking from, in image pixels.
+    /// Where the party is looking from, in grid units.
     ///
     /// Vision comes from tokens a player *owns*, so handing one over grants sight
     /// with no extra rule and taking it back removes it. A player's token the DM
@@ -2428,12 +2428,12 @@ impl RoomState {
     /// Asked of `Token::unseen` and deliberately not of `unseen_by_table`, which
     /// would be circular — what the party can see cannot be an input to computing
     /// what the party can see.
-    fn vision_sources(&self) -> Vec<Px> {
-        let mut sources: Vec<Px> = self
+    fn vision_sources(&self) -> Vec<Pos> {
+        let mut sources: Vec<Pos> = self
             .tokens
             .values()
             .filter(|t| matches!(t.owner, Owner::Player(_)) && !t.unseen())
-            .map(|t| fog::grid_to_px(&self.map, t.x, t.y))
+            .map(|t| Pos { x: t.x, y: t.y })
             .collect();
         // `HashMap` order varies per process and the sweep short-circuits on
         // cells another source already lit. The answer is the same either way,

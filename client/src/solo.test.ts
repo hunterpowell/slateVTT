@@ -84,6 +84,41 @@ test('an untraced board is lit to the radius and no further', () => {
   assert.ok(!seen.has('6,6'), 'the reach is a circle and not a square');
 });
 
+test('the circle is the same on both sides of the viewer', () => {
+  // The server's `the_circle_is_the_same_on_both_sides_of_the_viewer`, asked of
+  // the DM's own raycast so the sight check cannot disagree with the fog it is
+  // previewing. A radius set in feet is a whole number of cells, so the cells at
+  // exactly that distance sit exactly on the circle — and measured in pixels the
+  // two sides of that tie rounded apart, dropping a cell off one edge. The ten
+  // pixel grid the rest of this file uses is exact and hides it, so these are the
+  // awkward numbers a real map calibrates to.
+  for (const px of [35.65, 72.3, 28.4]) {
+    for (const [offsetX, offsetY] of [
+      [0, 0],
+      [7, 13.5],
+    ] as const) {
+      for (const visionFt of [20, 25, 30]) {
+        const grid = { px, offsetX, offsetY };
+        // Room enough that nothing is clipped by the edge of the board, which is
+        // the other thing that can make the answer lopsided and is meant to.
+        const size = { w: offsetX + px * 41, h: offsetY + px * 41 };
+        const cell = 20;
+        const seen = lit(soloSight(token(cell, cell), board({ grid, visionFt }), [], size));
+        for (const key of seen) {
+          const [x, y] = key.split(',').map(Number) as [number, number];
+          for (const mirror of [
+            `${2 * cell - x},${y}`,
+            `${x},${2 * cell - y}`,
+            `${2 * cell - x},${2 * cell - y}`,
+          ]) {
+            assert.ok(seen.has(mirror), `${px}px grid, ${visionFt}ft: ${key} is lit and ${mirror} is not`);
+          }
+        }
+      }
+    }
+  }
+});
+
 test('a solid wall stops sight past it', () => {
   // Along the boundary between cells 5 and 6, which is where `snapToCorner` puts
   // most masonry: it runs between cell centres and never through one.

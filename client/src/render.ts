@@ -322,6 +322,15 @@ export interface Frame {
    * questions and overlaying them would answer neither. See `solo.ts`.
    */
   solo: Fog | null;
+  /**
+   * The DM is looking at the board as the table sees it.
+   *
+   * The scene has already been narrowed by `asTable` before it reaches here, so
+   * nothing below draws a wall or a monster it should not — this flag exists for
+   * the one thing a filtered scene cannot say, which is how *dark* the fog
+   * should be. Always false for a player, whose board is that answer already.
+   */
+  playerView: boolean;
 }
 
 /**
@@ -563,7 +572,13 @@ function drawFog(
   // faint wash exists so the DM can still play on a board that also says what
   // the party can see; this is a question with an answer, and a legible answer
   // is the whole point of asking it.
-  const faint = frame.solo === null && frame.identity.isDm;
+  //
+  // Player view says the same thing about the whole board rather than about one
+  // creature, so it lands in the same place: a mirror of a board the DM can see
+  // through is not a mirror. This is the only line in the renderer that reads
+  // the flag — everything else was decided by `asTable` before the frame was
+  // built.
+  const faint = frame.solo === null && frame.identity.isDm && !frame.playerView;
   if (fog === null || area.w <= 0 || area.h <= 0) return;
 
   const right = area.x + area.w;
@@ -600,7 +615,13 @@ function drawFog(
   // canvas would ramp across the whole square and move the edge half a cell,
   // which is why this used to be switched off. The override tint below keeps its
   // hard edge — see `SUBCELLS` in `fog.ts` for why the two differ.
-  ctx.drawImage(fog.shade, seen.x, seen.y, seen.w, seen.h);
+  //
+  // The table's own canvas when this is not the faint wash, falling back to the
+  // one canvas a player or a solo answer has. That fallback is why nothing here
+  // asks who is reading: the four cases — the DM playing, the DM mirroring, the
+  // DM checking one creature, and a player — pick the right shade between them
+  // from `faint` alone.
+  ctx.drawImage(faint ? fog.shade : (fog.table ?? fog.shade), seen.x, seen.y, seen.w, seen.h);
   ctx.restore();
 }
 

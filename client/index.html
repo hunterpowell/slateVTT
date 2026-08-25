@@ -168,6 +168,40 @@
         pointer-events: none;
       }
 
+      /* The third of these, and the same bargain as the other two: the DM is
+         looking at a board that is not theirs, and the border is what keeps a
+         missing monster reading as this rather than as a bug. Green because the
+         other two are taken and because none of the three can be on at once —
+         preview greys the button, and the sight check and this one put each
+         other down. */
+      #table-tag {
+        position: fixed;
+        top: 12px;
+        left: 50%;
+        transform: translateX(-50%);
+        padding: 4px 12px;
+        border-radius: 4px;
+        background: rgba(126, 214, 160, 0.92);
+        color: #08150e;
+        font-size: 12px;
+        font-weight: 600;
+        letter-spacing: 0.04em;
+        pointer-events: none;
+        user-select: none;
+      }
+
+      body:not(.player-view) #table-tag {
+        display: none;
+      }
+
+      body.player-view::after {
+        content: '';
+        position: fixed;
+        inset: 0;
+        border: 2px solid rgba(126, 214, 160, 0.7);
+        pointer-events: none;
+      }
+
       body.previewing::after {
         content: '';
         position: fixed;
@@ -2278,8 +2312,25 @@
         </div>
         <!-- Solo sight. Below the paint controls because it edits nothing: it
              is the DM asking what one creature can see, computed on this client
-             from walls only they hold and sent nowhere. -->
+             from walls only they hold and sent nowhere.
+
+             **Not offered since milestone 34** — player view answers the same
+             question about the whole table, so this one is hidden by
+             `SOLO_SIGHT` in `fogtool.ts` until milestone 29 makes it a question
+             again. The element stays because the tool still paints it. -->
         <button id="fog-sight" class="draw-tool fog-sight" type="button">sight check</button>
+        <!-- Player view. Beside the sight check because they are the same
+             family — both put a board on screen that is not the DM's own, both
+             are computed here and sent nowhere, and both are the fog panel's
+             because the fog is what makes either question worth asking. -->
+        <button
+          id="fog-view"
+          class="draw-tool fog-sight"
+          type="button"
+          title="Show the board exactly as the table sees it: their fog, and none of your walls, painted squares, hit points or hidden creatures"
+        >
+          player view
+        </button>
         <p class="map-hint" id="fog-hint"></p>
       </aside>
       <!-- DM only, and last on the strip: the least-touched panel during play.
@@ -2354,6 +2405,7 @@
     <div id="hud"></div>
     <div id="preview-tag">NEXT MAP · not on the table</div>
     <div id="sight-tag">ONE CREATURE'S SIGHT · not the table's board</div>
+    <div id="table-tag">THE TABLE'S BOARD · not everything you hold</div>
     <!-- Outside the dock in the document, because it is what shows when the
          dock does not: a whisper nobody notices is the main way this feature
          fails a table where half the players are not looking at the panel. It

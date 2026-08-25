@@ -27,7 +27,7 @@ const FEET_PER_CELL = 5;
  * second and answer with thirty error banners. Clamping means the sweep simply
  * stops growing, which is also what it should look like.
  */
-const MAX_SHAPE_CELLS = 30;
+export const MAX_SHAPE_CELLS = 30;
 
 /** Holds a sweep inside what the server will accept, per axis, exactly as the
  *  server bounds it. */
@@ -121,7 +121,7 @@ const CONE_COS = Math.cos(CONE_HALF_ANGLE);
  * The other end is about 0.71, half a diagonal, at which a shape grazing any
  * corner of a square claims the whole thing.
  */
-const COVERAGE_SLACK = .15;
+const COVERAGE_SLACK = .20;
 
 export interface Shape {
   id: string;

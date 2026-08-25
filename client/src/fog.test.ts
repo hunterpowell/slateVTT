@@ -12,12 +12,12 @@ import { darkFill, fogRect } from './fog.js';
 const GRID = { px: 64, offsetX: 10, offsetY: -6 };
 
 test('the fog rectangle lands on the grid it was packed against', () => {
-  const rect = fogRect({ x: 2, y: 3, w: 4, h: 5, shade: null }, GRID);
+  const rect = fogRect({ x: 2, y: 3, w: 4, h: 5, cells: '', shade: null, table: null }, GRID);
   assert.deepEqual(rect, { x: 10 + 128, y: -6 + 192, w: 256, h: 320 });
 });
 
 test('an empty rectangle has no area to stretch anything over', () => {
-  const rect = fogRect({ x: 0, y: 0, w: 0, h: 0, shade: null }, GRID);
+  const rect = fogRect({ x: 0, y: 0, w: 0, h: 0, cells: '', shade: null, table: null }, GRID);
   assert.equal(rect.w, 0);
   assert.equal(rect.h, 0);
 });

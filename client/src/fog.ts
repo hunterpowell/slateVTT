@@ -38,12 +38,32 @@ export interface Fog {
   w: number;
   h: number;
   /**
+   * The packed frame exactly as it arrived, one character per cell.
+   *
+   * Kept rather than thrown away after the canvas is built, because a canvas
+   * answers "how dark is this square" and the DM's client has to ask "can the
+   * table see what is standing on it" — which is a different question about the
+   * same characters. `cellVisible` and `cellKnown` are the only readers; see
+   * `mirror.ts`.
+   */
+  cells: string;
+  /**
    * One pixel per cell, already carrying the alpha each state should draw at.
    *
    * Null when the rectangle is empty, which is what an unexplored map packs to —
    * there is nothing to stretch, and the caller fills the whole board instead.
    */
   shade: HTMLCanvasElement | null;
+  /**
+   * The same cells at the *table's* strength, for the DM's player view.
+   *
+   * Null on a client that is already drawing at that strength — a player's own
+   * fog is the table's fog, so there is nothing here for them to switch to, and
+   * the renderer falls back to `shade` without asking who it is drawing for.
+   * Built here rather than on demand because it is built once per `fog_changed`
+   * and the alternative is rebuilding a few thousand cells inside a frame.
+   */
+  table: HTMLCanvasElement | null;
 }
 
 /**
@@ -107,19 +127,38 @@ const SUBCELLS = 4;
 export function fogFromWire(wire: WireFog | null, isDm: boolean): Fog | null {
   if (wire === null) return null;
 
-  const fog: Fog = { x: wire.x, y: wire.y, w: wire.w, h: wire.h, shade: null };
+  const fog: Fog = {
+    x: wire.x,
+    y: wire.y,
+    w: wire.w,
+    h: wire.h,
+    cells: wire.cells,
+    shade: null,
+    table: null,
+  };
   if (wire.w === 0 || wire.h === 0) return fog;
 
+  fog.shade = shadeCanvas(wire, isDm ? SHADE.dm : SHADE.player);
+  // Only for the DM, and only because they are the only client that can ask to
+  // see the board the way the table does. A player switching to it would be
+  // switching to what they are already looking at.
+  if (isDm) fog.table = shadeCanvas(wire, SHADE.player);
+  return fog;
+}
+
+/** How solidly each state draws — one of the two entries in `SHADE`. */
+type Shade = (typeof SHADE)[keyof typeof SHADE];
+
+/** The little canvas for one frame at one strength. Null when the browser
+ *  cannot give a context, which is a browser that cannot draw the board either;
+ *  the caller then fills the whole board dark, which fails closed. */
+function shadeCanvas(wire: WireFog, alpha: Shade): HTMLCanvasElement | null {
   const canvas = document.createElement('canvas');
   canvas.width = wire.w * SUBCELLS;
   canvas.height = wire.h * SUBCELLS;
   const ctx = canvas.getContext('2d');
-  // A context is only ever unavailable in a browser that cannot draw the board
-  // either. Returning the fog without one leaves the caller filling the whole
-  // board dark, which fails closed.
-  if (ctx === null) return fog;
+  if (ctx === null) return null;
 
-  const alpha = isDm ? SHADE.dm : SHADE.player;
   const image = ctx.createImageData(canvas.width, canvas.height);
   for (let cy = 0; cy < wire.h; cy++) {
     for (let cx = 0; cx < wire.w; cx++) {
@@ -145,9 +184,42 @@ export function fogFromWire(wire: WireFog | null, isDm: boolean): Fog | null {
     }
   }
   ctx.putImageData(image, 0, 0);
+  return canvas;
+}
 
-  fog.shade = canvas;
-  return fog;
+/**
+ * Which state a cell is in, for the two readers that ask about one square
+ * rather than about the whole picture.
+ *
+ * Outside the packed rectangle is dark, which is the same thing the rectangle's
+ * own edge means — it is only ever as big as what has been explored.
+ */
+function stateAt(fog: Fog, cx: number, cy: number): string {
+  const x = cx - fog.x;
+  const y = cy - fog.y;
+  if (x < 0 || y < 0 || x >= fog.w || y >= fog.h) return DARK;
+  return fog.cells[y * fog.w + x] ?? DARK;
+}
+
+/**
+ * Whether the party has sight of this cell *now* — the client's twin of
+ * `visible` on the server, which is what creatures gate on.
+ *
+ * Written as "neither dark nor merely explored" rather than as a test for the
+ * lit character, so an unknown one fails towards visible. This decides what the
+ * DM's player view hides, and a mirror that hides a creature it should not is a
+ * DM misreading the table's board.
+ */
+export function cellVisible(fog: Fog, cx: number, cy: number): boolean {
+  const state = stateAt(fog, cx, cy);
+  return state !== DARK && state !== KNOWN;
+}
+
+/** Whether the party has ever had sight of this cell — `known` on the server,
+ *  which is what terrain gates on. Fringe included: the widening happened
+ *  before this was packed. */
+export function cellKnown(fog: Fog, cx: number, cy: number): boolean {
+  return stateAt(fog, cx, cy) !== DARK;
 }
 
 /** The wash covering every cell outside the packed rectangle. */

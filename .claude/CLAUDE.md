@@ -752,15 +752,28 @@ check* and clicking a creature redraws the DM's own board as that creature's lin
 **client-only** — a second raycast over the walls, radius and mode their client already holds — so
 there is no command, no event and no filter, and it is leak-proof by construction rather than by a
 check, exactly as the movement hint is. Live board only, no overrides applied. **Do not put any of it
-in the room.**
+in the room.** **The button is not offered right now** — `SOLO_SIGHT` in `fogtool.ts`, off since
+milestone 34, because player view below answers the same question about the whole table. The code is
+untouched and milestone 29 is what turns it back on.
+
+**`mirror.ts` is its sibling and asks the broad half of the same question: what is on the six other
+screens.** *Player view* redraws the DM's board as the table's — their fog at their strength, and
+nothing the server would have withheld — and `asTable` is the **client-side twin of `snapshot_for`**,
+line for line. Client-only like solo sight, and **not a security boundary**: it removes what the DM
+is entitled to and is entitled to put back. **It earns its keep because the fog is party-shared** —
+one answer to mirror rather than six to choose between — which is the line milestone 29 would have to
+re-argue. The fog is not filtered, only drawn darker (`Fog.table`, one line in `drawFog`); the
+initiative panel mirrors through `tableInitiative`, or a hidden creature's row draws as a raw id. It
+**annotates nothing and refuses nothing** — editing through it is unchanged — and a brush, the sight
+check, closing the tab or starting a preview each put it down. **Do not put any of it in the room.**
 
 *Per-player fog is no longer a closed question: `ROADMAP.md` milestone 29 designs a switch that makes
 `visible` per-player and leaves `revealed` alone — it exists because `solo.ts` answered the objection
 that killed it. Nothing above changes until 29 is built; read it before arguing from this line.*
 
-→ **`docs/fog.md`** before touching `fog.rs`, `fog.ts`, `solo.ts`, `overrides.ts`, `fogtool.ts`,
-`unseen_by_table`, `with_fringe`, `shape_seen`, `refresh_fog`, `sight_cells`/`lit_cells`, or
-`moves_sight`.
+→ **`docs/fog.md`** before touching `fog.rs`, `fog.ts`, `solo.ts`, `mirror.ts`, `overrides.ts`,
+`fogtool.ts`, `unseen_by_table`, `with_fringe`, `shape_seen`, `refresh_fog`,
+`sight_cells`/`lit_cells`, or `moves_sight`.
 
 ## Frontend
 

@@ -4,6 +4,7 @@
 // rows and only changes when the DM does something deliberate.
 
 import type { Identity } from './identity.js';
+import { asTable, tableInitiative } from './mirror.js';
 import type { ClientMsg, Initiative } from './protocol.js';
 // The only thing this panel takes from the renderer, and it takes it so that the
 // bar in a row and the bar over the token cannot disagree about which monster is
@@ -13,6 +14,15 @@ import type { Scene, Token } from './scene.js';
 
 export interface Panel {
   update(initiative: Initiative, scene: Scene): void;
+  /**
+   * Draw the rows the table has, rather than the ones the DM has.
+   *
+   * The board is redrawn every frame from a scene main.ts narrows on the way
+   * in; this panel is redrawn only when something arrives, so it is told
+   * instead. It goes through the same two functions either way — see
+   * `mirror.ts`.
+   */
+  mirror(on: boolean): void;
 }
 
 interface PanelUi {
@@ -158,16 +168,41 @@ export function createPanel(
   // arriving. Nothing else needs it: everything else that changes this panel
   // comes off the wire and brings its own.
   let last: { initiative: Initiative; scene: Scene } | null = null;
+  /** The DM is looking at the table's board, so this shows the table's rows. */
+  let mirrored = false;
+
+  /** Redraws from whatever was last handed over. Two things need it now: the
+   *  chevron, and the mirror going up or coming down. */
+  const repaint = (): void => {
+    if (last !== null) panel.update(last.initiative, last.scene);
+  };
 
   ui.collapse.addEventListener('click', () => {
     collapsed = !collapsed;
     storeCollapsed(collapsed);
-    if (last !== null) panel.update(last.initiative, last.scene);
+    repaint();
   });
 
   const panel: Panel = {
+    mirror(on) {
+      if (on === mirrored) return;
+      mirrored = on;
+      repaint();
+    },
+
     update(initiative, scene) {
+      // What the room said, kept before the mirror narrows it: putting the
+      // mirror down has to redraw from the room rather than from a filtered
+      // copy of it, and a filtered copy filtered again is what storing the
+      // other order would give.
       last = { initiative, scene };
+      if (mirrored) {
+        // The order first, from the scene the DM actually holds — it is the
+        // unfiltered token list that says which rows have to go, and asking the
+        // filtered one would find nothing to drop.
+        initiative = tableInitiative(initiative, scene);
+        scene = asTable(scene);
+      }
 
       ui.collapse.setAttribute('aria-expanded', String(!collapsed));
       ui.collapse.title = collapsed ? 'Show the whole order' : 'Show only whose turn it is';

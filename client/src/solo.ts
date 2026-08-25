@@ -74,7 +74,12 @@ export function soloSight(
   if (grid.px <= 0 || mapSize === null) return null;
 
   const area: Rect = playRect(board.playArea, mapSize.w, mapSize.h);
-  const radiusPx = (board.visionFt / FEET_PER_CELL) * grid.px;
+  // In cells for the reach test and in pixels for the window and the wall cull,
+  // which is `visible_cells`'s split on the server and is there for its reason:
+  // a radius set in feet is a whole number of cells, and the cells sitting
+  // exactly on it must land the same way on both sides of the viewer.
+  const radiusCells = board.visionFt / FEET_PER_CELL;
+  const radiusPx = radiusCells * grid.px;
   if (radiusPx <= 0) return null;
 
   // The viewer's centre, which is what the server casts from too. A token's
@@ -121,8 +126,8 @@ export function soloSight(
   // circle.
   for (let cy = y0; cy <= y1; cy++) {
     for (let cx = x0; cx <= x1; cx++) {
+      if (Math.hypot(cx + 0.5 - token.x, cy + 0.5 - token.y) > radiusCells) continue;
       const c = centreOf(cx, cy);
-      if (Math.hypot(c.x - eye.x, c.y - eye.y) > radiusPx) continue;
       if (crossesWall(near, eye, c)) continue;
       lit.add(at(cx, cy));
     }
@@ -138,10 +143,14 @@ export function soloSight(
   // door left open — which is `fillFrom`'s own rule and the one place the two
   // questions agree about doors. Only sight reads what a door is swung to.
   if (board.lighting === 'room') {
-    const flood = fillFrom({ x: token.x, y: token.y }, walls, grid, area, MAX_FILL_CELLS, {
-      centre: eye,
-      radiusPx,
-    });
+    const flood = fillFrom(
+      { x: token.x, y: token.y },
+      walls,
+      grid,
+      area,
+      MAX_FILL_CELLS,
+      radiusCells,
+    );
     for (let i = 0; i < flood.length; i += 2) {
       const cx = flood[i] ?? 0;
       const cy = flood[i + 1] ?? 0;

@@ -1,26 +1,25 @@
-// Drives the two things milestone 26 added that only a browser can see: the
-// initiative panel folding away, and the DM's solo sight.
+// Drives the initiative panel folding away — one of the two things milestone 26
+// added that only a browser can see.
 //
 //   cd server && SLATE_DM_SECRET=test-secret cargo run
 //   node tools/drive-panels.mjs                     # or: ... http://host:port secret
 //
 // It runs against a live room and *changes it* — it builds two tokens, rolls
-// them into the order, advances the turn and turns the fog on. Point it at a
-// scratch `SLATE_STATE`. It puts all of it back. Nothing here traces a wall:
-// solo sight has a shape without one (a circle of light), which is what makes it
-// cheaper to drive than room lighting was.
-//
-// Why a browser, for each half:
+// them into the order and advances the turn. Point it at a scratch
+// `SLATE_STATE`. It puts all of it back.
 //
 // **The fold is a layout fact.** Which rows are on screen cannot be read off the
 // state model at all, and `hidden` on a parent is exactly the state the DOM
 // reports as present. The fold also lives in `localStorage` rather than in the
 // room, so the only honest way to assert that is to reload the page.
 //
-// **Solo sight is a canvas.** It replaces the table's wash on one client's board
-// and touches the room not at all, which makes the negative half of it the
-// interesting half: the *other* browser must not move a pixel, and no frame may
-// leave the socket. A second connection is the only thing that can say so.
+// **The other half of milestone 26 is gone from here**, along with the control
+// it drove: milestone 34 hid the solo sight check, since player view answers the
+// same question about the whole table. What it used to assert — the DM's board
+// changing while the *player's* moves by nothing at all — is worth reading in
+// `git log` on the day milestone 29 turns the button back on. Until then this
+// driver has one subject and a second browser it keeps only to prove the fold is
+// one client's own business.
 
 import { open, checks } from './cdp.mjs';
 import { latticeOrBail } from './board.mjs';
@@ -198,38 +197,13 @@ check(
 );
 
 // ============================================================================
-// Solo sight
+// Tidying up, and the one check left about the fog panel
 // ============================================================================
-
-/** How many pixels of a board differ from the frame remembered on it. */
-const remember = (page) =>
-  page.evaluate(`(() => {
-    const c = document.querySelector('#stage');
-    window.__before = c.getContext('2d').getImageData(0, 0, c.width, c.height).data;
-    return window.__before.length / 4;
-  })()`);
-
-const changed = (page) =>
-  page.evaluate(`(() => {
-    const c = document.querySelector('#stage');
-    const now = c.getContext('2d').getImageData(0, 0, c.width, c.height).data;
-    const was = window.__before;
-    let n = 0;
-    for (let i = 0; i < now.length; i += 4) {
-      if (now[i] !== was[i] || now[i + 1] !== was[i + 1] || now[i + 2] !== was[i + 2]) n++;
-    }
-    return (100 * n) / (now.length / 4);
-  })()`);
-
-// A driver may not assume the board it was written against, and it may not erase
-// the DM's dungeon to make room for its own — the rule `drive-fog.mjs` learned.
-// Solo sight has a shape without walls (a circle of light), so unlike room
-// lighting this one does not have to trace anything, and deliberately does not.
-const traced = await dm.evaluate(`(() => {
-  const el = document.querySelector('#wall-readout');
-  return el === null ? '' : el.textContent;
-})()`);
-note(`the board's wall readout says "${traced.trim()}"`);
+//
+// The lattice and `lookAt` below outlived the half of this driver that needed
+// them for pixels: the cleanup at the bottom has to put the camera on each token
+// it built before it can select and delete one, since clicking a row *looks* at
+// a creature rather than selecting it.
 
 const lattice = await latticeOrBail(dm, [dm, player]);
 note(lattice.describe);
@@ -270,132 +244,34 @@ const lookAt = async (name) => {
   return { x, y };
 };
 
-// Fog has to be on for the table to have a wash for this to replace. Remembered
-// so it goes back.
+// The one thing left to say about the sight check: it is not on offer. Hidden
+// rather than greyed, so the assertion is that the DM cannot reach it at all —
+// `hidden` on the element itself, which is what `SOLO_SIGHT` sets and what a
+// greyed-out control would *not* report.
+//
+// The element is still in the document, deliberately: the tool goes on painting
+// it, so bringing the feature back is one const rather than a reconstruction.
+// This check is what fails on the day that const flips, which is the point of
+// having it.
 await tab(dm, 'fog');
 await dm.wait(200);
-const fogWas = await dm.evaluate(`(() => {
-  const box = document.querySelector('#fog-on');
-  if (!box.checked) box.click();
-  return 'ok';
-})()`);
-check('fog is on for the run', fogWas, 'ok');
-await dm.wait(900);
-
-const sightButton = () => dm.evaluate(`document.querySelector('#fog-sight').textContent.trim()`);
-
-check('the sight check button is there', await sightButton(), 'sight check');
 check(
-  'and it is reachable on a live board',
-  await dm.evaluate(`document.querySelector('#fog-sight').disabled`),
+  'the sight check is not offered',
+  await dm.evaluate(`document.querySelector('#fog-sight').hidden`),
+  true,
+);
+check(
+  'and player view is there instead',
+  await dm.evaluate(`document.querySelector('#fog-view').hidden`),
   false,
 );
 
-// `Panel A` is the DM's own, which is the point of `anchorTokenAt` rather than
-// `tokenAt` in `input.ts` — the interesting question at a table is nearly always
-// about a token the DM does *not* own, so the hit test has to reach every token
-// on the board rather than only the movable ones.
-const target = await lookAt(MINE[0]);
-
-if (target === null) {
-  note('could not find the row for the token this driver built — skipping the solo half');
-} else {
-  // A click on a token is a zero-length drag, so it leaves a ruler and a trail
-  // on *every* client, fading over a couple of seconds. Remembering a frame
-  // before those have gone measures the fade on both boards and reads it as a
-  // leak — the linger `docs/drawings.md` describes, met from the other side.
-  await dm.wait(3000);
-  await remember(dm);
-  await remember(player);
-
-  await dm.evaluate(`document.querySelector('#fog-sight').click(); "ok"`);
-  await dm.wait(200);
-  check(
-    'arming it takes the left button',
-    await dm.evaluate(`document.body.classList.contains('checking-sight')`),
-    true,
-  );
-
-  await dm.click(target.x, target.y);
-  await dm.wait(700);
-
-  check(
-    'clicking a creature picks it',
-    await dm.evaluate(`document.body.classList.contains('solo-sight')`),
-    true,
-  );
-  // Which creature is deliberately not asserted. Where the server drops a new
-  // token is a fact about how much of the board is already occupied, and a
-  // driver may not assume the room it was written against — so this says the
-  // button is naming *a* creature, which is the thing the control promises.
-  // Which one it named is in the log.
-  const naming = await sightButton();
-  note(`the button reads "${naming}"`);
-  check('and the button names the creature it picked', /^seeing as .+/.test(naming), true);
-  check(
-    'the tool disarms itself, because picking one is a one-shot gesture',
-    await dm.evaluate(`document.body.classList.contains('checking-sight')`),
-    false,
-  );
-  // `getComputedStyle` rather than `offsetParent`, which is null for a
-  // `position: fixed` element whether it is on screen or not — the tag is fixed
-  // like the preview one it borrows its treatment from.
-  check(
-    'and the label says the DM is looking at something nobody else is',
-    await dm.evaluate(
-      `getComputedStyle(document.querySelector('#sight-tag')).display !== 'none'`,
-    ),
-    true,
-  );
-
-  const dmMoved = await changed(dm);
-  const playerMoved = await changed(player);
-  note(`solo sight moved the DM's board by ${dmMoved.toFixed(1)}%, the player's by ${playerMoved.toFixed(1)}%`);
-
-  // The DM's faint wash is replaced by the table-strength answer, which is a
-  // large change by construction. The player's board is the assertion: this is
-  // computed on one client from walls only that client holds, so nothing left
-  // the socket and there is nothing for the room to relay.
-  check('the DM gets a different board', dmMoved > 2, true);
-  check('and the table is told nothing at all', playerMoved < 0.5, true);
-
-  // Putting the tool down gives the answer up with it — one button, and the
-  // rail's rule that closing a tab puts down whatever the panel armed.
-  await dm.evaluate(`document.querySelector('#fog-sight').click(); "ok"`);
-  await dm.wait(600);
-  check('clicking it again goes back to the table’s board', await sightButton(), 'sight check');
-  check(
-    'and the border comes off',
-    await dm.evaluate(`document.body.classList.contains('solo-sight')`),
-    false,
-  );
-
-  // Closing the tab has to do the same thing, which is the rail's rule and the
-  // reason `stop()` clears the answer as well as the arming.
-  await dm.evaluate(`document.querySelector('#fog-sight').click(); "ok"`);
-  await dm.wait(150);
-  await dm.click(target.x, target.y);
-  await dm.wait(500);
-  check('armed and picked again', await dm.evaluate(`document.body.classList.contains('solo-sight')`), true);
-  await tab(dm, 'fog');
-  await dm.wait(400);
-  check(
-    'closing the tab puts the answer down with the tool',
-    await dm.evaluate(`document.body.classList.contains('solo-sight')`),
-    false,
-  );
-}
-
 // --- put the room back -------------------------------------------------------
-
-await tab(dm, 'fog');
-await dm.wait(200);
-await dm.evaluate(`(() => {
-  const box = document.querySelector('#fog-on');
-  if (box.checked) box.click();
-  return 'ok';
-})()`);
-await dm.wait(600);
+//
+// Nothing to put back but the tokens now. This used to turn the fog on for the
+// wash solo sight replaced, and then off again — which was the one thing here
+// that touched a room-wide setting, and it turned it *off* rather than back to
+// where it was found.
 
 // Clicking the row *looks* at the creature and does not select it in the panel —
 // the two are deliberately different gestures. So this centres the camera on the

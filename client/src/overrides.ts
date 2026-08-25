@@ -182,8 +182,9 @@ export function fillFrom(
    *  away rather than a command that comes back as an error. */
   limit: number,
   /**
-   * A circle the fill may not leave, or nothing for the DM's reveal tool, which
-   * is bounded by walls and by the board alone.
+   * A circle the fill may not leave, in **cells** and measured from `seed`, or
+   * nothing for the DM's reveal tool, which is bounded by walls and by the board
+   * alone.
    *
    * This is `Room` lighting's bound and not the paint's: a pure fill does not
    * respect corners, so a winding corridor lights to its far end around every
@@ -192,8 +193,14 @@ export function fillFrom(
    * Euclidean from the source like the raycast's radius, and applied where a
    * cell is *entered* rather than where it is taken, so a fill stops at the
    * circle instead of stepping one cell past it.
+   *
+   * **In cells and not pixels**, which is why it is one number here rather than
+   * the centre and radius it used to be: a radius set in feet is a whole number
+   * of cells, so the cells due east and due west of the viewer sit exactly on
+   * it. Scaled into pixels the two sides of that tie round apart and the circle
+   * loses a cell off one edge — see `visible_cells` in `fog.rs`.
    */
-  within?: { centre: Vec2; radiusPx: number },
+  withinCells?: number,
 ): number[] {
   const centre = (cx: number, cy: number): Vec2 => ({
     x: grid.offsetX + (cx + 0.5) * grid.px,
@@ -222,11 +229,14 @@ export function fillFrom(
         const to = { x: cell.x + dx, y: cell.y + dy };
         const id = key(to.x, to.y);
         if (seen.has(id)) continue;
-        const at = centre(to.x, to.y);
-        if (!onBoard(at)) continue;
-        if (within !== undefined && Math.hypot(at.x - within.centre.x, at.y - within.centre.y) > within.radiusPx) {
+        if (
+          withinCells !== undefined &&
+          Math.hypot(to.x + 0.5 - seed.x, to.y + 0.5 - seed.y) > withinCells
+        ) {
           continue;
         }
+        const at = centre(to.x, to.y);
+        if (!onBoard(at)) continue;
         if (blocked(blockers, cell, to, from, at)) continue;
         seen.add(id);
         next.push(to);

@@ -69,6 +69,28 @@ const STEP_FT = 5;
  *  the socket and reloaded the page instead of being refused — see `docs/net.md`. */
 const MAX_FILL_CELLS = 8_000;
 
+/**
+ * Whether the solo sight check is offered at all.
+ *
+ * **Off since milestone 34, and this const is the whole of the suspension.**
+ * Player view answers the question a DM was actually using the sight check for —
+ * what is on the table's board — and answers it for the whole party at once, so
+ * asking one creature became a narrower version of a question with a better
+ * button next to it. `solo.ts`, its tests and the whole render path are
+ * untouched and still correct; what is switched off is the way in.
+ *
+ * **What brings it back is milestone 29.** The day `visible` becomes per-player
+ * there is no single table's board to mirror, player view has to name somebody,
+ * and "what can *this* creature see" stops being the narrow version of anything.
+ * Flip this to `true` then — and see *Solo sight* in `docs/fog.md`, which is
+ * still the design.
+ *
+ * Hidden rather than greyed on purpose: this panel greys a control to say "not
+ * on this board, and here is why", which is a sentence with a way out of it. A
+ * button that can never be pressed is not that sentence.
+ */
+const SOLO_SIGHT = false;
+
 /** What the brush is loaded with. `clear` is the absence of an override rather
  *  than a fourth kind of one, which is why it goes on the wire as null. */
 export type FogBrush = FogPaint | 'clear';
@@ -92,6 +114,8 @@ export interface FogToolUi {
   clear: HTMLButtonElement;
   /** Solo sight: arm it, then click a creature to see the board as it does. */
   sight: HTMLButtonElement;
+  /** Player view: the whole board as the table is looking at it. */
+  view: HTMLButtonElement;
 }
 
 export interface FogTool {
@@ -115,6 +139,16 @@ export interface FogTool {
   readonly sightId: string | null;
   /** From a click on the board while `checking`. Null clears the answer. */
   check(token: Token | null): void;
+
+  /**
+   * The DM is looking at the board as the table sees it.
+   *
+   * Read by the frame loop, which narrows the scene through `asTable` before
+   * handing it to the renderer. It arms nothing and refuses nothing: the DM can
+   * still drag, click and edit through the mirror, exactly as they can through
+   * one creature's sight. See `mirror.ts`.
+   */
+  readonly playerView: boolean;
 
   /** Where the pointer is, in grid units, or null when it has left the canvas.
    *  Recomputes the fill only when it crosses into a different cell. */
@@ -184,6 +218,10 @@ export function createFogTool(
   /** Called when the brush is picked up, so the other tools let go of the left
    *  button. Two tools armed at once is not a state input.ts could resolve. */
   onArm: () => void = () => {},
+  /** Called when player view is turned on or off. The board is redrawn every
+   *  frame and reads the flag for itself; the initiative panel is not, and it
+   *  mirrors too — see `tableInitiative`. */
+  onView: () => void = () => {},
 ): FogTool {
   let scene: Scene | null = null;
   let brush: FogBrush | null = null;
@@ -201,6 +239,10 @@ export function createFogTool(
    *  not take the answer off the board. */
   let checking = false;
   let sightId: string | null = null;
+  /** Player view: the whole board as the table has it. A third thing that can be
+   *  on the board instead of the DM's own, and it excludes the other two by
+   *  hand — see the button's handler. */
+  let playerView = false;
 
   const buttons = new Map<FogBrush, HTMLButtonElement>();
   const modes = new Map<Lighting, HTMLButtonElement>();
@@ -232,6 +274,15 @@ export function createFogTool(
   const clearPreview = (): void => {
     preview = [];
     previewCell = null;
+  };
+
+  /** Puts the mirror down, if it is up, and tells main.ts so the panels that do
+   *  not redraw themselves every frame catch up. A no-op otherwise, so every
+   *  caller can say it unconditionally. */
+  const leaveView = (): void => {
+    if (!playerView) return;
+    playerView = false;
+    onView();
   };
 
   const paint = (): void => {
@@ -272,6 +323,11 @@ export function createFogTool(
     // where everyone sees everything, and answering that is still an answer —
     // but a board with no grid is, which `usable()` already covers for the rest
     // of the panel.
+    // Everything below about this button is what paints it when it is offered,
+    // which it is not — see `SOLO_SIGHT`. Left running against a hidden element
+    // rather than branched around, so bringing it back is one const and not a
+    // reconstruction.
+    ui.sight.hidden = !SOLO_SIGHT;
     ui.sight.disabled = on === null || previewing;
     ui.sight.classList.toggle('is-on', checking);
     ui.sight.setAttribute('aria-pressed', String(checking));
@@ -279,6 +335,14 @@ export function createFogTool(
     // down, and the button is what says whose eyes the board is showing.
     const watched = sightId === null ? null : (scene?.tokens.find((t) => t.id === sightId) ?? null);
     ui.sight.textContent = watched === null ? 'sight check' : `seeing as ${watched.name}`;
+    // Live board only, for the reason reset and sight check are: the table is
+    // not looking at the map being prepared, so there is nothing here for a
+    // mirror of their board to answer. Unlike those two it is not greyed by an
+    // unfogged map — the fog is the loudest thing it hides and not the only one,
+    // and a monster the DM staged out of sight is hidden on a lit board too.
+    ui.view.disabled = on === null || previewing;
+    ui.view.classList.toggle('is-on', playerView);
+    ui.view.setAttribute('aria-pressed', String(playerView));
     for (const [b, button] of buttons) {
       button.disabled = locked;
       button.classList.toggle('is-on', b === brush);
@@ -293,8 +357,19 @@ export function createFogTool(
     // the DM is looking at something nobody else is, and mistaking it for the
     // board is the one way this goes wrong.
     document.body.classList.toggle('solo-sight', sightId !== null);
+    // The third board-level treatment, beside preview's amber and solo sight's
+    // blue, and it is owed one for their reason exactly: the DM is looking at
+    // something that is not their own board, and mistaking it for one is the
+    // single way any of the three goes wrong.
+    document.body.classList.toggle('player-view', playerView);
 
-    ui.hint.textContent = checking
+    ui.hint.textContent = playerView
+      ? // Says what is missing rather than what is there, because what is there
+        // looks exactly like an ordinary board — which is the whole point of it
+        // and also the whole risk. A DM who forgets they are in here will go
+        // looking for a monster that is on the board and not on this one.
+        'Showing the board as the table sees it — their fog, and nothing they are not sent. Your walls, painted squares, hit points and hidden creatures are still there behind it.'
+      : checking
       ? 'Click a creature to see the board as it does. Geometry only — your painted squares are not applied.'
       : sightId !== null
         ? `Showing what ${watched?.name ?? 'that creature'} can see right now. Click the button to go back to the table's board.`
@@ -370,7 +445,14 @@ export function createFogTool(
       // every other tool here uses and the fastest way back to the board.
       brush = brush === entry.brush ? null : entry.brush;
       clearPreview();
-      if (brush !== null) onArm();
+      // Painting through the mirror would be painting squares that are not on
+      // it: the tint is the DM's own hand, and the mirror is what their hand is
+      // absent from. Picking a brush up is therefore a way out of it, which is
+      // the same trade the sight check makes below.
+      if (brush !== null) {
+        leaveView();
+        onArm();
+      }
       paint();
     });
     buttons.set(entry.brush, button);
@@ -381,7 +463,11 @@ export function createFogTool(
   // competing for the same button, and two tools armed at once is not a state
   // input.ts could resolve. `onArm` says the same thing to the draw and wall
   // tools outside this panel.
-  ui.sight.addEventListener('click', () => {
+  // Registered only while the check is offered, so `checking` and `sightId`
+  // cannot be reached at all rather than merely being hard to click. A hidden
+  // button is still a button a script can press, and the two states behind this
+  // one put the DM's board somewhere nothing on screen would account for.
+  if (SOLO_SIGHT) ui.sight.addEventListener('click', () => {
     // Three states behind one button, and the order of these two branches is the
     // whole of it: **anything on the board comes off first.** With an answer up,
     // the button is the way back to the table's board, which is what the hint
@@ -393,8 +479,37 @@ export function createFogTool(
     } else {
       checking = true;
       brush = null;
+      // Three things can stand in for the DM's board and only one of them can be
+      // standing there: the whole table's answer and one creature's are two
+      // different questions, and a board showing both would be answering
+      // neither. Preview is the fourth and excludes itself — see `update`.
+      leaveView();
       clearPreview();
       onArm();
+    }
+    paint();
+  });
+
+  // The mirror. Its own button rather than a fifth brush or a second state on
+  // the one above, because it is neither a gesture nor a question about a
+  // creature — it is which board is on screen, which is what preview is too.
+  //
+  // It takes no mouse button, so nothing outside this panel has to let go of
+  // one: the draw tool stays armed through it deliberately, since a shape swept
+  // while looking at the table's board is a shape aimed at what they can see.
+  ui.view.addEventListener('click', () => {
+    if (playerView) {
+      leaveView();
+    } else {
+      playerView = true;
+      // Whatever else was standing in for the board comes off, which is the
+      // order the sight button already established: anything on the board goes
+      // first, and what is left is the thing that was just asked for.
+      checking = false;
+      sightId = null;
+      brush = null;
+      clearPreview();
+      onView();
     }
     paint();
   });
@@ -480,6 +595,9 @@ export function createFogTool(
     get sightId() {
       return sightId;
     },
+    get playerView() {
+      return playerView;
+    },
 
     check(token) {
       if (!checking) return;
@@ -541,6 +659,11 @@ export function createFogTool(
         stroke = [];
         painted = new Set();
       }
+      // A preview starting under the mirror is the one way the two could be on
+      // at once, and it is the way this feature would lie: `asTable` answers
+      // about the live board, so the DM would be looking at the board the table
+      // has while believing they were looking at the next dungeon.
+      if (staged()) leaveView();
       clearPreview();
       paint();
     },
@@ -557,6 +680,10 @@ export function createFogTool(
       // for.
       checking = false;
       sightId = null;
+      // And the mirror with them, for the same sentence: the button is the only
+      // thing on screen accounting for a board that is missing the DM's own
+      // walls and half their monsters, and it goes with the tab.
+      leaveView();
       clearPreview();
       paint();
     },

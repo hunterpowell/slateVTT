@@ -153,7 +153,7 @@ screen and which token is standing on a given square.
 | `drive-select.mjs` | Shift-click selection, and the group drag that moves them together | both     |
 | `drive-staged.mjs` | Tracing and painting the next dungeon, and the table not being told | both     |
 | `drive-undo.mjs`   | The DM's undo reaching the table, and not rebuilding their page    | both     |
-| `drive-panels.mjs` | The initiative panel folding, and the DM's solo sight staying theirs | both     |
+| `drive-panels.mjs` | The initiative panel folding, and the sight check no longer being offered | both     |
 | `drive-chat.mjs`   | Whisper and shout — and a whisper being absent from a *third* person's page | three    |
 | `drive-notes.mjs`  | The scratchpad — one person in two tabs, and the DM holding none of it | three    |
 | `drive-presence.mjs` | Who is connected, the colour a player picks, and being told it is your turn | three    |
@@ -161,9 +161,12 @@ screen and which token is standing on a given square.
 | `drive-backdrop.mjs` | A picture in front of the table, and the board being the same board when it comes down | both     |
 | `drive-library.mjs` | Adding an image to a library and removing it again — the one driver whose subject is the disk | DM       |
 | `drive-rooms.mjs`  | Two rooms on one server — the picker, and one board's tokens being absent from the other | both     |
+| `drive-mirror.mjs` | Player view — the DM's own board redrawn as the table's, and put down again | DM       |
 
 The ones marked *both* open two browsers at once, and that is the point of them: almost everything
 they assert is a **difference** between what two people are holding, which one client cannot see.
+`drive-mirror.mjs` is the one that could not use a second browser if it wanted one: its subject is a
+difference between two boards on the *same* screen, so there is nobody else to ask.
 `drive-chat.mjs` opens three, because the thing it has to show is what one *player* is not sent
 about another — a line drawn between two people at the same table rather than between the DM and it.
 `drive-presence.mjs` opens three for a related reason: its subject *is* the other connections, so a
