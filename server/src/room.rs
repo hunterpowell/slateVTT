@@ -800,6 +800,17 @@ pub struct RoomState {
     /// against `&self` while the client map is borrowed, so it could not mutate
     /// this even if it wanted to, and it is better kept pure regardless.
     visible: HashSet<Cell>,
+    /// Which tokens the table has been shown, as of the last recompute.
+    ///
+    /// Derived and never persisted like the two sets above — and **recorded when
+    /// the recompute runs**, rather than read back off the room when the next
+    /// command arrives, which is the one thing that cannot work. A drag frame
+    /// moves a token in memory without a recompute, so by the time the drop asks
+    /// what the table could see a moment ago, the creature has already been
+    /// carried into the dark and the honest answer off `&self` is "they never saw
+    /// it" — which is how a monster ends up standing on their board forever at
+    /// the last cell a frame reached them. See `docs/fog.md`.
+    shown: HashSet<TokenId>,
     /// What the DM has said about particular cells, overriding the rays.
     ///
     /// **A mask applied after the raycast, not a write into `revealed`**, and that
@@ -1580,6 +1591,7 @@ impl RoomState {
             revealed: HashSet::new(),
             known: HashSet::new(),
             visible: HashSet::new(),
+            shown: HashSet::new(),
             overrides: HashMap::new(),
             show_names: true,
             diagonals: Diagonals::Equal,
@@ -1864,6 +1876,7 @@ impl RoomState {
             revealed: HashSet::new(),
             known: HashSet::new(),
             visible: HashSet::new(),
+            shown: HashSet::new(),
             overrides: HashMap::new(),
             // On, which is what the board did before there was a switch. A first
             // boot is a room with eight named tokens and nothing else to tell
@@ -2483,32 +2496,50 @@ impl RoomState {
     /// overrides survive it — they are what the DM said, not a derived thing —
     /// and apply again the moment fog comes back.
     fn recompute_sight(&mut self) {
-        if !self.map.fog {
-            self.visible.clear();
-            self.known.clear();
-            return;
-        }
-        let rays = fog::sight_cells(&self.map, &self.walls, &self.vision_sources());
+        if self.map.fog {
+            let rays = fog::sight_cells(&self.map, &self.walls, &self.vision_sources());
 
-        self.revealed.extend(rays.iter().copied());
-        self.known = fog::with_fringe(&self.map, &self.revealed);
-        self.visible = rays;
+            self.revealed.extend(rays.iter().copied());
+            self.known = fog::with_fringe(&self.map, &self.revealed);
+            self.visible = rays;
 
-        for (&cell, over) in &self.overrides {
-            match over {
-                Override::Lit => {
-                    self.visible.insert(cell);
-                    self.known.insert(cell);
-                }
-                Override::Explored => {
-                    self.known.insert(cell);
-                }
-                Override::Dark => {
-                    self.visible.remove(&cell);
-                    self.known.remove(&cell);
+            for (&cell, over) in &self.overrides {
+                match over {
+                    Override::Lit => {
+                        self.visible.insert(cell);
+                        self.known.insert(cell);
+                    }
+                    Override::Explored => {
+                        self.known.insert(cell);
+                    }
+                    Override::Dark => {
+                        self.visible.remove(&cell);
+                        self.known.remove(&cell);
+                    }
                 }
             }
+        } else {
+            self.visible.clear();
+            self.known.clear();
         }
+
+        // Last, and after both branches rather than inside the fogged one: an
+        // unfogged map shows the table every token, and a room that has just had
+        // its fog switched off has to record that as much as one that recomputed
+        // a raycast.
+        //
+        // **This is the only moment the room and what the table holds are the
+        // same thing**, which is why it is written down here instead of being
+        // asked for later. Everything that can change the answer recomputes —
+        // `moves_sight` enumerates it — with the single exception of a drag
+        // frame, and a drag frame is exactly the case this exists to survive.
+        let shown = self
+            .tokens
+            .values()
+            .filter(|t| !self.unseen_by_table(t))
+            .map(|t| t.id.clone())
+            .collect();
+        self.shown = shown;
     }
 
     /// Forgets the dungeon: the party's memory and both sets derived from it.
@@ -4043,12 +4074,10 @@ impl RoomState {
     fn sight_now(&self) -> Sight {
         Sight {
             fog: self.fog_for(),
-            seen: self
-                .tokens
-                .values()
-                .filter(|t| !self.unseen_by_table(t))
-                .map(|t| t.id.clone())
-                .collect(),
+            // Read off the record and pointedly not off the tokens: this has to
+            // be what the table *holds*, and a drag frame has already moved the
+            // one token that could disagree. See `RoomState::shown`.
+            seen: self.shown.clone(),
             shapes: self
                 .shapes
                 .iter()

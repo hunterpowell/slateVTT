@@ -458,12 +458,23 @@ fn the_fog_survives_the_save_file() {
     let _dm = join_as_dm(&mut state, ClientId(1));
     let explored = state.revealed.clone();
 
+    // Straight out of the constructor, before `spawn`'s recompute — which is
+    // the only place the two halves can be told apart.
+    let cold = RoomState::restored(state.to_saved(), SECRET.to_owned(), roster_from(&ROSTER));
+    assert_eq!(cold.revealed, explored, "explored terrain is on disk");
+    assert!(cold.visible.is_empty(), "and sight is not");
+    assert!(cold.shown.is_empty(), "nor is what the table was holding");
+
     let restored = reboot(state.to_saved());
 
-    assert_eq!(restored.revealed, explored, "explored terrain is on disk");
-    assert!(
-        restored.visible.is_empty(),
-        "and sight is not — it is derived on boot, from the tokens the same file holds"
+    assert_eq!(restored.revealed, explored, "still on disk after the boot");
+    assert_eq!(
+        restored.visible, state.visible,
+        "and sight comes back derived, from the tokens the same file holds"
+    );
+    assert_eq!(
+        restored.shown, state.shown,
+        "with what the table can see of them, or the first command after a          restart would report every token as newly appeared"
     );
 }
 
@@ -1371,5 +1382,95 @@ fn a_player_is_never_sent_the_staged_boards_paint() {
     assert!(
         drain(&mut saelyn).is_empty(),
         "a player was told something about the next dungeon"
+    );
+}
+
+#[test]
+fn a_creature_dragged_out_of_sight_is_taken_off_the_tables_board() {
+    // The bug the screenshots showed: the DM drags a monster from the light
+    // into the dark and the table is left with it standing at the last cell a
+    // drag frame reached them, forever.
+    let mut state = fog_room(60.0);
+    let _dm = join_as_dm(&mut state, ClientId(1));
+    state.handle(ClientId(1), between(false));
+    // In front of the wall, where the party can see it.
+    state.handle(
+        ClientId(1),
+        ClientMsg::MoveToken {
+            id: TokenId::new("m"),
+            x: 2.5,
+            y: 1.5,
+            dragging: false,
+            staged: false,
+        },
+    );
+    let mut rx = join_as_player(&mut state, ClientId(2), "saelyn");
+    assert!(sees_the_ogre(&state), "visible before the drag");
+    drain(&mut rx);
+
+    // A drag, as a real one arrives: frames on the way, then the drop.
+    for x in [3.0, 4.0, 5.0] {
+        state.handle(
+            ClientId(1),
+            ClientMsg::MoveToken {
+                id: TokenId::new("m"),
+                x,
+                y: 1.5,
+                dragging: true,
+                staged: false,
+            },
+        );
+    }
+    state.handle(
+        ClientId(1),
+        ClientMsg::MoveToken {
+            id: TokenId::new("m"),
+            x: 5.5,
+            y: 1.5,
+            dragging: false,
+            staged: false,
+        },
+    );
+
+    assert!(!sees_the_ogre(&state), "behind the wall now");
+    let frames = drain(&mut rx);
+    assert!(
+        frames
+            .iter()
+            .any(|msg| matches!(msg, ServerMsg::TokenRemoved { id } if id.0 == "m")),
+        "it has to leave their board rather than stand where it was last seen, got {frames:?}"
+    );
+}
+
+#[test]
+fn a_creature_dragged_around_in_the_dark_is_still_never_mentioned() {
+    // The other half of the one above, and the half that is easy to break
+    // fixing it: a `TokenRemoved` naming an id they have never held would
+    // announce that the id exists. `was_unseen` is the whole guard, and the
+    // record `shown` now keeps has to agree with it frame by frame.
+    let mut state = fog_room(60.0);
+    let _dm = join_as_dm(&mut state, ClientId(1));
+    state.handle(ClientId(1), between(false));
+    let mut rx = join_as_player(&mut state, ClientId(2), "saelyn");
+    assert!(!sees_the_ogre(&state), "behind the wall from the start");
+    drain(&mut rx);
+
+    for (x, dragging) in [(6.0, true), (7.0, true), (6.5, false)] {
+        state.handle(
+            ClientId(1),
+            ClientMsg::MoveToken {
+                id: TokenId::new("m"),
+                x,
+                y: 1.5,
+                dragging,
+                staged: false,
+            },
+        );
+    }
+
+    let frames = drain(&mut rx);
+    assert!(
+        frames.is_empty(),
+        "nothing at all about a monster they were never shown, got {frames:?}"
     );
 }

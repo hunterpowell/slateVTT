@@ -206,6 +206,12 @@ struct RoomState {
     /// `recompute_sight` reads it — everything else reads `known` — see
     /// `docs/fog.md`.
     revealed: HashSet<Cell>, known: HashSet<Cell>, visible: HashSet<Cell>,
+    /// Which tokens the table could see when they were last told. Derived like
+    /// the two above, and written *at* the recompute rather than read back
+    /// later — a drag frame moves a token without one, so asking afterwards
+    /// answers "they never saw it" and leaves the creature standing on their
+    /// board. `recompute_sight` is its only write — see `docs/fog.md`.
+    shown: HashSet<TokenId>,
     /// What the DM said about particular cells of the live board anyway. A mask
     /// applied after the raycast, never a write into the two above. DM-only,
     /// whole, like the walls — and staged like them.
@@ -717,7 +723,7 @@ is the secret and the shadow it casts is what the table plays with. `None` means
 fogged, indistinguishable from having none.
 
 **Recompute on the drop, never on a drag frame** — `moves_sight` is `persists`'s twin and is
-enumerated the same way. `revealed` is persisted; `known` and `visible` are derived on boot. A map
+enumerated the same way. `revealed` is persisted; `known`, `visible` and `shown` are derived on boot. A map
 load, a promote, a recalibration and a redrawn play area clear all three through `forget_fog`;
 changing the radius does not. `ResetFog` is that plus the overrides, and is the DM's way to say **the
 whole map back to dark**.

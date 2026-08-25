@@ -5,7 +5,7 @@ nothing read them; this is what reads them.
 
 `.claude/CLAUDE.md` is loaded into every session; this file is not. **Read it before touching
 `fog.rs`, `fog.ts`, `solo.ts`, `overrides.ts`, `fogtool.ts`, `unseen_by_table`, `with_fringe`,
-`refresh_fog`, or the `moves_sight` gate** — five of those nine are the places a leak would go
+`recompute_sight`, `refresh_fog`, or the `moves_sight` gate** — six of those ten are the places a leak would go
 unnoticed, and the coordinate story in the first is the thing that looks like a mistake and is not.
 
 This covers the whole of milestone 16: automatic line of sight in 16a, and the DM's manual override
@@ -545,8 +545,9 @@ command added later and forgotten there leaves the fog quietly stale, which look
 raycast rather than a missing arm.
 
 The reading is taken in `handle`, **before `apply` runs**, and only for the commands that could move
-it — the set and the packed string cost too much to build on a drag frame arriving thirty times a
-second from each of six people. `refresh_fog` then recomputes and reports the difference as events:
+it — the packed string costs too much to build on a drag frame arriving thirty times a second from
+each of six people. Its token half is not built there at all; see *Drag frames* below.
+`refresh_fog` then recomputes and reports the difference as events:
 the fog frame, a `TokenChanged` for every token whose visibility flipped, and the initiative panel
 and the shape list if any of those tokens is named there. Both of the last two are gated on
 something actually having changed, which is load-bearing for the third time in this project: an
@@ -568,7 +569,43 @@ rather than as it travels.
 What still happens mid-drag is the *filter*. A monster dragged into a cell the party cannot currently
 see stops being relayed to them at once, because that decision reads `visible` rather than rebuilding
 it. The player is left holding it at the last position they saw until the drop lands and takes it off
-their board — a frame or two of staleness, and the alternative is thirty bitsets a second.
+their board — a drag's worth of staleness, and the alternative is thirty bitsets a second.
+
+**And that drop is why `Sight.seen` is copied off `RoomState::shown` instead of being computed where
+the rest of the reading is.** The reading exists to answer "what could the table see a moment ago",
+and reading it off `&self` answers "what can they see right now" — which is the same sentence only if
+nothing has moved since the last recompute. A drag frame is the one thing that moves a token without
+one. So by the time the drop asked, the creature was already standing in the dark, the room answered
+*they never saw it*, `refresh_fog` found no flip, and no `TokenRemoved` was sent: the monster stayed
+on the table's board at the last cell a drag frame reached them, for the rest of the session. It was
+worst exactly where fog matters most — the DM walking something out of the light is the ordinary way
+a creature stops being visible.
+
+`shown` fixes it by writing the answer down **when it is true rather than asking for it afterwards**.
+It is a set of `TokenId`, derived and never persisted like `visible`, and `recompute_sight` is its
+only write — which is what makes it correct rather than merely cached: everything that can change the
+answer recomputes, `moves_sight` enumerates that, and the sole exception is the drag frame this
+exists to survive. It is written after both branches of the recompute, because switching fog *off*
+shows the table every token and is as much a change to the answer as a raycast is.
+
+Nothing downstream knows about it. `refresh_fog`'s flip loop is unchanged, so the initiative row and
+the anchored aura come off the table's board with the creature through `anchors_a_shape`, exactly as
+they already did when somebody walked out of a doorway.
+
+**`Sight.shapes` beside it stays a live reading, and giving it the same treatment would be a bug.**
+It looks like it wants one — an anchored shape's visibility is a token's, so it goes stale on a drag
+in the same way — but the token loop above already covers that case, and the shapes are the one list
+here that a command *outside* `moves_sight` can change: `AddShape` and `RemoveShape` are neither
+recomputed nor gated. A record written only at the recompute would therefore miss them, and the next
+person to walk anywhere would find `before.shapes` disagreeing with the room and emit a
+`ShapesChanged` announcing to the table that something happened. `seen` has no such gap, which is the
+whole reason it can be written down and this cannot.
+
+The cost is that a room built without `spawn`'s boot recompute now claims the table has been shown
+nothing, and reports every token as newly appeared on its first command. That is a real trap and it
+caught fourteen tests: `room()` and `reboot()` go through `booted` for the same reason `spawn` calls
+`recompute_sight`, and `the_fog_survives_the_save_file` asserts both halves — absent from the
+constructor, derived back by the boot.
 
 ## What sweeps it
 

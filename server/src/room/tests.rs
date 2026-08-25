@@ -18,8 +18,21 @@ use crate::protocol::{Lighting, Px, Rect};
 
 const SECRET: &str = "test-secret";
 
+/// A room as `spawn` would hand one over, boot recompute included.
+///
+/// The recompute is not a detail of the fixture. `spawn` runs it on every room
+/// it starts, because the derived half of the fog is not on disk — and `shown`
+/// is derived with it, so a state that skipped this would claim the table has
+/// been shown nothing and report every token as newly appeared on the first
+/// command of every test.
 fn room() -> RoomState {
-    RoomState::hardcoded(SECRET.to_owned())
+    booted(RoomState::hardcoded(SECRET.to_owned()))
+}
+
+/// What `spawn` does to a freshly built room, wherever it came from.
+fn booted(mut state: RoomState) -> RoomState {
+    state.recompute_sight();
+    state
 }
 
 /// A room booted from a save, with the primary room's cast.
@@ -29,7 +42,11 @@ fn room() -> RoomState {
 /// tests is about the cast — what they are about is `adopt`, and a room with two
 /// rosters to choose from would otherwise make every one of them say so.
 fn reboot(saved: Saved) -> RoomState {
-    RoomState::restored(saved, SECRET.to_owned(), roster_from(&ROSTER))
+    booted(RoomState::restored(
+        saved,
+        SECRET.to_owned(),
+        roster_from(&ROSTER),
+    ))
 }
 
 /// Opens a connection and returns its outbound receiver.

@@ -1,17 +1,49 @@
 {
   "map": {
-    "url": "/assets/map.png",
-    "grid_px": 64.0,
+    "url": "/uploads/the-field-551e4c12.png",
+    "grid_px": 43.24138,
     "offset_x": 0.0,
     "offset_y": 0.0,
     "grid_color": "#ffffff52",
     "play_area": null,
-    "fog": false,
-    "vision_ft": 60.0,
+    "fog": true,
+    "vision_ft": 30.0,
     "lighting": "dynamic"
   },
   "staged": null,
-  "tokens": [],
+  "tokens": [
+    {
+      "id": "41f99d3db5244b9386f13b1061e00833",
+      "name": "The Harvest Saint",
+      "x": 12.0,
+      "y": 9.0,
+      "owner": {
+        "kind": "dm"
+      },
+      "img": "/uploads/portrait-the-saint-7aecaf90.png",
+      "size": 2.0,
+      "hidden": false,
+      "hp": null,
+      "staged_pos": null,
+      "staged_only": false
+    },
+    {
+      "id": "e0958f05ada5480fba801100e289229e",
+      "name": "test",
+      "x": 13.5,
+      "y": 8.5,
+      "owner": {
+        "kind": "player",
+        "id": "player-1"
+      },
+      "img": "/uploads/portrait-bronzebeard-395e743b.webp",
+      "size": 1.0,
+      "hidden": false,
+      "hp": null,
+      "staged_pos": null,
+      "staged_only": false
+    }
+  ],
   "initiative": {
     "entries": [],
     "current": null,
@@ -20,23 +52,60 @@
   "shapes": [],
   "walls": [],
   "revealed": {
-    "x": 0,
-    "y": 0,
-    "w": 0,
-    "h": 0,
-    "cells": ""
+    "x": 4,
+    "y": -6,
+    "w": 17,
+    "h": 24,
+    "cells": "##########o#############ooooooo#########ooooooooo#######ooooooooooo######ooooooooooo######ooooooooooo####oooooooooooooo##ooooooooooooooo#ooooooooooooooo##oooooooooooooooo#ooooooooooooooo#oooooooooooooooo##ooooooooooooooo##oooooooooooooo###oooooooooooooo####ooooooooooooo#####oooooooooooo####ooooooooooooo#####ooooooooooo######ooooooooooo######ooooooooooo#######ooooooooo#########ooooooo#############o########"
   },
   "overrides": {
     "x": 0,
     "y": 0,
-    "w": 0,
-    "h": 0,
-    "cells": ""
+    "w": 29,
+    "h": 29,
+    "cells": "ooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooo"
   },
   "show_names": true,
-  "diagonals": "equal",
+  "diagonals": "alternating",
   "show_cursors": true,
-  "calibrations": {},
+  "calibrations": {
+    "/uploads/the-field-551e4c12.png": {
+      "grid_px": 43.24138,
+      "offset_x": 0.0,
+      "offset_y": 0.0,
+      "grid_color": "#ffffff52",
+      "play_area": null,
+      "fog": true,
+      "vision_ft": 30.0,
+      "lighting": "dynamic",
+      "walls": [],
+      "overrides": {
+        "x": 0,
+        "y": 0,
+        "w": 0,
+        "h": 0,
+        "cells": ""
+      }
+    },
+    "/assets/map.png": {
+      "grid_px": 64.0,
+      "offset_x": 0.0,
+      "offset_y": 0.0,
+      "grid_color": "#ffffff52",
+      "play_area": null,
+      "fog": false,
+      "vision_ft": 60.0,
+      "lighting": "dynamic",
+      "walls": [],
+      "overrides": {
+        "x": 0,
+        "y": 0,
+        "w": 0,
+        "h": 0,
+        "cells": ""
+      }
+    }
+  },
   "notes": [],
   "colours": {},
   "backdrop": null
