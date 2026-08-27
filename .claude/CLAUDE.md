@@ -789,11 +789,17 @@ those two functions.
 an entry in `RailTab` and an entry in the array `main.ts` passes to `createRail` — never another
 `<aside>` stacked on the others. **Which panel a control belongs on is decided by where its field
 lives**: `MapInfo` is the map tab, `Token` is the token tab, room-wide `RoomState` is the table tab.
-Two rules come with the strip. Closing a tab must put down whatever that panel armed, via the panel's
+Three rules come with the strip. Closing a tab must put down whatever that panel armed, via the panel's
 `stop` — a tool still holding the left mouse button under a hidden panel is a click doing something
-with nothing on screen saying why. And a panel that goes inert in some state must make its **tab**
+with nothing on screen saying why. A panel that goes inert in some state must make its **tab**
 inert too: a way in to a panel that can do nothing is the same lie as the panel sitting there looking
 armed, and the rule cuts both ways — a tab wrongly greyed is the same defect as a tab wrongly live.
+And **only a click on a tab changes which tab is open** — nothing on the board and nothing on the
+wire moves the rail, which is why `createRail` returns nothing to move it with. Selecting a token
+used to open the token tab; the rail is where the DM is *working*, and a panel that swaps itself out
+mid-trace costs more than the click it saved. The open tab is remembered in `localStorage` for the
+reason the initiative fold is — a preference, not a `RoomState` field — and because a dropped socket
+reloads the page, so a rail that opens empty on connect empties itself mid-fight.
 
 The draw tool is deliberately *not* on the strip. It is the one panel everybody has and it is used
 in the middle of a fight, so it stays pinned to the bottom of the rail — the same reason a door

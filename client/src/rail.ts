@@ -53,20 +53,62 @@ export interface RailPanel {
   stop?: () => void;
 }
 
-export interface Rail {
-  /** The open tab, or `null` when the rail is just the strip. */
-  readonly open: RailTab | null;
-  /** Opens a tab. `null` closes whatever is open. */
-  show(tab: RailTab | null): void;
+/**
+ * Nothing is returned, which is the point rather than an omission.
+ *
+ * The rail used to hand `main.ts` a `show`, and the one caller was the board
+ * opening the token tab when a token was picked up. With that gone there is no
+ * second hand on the strip at all: a tab changes when the DM clicks a tab. If
+ * some panel ever needs opening from outside, this is the line to reconsider —
+ * and the question to ask first is whether the DM asked for it.
+ */
+
+/**
+ * Which tab this browser had open last time.
+ *
+ * `localStorage` and deliberately not the room, the line `panel.ts` draws for
+ * the initiative fold and for the same reason: how much of a panel somebody
+ * wants on their own screen is nobody else's business and nothing has to agree
+ * about it.
+ *
+ * The rail used to open nothing on connect, on the argument that the change was
+ * about giving the board back. What that missed is that a dropped socket reloads
+ * the page — see `docs/presence.md` — so "on connect" is not only the start of
+ * an evening, and losing the panel you were tracing with is the reload making
+ * itself felt in the middle of a fight.
+ *
+ * Wrapped like every other read of this API here: a private browsing mode can
+ * throw on the property itself, and a closed rail is a fine thing to fall back
+ * to.
+ */
+const OPEN_KEY = 'slate.rail.open';
+
+function readOpen(panels: RailPanel[]): RailTab | null {
+  try {
+    const stored = localStorage.getItem(OPEN_KEY);
+    // Checked against the panels actually built rather than cast: a tab that was
+    // renamed or removed since this was written would otherwise hide the rail
+    // behind a panel that does not exist.
+    return panels.find((p) => p.tab === stored)?.tab ?? null;
+  } catch {
+    return null;
+  }
 }
 
-export function createRail(ui: RailUi, panels: RailPanel[]): Rail {
-  // Nothing is open on connect. The change is about giving the board back, and
-  // opening a panel by default would undo it on every refresh; during play the
-  // panel the DM wants opens itself, because clicking a token opens the token
-  // tab. A fresh room with no map is the one case that needs a click, and the
-  // strip is sitting there saying "map".
-  let open: RailTab | null = null;
+function storeOpen(tab: RailTab | null): void {
+  try {
+    if (tab === null) localStorage.removeItem(OPEN_KEY);
+    else localStorage.setItem(OPEN_KEY, tab);
+  } catch {
+    /* the rail still opens and closes; it just forgets by the next load */
+  }
+}
+
+export function createRail(ui: RailUi, panels: RailPanel[]): void {
+  // Where the DM left it, and *only* where the DM left it: nothing outside this
+  // module moves the rail. A tab changes when a tab is clicked, and never
+  // because something happened on the board.
+  let open: RailTab | null = readOpen(panels);
 
   const buttons = new Map<RailTab, HTMLButtonElement>();
 
@@ -84,6 +126,7 @@ export function createRail(ui: RailUi, panels: RailPanel[]): Rail {
     if (tab === open) return;
     panels.find((p) => p.tab === open)?.stop?.();
     open = tab;
+    storeOpen(open);
     paint();
   };
 
@@ -104,11 +147,4 @@ export function createRail(ui: RailUi, panels: RailPanel[]): Rail {
 
   paint();
   ui.tabs.hidden = false;
-
-  return {
-    get open() {
-      return open;
-    },
-    show,
-  };
 }

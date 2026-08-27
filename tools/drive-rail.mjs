@@ -36,7 +36,7 @@ const tabs = () =>
 
 /** Which panels are actually on screen, by id. */
 const shown = () =>
-  evaluate(`['maptool','tokentool','walltool','tabletool','drawtool']
+  evaluate(`['maptool','tokentool','walltool','fogtool','tabletool','drawtool']
     .filter(id => document.getElementById(id).offsetParent !== null)`);
 
 const press = (label) =>
@@ -62,7 +62,9 @@ const heightOf = (id) =>
 // --- the strip itself -------------------------------------------------------
 
 check('the strip carries the five tabs', await tabs(), ['map', 'token', 'walls', 'fog', 'table']);
-check('nothing is open on connect', await openTab(), null);
+// A throwaway profile, so this is a *first* connection in a browser that has
+// never held this room. What a browser that has is asserted at the bottom.
+check('nothing is open in a fresh browser', await openTab(), null);
 check('the draw tool is the only panel up', await shown(), ['drawtool']);
 
 // --- one at a time ----------------------------------------------------------
@@ -120,18 +122,19 @@ await wait(400);
 note(`map panel with the library open is ${await heightOf('maptool')}px tall`);
 check('the rail holds with the library open too', (await railBottom()) <= 0, true);
 
-// --- clicking a token opens the tab that edits it ---------------------------
+// --- the board does not touch the strip -------------------------------------
 //
-// The rule that makes "nothing open on connect" liveable: during play the panel
-// the DM wants opens itself.
+// Clicking a token used to open the token tab, on the argument that picking a
+// creature up off the board is the request to edit it. The rail is *where the DM
+// is working*, though, and a panel that swaps itself out from under a half-traced
+// wall costs more than the click it saved. Selection is the whole of what a board
+// click does now, and the strip is the DM's alone.
 //
-// Where the token *is* has to be established before the tab is switched away,
-// and both halves of that matter. A new token lands in the first free cell out
-// from the middle of the view, which is the middle only if the middle was free —
-// so it is looked for rather than assumed, and this used to click the middle of
-// the canvas and fail whenever another map put something there. And the looking
-// is done from the token tab, because `tokenAt` opens it: doing it afterwards
-// would be the very tab switch this section is trying to observe.
+// Where the token *is* has to be established before any of that. A new token
+// lands in the first free cell out from the middle of the view, which is the
+// middle only if the middle was free — so it is looked for rather than assumed,
+// and this used to click the middle of the canvas and fail whenever another map
+// put something there.
 
 await press('token');
 await evaluate(`document.getElementById('token-name').value = 'Rail Test'; "ok"`);
@@ -143,22 +146,53 @@ note(grid.describe);
 const built = await findToken(session, grid, 'Rail Test');
 check('the token this script built is on the board', built !== null, true);
 
-await press('map');
-check('a different tab is up before the board is clicked', await openTab(), 'map');
+await press('walls');
+check('a different tab is up before the board is clicked', await openTab(), 'walls');
 
 const [tx, ty] = grid.screenOfCell(built.x, built.y);
 await click(tx, ty);
-check('clicking a token on the board opens the tab that edits it', await openTab(), 'token');
+await wait(250);
+check('clicking a token leaves the tab where the DM put it', await openTab(), 'walls');
+check('and the panel it opened is still the one on screen', await shown(), [
+  'walltool',
+  'drawtool',
+]);
 check(
-  'and the panel is describing that token',
+  'while the hidden token panel followed the selection anyway',
   await evaluate(`document.getElementById('token-name').value`),
   'Rail Test',
 );
 
-// Put the room back: this script is the only thing that wanted that token.
+// Put the room back: this script is the only thing that wanted that token. The
+// selection is what `token-delete` acts on and the board click above made it,
+// so only the panel has to be brought back up.
+await press('token');
 await evaluate(`window.confirm = () => true;
   document.getElementById('token-delete').click(); "ok"`);
 await wait(400);
+
+// --- the rail remembers -----------------------------------------------------
+//
+// Under test because a dropped socket reloads the page: "nothing open on
+// connect" also meant "nothing open after a reconnect", which is a rail that
+// empties itself in the middle of a fight.
+//
+// Back to the *DM* URL rather than `location.reload()`. The secret is stripped
+// out of the address bar before anything can screenshot it, so reloading what is
+// left reconnects as a player and there is no rail to assert about.
+// `localStorage` is per origin and survives the navigation either way, which is
+// the thing actually under test.
+
+await press('fog');
+check('the fog tab is open before the reload', await openTab(), 'fog');
+
+await evaluate(`location.href = ${JSON.stringify(`${base}/?room=campaign&dm=${secret}`)}; "ok"`);
+await wait(3500);
+check('the open tab survived a reload', await openTab(), 'fog');
+check('and its panel came back up with it', await shown(), ['fogtool', 'drawtool']);
+
+await press('fog');
+check('and a closed rail is remembered as well as an open one', await openTab(), null);
 
 process.exitCode = verdict(session);
 session.close();

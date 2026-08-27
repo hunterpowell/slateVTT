@@ -35,7 +35,7 @@ explaining that they were not really token fields. The comments were the smell: 
 a paragraph saying which panel it is *not* on is on the wrong panel. Moving them to a table tab
 deleted the divider, both comments, and the question.
 
-Three rules come with the strip:
+Four rules come with the strip:
 
 1. **A new panel is a `RailTab` entry, not an `<aside>`.** See above.
 2. **Closing a tab must put down whatever that panel armed**, via the panel's `stop`. The
@@ -43,6 +43,26 @@ Three rules come with the strip:
    under a hidden panel is a click doing something with nothing on screen saying why.
 3. **A panel that goes inert in some state must make its tab inert too.** A way in to a panel that
    can do nothing is the same lie as the panel sitting there looking armed.
+4. **Only a click on a tab changes which tab is open.** Nothing on the board, and nothing on the
+   wire, moves the rail.
+
+Rule 4 was learned rather than designed, and it cost `createRail` its return value. Selecting a
+token used to open the token tab, on the argument that picking a creature up off the board is the
+request to edit it. What that missed is which thing is scarce: the rail is *where the DM is
+working*, and swapping the panel out from under a half-traced wall to show a form nobody asked for
+costs more than the click it saved. The selection was never the thing at risk — it is a ring on the
+board, which is exactly what the token panel's `stop` already relies on. With that one caller gone
+there was no second hand on the strip at all, so `createRail` now returns `void`: the rule is in the
+type rather than in a comment asking future callers to respect it.
+
+The rail's memory is the other half of the same rule. The open tab is in `localStorage` —
+`slate.rail.open`, validated against the panels actually built rather than cast — which is the line
+`panel.ts` draws for the initiative fold, and drawn for the same reason: how much of a panel
+somebody wants on their own screen is nobody else's business, so it is a preference and not a
+`RoomState` field like `diagonals`. The rail used to open nothing on connect, on the argument that
+the change was about giving the board back. That argument forgot `docs/presence.md`: **a dropped
+socket reloads the page**, so "on connect" is not only the start of an evening, and a rail that
+empties itself mid-fight is the reconnect making itself felt.
 
 Rule 3 cuts both ways, and the staged board is the proof. When the staged map grew walls and a fog
 mask of its own, the wall and fog panels stopped being inert over a preview — and what got deleted

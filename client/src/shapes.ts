@@ -27,7 +27,7 @@ const FEET_PER_CELL = 5;
  * second and answer with thirty error banners. Clamping means the sweep simply
  * stops growing, which is also what it should look like.
  */
-const MAX_SHAPE_CELLS = 30;
+export const MAX_SHAPE_CELLS = 30;
 
 /** Holds a sweep inside what the server will accept, per axis, exactly as the
  *  server bounds it. */

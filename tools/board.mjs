@@ -239,9 +239,11 @@ export async function latticeOrBail(session, closing, options = {}) {
  * or null.
  *
  * The panel is put into creation mode first, so an empty box means *this* click
- * selected nothing rather than the last token's name still sitting in it. That
- * means this opens the token tab — which makes it the wrong tool for asserting
- * anything about which tab a click opens.
+ * selected nothing rather than the last token's name still sitting in it. It
+ * reads the form's value rather than the panel, so which rail tab is open does
+ * not matter — a board click has not opened one since the strip became the DM's
+ * alone — but it does move the selection and clear the form, which is why a
+ * driver asserting about either does its looking first.
  */
 export async function tokenAt(session, grid, cell) {
   await session.evaluate(`(() => {

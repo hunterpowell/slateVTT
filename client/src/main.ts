@@ -26,7 +26,6 @@ import { attachInput } from './input.js';
 import { asTable } from './mirror.js';
 import type { MapTool } from './maptool.js';
 import { createMapTool } from './maptool.js';
-import type { Rail } from './rail.js';
 import { createRail } from './rail.js';
 import { soloSight } from './solo.js';
 import type { TableTool } from './table.js';
@@ -467,9 +466,6 @@ function boot(ui: Ui, choice: RoomChoice): void {
   // And everybody's for the plainest reason of all: whose turn it is is not a
   // secret, so this is the same feature on every screen.
   let turn: Turn | null = null;
-  // DM-only, like the three panels it shows. Null on a player connection, which
-  // is why every use of it is optional-chained rather than guarded.
-  let rail: Rail | null = null;
   // DM-only for the same reason and optional-chained the same way: a player has
   // no undo ring to be told about, so the server sends them no label.
   let undo: Undo | null = null;
@@ -774,7 +770,7 @@ function boot(ui: Ui, choice: RoomChoice): void {
         // nothing, and the brush is a tool holding the left button like any
         // other — one left under a hidden panel is a click doing something with
         // nothing on screen saying why.
-        rail = createRail(ui.rail, [
+        createRail(ui.rail, [
           { tab: 'map', label: 'map', root: ui.maptool.root, stop: () => mapTool?.stop() },
           // Only the portrait list to put down. The selection stays: it is a
           // ring on the board, which is still on screen with the panel closed.
@@ -805,7 +801,6 @@ function boot(ui: Ui, choice: RoomChoice): void {
         sketches,
         wallTool,
         fogTool,
-        rail,
         pings,
         cursors,
         // The cast list, which every connection is sent and which nothing
@@ -1262,7 +1257,6 @@ async function start(
   sketches: Sketches,
   wallTool: WallTool | null,
   fogTool: FogTool | null,
-  rail: Rail | null,
   pings: Pings,
   cursors: Cursors,
   roster: readonly RosterEntry[],
@@ -1345,13 +1339,14 @@ async function start(
     tokenTool === null
       ? null
       : (id) => {
+          // Selection and nothing else. This used to open the token tab on the
+          // argument that picking a token up is the request to edit it, and the
+          // argument was wrong about which thing is scarce: the rail is where
+          // the DM is working, and swapping the panel out from under a trace to
+          // show a form they did not ask for costs more than the click it saved.
+          // The selection is still visible either way — it is a ring on the
+          // board, which is what the panel's own `stop` relies on.
           tokenTool.select(id);
-          // The mirror of the rule below, that a panel describing something not
-          // on screen is a panel lying: picking a token up off the board is the
-          // request to edit it, so the tab that edits it opens. Deselecting is
-          // not the request to close anything — the DM clicks empty map for all
-          // sorts of reasons — so only a real selection opens it.
-          if (id !== null) rail?.show('token');
         },
     rulers,
     drawTool,
