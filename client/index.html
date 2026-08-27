@@ -1957,7 +1957,8 @@
          setting. Violet is reserved for what the table cannot see, and there is
          nothing hidden about a label. */
       #table-names,
-      #table-cursors {
+      #table-cursors,
+      #table-dm-cursor {
         margin: 0;
         accent-color: #78beff;
         cursor: pointer;
@@ -1967,6 +1968,27 @@
          the gap the second control in a stack of pairs would otherwise lose. */
       .table-cursors {
         margin-top: 10px;
+      }
+
+      /* Indented under the switch it qualifies, and greyed rather than hidden
+         while every pointer is off — the fog panel's rule, for the fog panel's
+         reason: "including yours" is not a question the DM has to answer while
+         nobody's pointer is being drawn, and a control that vanishes is one
+         they go looking for. */
+      .table-dm-cursor,
+      .table-dm-cursor-hint {
+        margin-left: 18px;
+      }
+
+      /* The gap `.table-cursors` needs and for its reason: the hint above this
+         one belongs to the checkbox above it. */
+      .table-dm-cursor {
+        margin-top: 10px;
+      }
+
+      .table-dm-cursor:has(input:disabled),
+      .table-dm-cursor:has(input:disabled) + .table-dm-cursor-hint {
+        opacity: 0.5;
       }
 
       /* `.map-cells-label`'s row rather than `.token-field`'s, which is what the
@@ -2355,6 +2377,19 @@
           <span>pointers on the board</span>
         </label>
         <p class="map-hint">Everyone's pointer, drawn where their hand is.</p>
+        <!-- The switch above narrowed to one hand. Nested under it because it
+             is only answerable while pointers are on at all, and dimmed rather
+             than hidden when they are not — a control that vanishes is a control
+             the DM goes looking for. It stops the relay of the DM's own frames
+             and nothing else: their pointer is drawn by their own mouse either
+             way, and the other six go on seeing each other. -->
+        <label class="token-check table-dm-cursor">
+          <input id="table-dm-cursor" type="checkbox" checked />
+          <span>including yours</span>
+        </label>
+        <p class="map-hint table-dm-cursor-hint">
+          Off keeps your hand off their screens.
+        </p>
         <!-- How the table counts, which is the one thing here the server stores
              and never computes with: the only thing the room is authoritative
              over is that six clients agree. The labels are what people say out

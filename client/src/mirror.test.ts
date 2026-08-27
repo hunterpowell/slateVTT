@@ -90,6 +90,7 @@ function scene(over: Partial<Scene> = {}): Scene {
     showNames: true,
     diagonals: 'equal',
     showCursors: true,
+    showDmCursor: true,
     backdrop: null,
     ...over,
   };

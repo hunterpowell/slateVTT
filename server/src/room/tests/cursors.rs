@@ -311,3 +311,141 @@ fn the_switch_is_a_step_and_a_pointer_is_not() {
     state.handle(ClientId(1), ClientMsg::Undo);
     assert!(state.show_cursors, "and the switch went back");
 }
+
+// --- the DM's own ---------------------------------------------------------
+
+#[test]
+fn switching_the_dms_off_leaves_everybody_elses_alone() {
+    // The whole of what the narrow switch does, and the assertion that matters
+    // is the frame that never left. The two beside it are the reason it is not
+    // just `SetShowCursors` again: the other six hands go on being drawn for
+    // each other, and the DM's own second tab still sees the first.
+    let mut state = room();
+    let mut dm = join_as_dm(&mut state, ClientId(1));
+    let mut second_tab = join_as_dm(&mut state, ClientId(4));
+    let mut saelyn = join_as_player(&mut state, ClientId(2), "saelyn");
+    let mut cleodara = join_as_player(&mut state, ClientId(3), "cleodara");
+    state.handle(ClientId(1), ClientMsg::SetShowDmCursor { show: false });
+    settle(&mut [&mut dm, &mut second_tab, &mut saelyn, &mut cleodara]);
+
+    state.handle(ClientId(1), moved_to(2.0, 2.0));
+    assert!(
+        pointers(&mut saelyn).is_empty(),
+        "the DM put their hand away, and the table is where it goes away from"
+    );
+    assert_eq!(
+        pointers(&mut second_tab),
+        [(Owner::Dm, Pos { x: 2.0, y: 2.0 })],
+        "`to_dm` is still the first line of `cursor_seen`: this withholds the \
+         DM's pointer from the table, not from the DM"
+    );
+
+    state.handle(ClientId(2), moved_to(3.0, 3.0));
+    let sent = (
+        Owner::Player(PlayerId::new("saelyn")),
+        Pos { x: 3.0, y: 3.0 },
+    );
+    assert_eq!(pointers(&mut cleodara), vec![sent.clone()]);
+    assert_eq!(
+        pointers(&mut dm),
+        vec![sent],
+        "and this is the switch it is not: every other pointer is untouched"
+    );
+}
+
+#[test]
+fn the_dm_switch_reaches_past_the_dark_onto_a_lit_map() {
+    // Where it sits in `cursor_seen` is the test: after the two yeses and
+    // *before* the `map.fog` guard, so it holds on an unfogged map — which is
+    // most rooms, most of the time, and most of when a DM would reach for it.
+    // Read the other way round it would be a switch that did nothing until the
+    // fog was on, which is the one arrangement nobody would ask for.
+    let mut state = room();
+    let _dm = join_as_dm(&mut state, ClientId(1));
+    let mut saelyn = join_as_player(&mut state, ClientId(2), "saelyn");
+    state.handle(ClientId(1), ClientMsg::SetShowDmCursor { show: false });
+    settle(&mut [&mut saelyn]);
+
+    state.handle(ClientId(1), moved_to(40.0, 40.0));
+    assert!(
+        pointers(&mut saelyn).is_empty(),
+        "no fog to hide behind and nothing sent anyway"
+    );
+
+    state.handle(ClientId(1), ClientMsg::SetShowDmCursor { show: true });
+    settle(&mut [&mut saelyn]);
+    state.handle(ClientId(1), moved_to(40.0, 40.0));
+    assert_eq!(pointers(&mut saelyn).len(), 1, "and back on again");
+}
+
+#[test]
+fn the_dm_switch_is_the_dms_and_a_refusal_tells_nobody() {
+    let mut state = room();
+    let mut dm = join_as_dm(&mut state, ClientId(1));
+    let mut saelyn = join_as_player(&mut state, ClientId(2), "saelyn");
+    settle(&mut [&mut dm, &mut saelyn]);
+
+    let refused = state
+        .check(ClientId(2), &ClientMsg::SetShowDmCursor { show: false })
+        .expect_err("a player may not decide whose pointers the boards draw");
+    assert!(refused.contains("whose pointers the boards draw"));
+
+    assert!(state.show_dm_cursor, "and the room is unchanged");
+    assert!(drain(&mut dm).is_empty(), "nobody is told about a refusal");
+}
+
+#[test]
+fn the_dm_switch_is_told_to_everybody_and_survives_a_restart() {
+    // Unfiltered like the four room-wide switches beside it: who may flip it is
+    // a permission and what it says is not a secret. A player does nothing with
+    // the frame — unlike `CursorsChanged`, nothing about what they send or draw
+    // depends on it — and it goes to them anyway rather than earning a second
+    // rule for one bool.
+    let mut state = room();
+    let mut dm = join_as_dm(&mut state, ClientId(1));
+    let mut saelyn = join_as_player(&mut state, ClientId(2), "saelyn");
+    settle(&mut [&mut dm, &mut saelyn]);
+
+    assert!(state.snapshot_for(&as_player("saelyn")).show_dm_cursor);
+    assert!(state.snapshot_for(&Identity::Dm).show_dm_cursor);
+
+    state.handle(ClientId(1), ClientMsg::SetShowDmCursor { show: false });
+    assert!(
+        matches!(
+            drain(&mut saelyn).as_slice(),
+            [ServerMsg::DmCursorChanged { show: false }]
+        ),
+        "and the table is told, for the reason every switch on that panel is"
+    );
+    assert!(
+        matches!(
+            drain(&mut dm).as_slice(),
+            [ServerMsg::DmCursorChanged { show: false }]
+        ),
+        "and the DM who flipped it, which is how their own checkbox settles"
+    );
+
+    assert!(!state.snapshot_for(&as_player("saelyn")).show_dm_cursor);
+    assert!(
+        !state.to_saved().show_dm_cursor,
+        "a DM who put their pointer away on Tuesday finds it away on Saturday"
+    );
+}
+
+#[test]
+fn the_dm_switch_is_a_step_of_its_own() {
+    // `persists` and `undid` agreeing, and the label naming this switch rather
+    // than the one above it: with no redo, a press that took back a different
+    // switch would be unrecoverable.
+    let mut state = room();
+    let _dm = join_as_dm(&mut state, ClientId(1));
+
+    state.handle(ClientId(1), ClientMsg::SetShowDmCursor { show: false });
+    assert_eq!(
+        state.snapshot_for(&Identity::Dm).undo.as_deref(),
+        Some("the DM pointer switch")
+    );
+
+    state.handle(ClientId(1), ClientMsg::Undo);
+    assert!(state.show_dm_cursor, "and the switch went back");
+}

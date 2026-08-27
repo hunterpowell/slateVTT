@@ -41,6 +41,11 @@ export interface Handlers {
    *  connection, like the two above — and unlike them it changes what this
    *  client *sends*, because with it off the room relays nothing. */
   onCursorsChanged(show: boolean): void;
+  /** The DM's pointer is drawn on the players' boards now, or it is not.
+   *  Called on every connection, like the switch above — and unlike it this one
+   *  changes nothing about what this client sends or draws: the room withholds
+   *  the DM's frames itself, so all a player does with it is hold it. */
+  onDmCursorChanged(show: boolean): void;
   /** There is a picture in front of the table now, or there is not. Called on
    *  every connection, like the three above. Nothing about the board arrives
    *  with it and nothing needs to — the board is being covered, not changed. */
@@ -226,6 +231,9 @@ export function connect(roomId: string, on: Handlers): Net {
         break;
       case 'cursors_changed':
         on.onCursorsChanged(msg.show);
+        break;
+      case 'dm_cursor_changed':
+        on.onDmCursorChanged(msg.show);
         break;
       case 'backdrop_changed':
         on.onBackdropChanged(msg.url);

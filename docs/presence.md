@@ -14,10 +14,12 @@ Read `.claude/CLAUDE.md` first for the summary. This file is why each part is th
 it is, and what a change to it must not break.
 
 Covers: `presence.ts`, `turn.ts`, `cursors.ts`, the reconnect half of `net.ts`,
-`RoomState::colours`, `RoomState::here`, `RoomState::show_cursors`, `cursor_seen`,
-`Event::PresenceChanged`, `Event::ColoursChanged`, `Event::CursorMoved`,
-`Event::CursorsChanged`, and `SetColour`/`Presence`/`ColoursChanged`/`MoveCursor`/
-`CursorMoved`/`SetShowCursors`/`CursorsChanged` on the server.
+`RoomState::colours`, `RoomState::here`, `RoomState::show_cursors`,
+`RoomState::show_dm_cursor`, `cursor_seen`, `Event::PresenceChanged`,
+`Event::ColoursChanged`, `Event::CursorMoved`, `Event::CursorsChanged`,
+`Event::DmCursorChanged`, and `SetColour`/`Presence`/`ColoursChanged`/`MoveCursor`/
+`CursorMoved`/`SetShowCursors`/`CursorsChanged`/`SetShowDmCursor`/`DmCursorChanged` on
+the server.
 
 ---
 
@@ -424,6 +426,46 @@ What is deliberately *not* done is refusing `MoveCursor` in `check`. A client th
 yet been told is a client in the middle of a `pointermove`, and a red banner per frame is a
 far worse answer than a frame nobody is sent.
 
+### The second switch: the DM's own pointer
+
+`show_dm_cursor` is the switch above narrowed to one hand — **the DM's pointer is not drawn
+on the players' boards, and everybody else's still is.** Same shape as its neighbour in every
+respect that matters: on `RoomState`, DM-only to set, identical for every recipient,
+persisted, a step on the undo ring, on the table tab, and defaulting **on** so a room that
+predates it does not quietly lose a pointer off six screens.
+
+**It is read in `cursor_seen` and nowhere else**, which is the whole reason it cost four
+lines. That function already existed to answer exactly this question — *may this recipient be
+shown the DM's pointer here* — and already answered "no" for one case, the dark. The switch
+is that case widened from "over ground the party has not explored" to "anywhere". The order
+inside the function is load-bearing: it is read after the two yeses (`to_dm`, and a player's
+own pointer) and **before** the `map.fog` guard, so it works on an unfogged map. Read the
+other way round it would be a switch that did nothing until the DM turned fog on, which is
+the one arrangement nobody would ask for.
+
+**It stops the relay and not the sending, which is where it parts company with
+`show_cursors`.** That one is a dial: every pointer in the room, so every client stops
+shipping frames as well. This one is one client in seven, so a second condition at the send
+site would buy a branch in `input.ts` to save nothing measurable — and the DM's client would
+then have to decide whether a second DM tab still counts. The room drops the frame; nothing
+on any client knows the difference.
+
+**A player is sent the frame and does nothing with it.** `DmCursorChanged` is unfiltered like
+the four room-wide switches beside it, on the same principle: who may flip it is a permission,
+and what it says is not a secret. It could have been withheld to the DM — `WallsChanged`'s
+rule — and that would have been a second visibility rule invented for one bool that reveals
+nothing. What reads it back is the DM's own table panel, on a second tab or after a refresh.
+
+**On screen it is nested under "pointers on the board" and greyed while that is off**, which
+is the fog panel's rule for the fog panel's reason: "including yours" is not a question the DM
+has to answer while nobody's pointer is being drawn, and a control that vanishes is a control
+they go looking for. It is a second checkbox rather than a third state on the first one,
+because "everybody's pointers" and "the DM's pointer" are two questions and a select
+answering both would make the common case — all of them, on — cost a read of a menu.
+
+What it is for: a DM who wants their hand off the table's screens while the party argues about
+which door to open, without taking the other six pointers away from each other.
+
 ### The throttle, and the trailing edge that is not there
 
 ~30Hz, leading edge only — **faster than a drag frame's 25Hz**, which is the opposite of what
@@ -500,6 +542,13 @@ is the *DM's* own hand — `walls.rs` asserts what a player is never told, `chat
 what one player is told and another is not, and this one asserts what the DM cannot say by
 accident. The paint case is the one worth keeping: it is what pins `known` rather than
 `revealed`, which is the line a later reader would be most tempted to simplify.
+
+The narrow switch has five tests of its own in the same file, and the one that pins the
+design is `the_dm_switch_reaches_past_the_dark_onto_a_lit_map`: it fails if the read is
+moved below the `map.fog` guard, which is the only plausible way to get the order wrong.
+`switching_the_dms_off_leaves_everybody_elses_alone` is the other half — the assertion that
+it is not just `SetShowCursors` again is a player pointer that still arrives and a second DM
+tab that still sees the first.
 
 **`client/src/cursors.test.ts`** covers what a single process can see: one pointer per
 person, the decay, and `clear()`.

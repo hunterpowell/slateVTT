@@ -114,6 +114,18 @@ pub struct Saved {
     /// it has one checkbox, where the DM who never learns it exists has nothing.
     #[serde(default = "shown")]
     pub show_cursors: bool,
+    /// Whether the DM's own pointer is drawn on the players' boards. Room-wide,
+    /// and the DM's to set.
+    ///
+    /// **The third field here to carry a default of its own, and for the
+    /// narrower of the two reasons.** `show_names` defaults on because that is
+    /// what the board was already doing; this one defaults on because that is
+    /// what the room above it was already doing — a file written before this
+    /// existed came from a room where the DM's pointer went out with everyone
+    /// else's, and loading it as `false` would silently take a pointer off six
+    /// screens.
+    #[serde(default = "shown")]
+    pub show_dm_cursor: bool,
     /// Everything the DM has prepared, keyed by map URL: the grid they
     /// calibrated, the walls they traced and the fog they painted.
     ///
@@ -167,8 +179,8 @@ pub struct Saved {
     /// nothing to calibrate, nothing to trace and nothing to explore, so none of
     /// the six fields above it fork.
     ///
-    /// It needs no default of its own, unlike `show_names` and `show_cursors`
-    /// two fields up. The container's `None` *is* "whatever the room was already
+    /// It needs no default of its own, unlike the three `shown` fields above
+    /// it. The container's `None` *is* "whatever the room was already
     /// doing" — a file written before this existed came from a room with no
     /// backdrop, and that is exactly what it loads as.
     pub backdrop: Option<String>,
@@ -186,8 +198,9 @@ pub struct SavedNote {
     pub text: String,
 }
 
-/// The default for `Saved::show_names` and `Saved::show_cursors`. Serde wants a
-/// function rather than a literal, and these are the two fields on this file
+/// The default for `Saved::show_names`, `Saved::show_cursors` and
+/// `Saved::show_dm_cursor`. Serde wants a
+/// function rather than a literal, and these are the three fields on this file
 /// whose safe default is not the container's.
 fn shown() -> bool {
     true
@@ -425,6 +438,9 @@ mod tests {
             // this one defaults to `true`, so a round trip that dropped it would
             // come back on and pass a test written the other way round.
             show_cursors: false,
+            // And off, for the field above's reason exactly: it defaults to
+            // `true` too, so a round trip that dropped it would come back on.
+            show_dm_cursor: false,
             calibrations: HashMap::from([(
                 "/uploads/digital-goblin-camp-1a2b3c4d.jpg".to_owned(),
                 Prepared {
@@ -598,6 +614,11 @@ mod tests {
             "and the same for the pointers: a table that decided against them \
              does not have to decide again every session"
         );
+        assert!(
+            !loaded.show_dm_cursor,
+            "and the same again for the DM's own, which is a second switch and \
+             not a second reading of the first"
+        );
 
         // Surviving a restart is the whole of what a scratchpad is worth over
         // the Notepad window everyone already has open. Two boxes, kept apart:
@@ -749,6 +770,12 @@ mod tests {
             "a save predating cursors was drawing none, so this one cannot argue \
              from what the room was already doing — it defaults on because a \
              feature switched off in every existing room is one nobody finds"
+        );
+        assert!(
+            loaded.show_dm_cursor,
+            "a save predating this switch came from a room whose DM's pointer \
+             went out with everybody else's, so loading it off would take a \
+             pointer off six screens on an upgrade"
         );
     }
 

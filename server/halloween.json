@@ -68,6 +68,7 @@
   "show_names": true,
   "diagonals": "alternating",
   "show_cursors": true,
+  "show_dm_cursor": true,
   "calibrations": {
     "/assets/map.png": {
       "grid_px": 64.0,

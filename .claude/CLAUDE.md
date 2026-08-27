@@ -243,6 +243,10 @@ struct RoomState {
     /// DM's to set — and the one such setting read *in the filter*: off, no cursor
     /// frame leaves the room. Defaults on; see `docs/presence.md`.
     show_cursors: bool,
+    /// Whether the DM's own pointer is among them. Room-wide, the DM's to set,
+    /// and read in `cursor_seen` — the dark case widened to everywhere. Stops the
+    /// relay only, not the sending. Defaults on; see `docs/presence.md`.
+    show_dm_cursor: bool,
     /// The picture the table is looking at instead of the board, or `None`.
     /// Room-wide, the DM's to set. **Nothing else in the room reads it** — the
     /// board goes on existing untouched behind it — see `docs/maps.md`.
@@ -441,8 +445,9 @@ it exists to make the failure fail the safe way round: a secret added to `Token`
 here is *absent from the wire*, which shows up as the DM's own client missing a field, rather
 than shipped to everyone, which shows up as nothing at all until somebody opens devtools.
 
-**`here`, `colours` and `show_cursors` are identical for every recipient too**, which puts them
-with `fog`, `show_names`, `diagonals` and `backdrop` rather than with anything filtered. Neither of the first two
+**`here`, `colours`, `show_cursors` and `show_dm_cursor` are identical for every recipient
+too**, which puts them with `fog`, `show_names`, `diagonals` and `backdrop` rather than with
+anything filtered. Neither of the first two
 is a secret: a table that cannot tell whether the DM is still connected is what `here` exists to fix,
 and a colour nobody else can see is not a colour. `Presence` is also the one frame no command
 produced — it is dispatched where the socket table changes. `show_cursors` is the only unfiltered
@@ -1021,10 +1026,18 @@ every client stops sending. This is the busiest message in the protocol, so a sw
 saved none of that would be a preference rather than a dial. It is deliberately not refused
 in `check`: a red banner per `pointermove` is worse than a frame nobody is sent.
 
+**`SetShowDmCursor` is that switch narrowed to one hand** — the DM's pointer off the
+players' boards, everybody else's untouched. Its neighbour in every respect bar one: read in
+`cursor_seen` rather than in the filter, after the two yeses and **before** the `map.fog`
+guard, so it holds on an unfogged map. It stops the relay and not the sending, because one
+client in seven is not the traffic `show_cursors` is. Everyone is told and only the DM's panel
+reads it back.
+
 → **`docs/presence.md`** before touching `presence.ts`, `turn.ts`, `cursors.ts`, the reconnect
 half of `net.ts`, `RoomState::colours`, `RoomState::here`, `RoomState::show_cursors`,
-`cursor_seen`, `PLAYER_HUES`, or `SetColour`/`Presence`/`ColoursChanged`/`MoveCursor`/
-`CursorMoved`/`SetShowCursors` on the server.
+`RoomState::show_dm_cursor`, `cursor_seen`, `PLAYER_HUES`, or
+`SetColour`/`Presence`/`ColoursChanged`/`MoveCursor`/`CursorMoved`/`SetShowCursors`/
+`SetShowDmCursor` on the server.
 
 ## Testing
 

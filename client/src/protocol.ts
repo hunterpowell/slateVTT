@@ -288,6 +288,13 @@ export interface WireRoomView {
    *  joined without it would ship its own pointer at 30Hz into a room that has
    *  switched cursors off. */
   show_cursors: boolean;
+  /** Whether the DM's own pointer is drawn on the players' boards.
+   *
+   *  The narrow half of the switch above, and the same value for everyone like
+   *  the rest of them — but with none of that second job: a player is sent this
+   *  and does nothing with it, because the room drops the DM's frames itself.
+   *  What reads it back is the DM's own table panel. */
+  show_dm_cursor: boolean;
   /** The picture the table is looking at instead of the board, or null for the
    *  board.
    *
@@ -494,6 +501,11 @@ export type ServerMsg =
    *  this client *sends*: with it off the room relays nothing, so a client that
    *  kept sending would be paying for a feature nobody can see. */
   | { type: 'cursors_changed'; show: boolean }
+  /** The DM's pointer is drawn on the players' boards now, or it is not.
+   *
+   *  The frame above minus its second job — there is nothing for a client to do
+   *  about this one but put the DM's own checkbox back. */
+  | { type: 'dm_cursor_changed'; show: boolean }
   /** Every shape we may see. The whole list, like the initiative panel. */
   /** Somebody said something we are party to — a shout, or a whisper at whose
    *  either end we stand.
@@ -653,6 +665,12 @@ export type ClientMsg =
    *  carries tokens, nameplates, bars, rulers, trails, shapes and fog is a real
    *  cost, and a switch that saved none of it would be a preference. */
   | { type: 'set_show_cursors'; show: boolean }
+  /** DM-only. Whether the DM's own pointer is drawn on the players' boards.
+   *
+   *  The switch above narrowed to one hand, and it stops the relay only: one
+   *  client in seven is not traffic worth a second condition at the send site,
+   *  so unlike `set_show_cursors` nothing here changes what anybody sends. */
+  | { type: 'set_show_dm_cursor'; show: boolean }
   /** DM-only. Put a picture in front of the table, or null to take it away.
    *
    *  Room-wide and not on `set_map` for a sharper version of the reason above:

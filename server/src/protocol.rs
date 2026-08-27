@@ -903,6 +903,16 @@ pub struct RoomView {
     /// drawn — and a join that did not carry it would have every fresh page
     /// shipping cursors into a room that has switched them off.
     pub show_cursors: bool,
+    /// Whether the DM's own pointer is drawn on the players' boards.
+    ///
+    /// **The narrower half of the switch above**, and the same value for
+    /// everyone for the reason all five of these are: who may flip it is a
+    /// permission and what it says is not a secret. A player never draws it
+    /// themselves (they are sent no frame to draw), so this is on the view for
+    /// the DM's own panel to read back — `show_cursors` above is on it for a
+    /// second reason this one does not share, since nothing here changes what a
+    /// client *sends*.
+    pub show_dm_cursor: bool,
     /// The picture the table is looking at instead of the board, or `None` when
     /// they are looking at the board.
     ///
@@ -1091,6 +1101,25 @@ pub enum ClientMsg {
     /// the result would be the one control here that costs what it claims to
     /// save.
     SetShowCursors {
+        show: bool,
+    },
+
+    /// Whether the DM's own pointer is drawn on the players' boards. DM-only,
+    /// and the narrower half of the switch above it.
+    ///
+    /// **It stops the relay of one client's pointer, not the drawing and not
+    /// the sending.** That is the one thing it does not share with
+    /// `SetShowCursors`: switching every pointer off is a dial on the busiest
+    /// message in the protocol, and switching off the DM's alone is one client
+    /// in seven, so buying it a second condition at the send site would cost a
+    /// branch to save nothing measurable. The room drops the frame in
+    /// `cursor_seen`, which is where the DM's pointer is already withheld over
+    /// unexplored ground — this widens that from "the dark" to "everywhere".
+    ///
+    /// A DM who wants their hand off the table's screens while the party is
+    /// deciding something, without taking the other six pointers away from each
+    /// other, is the whole of what it is for.
+    SetShowDmCursor {
         show: bool,
     },
 
@@ -1514,6 +1543,16 @@ pub enum ServerMsg {
     CursorsChanged {
         show: bool,
     },
+    /// The DM's pointer is drawn on the players' boards now, or it is not.
+    ///
+    /// **The frame above it, minus the second job.** `CursorsChanged` changes
+    /// what a client sends; this one changes only what the room relays, so a
+    /// player receiving it has nothing to do about it — it is sent to everyone
+    /// anyway, because the panel that reads it back is the DM's second tab and
+    /// the value is nobody's secret.
+    DmCursorChanged {
+        show: bool,
+    },
     /// Somebody joined or left. The whole list, because it is at most seven
     /// names and nothing is predicted locally.
     ///
@@ -1787,6 +1826,7 @@ mod tests {
             ClientMsg::SetShowNames { .. } => "set_show_names",
             ClientMsg::SetDiagonals { .. } => "set_diagonals",
             ClientMsg::SetShowCursors { .. } => "set_show_cursors",
+            ClientMsg::SetShowDmCursor { .. } => "set_show_dm_cursor",
             ClientMsg::SetBackdrop { .. } => "set_backdrop",
             ClientMsg::SetMap { .. } => "set_map",
             ClientMsg::PromoteStaged => "promote_staged",
@@ -1827,6 +1867,7 @@ mod tests {
             ServerMsg::DiagonalsChanged { .. } => "diagonals_changed",
             ServerMsg::BackdropChanged { .. } => "backdrop_changed",
             ServerMsg::CursorsChanged { .. } => "cursors_changed",
+            ServerMsg::DmCursorChanged { .. } => "dm_cursor_changed",
             ServerMsg::Presence { .. } => "presence",
             ServerMsg::ColoursChanged { .. } => "colours_changed",
             ServerMsg::StagedChanged { .. } => "staged_changed",
@@ -1930,6 +1971,7 @@ mod tests {
         "set_map",
         "set_notes",
         "set_show_cursors",
+        "set_show_dm_cursor",
         "set_show_names",
         "sketch",
         "toggle_door",
@@ -1943,6 +1985,7 @@ mod tests {
         "cursor_moved",
         "cursors_changed",
         "diagonals_changed",
+        "dm_cursor_changed",
         "error",
         "fog_changed",
         "initiative_changed",

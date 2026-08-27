@@ -1,14 +1,14 @@
 // The table panel: the settings that belong to the room rather than to a map, a
 // token, or a person.
 //
-// It exists because of where its fields live. `show_names`, `diagonals` and
-// `show_cursors` are `RoomState` fields, and the first two spent four milestones
-// under the token panel's
-// form — which describes one selected creature — with a rule drawn across the
-// panel trying to say they were something else. Two comments in the markup
-// explaining why a control sat where it did was the report. **A panel mirrors
-// where its fields live**: `MapInfo` is the map tab, `Token` is the token tab,
-// and room-wide state is this one.
+// It exists because of where its fields live. `show_names`, `diagonals`,
+// `show_cursors` and `show_dm_cursor` are `RoomState` fields, and the first two
+// spent four milestones under the token panel's form — which describes one
+// selected creature — with a rule drawn across the panel trying to say they
+// were something else. Two comments in the markup explaining why a control sat
+// where it did was the report. **A panel mirrors where its fields live**:
+// `MapInfo` is the map tab, `Token` is the token tab, and room-wide state is
+// this one.
 //
 // Named "table" and not "room" because `Lighting::Room` is a fog mode one tab
 // over, and two meanings for one word in adjacent panels is worse than a
@@ -42,6 +42,11 @@ export interface TableToolUi {
   names: HTMLInputElement;
   diagonals: HTMLSelectElement;
   cursors: HTMLInputElement;
+  /** The narrow half of the switch above. Its own control rather than a third
+   *  state on that one: "everybody's pointers" and "the DM's pointer" are two
+   *  questions, and a select that answered both would make the common one — all
+   *  of them, on — cost a read of a menu. */
+  dmCursor: HTMLInputElement;
   /** The backdrop picker's disclosure button and list. `root` above is the
    *  panel the widget dims while a pick is in flight. */
   backdrop: Pick<LibraryUi, 'button' | 'list' | 'file' | 'fileText'>;
@@ -96,7 +101,17 @@ export function createTableTool(
     send({ type: 'set_show_cursors', show: ui.cursors.checked });
   });
 
-  // The same bargain a fourth time, through the widget the map and token panels
+  // The same bargain a fourth time, and the one control on this panel whose
+  // effect is on nobody's screen but the six other ones: the DM's own pointer
+  // is drawn by their own operating system either way. It is a room setting for
+  // the reason the switch above is — what the table can see is the room's, not
+  // a preference held in one browser — and unlike that one it changes nothing
+  // about what any client sends, because one pointer in seven is not traffic.
+  ui.dmCursor.addEventListener('change', () => {
+    send({ type: 'set_show_dm_cursor', show: ui.dmCursor.checked });
+  });
+
+  // The same bargain a fifth time, through the widget the map and token panels
   // already use. A pick has copied the file into the uploads directory by the
   // time this runs, so what goes on the wire is the URL it is served at —
   // byte-for-byte what an uploaded map or portrait would be, which is why
@@ -134,6 +149,13 @@ export function createTableTool(
       ui.names.checked = scene.showNames;
       ui.diagonals.value = scene.diagonals;
       ui.cursors.checked = scene.showCursors;
+      ui.dmCursor.checked = scene.showDmCursor;
+      // Greyed while every pointer is off, which is the fog panel's rule for
+      // the fog panel's reason: the value is still the room's and hiding it
+      // would make switching pointers back on look like it had also invented an
+      // answer. It is a checkbox and not a tab, so the rail's inert-panel rule
+      // is not what is being applied here — only its half about not lying.
+      ui.dmCursor.disabled = !scene.showCursors;
       // Read off the room rather than remembered from the click, so the DM's
       // second tab agrees with their first — and so an undo that takes a
       // backdrop down is reflected here without a line of its own.

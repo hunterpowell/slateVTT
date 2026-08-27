@@ -156,6 +156,13 @@ export interface Scene {
    *  off the room relays nothing, so a client that went on sending its own
    *  pointer would be paying the whole cost of a feature nobody can see. */
   showCursors: boolean;
+  /** Whether the DM's own pointer is drawn on the players' boards. Room-wide
+   *  and the same for every client like the switch above it.
+   *
+   *  The renderer never reads this and neither does `input.ts`: the room drops
+   *  the DM's frames itself, so a player is sent this and does nothing with it.
+   *  What reads it is the table panel, putting the DM's own checkbox back. */
+  showDmCursor: boolean;
   /** The picture in front of the table, or null when they are looking at the
    *  board.
    *
@@ -268,6 +275,7 @@ function fromView(view: WireRoomView, isDm: boolean): Omit<Scene, 'previewing'> 
     showNames: view.show_names,
     diagonals: view.diagonals,
     showCursors: view.show_cursors,
+    showDmCursor: view.show_dm_cursor,
     backdrop: view.backdrop,
   };
 }

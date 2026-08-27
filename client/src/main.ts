@@ -217,6 +217,7 @@ interface Ui {
     names: HTMLInputElement;
     diagonals: HTMLSelectElement;
     cursors: HTMLInputElement;
+    dmCursor: HTMLInputElement;
     backdrop: {
       button: HTMLButtonElement;
       list: HTMLElement;
@@ -374,6 +375,7 @@ function findUi(): Ui {
       names: need<HTMLInputElement>('#table-names'),
       diagonals: need<HTMLSelectElement>('#table-diagonals'),
       cursors: need<HTMLInputElement>('#table-cursors'),
+      dmCursor: need<HTMLInputElement>('#table-dm-cursor'),
       backdrop: {
         button: need<HTMLButtonElement>('#table-backdrop'),
         list: need('#table-backdrop-list'),
@@ -920,6 +922,17 @@ function boot(ui: Ui, choice: RoomChoice): void {
       // couple of seconds its decay takes, which reads as the switch not having
       // worked.
       if (!show) cursors.clear();
+      tableTool?.update(room.scene);
+    },
+
+    // The frame above narrowed to one hand, and the arm is shorter by
+    // everything that made that one long: there is nothing already on our board
+    // to clear, because the DM's pointer is withheld by the room rather than
+    // declined by us, and nothing here decides what we send. A player holds this
+    // and does nothing with it; what reads it back is the DM's own panel.
+    onDmCursorChanged: (show) => {
+      if (room === null) return;
+      room.scene.showDmCursor = show;
       tableTool?.update(room.scene);
     },
 

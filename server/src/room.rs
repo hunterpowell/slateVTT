@@ -368,6 +368,10 @@ enum Event {
     /// these, and identical to its two neighbours in every respect — including
     /// that the frame reaches the DM who flipped it.
     CursorsChanged,
+    /// The DM's pointer is drawn on the players' boards now, or it is not. The
+    /// one above narrowed to one hand, and rebuilt into the same answer for
+    /// everybody like the rest of them.
+    DmCursorChanged,
     /// There is a picture in front of the table now, or there is not. The fourth
     /// of these and identical to the three above in every respect, including
     /// that the frame reaches the DM who put it up.
@@ -854,6 +858,15 @@ pub struct RoomState {
     /// this is the busiest message in the room, and a switch that saved nothing
     /// would be a preference rather than a dial.
     show_cursors: bool,
+    /// Whether the DM's own pointer is drawn on the players' boards.
+    ///
+    /// **The switch above narrowed to one hand**, and read in the same place:
+    /// `cursor_seen` already withholds the DM's pointer from a player over
+    /// ground the party has not explored, and this is that widened from the dark
+    /// to everywhere. So it is a fifth room-wide switch and not a second dial —
+    /// nothing about it changes what a client *sends*, because one client in
+    /// seven is not traffic worth a branch at the send site.
+    show_dm_cursor: bool,
     /// The picture the table is looking at instead of the board, or `None`.
     ///
     /// The fourth room-wide switch, and its three neighbours in every respect
@@ -1101,11 +1114,12 @@ fn persists(event: &Event) -> bool {
         | Event::TokenRemoved { .. }
         | Event::TokenPlanChanged { .. }
         | Event::Promoted { .. }
-        // Three switches the DM flipped once and expects to find flipped next
+        // Four switches the DM flipped once and expects to find flipped next
         // week.
         | Event::NamesChanged
         | Event::DiagonalsChanged
         | Event::CursorsChanged
+        | Event::DmCursorChanged
         // And the picture the DM left up, for the same reason: a room reopened
         // on Saturday should be looking at whatever it was looking at.
         | Event::BackdropChanged
@@ -1222,6 +1236,9 @@ fn undid(msg: &ClientMsg) -> Option<&'static str> {
         ClientMsg::SetShowNames { .. } => Some("the name switch"),
         ClientMsg::SetDiagonals { .. } => Some("the diagonal rule"),
         ClientMsg::SetShowCursors { .. } => Some("the cursor switch"),
+        // Named for whose it is rather than for which way it went, like the
+        // backdrop below: "the DM pointer switch" is true either way.
+        ClientMsg::SetShowDmCursor { .. } => Some("the DM pointer switch"),
         // Named for what it does rather than for which way it went, like the
         // map's label above: "the backdrop" is true whether the DM put one up
         // or took one down.
@@ -1337,6 +1354,9 @@ fn moves_sight(msg: &ClientMsg) -> bool {
         // every pointer off changes what is on a screen rather than what a ray
         // reaches.
         | ClientMsg::SetShowCursors { .. }
+        // And the narrow half of it, for the same reason: whose pointers are
+        // drawn changes no ray.
+        | ClientMsg::SetShowDmCursor { .. }
         // A picture in front of the board is drawn over the light in the most
         // literal sense available: the board is still there, still lit exactly
         // as it was, with something in front of it.
@@ -1596,6 +1616,7 @@ impl RoomState {
             show_names: true,
             diagonals: Diagonals::Equal,
             show_cursors: true,
+            show_dm_cursor: true,
             backdrop: None,
             calibrations: HashMap::new(),
             undo: VecDeque::new(),
@@ -1704,6 +1725,7 @@ impl RoomState {
         self.show_names = saved.show_names;
         self.diagonals = saved.diagonals;
         self.show_cursors = saved.show_cursors;
+        self.show_dm_cursor = saved.show_dm_cursor;
         self.backdrop = saved.backdrop;
         self.calibrations = saved.calibrations;
         // Restored here like everything else, because this has one inverse and
@@ -1747,6 +1769,7 @@ impl RoomState {
             show_names: self.show_names,
             diagonals: self.diagonals,
             show_cursors: self.show_cursors,
+            show_dm_cursor: self.show_dm_cursor,
             backdrop: self.backdrop.clone(),
             calibrations: self.calibrations.clone(),
             // Sorted for the tokens' reason: `HashMap` order varies per process,
@@ -1889,6 +1912,9 @@ impl RoomState {
             // there were no cursors at all before there was a switch. A feature
             // that ships off is a feature a table never discovers.
             show_cursors: true,
+            // On, and for the field above's reason narrowed to one hand: there
+            // was no way to withhold the DM's pointer before there was a switch.
+            show_dm_cursor: true,
             // Nothing in front of the table, which is what a fresh room and
             // every room that predates this field are both looking at.
             backdrop: None,
@@ -2183,12 +2209,16 @@ impl RoomState {
             // would leave every fresh page shipping its pointer into a room that
             // has switched cursors off.
             show_cursors: self.show_cursors,
-            // And a fourth time, for the plainest version of the reason: the DM
+            // And a fourth time, for the narrow half of the same reason. A
+            // player is sent this and does nothing with it — what reads it back
+            // is the DM's own panel, on a second tab or after a refresh.
+            show_dm_cursor: self.show_dm_cursor,
+            // And a fifth time, for the plainest version of the reason: the DM
             // decides what is on the screens and there is nothing here to keep
             // from anybody. A join that omitted it would put a fresh page back
             // on the board while the rest of the table looked at the campfire.
             backdrop: self.backdrop.clone(),
-            // And the same a fifth and sixth time. Neither is anybody's secret:
+            // And the same a sixth and seventh time. Neither is anybody's secret:
             // the point of one is that the table can see whether the DM is still
             // there, and the point of the other is that six other screens draw
             // your ring in the colour you chose.
@@ -2406,11 +2436,28 @@ impl RoomState {
     /// free — a room the DM has painted `Dark` swallows their pointer too, which
     /// is the honest reading of having blacked it out.
     ///
+    /// **`show_dm_cursor` is the second no, and it is the same case widened.**
+    /// Everything this function withholds it withholds from a player about the
+    /// DM; the fog decides *where*, and the switch says "everywhere". It is read
+    /// after the two yeses above it and before the `map.fog` guard, so it works
+    /// on an unfogged map — which is most of when a DM would reach for it.
+    ///
     /// The `map.fog` guard is load-bearing and is `shape_seen`'s: `known` is
     /// empty on an unfogged map, so without it the DM's pointer would vanish
     /// from every player's board the moment fog was switched off.
     fn cursor_seen(&self, by: &Owner, at: Pos, to_dm: bool) -> bool {
-        if to_dm || !matches!(by, Owner::Dm) || !self.map.fog {
+        if to_dm || !matches!(by, Owner::Dm) {
+            return true;
+        }
+        // The switch, and it is the same question the fog asks with the answer
+        // fixed: a DM who has put their pointer away is withheld from a player
+        // everywhere rather than only over the dark. It is read here and not in
+        // `check` because what it governs is one hand at the table rather than
+        // what any client sends.
+        if !self.show_dm_cursor {
+            return false;
+        }
+        if !self.map.fog {
             return true;
         }
         let px = fog::grid_to_px(&self.map, at.x, at.y);
@@ -2741,6 +2788,14 @@ impl RoomState {
             // is not one of the two variants, which is what a closed set is for.
             ClientMsg::SetDiagonals { .. } => require_dm(client, "set how diagonals count"),
             ClientMsg::SetShowCursors { .. } => require_dm(client, "set what the boards draw"),
+
+            // Nothing to bound here either, and the check is the whole of it:
+            // the switch above governs every pointer in the room and this one
+            // governs the DM's, which is exactly the sort of thing only the DM
+            // may say about their own hand.
+            ClientMsg::SetShowDmCursor { .. } => {
+                require_dm(client, "set whose pointers the boards draw")
+            }
 
             // Bounded by the one rule `SetMap` bounds a URL with, and by no
             // other: there is nothing else here to check. The picker only ever
@@ -3362,7 +3417,15 @@ impl RoomState {
                 vec![Event::CursorsChanged]
             }
 
-            // **The fourth, and the one arm here that must stay this short.**
+            // The fourth, unconditional for both reasons above and neither of
+            // them sharpened: a client does nothing with this but put a
+            // checkbox back, so a redundant frame is a redundant checkbox.
+            ClientMsg::SetShowDmCursor { show } => {
+                self.show_dm_cursor = show;
+                vec![Event::DmCursorChanged]
+            }
+
+            // **The fifth, and the one arm here that must stay this short.**
             // Everything a DM might expect to happen when the board is covered
             // — sweeping the shapes, forgetting the fog, clearing the walls — is
             // the thing this command exists not to do. One assignment and one
@@ -4156,6 +4219,7 @@ impl RoomState {
                 | Event::PresenceChanged
                 | Event::ColoursChanged
                 | Event::CursorsChanged
+                | Event::DmCursorChanged
                 | Event::UndoChanged => None,
             })
             .collect();
@@ -4683,6 +4747,15 @@ impl RoomState {
             // room that drops every frame.
             Event::CursorsChanged => Some(ServerMsg::CursorsChanged {
                 show: self.show_cursors,
+            }),
+
+            // And the same again for the narrow half of it. `CursorsChanged`
+            // sits above because it is a switch the room reads in this filter;
+            // this one is read in `cursor_seen` instead, which is one layer
+            // further down and makes no difference to what a client is sent
+            // here.
+            Event::DmCursorChanged => Some(ServerMsg::DmCursorChanged {
+                show: self.show_dm_cursor,
             }),
 
             // And a fourth time, unfiltered like the three above it. What makes
