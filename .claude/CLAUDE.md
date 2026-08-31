@@ -990,9 +990,9 @@ every monster's turn, deliberately unresolved —
 **play decides**, and the off-switch is `localStorage` if it ever needs one.
 
 **A dropped socket now backs off and reloads the page** when a fresh one opens — and **the DM
-comes back as the DM**, because `takeDmSecret` keeps their secret in `sessionStorage` for the life
-of the tab; the address bar is still stripped on sight, which is the risk that guard was written
-against. **The reload is the design**: `onWelcome` builds the panels, the tools and the board once per socket, so a second
+comes back as the DM**, because `takeDmSecret` keeps their secret in `localStorage`; the address bar
+is still stripped on sight, which is the risk that guard was written against, and storage is not the
+address bar. **The reload is the design**: `onWelcome` builds the panels, the tools and the board once per socket, so a second
 `Welcome` would build a second of each — the wall `Restored` was invented to avoid, except that
 here a refresh was already the supported way back. The socket the backoff opens is a probe and
 nothing is sent on it. Today's banner is now the floor, reached when the backoff gives up.

@@ -11,8 +11,10 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use axum::body::Bytes;
+use axum::extract::Request;
 use axum::extract::{DefaultBodyLimit, Path as UrlPath, Query, State, WebSocketUpgrade};
-use axum::http::{HeaderMap, StatusCode};
+use axum::http::{HeaderMap, StatusCode, header};
+use axum::middleware::{self, Next};
 use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
 use axum::{Json, Router};
@@ -185,6 +187,51 @@ impl Library {
 
 static NEXT_CLIENT_ID: AtomicU64 = AtomicU64::new(1);
 
+/// What the client is allowed to reuse without asking, and it is nothing.
+///
+/// **`index.html` and `dist/main.js` are fixed names with no content hash in
+/// them**, so a browser or a proxy holding an old copy serves an old Slate
+/// against a new server, with nothing on screen to say so. Deployed behind a
+/// Cloudflare Tunnel that is not theoretical: with no `Cache-Control` at all —
+/// which is what this served before — an intermediary is free to invent its own
+/// freshness, and a shipped fix can stay invisible for as long as it does.
+///
+/// `no-cache` is *revalidate*, not *do not store*: the bundle is 82 KB and the
+/// answer to an unchanged file is a 304 carrying no body. One round trip per
+/// file per load is the whole cost, and it buys "a deploy is live the moment
+/// somebody reloads".
+async fn always_revalidate(req: Request, next: Next) -> Response {
+    let mut res = next.run(req).await;
+    res.headers_mut().insert(
+        header::CACHE_CONTROL,
+        header::HeaderValue::from_static("no-cache"),
+    );
+    res
+}
+
+/// The opposite, for the one directory that has earned it.
+///
+/// **An upload's name is fingerprinted by content** — `the-field-551e4c12.png` —
+/// so the bytes behind a URL here never change; a new picture is a new name.
+/// That is exactly the condition `immutable` describes, and it is why the rule
+/// above would be wrong here: map art is megabytes and revalidating every image
+/// on every load is a round trip per token portrait, over a tunnel, for an
+/// answer that is always 304.
+async fn cache_forever(req: Request, next: Next) -> Response {
+    let mut res = next.run(req).await;
+    // **Only on a success**, which is not a detail: a year is a long time to
+    // remember that a file was missing. A 404 carrying `immutable` is cacheable
+    // exactly as a 200 is, so a portrait asked for a moment before it exists
+    // would stay absent on that screen until the browser's data is cleared.
+    if res.status().is_success() {
+        res.headers_mut().insert(
+            header::CACHE_CONTROL,
+            header::HeaderValue::from_static("public, max-age=31536000, immutable"),
+        );
+    }
+    res
+}
+
 #[tokio::main]
 async fn main() {
     tracing_subscriber::fmt()
@@ -317,8 +364,17 @@ async fn main() {
             post(add).layer(DefaultBodyLimit::max(MAX_MAP_BYTES)),
         )
         .route("/api/{library}/remove", post(remove))
-        .nest_service("/uploads", ServeDir::new(&uploads_dir))
-        .fallback_service(ServeDir::new(&client_dir).append_index_html_on_directories(true))
+        .nest_service(
+            "/uploads",
+            Router::new()
+                .fallback_service(ServeDir::new(&uploads_dir))
+                .layer(middleware::from_fn(cache_forever)),
+        )
+        .fallback_service(
+            Router::new()
+                .fallback_service(ServeDir::new(&client_dir).append_index_html_on_directories(true))
+                .layer(middleware::from_fn(always_revalidate)),
+        )
         .with_state(state);
 
     // Startup failures are fatal and there is nothing to recover to, so this is

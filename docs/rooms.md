@@ -209,22 +209,35 @@ this button.** `net.ts` reconnects a dropped socket by calling `location.reload(
 page demoted itself mid-session, which is the worst possible moment for it. This file carried it as
 a known bug and deferred the call as security-relevant.
 
-### The secret is remembered per tab
+### The secret is remembered in the browser
 
-`takeDmSecret` writes it to `sessionStorage` under `slate.dm_secret` and reads it back when the URL
+`takeDmSecret` writes it to `localStorage` under `slate.dm_secret` and reads it back when the URL
 carries none. Four things about that, and each is the decision rather than a detail:
 
-- **`sessionStorage` and not `localStorage`.** It dies with the tab, so it survives exactly one
-  thing — `location.reload()` — which is the case it exists for. Closing the tab is how you stop
-  being the DM, and nothing is left behind on a shared machine.
+- **`localStorage`, and it was `sessionStorage` first.** Per-tab is the tidier answer and it was the
+  wrong one. It survives `location.reload()` — the reconnect — and nothing else, so a DM who
+  reaches for their bookmark or a new tab when the board goes stale lands on the character picker
+  exactly as they did before any of this. **That is what happened on the Pi**, and it is why the
+  narrower version is recorded here as a mistake rather than as a trade: "how do I get back" is not
+  a habit anybody has to have consistently, and a fix that only works for one of the two ways is a
+  fix that reads as broken.
 - **The strip is untouched, and that was always the real guard.** The risk is the address bar during
-  a screen-share; `sessionStorage` is not on screen, so remembering it there costs that argument
-  nothing. This is the deferred call above, made, and it is small because the two risks were never
-  the same one.
+  a screen-share; storage is not on screen, so remembering it there costs that argument nothing. The
+  two risks were never the same risk, which is why widening the storage leaves the stripping exactly
+  where it was.
 - **A URL beats what is stored**, so a DM opening a fresh link is never handed a stale secret by a
-  tab that held one earlier.
+  browser that held an old one.
 - Both accessors are wrapped, like every other storage read in `identity.ts`. A private-browsing tab
-  that throws loses the reload path and nothing else.
+  that throws loses the reconnect path and nothing else.
+
+**What it costs, stated rather than argued away.** The secret now sits in the DM's browser until
+site data is cleared, so anybody with that browser profile opens the room as the DM. That is
+proportionate here and would not be anywhere else: `.claude/CLAUDE.md` says this is a private game
+among friends and not to build real authentication, and the unguessable subdomain is the access
+control the whole deployment already rests on. A DM sharing a profile with a player wants a second
+profile, not a login. If that ever stops being true, the switch button below is where a *leave the
+DM seat* would go — it already forgets the room and the player id, and forgetting the secret beside
+them is one line.
 
 **The switch button stays hidden anyway.** Fixing the secret removes the second argument for hiding
 it, not the first, and widening a reconnect fix into a UI change is scope it does not need.

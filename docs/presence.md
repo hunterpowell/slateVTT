@@ -212,8 +212,9 @@ attached to it is the one that throws the page away. `net.ts` says so.
 about because it is the one identity a reload could lose. Their secret is stripped from the
 address bar on boot, so it used to live in a closure and die with the page — the reconnect
 this section is about handed the DM their own character picker in the middle of a session.
-`takeDmSecret` remembers it in `sessionStorage` for the life of the tab; see *The secret is
-remembered per tab* in `docs/rooms.md` for why that costs the stripping nothing.
+`takeDmSecret` remembers it in `localStorage`; see *The secret is remembered in the browser* in
+`docs/rooms.md` for why that costs the stripping nothing, and for why the per-tab version this
+shipped with first was too narrow to survive contact with the Pi.
 
 ### The backoff
 

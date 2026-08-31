@@ -157,8 +157,7 @@ check(
 // `net.ts` comes back from a dropped socket by calling `location.reload()`, and
 // the DM's secret is stripped from the address bar on boot — so if it lives
 // only in a closure, the reconnect hands the DM their own character picker in
-// the middle of a session. `takeDmSecret` keeps it in `sessionStorage` for the
-// life of the tab.
+// the middle of a session. `takeDmSecret` keeps it in `localStorage`.
 //
 // This runs after every presence assertion above, because a reload drops and
 // reopens a socket and would perturb the strips it reads.
@@ -183,6 +182,35 @@ check(
   'still in the room the link named',
   await dm.evaluate('document.querySelector("#whoami-name").textContent.includes("Campaign")'),
   true,
+);
+
+// The reload above is only half of how a DM comes back. The other half is a
+// bookmark or a fresh tab, which `sessionStorage` does not survive — that is
+// what this shipped with first, and what failed on the Pi. No two connections
+// can show a new tab, so what is asserted is the property that makes one work.
+check(
+  'and it is in localStorage, so a bookmark or a new tab keeps it too',
+  await dm.evaluate(`[
+    localStorage.getItem('slate.dm_secret') !== null,
+    sessionStorage.getItem('slate.dm_secret') === null,
+  ]`),
+  [true, true],
+);
+
+// And the case itself, as faithfully as one tab can put it: a **new tab** is an
+// empty `sessionStorage` in front of a populated `localStorage`, so clearing the
+// first and loading the plain room link — the bookmark, with no `?dm=` in it —
+// is the same starting condition. This is the check that fails against the
+// version that shipped to the Pi.
+await dm.evaluate(`sessionStorage.clear(); location.href = '/?room=campaign'; "ok"`);
+await dm.wait(3000);
+check(
+  'the bookmark, opened with no ?dm= and no session state, still opens as the DM',
+  await dm.evaluate(`[
+    document.querySelector('#whoami-name').textContent,
+    document.querySelector('#picker').hidden,
+  ]`),
+  ['DM · Campaign', true],
 );
 
 // --- switching rooms ----------------------------------------------------

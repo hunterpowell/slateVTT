@@ -147,29 +147,40 @@ export function takeRoomFromUrl(): string | null {
 /**
  * Where the DM secret lives once it has been taken out of the address bar.
  *
- * **`sessionStorage`, not `localStorage`**, and the difference is the whole
- * decision. It dies with the tab, so it survives exactly one thing —
- * `location.reload()` — and that is the case this exists for. Nothing outlives
- * the evening, and closing the tab is how you stop being the DM.
+ * **`localStorage`, and it was `sessionStorage` first.** Per-tab was the tidier
+ * answer and it was the wrong one: it survives `location.reload()`, which is the
+ * reconnect, and nothing else — so a DM who reaches for their bookmark or a new
+ * tab when the board goes stale lands on the character picker exactly as they
+ * did before this existed. On the Pi that is what happened, because "how do I
+ * get back" is not a habit anybody has to have consistently.
+ *
+ * The cost is stated rather than argued away: the secret now sits in the DM's
+ * browser until site data is cleared, so anyone with that browser profile opens
+ * the room as the DM. That is proportionate here and nowhere else —
+ * `.claude/CLAUDE.md` says this is a private game among friends and not to build
+ * real authentication, and the unguessable subdomain is the access control the
+ * whole deployment already rests on. A DM sharing a browser profile with a
+ * player wants a separate profile, not a login.
  */
 const DM_SECRET_KEY = 'slate.dm_secret';
 
 /**
- * The DM secret for this tab: from `?dm=<secret>` if the link carried one,
- * otherwise from the one this tab was already holding.
+ * The DM secret for this browser: from `?dm=<secret>` if the link carried one,
+ * otherwise from the one it was already holding.
  *
  * **The strip is unchanged and is still the point.** The DM screen-shares
  * constantly, so a secret sitting in the URL is one alt-tab away from being
- * handed to the table — and `sessionStorage` is not on screen, so remembering
- * it there costs that argument nothing.
+ * handed to the table — and storage is not on screen, so remembering it there
+ * costs that argument nothing. The two risks were never the same risk, which is
+ * why fixing the second one leaves the first one's guard exactly where it was.
  *
  * **What it buys is the reconnect.** `net.ts` comes back from a dropped socket
  * by calling `location.reload()`, and a secret that lived only in a closure did
- * not survive one: the DM's own page reloaded mid-session and landed on the
- * character picker. `docs/rooms.md` carried that as a known bug for a milestone.
+ * not survive one: the DM's own page demoted itself to the character picker in
+ * the middle of a session.
  *
- * **A URL wins over what is stored**, so a DM opening a fresh link is never
- * handed a stale secret by a tab that had one earlier.
+ * **A URL beats what is stored**, so a DM opening a fresh link is never handed a
+ * stale secret by a browser that held an old one.
  */
 export function takeDmSecret(): string | null {
   const url = new URL(location.href);
@@ -178,16 +189,16 @@ export function takeDmSecret(): string | null {
     url.searchParams.delete('dm');
     history.replaceState(null, '', `${url.pathname}${url.search}${url.hash}`);
     try {
-      sessionStorage.setItem(DM_SECRET_KEY, fromUrl);
+      localStorage.setItem(DM_SECRET_KEY, fromUrl);
     } catch {
-      // Private browsing modes can throw, exactly as they can above. All that
-      // is lost is coming back as the DM after a reload; this load is fine.
+      // Private browsing modes can throw, exactly as they can above. All that is
+      // lost is coming back as the DM after a reload; this load is fine.
     }
     return fromUrl;
   }
 
   try {
-    return sessionStorage.getItem(DM_SECRET_KEY);
+    return localStorage.getItem(DM_SECRET_KEY);
   } catch {
     return null;
   }
