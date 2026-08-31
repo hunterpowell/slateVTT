@@ -19,7 +19,7 @@ import {
   readStoredRoom,
   storePlayerId,
   storeRoom,
-  takeDmSecretFromUrl,
+  takeDmSecret,
   takeRoomFromUrl,
 } from './identity.js';
 import { attachInput } from './input.js';
@@ -445,7 +445,10 @@ async function chooseRoom(): Promise<void> {
 
 function boot(ui: Ui, choice: RoomChoice): void {
   // Read and strip the DM secret before anything else can screenshot the URL.
-  const dmSecret = takeDmSecretFromUrl();
+  // A reload comes back through this with an empty `?dm=` and picks the secret
+  // up out of `sessionStorage`, which is what makes a dropped socket survivable
+  // for the DM as well as for everybody else.
+  const dmSecret = takeDmSecret();
 
   let room: Room | null = null;
   let panel: Panel | null = null;
@@ -1212,14 +1215,13 @@ function showWhoami(ui: Ui, identity: Identity, choice: RoomChoice, tokens: Wire
     const own = tokens.find((t) => t.owner.kind === 'player' && t.owner.id === identity.playerId);
     ui.whoamiName.textContent = `${own?.name ?? identity.playerId ?? '—'} · ${choice.name}`;
   }
-  // **Still hidden for the DM**, and multi-room is a reason to keep it that way
-  // rather than the reason to change it. A reload is how this button works, and
-  // the DM's secret does not survive one: `takeDmSecretFromUrl` strips it from
-  // the address bar on boot and it lives in a closure from then on, so a
-  // reloaded DM comes back anonymous and lands on the character picker. A
-  // button that silently demotes them is worse than no button — they switch
-  // rooms by opening their own link, which may carry `?room=` and skip the
-  // picker entirely.
+  // **Still hidden for the DM**, and now for one reason rather than two: the DM
+  // has no character to switch to, which is what this button is for. The second
+  // reason has been fixed out from under it — the secret used to live only in a
+  // closure, so the reload this button works by came back anonymous, and a
+  // button that silently demotes them was worse than no button. `takeDmSecret`
+  // remembers it per tab now. The DM still switches rooms by opening their own
+  // link, which may carry `?room=` and skip the picker entirely.
   ui.whoamiSwitch.hidden = identity.isDm;
   ui.whoami.hidden = false;
 }

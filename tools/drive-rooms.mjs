@@ -151,11 +151,46 @@ check(
   [true, true],
 );
 
+// --- the DM survives a reload -------------------------------------------
+
+// The half of the reconnect that can be asserted without stopping the server.
+// `net.ts` comes back from a dropped socket by calling `location.reload()`, and
+// the DM's secret is stripped from the address bar on boot — so if it lives
+// only in a closure, the reconnect hands the DM their own character picker in
+// the middle of a session. `takeDmSecret` keeps it in `sessionStorage` for the
+// life of the tab.
+//
+// This runs after every presence assertion above, because a reload drops and
+// reopens a socket and would perturb the strips it reads.
+check(
+  'the DM link left no secret in the address bar',
+  await dm.evaluate('location.search.includes("dm=")'),
+  false,
+);
+
+await dm.evaluate('location.reload(); "ok"');
+await dm.wait(3000);
+
+check(
+  'and the DM comes back as the DM after a reload, not on the picker',
+  await dm.evaluate(`[
+    document.querySelector('#whoami-name').textContent.includes('DM'),
+    document.querySelector('#picker').hidden,
+  ]`),
+  [true, true],
+);
+check(
+  'still in the room the link named',
+  await dm.evaluate('document.querySelector("#whoami-name").textContent.includes("Campaign")'),
+  true,
+);
+
 // --- switching rooms ----------------------------------------------------
 
-// The DM has none, deliberately: a reload is how this button works and their
-// secret does not survive one, so it would put them back as an anonymous
-// client. They switch rooms by opening their own link.
+// The DM has none, and now for one reason rather than two: they have no
+// character to switch to, which is the whole job of the button. The second
+// reason — that a reload demoted them — is what the section above asserts is
+// gone. They switch rooms by opening their own link.
 check(
   'the DM has no switch button',
   await dm.evaluate('document.querySelector("#whoami-switch").hidden'),

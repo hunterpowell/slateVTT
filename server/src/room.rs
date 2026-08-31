@@ -167,10 +167,10 @@ const ROSTER: [(&str, &str); 6] = [
 /// slugs, which is what makes their tokens, their colour and their scratchpad
 /// separate in each.
 const HALLOWEEN_ROSTER: [(&str, &str); 6] = [
-    ("player-1", "Player 1"),
-    ("player-2", "Player 2"),
-    ("player-3", "Player 3"),
-    ("player-4", "Player 4"),
+    ("elias", "Elias"),
+    ("corvus", "Corvus Nevermore"),
+    ("rostam", "Rostam"),
+    ("ironbeak", "Iron Beak"),
     ("player-5", "Player 5"),
     ("player-6", "Player 6"),
 ];

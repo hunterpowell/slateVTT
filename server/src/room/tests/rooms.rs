@@ -60,6 +60,29 @@ fn every_room_has_a_cast() {
     }
 }
 
+#[test]
+fn every_roster_id_is_a_slug() {
+    // The same rule as `every_room_id_is_a_slug` above, one level down, and it
+    // is the rule `.claude/CLAUDE.md` states about a roster slot: the id is what
+    // `localStorage` remembers, what a token's `owner` is written as, and what
+    // keys this player's colour and their scratchpad. So renaming one after a
+    // room has been played in orphans four things at once, and a slot id with a
+    // space in it is a name wearing an id's job. The display name beside it is
+    // free text and is deliberately not checked.
+    for (id, _) in rooms() {
+        let roster = roster_of(id).unwrap_or_else(|| panic!("{id} has no roster"));
+        for entry in roster {
+            let slug = &entry.id.0;
+            assert!(!slug.is_empty(), "a roster id in {id} must be something");
+            assert!(
+                slug.chars()
+                    .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-'),
+                "{slug} in {id} is not a slug"
+            );
+        }
+    }
+}
+
 // --- one room's cast is not another's ------------------------------------
 
 /// A room with the Halloween cast rather than the campaign's, so that the two

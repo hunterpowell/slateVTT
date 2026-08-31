@@ -208,6 +208,13 @@ way back. All this does is stop asking the person at the keyboard to do it by ha
 So the socket the backoff opens is a **probe**. Nothing is sent on it and the only handler
 attached to it is the one that throws the page away. `net.ts` says so.
 
+**The DM comes back as the DM**, which was not true when this landed and is worth knowing
+about because it is the one identity a reload could lose. Their secret is stripped from the
+address bar on boot, so it used to live in a closure and die with the page — the reconnect
+this section is about handed the DM their own character picker in the middle of a session.
+`takeDmSecret` remembers it in `sessionStorage` for the life of the tab; see *The secret is
+remembered per tab* in `docs/rooms.md` for why that costs the stripping nothing.
+
 ### The backoff
 
 `BACKOFF_MS` climbs 500ms → 10s over nine attempts, a little over a minute in total. It

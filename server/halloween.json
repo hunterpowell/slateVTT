@@ -29,14 +29,13 @@
     },
     {
       "id": "e0958f05ada5480fba801100e289229e",
-      "name": "test",
-      "x": 8.5,
-      "y": 5.5,
+      "name": "Corvus",
+      "x": 13.5,
+      "y": 20.5,
       "owner": {
-        "kind": "player",
-        "id": "player-1"
+        "kind": "dm"
       },
-      "img": "/uploads/portrait-bronzebeard-395e743b.webp",
+      "img": "/uploads/portrait-corvus-da4bc29c.png",
       "size": 1.0,
       "hidden": false,
       "hp": null,
@@ -54,9 +53,9 @@
   "revealed": {
     "x": 0,
     "y": -1,
-    "w": 16,
-    "h": 23,
-    "cells": "########oo###########oooooooo#######oooooooooo#####oooooooooooo####oooooooooooo####oooooooooooo###oooooooooooooo##ooooooooooooo##oooooooooooooo##oooooooooooooo##ooooooooooooo##ooooooooooooo####oooooooooooo####ooooooooooooo###ooooooooooooo####oooooooooooo####ooooooooooooo####ooooooooooo#####ooooooooooo#####ooooooooooo######ooooooooo########ooooooo############o#######"
+    "w": 20,
+    "h": 28,
+    "cells": "########oo###############oooooooo###########oooooooooo#########oooooooooooo########oooooooooooo########oooooooooooo#######oooooooooooooo######ooooooooooooo######oooooooooooooo######oooooooooooooo######ooooooooooooo######ooooooooooooo########oooooooooooo########ooooooooooooo#######ooooooooooooo########oooooooooooo########ooooooooooooooo######ooooooooooooooo#####oooooooooooooooo####oooooooooooooooo#####ooooooooooooooo######ooooooooooooooo########ooooooooooo#########ooooooooooo#########ooooooooooo##########ooooooooo############ooooooo################o######"
   },
   "overrides": {
     "x": 0,

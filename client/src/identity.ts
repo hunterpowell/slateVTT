@@ -145,16 +145,50 @@ export function takeRoomFromUrl(): string | null {
 }
 
 /**
- * Reads `?dm=<secret>` and immediately strips it from the address bar. The DM
- * screen-shares constantly; a secret sitting in the URL is one alt-tab away
- * from being handed to the table.
+ * Where the DM secret lives once it has been taken out of the address bar.
+ *
+ * **`sessionStorage`, not `localStorage`**, and the difference is the whole
+ * decision. It dies with the tab, so it survives exactly one thing —
+ * `location.reload()` — and that is the case this exists for. Nothing outlives
+ * the evening, and closing the tab is how you stop being the DM.
  */
-export function takeDmSecretFromUrl(): string | null {
-  const url = new URL(location.href);
-  const secret = url.searchParams.get('dm');
-  if (secret === null) return null;
+const DM_SECRET_KEY = 'slate.dm_secret';
 
-  url.searchParams.delete('dm');
-  history.replaceState(null, '', `${url.pathname}${url.search}${url.hash}`);
-  return secret;
+/**
+ * The DM secret for this tab: from `?dm=<secret>` if the link carried one,
+ * otherwise from the one this tab was already holding.
+ *
+ * **The strip is unchanged and is still the point.** The DM screen-shares
+ * constantly, so a secret sitting in the URL is one alt-tab away from being
+ * handed to the table — and `sessionStorage` is not on screen, so remembering
+ * it there costs that argument nothing.
+ *
+ * **What it buys is the reconnect.** `net.ts` comes back from a dropped socket
+ * by calling `location.reload()`, and a secret that lived only in a closure did
+ * not survive one: the DM's own page reloaded mid-session and landed on the
+ * character picker. `docs/rooms.md` carried that as a known bug for a milestone.
+ *
+ * **A URL wins over what is stored**, so a DM opening a fresh link is never
+ * handed a stale secret by a tab that had one earlier.
+ */
+export function takeDmSecret(): string | null {
+  const url = new URL(location.href);
+  const fromUrl = url.searchParams.get('dm');
+  if (fromUrl !== null) {
+    url.searchParams.delete('dm');
+    history.replaceState(null, '', `${url.pathname}${url.search}${url.hash}`);
+    try {
+      sessionStorage.setItem(DM_SECRET_KEY, fromUrl);
+    } catch {
+      // Private browsing modes can throw, exactly as they can above. All that
+      // is lost is coming back as the DM after a reload; this load is fine.
+    }
+    return fromUrl;
+  }
+
+  try {
+    return sessionStorage.getItem(DM_SECRET_KEY);
+  } catch {
+    return null;
+  }
 }

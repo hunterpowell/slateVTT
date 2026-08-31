@@ -157,7 +157,7 @@ bookmark or a renamed room falls back to the picker instead of a socket the serv
 ### `?room=` is not stripped, and `?dm=` is
 
 `takeRoomFromUrl` deliberately leaves the address bar alone, one function above
-`takeDmSecretFromUrl` which deliberately does not. A DM secret is a credential and the DM
+`takeDmSecret` which deliberately does not. A DM secret is a credential and the DM
 screen-shares; a room id is checked against a const and knowing a room exists gets you no further
 than the picker already does. What keeping it buys is a link the DM can send the table that opens
 straight into the one-shot — and the drivers skipping the picker, which is the same property used
@@ -197,19 +197,37 @@ otherwise the link puts you straight back where you were. All three are one act:
 which slots exist, so being asked which character you are without being asked which room you are in
 offers a cast you may not want.
 
-**It stays hidden for the DM**, and multi-room is a reason to keep it that way rather than the
-reason to change it. It was hidden because the DM has no character to switch, and they now do have a
-room to switch — but a reload is how this button works, and *the DM's secret does not survive one*.
-`takeDmSecretFromUrl` strips it from the address bar on boot and it lives in a closure from then on,
-so a reloaded DM comes back anonymous and lands on the character picker. A button that silently
-demotes them is worse than no button. They switch rooms by opening their own link, which may carry
-`?room=` and skip the picker entirely.
+**It stays hidden for the DM**, and it now has one reason rather than two: the DM has no character
+to switch to, which is the entire job of this button. They switch rooms by opening their own link,
+which may carry `?room=` and skip the picker entirely.
 
-**That is a pre-existing bug wearing a new hat, and it is worth knowing about**: `net.ts` reconnects
-by calling `location.reload()`, so a DM whose socket drops already comes back anonymous today.
-Fixing it means deciding to persist the secret — `sessionStorage` is the obvious place, since the
-risk stripping guards against is the address bar during a screen-share and not storage. That is a
-security-relevant call and it is not this milestone's to make.
+The second reason is gone, and it is worth recording that it was a real bug rather than a design.
+This section used to say that a reload is how the button works and *the DM's secret does not survive
+one* — the secret was stripped from the address bar on boot and lived in a closure from then on, so
+a reloaded DM came back anonymous and landed on the character picker. **That was never only about
+this button.** `net.ts` reconnects a dropped socket by calling `location.reload()`, so the DM's own
+page demoted itself mid-session, which is the worst possible moment for it. This file carried it as
+a known bug and deferred the call as security-relevant.
+
+### The secret is remembered per tab
+
+`takeDmSecret` writes it to `sessionStorage` under `slate.dm_secret` and reads it back when the URL
+carries none. Four things about that, and each is the decision rather than a detail:
+
+- **`sessionStorage` and not `localStorage`.** It dies with the tab, so it survives exactly one
+  thing — `location.reload()` — which is the case it exists for. Closing the tab is how you stop
+  being the DM, and nothing is left behind on a shared machine.
+- **The strip is untouched, and that was always the real guard.** The risk is the address bar during
+  a screen-share; `sessionStorage` is not on screen, so remembering it there costs that argument
+  nothing. This is the deferred call above, made, and it is small because the two risks were never
+  the same one.
+- **A URL beats what is stored**, so a DM opening a fresh link is never handed a stale secret by a
+  tab that held one earlier.
+- Both accessors are wrapped, like every other storage read in `identity.ts`. A private-browsing tab
+  that throws loses the reload path and nothing else.
+
+**The switch button stays hidden anyway.** Fixing the secret removes the second argument for hiding
+it, not the first, and widening a reconnect fix into a UI change is scope it does not need.
 
 ## What the drivers cost
 

@@ -4,10 +4,11 @@ What is not built yet, and the order it gets built in.
 
 `.claude/CLAUDE.md` holds the rules that hold across every feature and is loaded into every
 session. This file is not, deliberately — it is design for features that do not exist, and it
-would otherwise cost context in every session that has nothing to do with it. `docs/maps.md`,
-`docs/tokens.md`, `docs/drawings.md`, `docs/walls.md` and `docs/fog.md` are out of context for the
-same reason from the other direction: they are why each built feature is the shape it is, and only
-the session touching that subsystem needs them.
+would otherwise cost context in every session that has nothing to do with it. The twelve files in
+`docs/` — `maps.md`, `tokens.md`, `drawings.md`, `walls.md`, `fog.md`, `undo.md`, `chat.md`,
+`notes.md`, `presence.md`, `rooms.md`, `frontend.md` and `net.md` — are out of context for the same
+reason from the other direction: they are why each built feature is the shape it is, and only the
+session touching that subsystem needs them.
 
 **Read this before starting a new milestone.** The invariants in CLAUDE.md are what make
 everything below addable without a rewrite; if a decision here turns out to conflict with one of
@@ -25,7 +26,7 @@ Do not work ahead. Each milestone should run and be usable before starting the n
 6. Map upload and grid calibration UI.
 7. Package for Windows session hosting and deploy behind a Cloudflare Tunnel.
 
-**Everything through 28 is built, and so are 30, 31, 32, 33 and 34; 29 is not.** 25, 26 and 34 were
+**Everything through 28 is built, and so are 30 through 35; 29 is not.** 25, 26 and 34 were
 never planned and are out of order for the reasons their own entries give. 33 is *Multi-room*, which was
 unscheduled until a Halloween one-shot became the second room it was waiting for. Everything from 8 on was planned after the original
 seven; 17 and 18 were workshopped after 16 landed, 19–24 after 18, and 27–29 on 2026-08-18 after 26.
@@ -1368,6 +1369,29 @@ and 28 also overturned something *its own* design section said, which its entry 
     it. Renaming is remove-then-add, which is also how replacing a portrait's art works, and both
     are two-step for the same reason: the one-step version is a silent overwrite with no undo.
 
+33. **Done**, on 2026-08-23. Multi-room — a Halloween one-shot on the same server as the
+    campaign, without clearing the campaign's board to run it. See `docs/rooms.md`, and the
+    *Multi-room* section at the foot of this file, which is the design as it was written down in
+    advance with its corrections marked inline.
+
+    **It is numbered here late.** The design and its post-mortem both landed in that section rather
+    than in this list, in the annotate-in-place style *Cursors* uses, and the number was never
+    written down beside them. Nothing is restated here that either of those already says — three of
+    the six items held, three were overturned, and the overturned ones are correct where they are.
+
+    What is worth pulling up into the numbered record is the shape of it, because it is the one
+    milestone whose cost landed somewhere this file did not look. **The room registry was the cheap
+    half.** `ROADMAP.md` and `CLAUDE.md` had both budgeted an `RwLock<HashMap<..>>` for it; what
+    shipped is a const and an `Arc<HashMap<..>>` built once in `main`, because a lock guards a table
+    that changes and nothing changes this one. The expensive half was **the twenty-odd files that
+    were not about rooms at all** — every `tools/drive-*.mjs` needed `?room=campaign` appended, and
+    `audit-uploads.mjs` had to start reading *every* room's save or it would print an `rm` for
+    every other room's art. Shared libraries with unshared boards is what did that.
+
+    The generalisation, and it is the mirror of milestone 21's: **a feature that adds a dimension to
+    something shared makes every tool that reads it wrong at once.** The room actor did not care that
+    rooms are plural; the things standing outside it all did.
+
 34. **Done**, on 2026-08-25. Player view — the DM's own board, redrawn as the board the table is
     looking at. One button on the fog panel; see *Player view* in `docs/fog.md`.
 
@@ -1410,6 +1434,49 @@ and 28 also overturned something *its own* design section said, which its entry 
     `solo.ts`, its tests and the render path are untouched, and milestone 29 is what turns it back
     on, for the reason that entry now gives. `drive-panels.mjs` lost its solo half and gained the
     check that fails when the const flips.
+
+35. **Done**, on 2026-08-27. The controls pass — the rail stops surprising the person operating
+    it, and the DM can take their own pointer off the table's boards. Two parts, held together by a
+    theme rather than a dependency, which is milestones 26 and 27's shape: neither came out of this
+    file, both came out of playing, and each is a control that was doing something other than what
+    the hand reaching for it expected.
+
+    **35a — the rail pass.** Two changes and one deleted return value. Selecting a token used to
+    open the token tab; now **only a click on a tab changes which tab is open**, which is rule 4 in
+    `docs/frontend.md` and is there in full. The thing to keep is what the rule cost: with its one
+    caller gone there was no second hand on the strip at all, so `createRail` returns `void` — **the
+    rule is in the type rather than in a comment asking future callers to respect it**, which is the
+    same move `Omit<Scene, 'previewing'>` made for the undo in milestone 22.
+
+    And the rail remembers its open tab in `localStorage`. It used to open nothing on connect, on
+    the argument that the change was about giving the board back — and **that argument forgot
+    milestone 27c.** A dropped socket reloads the page, so "on connect" is not only the start of an
+    evening, and a rail that opens empty there empties itself in the middle of a fight. Worth
+    recording as a general trap: **since 27c, every "on connect" decision in this client is also a
+    mid-session decision**, and the two have different right answers more often than not.
+
+    **35b — the DM's own pointer.** `show_dm_cursor`, `show_cursors`' narrower sibling: the DM's
+    pointer off the players' boards with everybody else's untouched, for a DM who wants their hand
+    out of sight while the party argues about which door to open. On `RoomState`, DM-only to set,
+    unfiltered, persisted, a step on the ring, on the table tab, defaulting on — `show_names`'
+    fourth instance and by now an entirely unsurprising one. See `docs/presence.md`.
+
+    **It cost four lines of filter because `cursor_seen` already existed to answer exactly this
+    question**, and already answered *no* for one case: the dark. The switch is that case widened
+    from "over ground the party has not explored" to "anywhere". That is milestone 21's
+    generalisation for the third time — *a feature that changes what a filter is given, rather than
+    what it decides, is nearly free* — and it is the reason a full-stack change with a new command,
+    a new event and a `protocol-tags.json` entry still touched no visibility rule.
+
+    **The ordering inside `cursor_seen` is the load-bearing part.** It is read after the two yeses
+    and **before** the `map.fog` guard. Read the other way round it is a switch that does nothing
+    until the DM turns fog on, which is the one arrangement nobody would ask for — and it would
+    have tested clean on every fogged map in the project.
+
+    Where it parts company with its neighbour: **it stops the relay and not the sending.**
+    `show_cursors` is a dial and takes every client's frames off the wire with it; this is one
+    client in seven, so a second condition at the send site would buy a branch in `input.ts` to save
+    nothing measurable, and the DM's client would then have to decide whether a second DM tab counts.
 
 ### The right dock
 

@@ -10,8 +10,8 @@ deliberately, and neither is loaded for you:
 - **`ROADMAP.md`** — design for what is not built yet, and the milestone order. Read it when
   starting a milestone.
 - **`docs/maps.md`, `docs/tokens.md`, `docs/drawings.md`, `docs/walls.md`, `docs/fog.md`,
-  `docs/undo.md`, `docs/chat.md`, `docs/notes.md`, `docs/presence.md`, `docs/frontend.md`,
-  `docs/net.md`** — why each built feature is the shape it is. Every section below that summarises a
+  `docs/undo.md`, `docs/chat.md`, `docs/notes.md`, `docs/presence.md`, `docs/rooms.md`,
+  `docs/frontend.md`, `docs/net.md`** — why each built feature is the shape it is. Every section below that summarises a
   feature ends with a pointer to its file and the code that file covers.
 
 (All referenced in backticks on purpose: a bare `@` path here would be an import, and importing
@@ -989,8 +989,10 @@ has `update` and `adopt` rather than one method. It opens and moves nothing. It 
 every monster's turn, deliberately unresolved —
 **play decides**, and the off-switch is `localStorage` if it ever needs one.
 
-**A dropped socket now backs off and reloads the page** when a fresh one opens. **The reload is
-the design**: `onWelcome` builds the panels, the tools and the board once per socket, so a second
+**A dropped socket now backs off and reloads the page** when a fresh one opens — and **the DM
+comes back as the DM**, because `takeDmSecret` keeps their secret in `sessionStorage` for the life
+of the tab; the address bar is still stripped on sight, which is the risk that guard was written
+against. **The reload is the design**: `onWelcome` builds the panels, the tools and the board once per socket, so a second
 `Welcome` would build a second of each — the wall `Restored` was invented to avoid, except that
 here a refresh was already the supported way back. The socket the backoff opens is a probe and
 nothing is sent on it. Today's banner is now the floor, reached when the backoff gives up.
