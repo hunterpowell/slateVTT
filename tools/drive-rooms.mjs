@@ -215,17 +215,41 @@ check(
 
 // --- switching rooms ----------------------------------------------------
 
-// The DM has none, and now for one reason rather than two: they have no
-// character to switch to, which is the whole job of the button. The second
-// reason — that a reload demoted them — is what the section above asserts is
-// gone. They switch rooms by opening their own link.
+// The DM has one too, and it says what it does: half the button's job is the
+// room, and with the room and the secret both remembered there was otherwise no
+// way back to the picker but hand-editing an id onto the URL.
 check(
-  'the DM has no switch button',
-  await dm.evaluate('document.querySelector("#whoami-switch").hidden'),
-  true,
+  'the DM has a switch button, named for the half of it that is theirs',
+  await dm.evaluate(`[
+    document.querySelector('#whoami-switch').hidden,
+    document.querySelector('#whoami-switch').textContent,
+  ]`),
+  [false, 'switch room'],
 );
 
-// The player's does work, because re-picking is all they have to do.
+// And it is *switch campaign*, not *leave the DM seat*: the secret is untouched,
+// so the reload comes back through the room picker and into the other room as
+// the DM, with no character picker in between.
+await dm.evaluate('document.querySelector("#whoami-switch").click(); "ok"');
+await dm.wait(2500);
+check(
+  'and it puts them on the room picker',
+  await dm.evaluate('!document.querySelector("#room-picker").hidden'),
+  true,
+);
+await pick(dm, 'Halloween');
+await dm.wait(1200);
+check(
+  'from which they arrive in the other room, still the DM and never asked who they are',
+  await dm.evaluate(`[
+    document.querySelector('#whoami-name').textContent.startsWith('DM · '),
+    document.querySelector('#whoami-name').textContent.includes('Halloween'),
+    document.querySelector('#picker').hidden,
+  ]`),
+  [true, true, true],
+);
+
+// The player's does more, because re-picking a character is the other half.
 check(
   'a player has one',
   await player.evaluate('!document.querySelector("#whoami-switch").hidden'),

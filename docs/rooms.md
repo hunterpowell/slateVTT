@@ -197,9 +197,28 @@ otherwise the link puts you straight back where you were. All three are one act:
 which slots exist, so being asked which character you are without being asked which room you are in
 offers a cast you may not want.
 
-**It stays hidden for the DM**, and it now has one reason rather than two: the DM has no character
-to switch to, which is the entire job of this button. They switch rooms by opening their own link,
-which may carry `?room=` and skip the picker entirely.
+**The DM has one too, and for them it is the room alone.** It was hidden on the argument that they
+have no character to switch to — which is true, and was never the whole of the button: the other
+half is the *room*, and the chip beside it has said which room they are in since the day this
+feature landed. Two things that arrived to fix something else closed the door behind them. The room
+is remembered in `localStorage`, so a bare link reopens the last one; the secret is remembered
+beside it, so the DM's own link no longer has to carry `?dm=` and in practice stops being opened by
+hand at all. What was left was a DM who wanted the other campaign and had no way to the picker but
+typing `?room=<id>` onto the URL with an id **nothing on the screen tells them** — `/api/rooms`
+reports it and the picker spends it, and neither ever puts it in front of the DM.
+
+So it shows for everybody and the label carries the difference: `switch room` for the DM, `switch`
+for a player. The click is the same act minus the half they do not have — `forgetPlayerId` is
+skipped, because the DM holds no slot and there is nothing to be asked afterwards.
+
+**The secret is untouched, deliberately.** This is *switch campaign*, not *leave the DM seat*: the
+reload goes back through `takeDmSecret`, the DM comes back as the DM in whichever room they pick,
+and the character picker never appears. A *leave the DM seat* would be one more line here and is
+still not wanted; see the paragraph below on what remembering the secret costs.
+
+That the reload survives at all is the reason showing this is safe now, and it is why the order
+matters: the second argument for hiding the button — that a reloaded DM came back anonymous — had
+to be a fixed bug before the first one could be re-examined.
 
 The second reason is gone, and it is worth recording that it was a real bug rather than a design.
 This section used to say that a reload is how the button works and *the DM's secret does not survive
@@ -239,8 +258,10 @@ profile, not a login. If that ever stops being true, the switch button below is 
 DM seat* would go — it already forgets the room and the player id, and forgetting the secret beside
 them is one line.
 
-**The switch button stays hidden anyway.** Fixing the secret removes the second argument for hiding
-it, not the first, and widening a reconnect fix into a UI change is scope it does not need.
+**The switch button was left hidden at the time**, on the ground that fixing the secret removed the
+second argument for hiding it and not the first, and that widening a reconnect fix into a UI change
+was scope that milestone did not need. The first argument turned out not to survive contact with the
+Pi either — see *The switch button* above, where it is now shown to the DM as well.
 
 ## What the drivers cost
 

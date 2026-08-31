@@ -26,7 +26,7 @@ Do not work ahead. Each milestone should run and be usable before starting the n
 6. Map upload and grid calibration UI.
 7. Package for Windows session hosting and deploy behind a Cloudflare Tunnel.
 
-**Everything through 28 is built, and so are 30 through 35; 29 is not.** 25, 26 and 34 were
+**Everything through 28 is built, and so are 30 through 36; 29 is not.** 25, 26 and 34 were
 never planned and are out of order for the reasons their own entries give. 33 is *Multi-room*, which was
 unscheduled until a Halloween one-shot became the second room it was waiting for. Everything from 8 on was planned after the original
 seven; 17 and 18 were workshopped after 16 landed, 19–24 after 18, and 27–29 on 2026-08-18 after 26.
@@ -1477,6 +1477,48 @@ and 28 also overturned something *its own* design section said, which its entry 
     `show_cursors` is a dial and takes every client's frames off the wire with it; this is one
     client in seven, so a second condition at the send site would buy a branch in `input.ts` to save
     nothing measurable, and the DM's client would then have to decide whether a second DM tab counts.
+
+36. **Done**, on 2026-08-31. The damage box — the DM types `-12` on a creature's initiative row
+    instead of doing the subtraction in their head on the token tab. See *The damage box* in
+    `docs/tokens.md`.
+
+    Milestones 26 and 35's shape a third time: it came out of playing rather than out of this file,
+    and it is a control that was making the hand reaching for it do arithmetic. It is also
+    **milestone 18's shape a second time — no Rust at all.** `panel.update` is handed the whole
+    `Scene`, so the row resolves its own token and has every field `UpdateToken` needs; the box works
+    out the absolute and sends an ordinary edit. Nothing was missing from the wire, and there is
+    still no `SetHp`.
+
+    Three things are worth keeping.
+
+    **The permission check is the one that is not there, again.** The box is built inside the
+    existing `hp !== null` branch and gated on nothing else, so a player's panel cannot contain one:
+    `view_for` redacts `hp`, and `asTable` strips it for player view. That is invariant 4 the safe
+    way round for the third time on this panel — the bar, the numbers, and now the control that
+    edits them, none of which asks who is reading it. The driver asserts it as the absence of
+    `.init-damage` anywhere on the second browser's page.
+
+    **The rule that had to be *invented* is about the caret, not about the numbers.** This panel is
+    rebuilt wholesale on every token delta, which has always been fine because nothing on a row was
+    worth typing into for long — `valueField` wears the same hazard and a misheard roll is corrected
+    once. A damage box is used repeatedly on the same creature, and the room's echo of the hit
+    destroys the element it was typed into. So `update` records which `data-hp-for` held focus and
+    restores it after `replaceChildren`. The general form: **wholesale rebuild is affordable until a
+    control is used twice in a row**, and the tell is not visible in the state model at all. Drag
+    frames were the thing to check and are safe — `onTokenMoved` does not reach `afterTokens`.
+
+    **A delta box makes the absolute box load-bearing.** `-3` on the row now means three damage, so
+    the token tab's `hp`/`max` pair is the only place left that can write a creature *down* to minus
+    three — which `token_fields` allows, since `-MAX_HP..=MAX_HP` is a bound on magnitude and
+    "a creature cannot go below zero" is the rules knowledge this project refuses. Keeping the tab
+    absolute-only was the decision that made the row's grammar free of ambiguity, and it is the
+    reason not to "simplify" the two into one behaviour later.
+
+    One thing the build corrected, and it is a driver fact rather than a design one:
+    `drive-panels.mjs`'s `build()` had to write the hit point fields on *every* token including the
+    one meant to have none. The token panel deliberately keeps its fields after a create — six
+    goblins is six clicks — so a total typed for the first creature was still sitting there for the
+    second, and the check that a row without hit points has no box passed nothing and failed loudly.
 
 ### The right dock
 

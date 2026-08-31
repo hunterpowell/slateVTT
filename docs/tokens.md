@@ -291,6 +291,46 @@ Escape puts the number back *before* blurring, since a blur commits and abandoni
 possible. The player's row is still a span — re-valuing is the DM's, and their copy of the panel has
 nothing to say about it.
 
+### The damage box
+
+**The row is where damage gets typed, because the row is what the DM is looking at.** Before this,
+taking twelve off a monster was: click it on the board, open the token tab, subtract twelve in your
+head, type the new total. Three of those four steps are the ones this removes — the box sits beside
+the bar that is already on screen, and it takes the *number that was rolled* rather than the total
+that results.
+
+`-12` is damage, `+7` is healing, and a bare `35` is the new total. `parseHpEntry` is the whole
+grammar and it is a pure function with a table beside it in `panel.test.ts`; anything that is not one
+of those three forms returns `null`, which the box answers by clearing itself and saying nothing —
+`valueField`'s rule that a row puts itself back rather than send the server something to interpret.
+The box is emptied after a commit as well as after a refusal, because it holds an *instruction*
+rather than a value and a `-6` left sitting in it is a hit waiting to land twice.
+
+**It is not on the token tab, and that is not a violation of `docs/frontend.md`'s rule.** That rule
+decides which *rail panel* a control belongs on, and the initiative panel is not one — it is the same
+exception `valueField` already is, and for the same reason: correcting a number the row is showing
+belongs on the row showing it. What did stay on the token tab is the absolute `hp` / `max` pair, and
+that is now load-bearing rather than merely untouched — `-3` in the row's box means three damage, so
+the tab is the only place left that can write a creature *down* to minus three, which the server
+allows.
+
+**No permission check, exactly as the bar beside it has none.** The box is built inside the
+`hp !== null` branch and gated on nothing else: `view_for` redacts `hp`, so a player's copy of every
+token carries null and the branch never runs for them; `asTable` strips it the same way, so player
+view drops it too. Invariant 4 the safe way round again — a secret added to `Token` and forgotten in
+`view_for` goes missing from the DM's own panel rather than appearing on everybody's.
+
+**The one thing it needed beyond a new element is the caret.** This panel is rebuilt wholesale on
+every token delta, including the room's echo of the hit that was just applied — so committing a
+number destroys the box it was typed into. Two hits on the same creature in a row is the ordinary
+case, so `update` records which `data-hp-for` held focus and restores it after `replaceChildren`.
+Drag frames are not a hazard here: `onTokenMoved` does not rebuild this panel, which is the only
+reason an input on a row is affordable at all.
+
+Nothing on the wire changed. The box does the arithmetic and sends an ordinary `UpdateToken`, built
+by read-modify-write off the token the row already resolved — which is milestone 18's shape a second
+time, and the reason this touched no Rust.
+
 When everything is in the order the picker holds one disabled placeholder and stops taking clicks.
 That is the rail's rule about inert tabs, applied in the one part of this UI that is not a tab: a
 control that looks armed and can do nothing is the same lie either way.
@@ -349,9 +389,9 @@ are reading.
 
 Hit points draw as a bar above the token with the numbers over it, in screen space like a name.
 Three colour bands rather than a gradient — a DM glancing at six monsters wants to sort them, and
-nothing here knows the word "bloodied". Taking damage is the token panel with a new number and
-Enter; there is no `SetHp`, because it would carry one field of the several `UpdateToken` already
-sends together.
+nothing here knows the word "bloodied". Taking damage is a delta typed on the initiative row — see
+*The damage box* above; there is no `SetHp`, because it would carry one field of the several
+`UpdateToken` already sends together, and the box sends an absolute it worked out for itself.
 
 ## Preparing the next room
 

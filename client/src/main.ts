@@ -500,7 +500,12 @@ function boot(ui: Ui, choice: RoomChoice): void {
     // asked which room you are in offers a cast you may not want. It reloads
     // into the room picker and then the character picker, which is the same
     // sequence a first visit takes.
-    forgetPlayerId(choice.id);
+    //
+    // For the DM it is the room alone: they hold no slot, so there is nothing
+    // to forget and nothing to be asked afterwards. The secret is untouched
+    // either way — this is *switch campaign*, not *leave the DM seat*, and the
+    // reload comes back through `takeDmSecret` as the DM.
+    if (!identity.isDm) forgetPlayerId(choice.id);
     forgetRoom();
     // The link's own `?room=` would beat the forgetting and put us straight
     // back where we were, so it goes too.
@@ -1215,14 +1220,17 @@ function showWhoami(ui: Ui, identity: Identity, choice: RoomChoice, tokens: Wire
     const own = tokens.find((t) => t.owner.kind === 'player' && t.owner.id === identity.playerId);
     ui.whoamiName.textContent = `${own?.name ?? identity.playerId ?? '—'} · ${choice.name}`;
   }
-  // **Still hidden for the DM**, and now for one reason rather than two: the DM
-  // has no character to switch to, which is what this button is for. The second
-  // reason has been fixed out from under it — the secret used to live only in a
-  // closure, so the reload this button works by came back anonymous, and a
-  // button that silently demotes them was worse than no button. `takeDmSecret`
-  // remembers it per tab now. The DM still switches rooms by opening their own
-  // link, which may carry `?room=` and skip the picker entirely.
-  ui.whoamiSwitch.hidden = identity.isDm;
+  // **The DM has one too, and it says what it does.** It used to be hidden on
+  // the argument that they have no character to switch to — true, and it was
+  // never the whole job of the button: half of it is the *room*, and the chip
+  // beside it says which room they are in. With the room and the secret both
+  // remembered, a DM who wanted the other campaign had no way back to the
+  // picker but hand-editing `?room=` onto the URL with an id nothing on the
+  // screen tells them. The reason that did hold — that the reload this works by
+  // came back anonymous — was fixed when `takeDmSecret` started remembering the
+  // secret, which is what makes showing it safe now.
+  ui.whoamiSwitch.textContent = identity.isDm ? 'switch room' : 'switch';
+  ui.whoamiSwitch.hidden = false;
   ui.whoami.hidden = false;
 }
 

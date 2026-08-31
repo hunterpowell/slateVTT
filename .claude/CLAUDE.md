@@ -572,6 +572,15 @@ player's copy of the token carries no `hp`, so there is nothing to decline to dr
 invariant 4 the safe way round. Clicking a row centres the camera on that creature; it is not an
 automatic pan on turn change, which would move the board under whoever is mid-drag.
 
+**Damage is typed on the row, as a delta.** `-12` hurts, `+7` heals, a bare `35` sets; anything else
+clears the box and sends nothing. It is built in the same `hp !== null` branch as the bar and gated
+on nothing else, so it inherits that no-permission-check argument whole — and it sends an ordinary
+`UpdateToken` it worked the absolute out for, so **there is still no `SetHp` and nothing on the wire
+changed**. The token tab keeps the absolute `hp`/`max` pair and that is now what makes a negative
+total sayable at all. One thing binds it: this panel is rebuilt wholesale on every token delta, so
+the box that was typed into must have its focus restored afterwards — see *The damage box* in
+`docs/tokens.md`.
+
 **It folds, and folded is the current row rather than a bare tab.** Whose turn it is is what the
 panel is for, so the fold gives back the other eleven rows and keeps that one — rendered by the same
 loop, with the turn buttons still beside it. The preference is `localStorage` and pointedly not the

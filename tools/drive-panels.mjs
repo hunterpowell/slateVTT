@@ -79,7 +79,7 @@ await dm.evaluate(`(() => {
 })()`);
 await dm.wait(200);
 
-const build = async (name) => {
+const build = async (name, hp = null) => {
   await dm.evaluate(`(() => {
     const fresh = document.getElementById('token-new');
     if (!fresh.hidden) fresh.click();
@@ -87,6 +87,19 @@ const build = async (name) => {
   })()`);
   await dm.wait(150);
   await dm.evaluate(`document.getElementById('token-name').value = ${JSON.stringify(name)}; "ok"`);
+  // Hit points are what puts a damage box on the row, so one of the two
+  // creatures gets a total and the other deliberately does not — the row with
+  // none is what says the box follows `hp` rather than being on every row.
+  //
+  // Written on every build, including the empty case. The token panel keeps its
+  // fields after a create on purpose — six goblins is six clicks — so a total
+  // typed for the first creature is still sitting there for the second, and
+  // "leave it alone" would silently build two creatures with the same total.
+  await dm.evaluate(`(() => {
+    document.getElementById('token-hp').value = '${hp === null ? '' : hp}';
+    document.getElementById('token-hp-max').value = '${hp === null ? '' : hp}';
+    return 'ok';
+  })()`);
   await dm.evaluate(`document.getElementById('token-save').click(); "ok"`);
   await dm.wait(500);
 };
@@ -99,7 +112,8 @@ const build = async (name) => {
 const RUN = Date.now().toString(36).slice(-4);
 const MINE = [`Panel A ${RUN}`, `Panel B ${RUN}`];
 const PANEL_TOKEN = /^Panel [AB] /;
-for (const name of MINE) await build(name);
+await build(MINE[0], 27);
+await build(MINE[1]);
 
 const roll = async (name, value) => {
   const ok = await dm.evaluate(`(() => {
@@ -194,6 +208,105 @@ check(
   'leaving the roll form where it was found',
   await dm.evaluate(`document.getElementById('init-add').offsetParent !== null`),
   true,
+);
+
+// ============================================================================
+// The damage box on a row
+// ============================================================================
+//
+// The arithmetic itself is `parseHpEntry` and is unit-tested in
+// `client/src/panel.test.ts`. What only a browser can say is that the box is on
+// the row at all, that committing it reaches the room and comes back, that the
+// caret survives the rebuild that answer triggers — and that the box is absent
+// from the table's copy of the same panel.
+
+const hpText = (page, name) =>
+  page.evaluate(`(() => {
+    const row = [...document.querySelectorAll('.init-row')]
+      .find(r => r.querySelector('.init-name').textContent === ${JSON.stringify(name)});
+    if (!row) return 'missing row';
+    const el = row.querySelector('.init-hp-text');
+    return el === null ? null : el.textContent;
+  })()`);
+
+/** Types into a row's box the way a DM does: focus it, then let it commit. */
+const damage = async (name, text) => {
+  const ok = await dm.evaluate(`(() => {
+    const row = [...document.querySelectorAll('.init-row')]
+      .find(r => r.querySelector('.init-name').textContent === ${JSON.stringify(name)});
+    if (!row) return 'missing row';
+    const box = row.querySelector('.init-damage');
+    if (!box) return 'no box';
+    box.focus();
+    box.value = ${JSON.stringify(text)};
+    box.dispatchEvent(new Event('change', { bubbles: true }));
+    return 'ok';
+  })()`);
+  await dm.wait(600);
+  return ok;
+};
+
+const HURT = MINE[0];
+const NO_TOTAL = MINE[1];
+
+check('the creature with a total starts where it was built', await hpText(dm, HURT), '27/27');
+check(
+  'a row with no total has no box to type in',
+  await dm.evaluate(`(() => {
+    const row = [...document.querySelectorAll('.init-row')]
+      .find(r => r.querySelector('.init-name').textContent === ${JSON.stringify(NO_TOTAL)});
+    return row === undefined ? 'missing row' : row.querySelector('.init-damage') === null;
+  })()`),
+  true,
+);
+
+check('a signed entry is damage', await damage(HURT, '-12'), 'ok');
+check('and the row came back from the room twelve down', await hpText(dm, HURT), '15/27');
+
+// The caret is the reason this feature needed anything beyond a new element.
+// The room's echo of the hit replaces every row in the list, so without the
+// restore the second hit on the same creature goes into a box that no longer
+// exists.
+check(
+  'the caret survived the rebuild that answer caused',
+  await dm.evaluate(`document.activeElement !== null &&
+    document.activeElement.classList.contains('init-damage')`),
+  true,
+);
+
+check('a plus entry heals', await damage(HURT, '+5'), 'ok');
+check('and the row says so', await hpText(dm, HURT), '20/27');
+
+check('a bare entry is the new total', await damage(HURT, '9'), 'ok');
+check('and it set rather than subtracted', await hpText(dm, HURT), '9/27');
+
+check('nonsense is accepted by the box', await damage(HURT, 'abc'), 'ok');
+check('and changes nothing', await hpText(dm, HURT), '9/27');
+check(
+  'the box is empty either way, so no entry can be sent twice',
+  await dm.evaluate(`(() => {
+    const row = [...document.querySelectorAll('.init-row')]
+      .find(r => r.querySelector('.init-name').textContent === ${JSON.stringify(HURT)});
+    return row.querySelector('.init-damage').value;
+  })()`),
+  '',
+);
+
+// The negative assertion, and it is free rather than defended: `view_for`
+// redacts `hp` for a player, so their copy of every token carries null and the
+// `hp !== null` branch that builds the box never runs. Invariant 4 the safe way
+// round — a secret forgotten in `view_for` would go missing from the DM's own
+// panel rather than appear here.
+await player.wait(800);
+check(
+  'the table holds the row and none of the numbers',
+  await hpText(player, HURT),
+  null,
+);
+check(
+  'and has no damage box anywhere on the page',
+  await player.evaluate(`document.querySelectorAll('.init-damage').length`),
+  0,
 );
 
 // ============================================================================

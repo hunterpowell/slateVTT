@@ -5,7 +5,7 @@
 
 import type { Identity } from './identity.js';
 import { asTable, tableInitiative } from './mirror.js';
-import type { ClientMsg, Initiative } from './protocol.js';
+import type { ClientMsg, Hp, Initiative } from './protocol.js';
 // The only thing this panel takes from the renderer, and it takes it so that the
 // bar in a row and the bar over the token cannot disagree about which monster is
 // nearly down. See `hpColour` for the argument.
@@ -78,6 +78,97 @@ function valueField(value: number, name: string, commit: (value: number) => void
   field.addEventListener('keydown', (e) => {
     if (e.key !== 'Escape') return;
     field.value = String(value);
+    field.blur();
+  });
+
+  return field;
+}
+
+/**
+ * What the DM typed into a row's damage box, resolved against the total the row
+ * is showing.
+ *
+ * A signed entry is a delta and a bare one is the new total — `-12` is twelve
+ * damage, `+7` is seven back, `35` is "the number I have written down is 35".
+ * The signed form is what the box exists for: doing the subtraction in your head
+ * is the work this feature takes away, and it is also the reason the token
+ * panel's own field stays absolute-only — `-3` there is still a creature at
+ * minus three, which the server allows and this box can no longer say.
+ *
+ * `null` is "say nothing", which is `valueField`'s rule below: put the row back
+ * rather than send the server something it would have to guess at.
+ */
+export function parseHpEntry(text: string, current: number): number | null {
+  const t = text.trim();
+  if (/^[+-]\d+$/.test(t)) return current + Number.parseInt(t, 10);
+  if (/^\d+$/.test(t)) return Number.parseInt(t, 10);
+  return null;
+}
+
+/**
+ * The DM's damage box: type `-12`, press Enter, the monster is twelve down.
+ *
+ * **Built with no check for who is reading it**, exactly as the bar beside it is
+ * — this whole function is called from inside the `hp !== null` branch, and a
+ * player's copy of every token carries null because `view_for` redacts it. The
+ * mirror strips it the same way. So there is nothing here to decline to build,
+ * which is invariant 4 failing the safe way round.
+ *
+ * `type="text"` rather than `number`: a number input's handling of a leading `+`
+ * is not dependable, and it would put back the spinner this box exists to
+ * replace.
+ *
+ * The three rules are `valueField`'s, for its reasons — commit on `change` so a
+ * keystroke does not fire mid-entry, stop the click so correcting a total does
+ * not also move the camera, and let Escape out. The fourth is the keydown stop:
+ * four rail tools disarm on Escape from a `window` listener and none of them
+ * should be reachable from a number being typed into this panel, which is
+ * `chat.ts`'s argument for its own input.
+ */
+function damageField(token: Token, hp: Hp, send: (msg: ClientMsg) => void): HTMLInputElement {
+  const field = document.createElement('input');
+  field.type = 'text';
+  field.inputMode = 'numeric';
+  field.className = 'init-damage';
+  field.placeholder = '±';
+  field.autocomplete = 'off';
+  // Which row this is, so a rebuild can put the caret back where it was — see
+  // `typingIn` in `update`.
+  field.dataset.hpFor = token.id;
+  const label = `Damage or heal ${token.name}: -12, +7, or a new total`;
+  field.setAttribute('aria-label', label);
+  field.title = label;
+
+  field.addEventListener('click', (e) => e.stopPropagation());
+
+  field.addEventListener('change', () => {
+    const next = parseHpEntry(field.value, hp.current);
+    // Cleared either way. The box starts empty and holds an instruction rather
+    // than a value, so leaving `-6` sitting in it after the hit landed is an
+    // invitation to send it twice.
+    field.value = '';
+    if (next === null) return;
+    // Read-modify-write off the token the row already resolved. `UpdateToken`
+    // carries every editable field together, which is the reason there is no
+    // `SetHp` — see `docs/tokens.md`.
+    send({
+      type: 'update_token',
+      id: token.id,
+      name: token.name,
+      img: token.img,
+      size: token.size,
+      owner: token.owner,
+      hidden: token.hidden,
+      hp: { current: next, max: hp.max },
+    });
+  });
+
+  field.addEventListener('keydown', (e) => {
+    e.stopPropagation();
+    if (e.key !== 'Escape') return;
+    // Abandoning has to be possible and a blur commits, so this empties the box
+    // first and leaves the blur with nothing to report.
+    field.value = '';
     field.blur();
   });
 
@@ -226,6 +317,20 @@ export function createPanel(
 
       ui.round.textContent = `Round ${initiative.round}`;
 
+      // Which damage box the DM was typing in, so the rebuild below can put the
+      // caret back where it was.
+      //
+      // This list is replaced wholesale on every token delta — including the
+      // server's echo of the hit that was just applied, which arrives through
+      // `afterTokens` in main.ts. Without this, landing two hits on the same
+      // creature means clicking its box again between them, and the second
+      // number goes into a box that no longer exists. Drag frames are not a
+      // problem here: `onTokenMoved` does not rebuild this panel.
+      const typingIn =
+        document.activeElement instanceof HTMLElement && ui.list.contains(document.activeElement)
+          ? (document.activeElement.dataset.hpFor ?? null)
+          : null;
+
       ui.list.replaceChildren(
         ...entries.map((entry) => {
           const token = tokenFor(entry.token);
@@ -282,15 +387,18 @@ export function createPanel(
           // No check for who is reading this. `hp` is redacted server-side, so a
           // player's copy of the token carries null and there is nothing here to
           // decline to draw — invariant 4's shape, and the same reason
-          // `drawHitPoints` needs no guard either.
+          // `drawHitPoints` needs no guard either. The damage box is built on
+          // the same argument and inside the same branch — see `damageField`.
+          // `token` is narrowed alongside `hp` only because TypeScript cannot
+          // see through the optional chain above.
           const hp = token?.hp ?? null;
-          if (hp !== null) {
+          if (hp !== null && token !== undefined) {
             const filled = hpFilled(hp);
 
             const total = document.createElement('span');
             total.className = 'init-hp-text';
             total.textContent = `${hp.current}/${hp.max}`;
-            line.append(total);
+            line.append(total, damageField(token, hp, send));
 
             const track = document.createElement('span');
             track.className = 'init-hp';
@@ -333,6 +441,12 @@ export function createPanel(
           return row;
         }),
       );
+
+      if (typingIn !== null) {
+        ui.list
+          .querySelector<HTMLInputElement>(`.init-damage[data-hp-for="${CSS.escape(typingIn)}"]`)
+          ?.focus();
+      }
 
       if (isDm) {
         // A token built on the next map is not in this fight — the server

@@ -15,15 +15,18 @@
     {
       "id": "41f99d3db5244b9386f13b1061e00833",
       "name": "The Harvest Saint",
-      "x": 14.0,
-      "y": 13.0,
+      "x": 13.0,
+      "y": 11.0,
       "owner": {
         "kind": "dm"
       },
       "img": "/uploads/portrait-the-saint-7aecaf90.png",
       "size": 2.0,
-      "hidden": false,
-      "hp": null,
+      "hidden": true,
+      "hp": {
+        "current": 44,
+        "max": 100
+      },
       "staged_pos": null,
       "staged_only": false
     },
@@ -44,8 +47,17 @@
     }
   ],
   "initiative": {
-    "entries": [],
-    "current": null,
+    "entries": [
+      {
+        "token": "41f99d3db5244b9386f13b1061e00833",
+        "value": 23
+      },
+      {
+        "token": "e0958f05ada5480fba801100e289229e",
+        "value": 1
+      }
+    ],
+    "current": "41f99d3db5244b9386f13b1061e00833",
     "round": 1
   },
   "shapes": [],
@@ -69,24 +81,6 @@
   "show_cursors": true,
   "show_dm_cursor": true,
   "calibrations": {
-    "/assets/map.png": {
-      "grid_px": 64.0,
-      "offset_x": 0.0,
-      "offset_y": 0.0,
-      "grid_color": "#ffffff52",
-      "play_area": null,
-      "fog": false,
-      "vision_ft": 60.0,
-      "lighting": "dynamic",
-      "walls": [],
-      "overrides": {
-        "x": 0,
-        "y": 0,
-        "w": 0,
-        "h": 0,
-        "cells": ""
-      }
-    },
     "/uploads/the-field-551e4c12.png": {
       "grid_px": 44.785713,
       "offset_x": 0.0,
@@ -104,9 +98,34 @@
         "h": 0,
         "cells": ""
       }
+    },
+    "/assets/map.png": {
+      "grid_px": 64.0,
+      "offset_x": 0.0,
+      "offset_y": 0.0,
+      "grid_color": "#ffffff52",
+      "play_area": null,
+      "fog": false,
+      "vision_ft": 60.0,
+      "lighting": "dynamic",
+      "walls": [],
+      "overrides": {
+        "x": 0,
+        "y": 0,
+        "w": 0,
+        "h": 0,
+        "cells": ""
+      }
     }
   },
-  "notes": [],
+  "notes": [
+    {
+      "by": {
+        "kind": "dm"
+      },
+      "text": "noted"
+    }
+  ],
   "colours": {},
   "backdrop": null
 }

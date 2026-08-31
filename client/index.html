@@ -953,6 +953,41 @@
         font-variant-numeric: tabular-nums;
       }
 
+      /* The DM's damage box: type `-12`, Enter, the monster is twelve down.
+         Never built on a player's panel, because their copy of the token
+         carries no hit points — see `damageField`.
+
+         Styled as `.init-value-edit` is, and for its reason: a combat panel
+         that looks like a form is harder to read at a glance, and glancing at
+         it is all it is for. So it reads as blank space until it is pointed at.
+
+         It sits on the name line rather than beside the bar below because
+         height is the scarce axis in a twelve-row panel — which is what the
+         fold exists for — and the name already ellipses. */
+      .init-damage {
+        flex: none;
+        width: 34px;
+        padding: 0 2px;
+        border: 1px solid transparent;
+        border-radius: 3px;
+        background: transparent;
+        color: inherit;
+        font: inherit;
+        font-size: 11px;
+        font-variant-numeric: tabular-nums;
+        text-align: right;
+      }
+
+      .init-damage::placeholder {
+        color: #5a6472;
+      }
+
+      .init-damage:hover,
+      .init-damage:focus {
+        border-color: #2b3038;
+        background: #171a1f;
+      }
+
       .init-hp {
         display: block;
         height: 4px;
