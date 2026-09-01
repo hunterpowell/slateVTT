@@ -1,6 +1,11 @@
 node_modules/
 client/dist/
 client/testbuild/
+
+# The build stamp Deploy-Slate.ps1 writes for the status page to report. Not
+# under client/, because that tree is served statically -- see
+# client/status/README.md.
+/build.json
 target/
 
 # The saved room. It is the group's game, not source.

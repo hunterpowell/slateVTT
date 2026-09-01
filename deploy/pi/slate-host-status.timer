@@ -1,0 +1,19 @@
+# Every minute. See slate-host-status.service.
+#
+# The page treats a reading older than five minutes as an alarm, so this has
+# four misses of headroom before it starts shouting -- deliberate, because a
+# status page that cries wolf gets ignored, which is the only way it can fail.
+
+[Unit]
+Description=Collect host vitals for the Slate status page every minute
+
+[Timer]
+# After the boot storm, so the first reading is not of a machine still starting.
+OnBootSec=30s
+OnUnitActiveSec=60s
+AccuracySec=5s
+# So a reading exists the moment the timer is enabled rather than a minute later.
+Persistent=true
+
+[Install]
+WantedBy=timers.target

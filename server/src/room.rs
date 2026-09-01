@@ -8,7 +8,7 @@
 
 use std::cmp::Ordering;
 use std::collections::{HashMap, HashSet, VecDeque};
-use std::time::Duration;
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use tokio::sync::{mpsc, oneshot};
 use tokio::time::{Instant, sleep_until};
@@ -266,6 +266,58 @@ pub enum RoomCmd {
     Shutdown {
         done: oneshot::Sender<bool>,
     },
+    /// Report how the room is doing, for `/api/status`. Answers and carries on;
+    /// the only command that asks the room a question and changes nothing.
+    ///
+    /// It rides the same `mpsc` as every socket's traffic on purpose. A status
+    /// answered off to one side would be describing a room it could not see —
+    /// and the queue is the honest measure of a wedged actor, which is what the
+    /// caller's timeout is there to notice.
+    Status {
+        done: oneshot::Sender<RoomStatus>,
+    },
+}
+
+/// One room, as the status page sees it.
+///
+/// Deliberately small. This is an ops window, not a second board: it answers
+/// "is the room alive, is anyone in it, is anything unwritten", and questions
+/// about *play* — whose turn it is, which map is up — belong on the board,
+/// where the answer can be acted on.
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct RoomStatus {
+    /// Straight from `RoomState::here` — the same answer `ServerMsg::Presence`
+    /// carries, deduplicated and DM-first. Not a second implementation of it.
+    pub here: Vec<Owner>,
+    /// Sockets rather than people, which is the one thing `here` cannot say: a
+    /// table of three with five tabs open is worth being able to see.
+    pub sockets: usize,
+    pub tokens: usize,
+    /// Whether a change is sitting inside the save debounce. It lives in `run`
+    /// rather than on `RoomState`, which is why this struct is finished there.
+    pub unsaved: bool,
+    /// Whether the last write to disk *failed*. **The whole reason this is a
+    /// separate field from `unsaved`**: a save that keeps failing leaves
+    /// `save_at` set exactly as a change waiting out the debounce does, so on
+    /// the deadline alone a dying card is indistinguishable from a healthy
+    /// write two seconds old. This is the one that means the group is about to
+    /// lose an evening.
+    pub saves_failing: bool,
+    /// When the room was last written to disk successfully, or `None` if it has
+    /// not been since this process started — which a quiet room is entitled to,
+    /// so it is not on its own a problem. It is what says how much is at risk
+    /// once `saves_failing` is set.
+    pub last_saved_unix: Option<u64>,
+}
+
+/// How a room's writes to disk are going.
+///
+/// Lives in `run` beside `save_at`, because that is where `flush` is called
+/// from and this is the half of the story the deadline cannot tell.
+#[derive(Debug, Default)]
+struct SaveHealth {
+    failing: bool,
+    last_ok_unix: Option<u64>,
 }
 
 #[derive(Clone)]
@@ -287,6 +339,21 @@ impl RoomHandle {
             return flushed.await.unwrap_or(false);
         }
         false
+    }
+
+    /// How the room is doing, or `None` if it did not answer.
+    ///
+    /// `shutdown`'s shape, with one difference that matters: **the caller must
+    /// bound this in time.** A room whose task is wedged never drains its
+    /// mailbox, so this future never completes — and the moment a status page
+    /// most needs an answer is exactly the moment it would hang waiting for
+    /// one. `None` is "did not answer", which is itself a status.
+    pub async fn status(&self) -> Option<RoomStatus> {
+        let (done, reply) = oneshot::channel();
+        if self.tx.send(RoomCmd::Status { done }).await.is_ok() {
+            return reply.await.ok();
+        }
+        None
     }
 }
 
@@ -1026,6 +1093,7 @@ async fn run(mut state: RoomState, mut rx: mpsc::Receiver<RoomCmd>, store: Store
     // the save off indefinitely, whereas a fixed deadline caps how stale the
     // file can get no matter how much traffic arrives.
     let mut save_at: Option<Instant> = None;
+    let mut health = SaveHealth::default();
 
     loop {
         // `Receiver::recv` is cancel-safe, so losing the race to the timer
@@ -1035,7 +1103,7 @@ async fn run(mut state: RoomState, mut rx: mpsc::Receiver<RoomCmd>, store: Store
             Some(at) => tokio::select! {
                 cmd = rx.recv() => cmd,
                 _ = sleep_until(at) => {
-                    save_at = flush(&state, &store).await;
+                    save_at = flush(&state, &store, &mut health).await;
                     continue;
                 }
             },
@@ -1061,12 +1129,20 @@ async fn run(mut state: RoomState, mut rx: mpsc::Receiver<RoomCmd>, store: Store
                     // A shutdown is allowed to wait for the disk. A failed save
                     // is still logged by `flush`; there is no useful retry once
                     // the process has been asked to stop.
-                    flush(&state, &store).await.is_none()
+                    flush(&state, &store, &mut health).await.is_none()
                 } else {
                     true
                 };
                 let _ = done.send(saved);
                 return;
+            }
+            RoomCmd::Status { done } => {
+                // `save_at` is the whole of the dirty flag and it lives here, so
+                // the struct is finished here rather than purely on `RoomState`.
+                let _ = done.send(state.status(save_at.is_some(), &health));
+                // Asking a room a question does not change it — the same
+                // sentence the `Disconnected` arm above is written around.
+                false
             }
         };
 
@@ -1080,21 +1156,34 @@ async fn run(mut state: RoomState, mut rx: mpsc::Receiver<RoomCmd>, store: Store
     // The room outlives every client, so reaching here means the process is on
     // its way down. Anything still inside the debounce window gets a last write.
     if save_at.is_some() {
-        flush(&state, &store).await;
+        flush(&state, &store, &mut health).await;
     }
 }
 
 /// Writes the room out and returns the next deadline: `None` once it is safely
 /// on disk, or a retry if it is not. Clearing the flag on a failed write would
 /// throw the change away silently, and a disk is rarely full for long.
-async fn flush(state: &RoomState, store: &Store) -> Option<Instant> {
+async fn flush(state: &RoomState, store: &Store, health: &mut SaveHealth) -> Option<Instant> {
     match store.save(&state.to_saved()).await {
         Ok(()) => {
             debug!(path = %store.path().display(), "room saved");
+            health.failing = false;
+            // Wall clock rather than the `Instant` above, because this one is
+            // shown to a person and an `Instant` cannot be formatted. A clock
+            // that has never been set reads as the epoch rather than failing.
+            health.last_ok_unix = SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .map(|since| since.as_secs())
+                .ok();
             None
         }
         Err(err) => {
             error!(%err, path = %store.path().display(), "could not save the room; will retry");
+            // Set until a write succeeds, not just for this attempt: the retry
+            // loop is silent by design, and something has to outlive one pass
+            // of it or the status page would only ever catch the failure by
+            // being asked in the wrong two-second window.
+            health.failing = true;
             Some(Instant::now() + SAVE_DEBOUNCE)
         }
     }
@@ -2122,6 +2211,25 @@ impl RoomState {
             }
         }
         here
+    }
+
+    /// How this room is doing, for `/api/status`.
+    ///
+    /// `unsaved` is passed in because the debounce deadline lives in `run` and
+    /// not on the state. Everything else is counted off `&self` here, and
+    /// `here()` is *called* rather than reimplemented: the status page and the
+    /// presence strip must never be able to disagree about who is connected.
+    fn status(&self, unsaved: bool, health: &SaveHealth) -> RoomStatus {
+        RoomStatus {
+            here: self.here(),
+            // Both tables, because a socket that has not said who it is yet is
+            // still a socket the box is holding open.
+            sockets: self.clients.len() + self.pending.len(),
+            tokens: self.tokens.len(),
+            unsaved,
+            saves_failing: health.failing,
+            last_saved_unix: health.last_ok_unix,
+        }
     }
 
     /// Re-sends the roster to everyone still on the picker, so a slot taken

@@ -147,6 +147,9 @@ sudo chmod 750 /var/lib/slate
 ```bash
 sudo mkdir -p /etc/slate
 SECRET=$(openssl rand -hex 16)
+# A second, separate credential: it reads the status page and nothing else, so a
+# display left on a shelf does not hold the key to the map library.
+STATUS_KEY=$(openssl rand -hex 16)
 sudo tee /etc/slate/slate.env >/dev/null <<EOF
 SLATE_ADDR=127.0.0.1:3000
 SLATE_CLIENT_DIR=/opt/slate/client
@@ -156,12 +159,15 @@ SLATE_BACKDROPS=/var/lib/slate/backdrops
 SLATE_STATE=/var/lib/slate/slate-state.json
 SLATE_UPLOADS=/var/lib/slate/uploads
 SLATE_DM_SECRET=$SECRET
+SLATE_STATUS_KEY=$STATUS_KEY
+SLATE_HOST_STATUS=/var/lib/slate/host.json
+SLATE_BUILD_INFO=/opt/slate/build.json
 RUST_LOG=slate_server=info
 EOF
 sudo chmod 600 /etc/slate/slate.env
 ```
 
-Five of those deserve a note:
+Eight of those deserve a note:
 
 - **`SLATE_STATE` names the *primary* room's save file**, which is why it did not have to change
   when Slate gained a second room. Every other room's save is a sibling in the same directory,
@@ -180,6 +186,17 @@ Five of those deserve a note:
   [`Start-Slate.ps1`](../windows/Start-Slate.ps1) enforces on Windows.
 - **`RUST_LOG=slate_server=info`** overrides the `debug` default in `server/src/main.rs`.
   Turning the level down at the source is better than routing debug output somewhere cheap.
+- **`SLATE_STATUS_KEY` is a second credential and deliberately not the first.** It reads
+  `/api/status` and nothing else, so a Kindle or a TRMNL panel left on a shelf does not hold the
+  key to the map library. **Leave it out and `/api/status` is not mounted at all** — the page then
+  answers 404 rather than 403, because an endpoint that says "wrong credential" has announced that
+  it exists. Hex for the same reason `SLATE_DM_SECRET` is: it goes into a URL unencoded.
+- **`SLATE_HOST_STATUS` is written by something else on this box**, never by Slate — the server
+  has no idea what `/sys/class/thermal` is and is not going to learn. See *The host collector*
+  below; without it the status page's host section simply reads "no collector on this machine".
+- **`SLATE_BUILD_INFO` points outside `/opt/slate/client`**, which is served statically. The
+  deploy writes it and `install.sh` places it; it names the running commit, and it is rolled back
+  with the binary so it cannot claim a failed deploy landed.
 
 To read the secret back later, either open that file as root or:
 
@@ -189,6 +206,49 @@ journalctl -u slate | grep "DM link"
 
 Slate logs the DM link on every start. Convenient, and worth knowing the secret is therefore
 sitting in the journal in plaintext.
+
+## 3a. The host collector
+
+The status page's host section — temperature, load, memory, disk, undervoltage, the size of
+`uploads/`, and how many times systemd has restarted Slate on its own — comes from a file this
+writes, not from Slate. That split is deliberate and `client/status/README.md` explains it:
+Slate reports what Slate knows, and a game server that grows a hardware monitor has stopped being a
+game server.
+
+Installed once, by hand, like the service unit itself. **`Deploy-Slate.ps1` does not ship these** —
+they change about as often as `slate.service` does, and a deploy that reinstalled a systemd timer
+every time would be doing something a deploy should not.
+
+From the Windows machine, in the repo:
+
+```powershell
+scp deploy\pi\slate-host-status.sh deploy\pi\slate-host-status.service deploy\pi\slate-host-status.timer hunter@slate.local:~
+```
+
+Then on the Pi:
+
+```bash
+sudo install -m 755 ~/slate-host-status.sh      /usr/local/bin/slate-host-status
+sudo install -m 644 ~/slate-host-status.service /etc/systemd/system/
+sudo install -m 644 ~/slate-host-status.timer   /etc/systemd/system/
+sudo systemctl daemon-reload
+sudo systemctl enable --now slate-host-status.timer
+```
+
+Check it wrote something:
+
+```bash
+systemctl list-timers slate-host-status.timer
+cat /var/lib/slate/host.json
+```
+
+It runs as root because `vcgencmd` wants the video group, and it is its own unit rather than
+anything inside `slate.service` — that one runs as `slate` under `ProtectSystem=strict`, which
+is not a sandbox for reading `/sys`.
+
+**Every reading is stamped with the time it was taken, and that field is the point.** A timer that
+has died leaves a file that still parses and still looks like data. The page treats a reading older
+than five minutes as an alarm, which is four missed runs of headroom.
 
 ## 4. The systemd unit
 

@@ -1,0 +1,19 @@
+# Collects the host vitals the Slate status page shows. Installed once, by hand,
+# alongside slate.service -- see deploy/pi/README.md.
+#
+# Its own unit rather than something inside slate.service, and that is the
+# point: slate.service runs as the `slate` user under ProtectSystem=strict, and
+# reading /sys and running vcgencmd is not what that sandbox is for. Slate reads
+# the file this writes and knows nothing about where it came from.
+
+[Unit]
+Description=Collect host vitals for the Slate status page
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/slate-host-status
+# vcgencmd wants the video group; root is simpler than a group membership for a
+# script that runs for 40ms a minute and writes one file.
+User=root
+Environment=SLATE_HOST_STATUS=/var/lib/slate/host.json
+Environment=SLATE_UPLOADS=/var/lib/slate/uploads

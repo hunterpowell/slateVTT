@@ -216,7 +216,53 @@ if ($SkipBuild) {
         Invoke-Native -Exe 'cargo.exe' -Arguments @('test') -What 'cargo test'
         Invoke-Native -Exe 'cargo.exe' -Arguments @('zigbuild', '--release', '--target', $target) -What "cargo zigbuild --target $target"
     } finally { Pop-Location }
+
 }
+
+# ---------------------------------------------------------------------------
+# 2a. Stamp what is being shipped
+# ---------------------------------------------------------------------------
+
+# What the status page reports as the running build, written here because this
+# is the only machine that knows -- the Pi has no checkout.
+#
+# **Repo root, not client\dist.** Anything under client\ is copied into
+# /opt/slate/client, which is served statically, and this is for /api/status to
+# read rather than for anyone who can reach the port. It is shipped as its own
+# scp to stage/build.json, which is where install.sh looks for it.
+#
+# Outside the -SkipBuild branch on purpose: a reship with a stale stamp beside a
+# fresh binary is the one lie this file exists to prevent. It describes the
+# checkout, which with -SkipBuild is the best answer available.
+Step 'Stamping the build'
+$stamp = Join-Path $repoRoot 'build.json'
+try {
+    Push-Location -LiteralPath $repoRoot
+    try {
+        $sha = (& git.exe rev-parse --short HEAD 2>$null)
+        $branch = (& git.exe rev-parse --abbrev-ref HEAD 2>$null)
+        # Anything in the working tree at all, tracked or not. A deploy from a
+        # dirty tree is exactly the one worth flagging on the page, because the
+        # sha beside it is then not the whole truth.
+        $dirty = [bool] (& git.exe status --porcelain 2>$null)
+    } finally { Pop-Location }
+    $sha = if ($sha) { "$sha".Trim() } else { 'unknown' }
+    $branch = if ($branch) { "$branch".Trim() } else { 'unknown' }
+} catch {
+    Say "could not read git ($($_.Exception.Message)); stamping it unknown"
+    $sha = 'unknown'; $branch = 'unknown'; $dirty = $false
+}
+# Always written, even when git said nothing useful: the upload list below is a
+# fixed table and a missing source there is a failed deploy, so "unknown" is the
+# answer rather than no file.
+$info = [ordered] @{
+    sha        = $sha
+    branch     = $branch
+    dirty      = [bool] $dirty
+    built_unix = [int64] ((Get-Date).ToUniversalTime() - [datetime]'1970-01-01').TotalSeconds
+}
+$info | ConvertTo-Json -Compress | Set-Content -LiteralPath $stamp -Encoding utf8
+Say "stamped $($info.sha)$(if ($info.dirty) { ' (dirty)' })"
 
 # ---------------------------------------------------------------------------
 # 3. Check the artifacts before uploading any of them
@@ -237,6 +283,9 @@ try {
         'client\dist\main.js'
         'client\assets'
         'client\spells\index.html'
+        'client\status\index.html'
+        'client\status\status.js'
+        'build.json'
     )
     foreach ($rel in $needed) {
         $full = Join-Path $repoRoot $rel
@@ -340,6 +389,8 @@ try {
         @{ Local = 'client\dist';                Remote = 'stage/client/';       Recurse = $true  }
         @{ Local = 'client\assets';              Remote = 'stage/client/';       Recurse = $true  }
         @{ Local = 'client\spells';              Remote = 'stage/client/';       Recurse = $true  }
+        @{ Local = 'client\status';              Remote = 'stage/client/';       Recurse = $true  }
+        @{ Local = 'build.json';                 Remote = 'stage/build.json';    Recurse = $false }
     )
     # client\src and client\node_modules are deliberately absent: the Pi serves
     # the bundle, not the sources.

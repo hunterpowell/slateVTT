@@ -9,6 +9,7 @@ use std::collections::HashMap;
 use std::path::Path;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use axum::body::Bytes;
 use axum::extract::Request;
@@ -19,6 +20,7 @@ use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
 use axum::{Json, Router};
 use serde::{Deserialize, Serialize};
+use serde_json::{Value, json};
 use tokio::fs;
 use tower_http::services::ServeDir;
 use tracing::{error, info, warn};
@@ -26,7 +28,7 @@ use tracing_subscriber::EnvFilter;
 use uuid::Uuid;
 
 use crate::protocol::ClientId;
-use crate::room::RoomHandle;
+use crate::room::{RoomHandle, RoomStatus};
 
 /// Big enough for a detailed battle map, small enough that a mistyped upload
 /// cannot fill the disk. axum's own default is 2 MB, which most maps exceed.
@@ -51,6 +53,17 @@ const MAX_TOKEN_BYTES: usize = 4 * 1024 * 1024;
 /// worth saying out loud rather than leaving implied.
 pub(crate) const MAX_WS_MESSAGE_BYTES: usize = 128 * 1024;
 const DM_SECRET_HEADER: &str = "x-slate-dm-secret";
+/// Read by `/api/status` only, and never a substitute for the DM secret. A
+/// display pinned to a wall holds this one and nothing else — see
+/// `client/status/README.md`.
+const STATUS_KEY_HEADER: &str = "x-slate-status-key";
+/// How long `/api/status` waits on one room before calling it unresponsive.
+///
+/// **The whole reason this is bounded**: a wedged room actor never drains its
+/// mailbox, and an unbounded wait would hang the status page at exactly the
+/// moment it is the only thing that could tell you why. Generous next to a
+/// healthy room, which answers in microseconds.
+const STATUS_TIMEOUT: Duration = Duration::from_secs(2);
 
 /// Every room's handle, keyed by the id in `room::ROOMS`.
 ///
@@ -75,6 +88,24 @@ struct AppState {
     maps: Arc<Path>,
     portraits: Arc<Path>,
     backdrops: Arc<Path>,
+    /// The status page's own credential, or `None` — in which case
+    /// `/api/status` is **not mounted at all**, which is why this is read
+    /// before the router is built. Deliberately not the DM secret: it buys
+    /// nothing but this one read-only JSON.
+    status_key: Option<Arc<str>>,
+    /// A file some *other* process on the box writes with the host's vitals,
+    /// re-emitted verbatim. The server stays platform-blind — it never learns
+    /// what `/sys/class/thermal` is — and on a machine with no collector the
+    /// section simply reads `null`.
+    host_status: Option<Arc<Path>>,
+    /// The same trick, for what the deploy stamped. Read once at boot because
+    /// unlike the host's vitals it cannot change while the process runs.
+    build: Option<Value>,
+    /// For `uptime_s`, and its wall-clock twin for `started_unix`. An `Instant`
+    /// cannot be formatted and a `SystemTime` jumps when the clock is set, so
+    /// the honest answer needs both.
+    started_at: Instant,
+    started_unix: u64,
 }
 
 /// Which folder a listing or a pick is about.
@@ -285,6 +316,49 @@ async fn main() {
         warn!(%backdrops_dir, "no backdrop library there; the DM can show the board instead");
     }
 
+    // Unset means the status page does not exist on this server: the route is
+    // never mounted, so an unguarded status surface cannot appear by accident
+    // on a dev box. Empty is treated as unset for the same reason — an env file
+    // with `SLATE_STATUS_KEY=` in it is somebody who meant to turn it off.
+    let status_key = std::env::var("SLATE_STATUS_KEY")
+        .ok()
+        .filter(|key| !key.is_empty());
+    let serve_status = status_key.is_some();
+    if serve_status {
+        info!("status page enabled at /status/");
+    }
+
+    // Written by something else on the box — a timer on the Pi — and passed
+    // through untouched. See `client/status/README.md`.
+    let host_status = std::env::var("SLATE_HOST_STATUS")
+        .ok()
+        .filter(|path| !path.is_empty());
+
+    // The same trick for what the deploy stamped, read once because it cannot
+    // change while this process is alive. A missing or broken file is a warning
+    // and a `null` section, never a failure to boot: nothing here is load
+    // bearing, and refusing to start a game server over a build stamp would be
+    // the tail wagging the dog.
+    let build = match std::env::var("SLATE_BUILD_INFO")
+        .ok()
+        .filter(|p| !p.is_empty())
+    {
+        Some(path) => match fs::read_to_string(&path).await {
+            Ok(text) => match serde_json::from_str::<Value>(&text) {
+                Ok(value) => Some(value),
+                Err(err) => {
+                    warn!(%path, %err, "SLATE_BUILD_INFO is not valid JSON; ignoring it");
+                    None
+                }
+            },
+            Err(err) => {
+                warn!(%path, %err, "could not read SLATE_BUILD_INFO; ignoring it");
+                None
+            }
+        },
+        None => None,
+    };
+
     let mut rooms = HashMap::new();
     for (id, name) in room::rooms() {
         let path = save_path(&state_path, id);
@@ -327,6 +401,16 @@ async fn main() {
         maps: Path::new(&maps_dir).into(),
         portraits: Path::new(&portraits_dir).into(),
         backdrops: Path::new(&backdrops_dir).into(),
+        status_key: status_key.map(Arc::from),
+        host_status: host_status.map(|path| Path::new(&path).into()),
+        build,
+        started_at: Instant::now(),
+        // A clock that has never been set reads as the epoch rather than
+        // failing; the page shows what it is given.
+        started_unix: SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map(|d| d.as_secs())
+            .unwrap_or(0),
     };
 
     let app = Router::new()
@@ -374,8 +458,24 @@ async fn main() {
             Router::new()
                 .fallback_service(ServeDir::new(&client_dir).append_index_html_on_directories(true))
                 .layer(middleware::from_fn(always_revalidate)),
-        )
-        .with_state(state);
+        );
+
+    // **Mounted only when there is a key**, so "no key" is a 404 rather than a
+    // 403: an endpoint that answers "wrong credential" is an endpoint that has
+    // announced it exists. It also keeps `/api/rooms` the only route under
+    // `/api` a client can reach without one, which the comment above says is
+    // deliberate and is worth staying true.
+    //
+    // Static `/api/status` outranks `{library}` in axum's router and
+    // `Library::named("status")` is `None` regardless — the same belt and
+    // braces `/api/rooms` has, and the same test covers both.
+    let app = if serve_status {
+        app.route("/api/status", get(status))
+    } else {
+        app
+    };
+
+    let app = app.with_state(state);
 
     // Startup failures are fatal and there is nothing to recover to, so this is
     // the one place a panic is the right answer.
@@ -445,6 +545,128 @@ async fn room_listing() -> Json<Vec<RoomEntry>> {
             .map(|(id, name)| RoomEntry { id, name })
             .collect(),
     )
+}
+
+/// The status page's credential, as a query parameter.
+///
+/// **Accepted in the URL as well as in a header**, which is not laxness: the
+/// eventual reader is a jailbroken Kindle's browser, and a browser loading a
+/// URL cannot set a header. The DM link has put its secret in a query string
+/// since the first commit, so this is existing practice rather than a new
+/// weakening — and what this key unlocks is one read-only JSON document.
+#[derive(Deserialize)]
+struct StatusQuery {
+    key: Option<String>,
+}
+
+/// `is_dm`'s neighbour, and a plain function for the same reason: one route
+/// wants it, and middleware for one route is indirection with nothing to gain.
+///
+/// A `None` key cannot be matched by anything, but that path is unreachable —
+/// the route is not mounted without one. It is written to fail closed anyway,
+/// so that mounting it unconditionally later could not silently open it.
+fn status_allowed(state: &AppState, headers: &HeaderMap, query: &StatusQuery) -> bool {
+    let Some(expected) = state.status_key.as_deref() else {
+        return false;
+    };
+    let header = headers
+        .get(STATUS_KEY_HEADER)
+        .and_then(|value| value.to_str().ok());
+    header == Some(expected) || query.key.as_deref() == Some(expected)
+}
+
+/// How the box is doing, for the status page and for whatever polls it.
+///
+/// **Read-only, and it must stay that way.** A restart button here would need
+/// the DM secret and a much harder argument than "it would be convenient".
+///
+/// The shape is three sections the server knows nothing about the contents of —
+/// `build` and `host` are files somebody else wrote, re-emitted verbatim — and
+/// one it does: the rooms, each asked over its own `mpsc`.
+async fn status(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Query(query): Query<StatusQuery>,
+) -> Response {
+    if !status_allowed(&state, &headers, &query) {
+        warn!("rejected a request with a bad status key");
+        return (StatusCode::FORBIDDEN, "not the status key").into_response();
+    }
+
+    // Every room at once rather than one after another, so a slow room costs
+    // the page its own timeout and not the sum of them. In `room::rooms()`
+    // order — the picker's order — because a status page whose rows moved
+    // between refreshes would be unreadable at a glance, which is the only way
+    // a wall display is ever read.
+    let rooms = futures_util::future::join_all(room::rooms().map(|(id, name)| {
+        let handle = state.rooms.get(id).cloned();
+        async move {
+            let reported = match handle {
+                // `Some(None)` from the timeout and `None` from a closed channel
+                // are the same fact — the room did not answer — so they flatten
+                // into one.
+                Some(handle) => tokio::time::timeout(STATUS_TIMEOUT, handle.status())
+                    .await
+                    .ok()
+                    .flatten(),
+                None => None,
+            };
+            room_status_json(id, name, reported)
+        }
+    }))
+    .await;
+
+    Json(json!({
+        "server": {
+            "version": env!("CARGO_PKG_VERSION"),
+            "started_unix": state.started_unix,
+            "uptime_s": state.started_at.elapsed().as_secs(),
+        },
+        "build": state.build,
+        "rooms": rooms,
+        "host": host_json(state.host_status.as_deref()).await,
+    }))
+    .into_response()
+}
+
+/// One room's row. A room that did not answer still gets a row: **the absence
+/// is the news**, and dropping it would leave the page looking complete.
+fn room_status_json(id: &str, name: &str, reported: Option<RoomStatus>) -> Value {
+    match reported {
+        Some(status) => json!({
+            "id": id,
+            "name": name,
+            "responding": true,
+            "here": status.here,
+            "sockets": status.sockets,
+            "tokens": status.tokens,
+            "unsaved": status.unsaved,
+            "saves_failing": status.saves_failing,
+            "last_saved_unix": status.last_saved_unix,
+        }),
+        None => json!({ "id": id, "name": name, "responding": false }),
+    }
+}
+
+/// The host's vitals, as whatever wrote them left them.
+///
+/// Three outcomes and they are deliberately different. No file configured is
+/// `null` — there is no collector here, which is the ordinary case on Windows.
+/// A file that will not read or will not parse is `{"error": ...}`, because a
+/// collector that has broken must not be indistinguishable from one that was
+/// never installed: the second reads as "nothing to report" and would hide a
+/// dead timer for weeks.
+async fn host_json(path: Option<&Path>) -> Value {
+    let Some(path) = path else {
+        return Value::Null;
+    };
+    match fs::read_to_string(path).await {
+        Ok(text) => match serde_json::from_str::<Value>(&text) {
+            Ok(value) => value,
+            Err(err) => json!({ "error": format!("{} is not valid JSON: {err}", path.display()) }),
+        },
+        Err(err) => json!({ "error": format!("could not read {}: {err}", path.display()) }),
+    }
 }
 
 #[derive(Deserialize)]
@@ -890,6 +1112,147 @@ mod tests {
         // this is belt and braces — but if that ever changed, a `rooms` library
         // would put the room list behind the secret the picker cannot offer.
         assert!(Library::named("rooms").is_none());
+        // `/api/status` is the second static segment under `/api` and wants the
+        // same guarantee for the opposite reason: a `status` library would put
+        // the map folder behind the key a wall display holds.
+        assert!(Library::named("status").is_none());
+    }
+
+    // --- the status page's credential -------------------------------------
+
+    /// Enough of an `AppState` to ask the guard a question. The room table is
+    /// empty on purpose: nothing here reaches an actor.
+    fn app_state(status_key: Option<&str>) -> AppState {
+        AppState {
+            rooms: Arc::new(HashMap::new()),
+            dm_secret: "the-dm-secret".into(),
+            uploads: Path::new("uploads").into(),
+            maps: Path::new("maps").into(),
+            portraits: Path::new("portraits").into(),
+            backdrops: Path::new("backdrops").into(),
+            status_key: status_key.map(Arc::from),
+            host_status: None,
+            build: None,
+            started_at: Instant::now(),
+            started_unix: 0,
+        }
+    }
+
+    fn with_status_header(value: &str) -> HeaderMap {
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            axum::http::HeaderName::from_static(STATUS_KEY_HEADER),
+            axum::http::HeaderValue::from_str(value).expect("a legal header value"),
+        );
+        headers
+    }
+
+    fn query(key: Option<&str>) -> StatusQuery {
+        StatusQuery {
+            key: key.map(str::to_owned),
+        }
+    }
+
+    #[test]
+    fn the_status_key_is_accepted_in_a_header_or_in_the_url() {
+        // Both, and the URL half is not laxness: a Kindle's browser loads a URL
+        // and cannot set a header. TRMNL sends the header.
+        let state = app_state(Some("status-key"));
+        assert!(status_allowed(
+            &state,
+            &with_status_header("status-key"),
+            &query(None)
+        ));
+        assert!(status_allowed(
+            &state,
+            &HeaderMap::new(),
+            &query(Some("status-key"))
+        ));
+    }
+
+    #[test]
+    fn a_wrong_status_key_is_refused_by_either_route_in() {
+        let state = app_state(Some("status-key"));
+        assert!(!status_allowed(
+            &state,
+            &with_status_header("nearly"),
+            &query(None)
+        ));
+        assert!(!status_allowed(&state, &HeaderMap::new(), &query(Some(""))));
+        assert!(!status_allowed(&state, &HeaderMap::new(), &query(None)));
+    }
+
+    #[test]
+    fn the_status_key_and_the_dm_secret_are_not_each_other() {
+        // The whole reason there are two. A display pinned to a wall holds the
+        // status key; if that opened the library routes it would be the DM
+        // secret with extra steps.
+        let state = app_state(Some("status-key"));
+        assert!(!status_allowed(
+            &state,
+            &with_status_header("the-dm-secret"),
+            &query(None)
+        ));
+        assert!(!status_allowed(
+            &state,
+            &HeaderMap::new(),
+            &query(Some("the-dm-secret"))
+        ));
+
+        let mut dm_headers = HeaderMap::new();
+        dm_headers.insert(
+            axum::http::HeaderName::from_static(DM_SECRET_HEADER),
+            axum::http::HeaderValue::from_static("status-key"),
+        );
+        assert!(!is_dm(&state, &dm_headers), "and not the other way round");
+    }
+
+    #[test]
+    fn with_no_key_configured_nothing_gets_in() {
+        // Unreachable in practice — the route is not mounted without a key — but
+        // written to fail closed so that mounting it unconditionally one day
+        // could not silently open it.
+        let state = app_state(None);
+        assert!(!status_allowed(&state, &HeaderMap::new(), &query(None)));
+        assert!(!status_allowed(
+            &state,
+            &with_status_header(""),
+            &query(Some(""))
+        ));
+    }
+
+    // --- what the page is handed ------------------------------------------
+
+    #[test]
+    fn a_room_that_did_not_answer_still_gets_a_row() {
+        // The absence is the news. Dropping the row would leave a page that
+        // looks complete while a room is wedged.
+        let row = room_status_json("campaign", "Campaign", None);
+        assert_eq!(row["id"], "campaign");
+        assert_eq!(row["responding"], false);
+        assert!(
+            row.get("here").is_none(),
+            "nothing to report is not an empty list"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_missing_collector_and_a_broken_one_read_differently() {
+        // No file configured is the ordinary case on a machine with no
+        // collector. A file that will not read has to say so instead: a dead
+        // timer that looked like "nothing to report" would hide for weeks.
+        assert_eq!(host_json(None).await, Value::Null);
+
+        let absent = std::env::temp_dir().join(format!(
+            "slate-no-such-host-{}-{}.json",
+            std::process::id(),
+            Uuid::new_v4().simple()
+        ));
+        let broken = host_json(Some(&absent)).await;
+        assert!(
+            broken["error"].is_string(),
+            "an unreadable file reports an error, not null"
+        );
     }
 
     #[test]

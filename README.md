@@ -81,6 +81,9 @@ for local use:
 | `SLATE_UPLOADS`    | `uploads`        | Directory for DM-uploaded map images          |
 | `SLATE_MAPS`       | `../maps`        | Map library the DM picks from. Never served directly — a pick is copied into `SLATE_UPLOADS` |
 | `SLATE_PORTRAITS`  | `../portraits`   | Token-art library, the same way. DM-only to list or pick from |
+| `SLATE_STATUS_KEY` | unset            | Enables `/api/status` and the `/status/` page. **Unset means the route is not mounted at all** — see [client/status/README.md](client/status/README.md) |
+| `SLATE_HOST_STATUS` | unset           | A JSON file some *other* process writes with the host's vitals, re-emitted verbatim by `/api/status` |
+| `SLATE_BUILD_INFO` | unset            | A JSON file the deploy writes naming the running build, read once at boot |
 
 The player roster (currently Cleodara, Saelyn, Torrin, Captain Bronzebeard, Thornwhistle
 Fernbark and Ignacio) is a constant in [server/src/room.rs](server/src/room.rs), not runtime
@@ -161,6 +164,7 @@ screen and which token is standing on a given square.
 | `drive-backdrop.mjs` | A picture in front of the table, and the board being the same board when it comes down | both     |
 | `drive-library.mjs` | Adding an image to a library and removing it again — the one driver whose subject is the disk | DM       |
 | `drive-rooms.mjs`  | Two rooms on one server — the picker, and one board's tokens being absent from the other | both     |
+| `drive-status.mjs` | The status page — its three states, that it fits an 800×480 panel, and that a join shows up on it | both     |
 | `drive-mirror.mjs` | Player view — the DM's own board redrawn as the table's, and put down again | DM       |
 
 The ones marked *both* open two browsers at once, and that is the point of them: almost everything
@@ -189,12 +193,18 @@ are exactly what is written below:
 
 ```sh
 cd server
-SLATE_DM_SECRET=test-secret SLATE_STATE=scratch.json cargo run
+SLATE_DM_SECRET=test-secret SLATE_STATUS_KEY=test-status SLATE_STATE=scratch.json cargo run
 
 # elsewhere — the arguments below are the defaults, so bare `node tools/…` does the same
 node tools/drive-ui.mjs     http://127.0.0.1:3000 test-secret
 node tools/drive-player.mjs http://127.0.0.1:3000
 ```
+
+`SLATE_STATUS_KEY` is there for `drive-status.mjs` alone: without it `/api/status` is not mounted
+and that driver fails on a 404, which is the feature working rather than the driver being broken.
+Every other driver ignores it. It does *not* also want `SLATE_HOST_STATUS` or `SLATE_BUILD_INFO`
+— those name files written outside this repo, so their sections have a legitimate empty state and
+the driver asserts whichever one it finds.
 
 **Every driver appends `?room=campaign` to the URL it opens**, because a page that names no room
 shows the room picker and there is no board behind it to click. That is the whole of what

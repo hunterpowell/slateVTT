@@ -106,6 +106,16 @@ clients on a 1GB board — so this buys availability and not headroom.
 The procedure lives in `deploy/pi/README.md`, which also covers backups of `/var/lib/slate`;
 `deploy/windows/` still hosts a session from a PC and is kept for a game away from home.
 
+**How the box is doing is `/status/`, and it is not part of Slate.** A static page and one
+read-only `/api/status`, behind `SLATE_STATUS_KEY` — **a second credential, not the DM secret**,
+so a display on a shelf cannot reach the map library, and **unset means the route is not mounted at
+all**. It reports the rooms (asked over each actor's own `mpsc`, with a **timeout**, because the
+moment it matters is the moment a wedged room would hang it), the process, and two files *somebody
+else* wrote: the host's vitals from a systemd timer and the running commit from the deploy. **Slate
+reports only what Slate knows** — it never learns what `/sys/class/thermal` is, and a monitoring
+feature inside the room actor is the scope creep this refuses. Read-only, and a control on it would
+need a much harder argument. See `client/status/README.md`.
+
 ## Architecture
 
 ### Room actor

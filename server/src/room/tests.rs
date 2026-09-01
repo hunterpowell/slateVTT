@@ -532,6 +532,7 @@ mod notes;
 mod persistence;
 mod presence;
 mod rooms;
+mod status;
 mod tokens;
 mod undo;
 mod walls;

@@ -26,7 +26,7 @@ Do not work ahead. Each milestone should run and be usable before starting the n
 6. Map upload and grid calibration UI.
 7. Package for Windows session hosting and deploy behind a Cloudflare Tunnel.
 
-**Everything through 28 is built, and so are 30 through 36; 29 is not.** 25, 26 and 34 were
+**Everything through 28 is built, and so are 30 through 37; 29 is not.** 25, 26 and 34 were
 never planned and are out of order for the reasons their own entries give. 33 is *Multi-room*, which was
 unscheduled until a Halloween one-shot became the second room it was waiting for. Everything from 8 on was planned after the original
 seven; 17 and 18 were workshopped after 16 landed, 19–24 after 18, and 27–29 on 2026-08-18 after 26.
@@ -1519,6 +1519,72 @@ and 28 also overturned something *its own* design section said, which its entry 
     one meant to have none. The token panel deliberately keeps its fields after a create — six
     goblins is six clicks — so a total typed for the first creature was still sitting there for the
     second, and the check that a row without hit points has no box passed nothing and failed loudly.
+
+37. **Done**, on 2026-08-31. The status page — `/status/`, so "is the Pi alive, is anyone in
+    there, did my deploy land, is the card full" stops being `ssh` and `journalctl`. See
+    `client/status/README.md`.
+
+    **It is `/spells/`'s shape, not a feature of Slate**: a static page importing nothing from
+    `client/src/`, no esbuild entry, no room state — and unlike the spell index it has no anchor
+    on the board either, because nobody at the table wants a link to the server's temperature
+    mid-combat. The coupling is one route and one `RoomCmd` variant.
+
+    Four things are worth keeping.
+
+    **The interim and the endgame are one artifact.** It is a window on the Windows machine now and
+    a jailbroken Kindle or a TRMNL panel later, and designing for the second is what shaped the
+    first: TRMNL polls a URL, so JSON at a guarded URL is the format and the page is a *client* of
+    the same endpoint; a Kindle browser cannot set a header, so the key is accepted as `?key=`
+    too; and both are 1-bit, so the layout is black on white with inversion as its only alarm and
+    **fits 800×480 without scrolling**, because a panel that cannot scroll makes content past the
+    fold content that does not exist. `drive-status.mjs` asserts that fit, which is exactly the
+    sort of thing only a browser can see.
+
+    **A wedged room must not hang the page.** The status rides each room's own `mpsc` — the same
+    queue a socket uses, deliberately, because an answer produced off to one side would describe a
+    room it could not see. That makes the wait unbounded by construction, so `RoomHandle::status`
+    returns `Option` and the caller wraps it in a two-second timeout. **The moment the page is
+    worth having is the moment the naive version would hang**, and a room that misses the timeout
+    still gets a row saying so: the absence is the news, and dropping it would leave a page that
+    looked complete.
+
+    **Slate reports only what Slate knows.** The host's temperature and the running commit arrive as
+    two files *somebody else* wrote — a systemd timer and the deploy — which the server reads and
+    re-emits verbatim. It never learns what `/sys/class/thermal` is. That is what keeps a
+    monitoring feature out of the room actor, keeps the handler testable on Windows, and makes the
+    absent case honest: both sections read `null` rather than zero. The one refinement the build
+    added is that "no file configured" and "the file will not parse" are *different* answers, because
+    a collector that has died must not be indistinguishable from one never installed.
+
+    **A second credential, and no key means no route.** `SLATE_STATUS_KEY` is not the DM secret —
+    a display on a shelf must not hold the key to the map library, and both directions are tested.
+    Unset, `/api/status` is not mounted at all, so an unconfigured server answers 404 rather than
+    403: an endpoint that says "wrong credential" has announced that it exists. `/api/rooms` stays
+    the only route under `/api` reachable without one.
+
+    Two things the build corrected. The build stamp had to be **rolled back with the binary it
+    names** — one left pointing at the commit that failed would have the page state, confidently,
+    that a rolled-back deploy had landed, which is the exact question it exists to answer. And the
+    host reading had to be **stamped with the time it was taken**: a timer that has died leaves a
+    file that still parses and still looks like data, so age is the only thing that can catch it.
+
+    **A third correction came from using it, and it is the same mistake in a third place.** The
+    first cut reported `unsaved` off `save_at.is_some()` alone — but that deadline is `Some`
+    both while a change waits out the debounce *and* while a write is failing and retrying, so a
+    dying SD card rendered as a healthy write two seconds old. `saves_failing` and
+    `last_saved_unix` separate them, and the flag is held until a write succeeds rather than for
+    one attempt, because the retry loop is otherwise silent apart from an `error!` nobody reads.
+    Generalise it as: **a field that is true for two unrelated reasons is not a status, it is a
+    coincidence** — and the fix was also to stop inverting `pending`, since an alarm that fires on
+    the ordinary case is one you learn to ignore.
+
+    The collector later grew two more readings for failures Slate cannot see at all — systemd's
+    `NRestarts`, because `Restart=always` makes a crash invisible, and the size of `uploads/`,
+    which only ever grows. Both were a line of shell and no Rust, which is the property worth
+    keeping: **anything about the box is a line in the collector; only questions about the rooms
+    cost a binary.** The restart count also found a real ordering bug — its card was built *after*
+    the alarm strip had been rendered, so it inverted a number on screen while the bar still read
+    `OK`. Every card is now built before the verdict is decided.
 
 ### The right dock
 

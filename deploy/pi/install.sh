@@ -66,6 +66,13 @@ rollback() {
         mv -f "$OPT/bin/slate-server" "$OPT/bin/slate-server.failed" 2>/dev/null || true
         mv -f "$OPT/bin/slate-server.old" "$OPT/bin/slate-server"
     fi
+    # The build stamp goes back with the binary it names. One left pointing at
+    # the commit that failed would have the status page state, confidently,
+    # that a rolled-back deploy had landed -- which is the exact question the
+    # stamp exists to answer.
+    if [ -f "$OPT/build.json.old" ]; then
+        mv -f "$OPT/build.json.old" "$OPT/build.json"
+    fi
 
     if systemctl start slate 2>/dev/null; then
         printf '  the previous build is running again\n' >&2
@@ -140,8 +147,18 @@ step "Staging the new build into $OPT"
 
 rm -rf "$OPT/client.new"
 rm -f  "$OPT/bin/slate-server.new"
+rm -f  "$OPT/build.json.new"
 
 install -o root -g root -m 755 "$BIN" "$OPT/bin/slate-server.new"
+
+# What the status page reports as the running build. Kept *outside* client/,
+# which is served statically: this is for the status endpoint to read, not for
+# anyone who can reach the port. Optional -- an older Deploy-Slate.ps1 stages
+# none, and the server reads a missing file as "no build stamp" and boots.
+if [ -s "$STAGE/build.json" ]; then
+    install -o root -g root -m 644 "$STAGE/build.json" "$OPT/build.json.new"
+    say "build stamp staged"
+fi
 
 mkdir -p "$OPT/client.new"
 cp -r "$STAGE/client/." "$OPT/client.new/"
@@ -152,7 +169,7 @@ chmod -R u+w "$OPT/client.new"
 
 # Prove the copy arrived rather than trusting cp's exit code. Same list as the
 # preflight, one directory later.
-for f in index.html dist/main.js spells/index.html; do
+for f in index.html dist/main.js spells/index.html status/index.html status/status.js; do
     [ -s "$OPT/client.new/$f" ] || die "the copy into $OPT/client.new is missing $f"
 done
 [ -d "$OPT/client.new/assets" ] || die "the copy into $OPT/client.new is missing assets/"
@@ -162,11 +179,11 @@ done
 # one deploy typo that matters beyond tidiness. Refuse it here, where refusing
 # is still free.
 unexpected=$(find "$OPT/client.new" -maxdepth 1 -mindepth 1 \
-    ! -name index.html ! -name dist ! -name assets ! -name spells -printf '%f\n')
+    ! -name index.html ! -name dist ! -name assets ! -name spells ! -name status -printf '%f\n')
 if [ -n "$unexpected" ]; then
     die "unexpected entries in the staged client tree, which is served statically: $(echo "$unexpected" | tr '\n' ' ')"
 fi
-say "client tree holds exactly index.html, dist, assets and spells"
+say "client tree holds exactly index.html, dist, assets, spells and status"
 
 say "new tree built; nothing live has been touched yet"
 
@@ -188,6 +205,10 @@ cp -p "$OPT/bin/slate-server" "$OPT/bin/slate-server.old"
 mv    "$OPT/client" "$OPT/client.old"
 mv    "$OPT/client.new" "$OPT/client"
 mv -f "$OPT/bin/slate-server.new" "$OPT/bin/slate-server"
+if [ -f "$OPT/build.json.new" ]; then
+    [ -f "$OPT/build.json" ] && cp -p "$OPT/build.json" "$OPT/build.json.old"
+    mv -f "$OPT/build.json.new" "$OPT/build.json"
+fi
 
 say "swapped; the previous build is at client.old and bin/slate-server.old"
 
@@ -208,8 +229,13 @@ for attempt in $(seq 1 20); do
     # own copy ran. A 404 here is the missed client/spells, and it looks fine on
     # the build machine, so it is worth a rollback rather than a warning.
     curl -fsS -o /dev/null --max-time 3 "http://$ADDR/spells/" || continue
+    # And the status page, for the same reason and with the same failure mode:
+    # its folder is outside the bundle too, so it goes missing the same way.
+    # The page itself is static and needs no key -- what the key guards is
+    # /api/status, which this deliberately does not call.
+    curl -fsS -o /dev/null --max-time 3 "http://$ADDR/status/" || continue
     ok=1
-    say "serving after ${attempt}s: / and /spells/ both 200"
+    say "serving after ${attempt}s: /, /spells/ and /status/ all 200"
     break
 done
 
