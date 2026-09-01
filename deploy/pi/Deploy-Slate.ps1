@@ -261,7 +261,15 @@ $info = [ordered] @{
     dirty      = [bool] $dirty
     built_unix = [int64] ((Get-Date).ToUniversalTime() - [datetime]'1970-01-01').TotalSeconds
 }
-$info | ConvertTo-Json -Compress | Set-Content -LiteralPath $stamp -Encoding utf8
+# **No BOM, explicitly.** Windows PowerShell 5.1's `-Encoding utf8` writes one,
+# and a byte order mark in front of `{` is not JSON as far as `serde_json` is
+# concerned -- the stamp parsed fine in every editor and was silently dropped by
+# the server. `WriteAllText` with an explicit encoding is the one form that
+# means the same thing in both PowerShell editions.
+[System.IO.File]::WriteAllText(
+    $stamp,
+    ($info | ConvertTo-Json -Compress),
+    (New-Object System.Text.UTF8Encoding($false)))
 Say "stamped $($info.sha)$(if ($info.dirty) { ' (dirty)' })"
 
 # ---------------------------------------------------------------------------

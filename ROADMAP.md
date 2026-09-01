@@ -1586,6 +1586,16 @@ and 28 also overturned something *its own* design section said, which its entry 
     the alarm strip had been rendered, so it inverted a number on screen while the bar still read
     `OK`. Every card is now built before the verdict is decided.
 
+    The last one only appeared on the real Pi, and it is the most instructive. The build stamp
+    was written by `Set-Content -Encoding utf8`, which on Windows PowerShell 5.1 means **UTF-8
+    with a BOM** — and `serde_json` will not parse a byte order mark before `{`, so a stamp that
+    was correct in every editor arrived as "No build stamp" with one `warn!` nobody was looking
+    at. Fixed at both ends deliberately: the writer names `UTF8Encoding($false)`, and the reader
+    strips the mark, because **a file this server only relays is the wrong place to be strict** —
+    the next one will be written by another tool on another machine. It also says something about
+    the diagnosis: the file was the right size *to the byte* for its contents plus a BOM plus a
+    CRLF, which is what identified it.
+
 ### The right dock
 
 **Built in milestone 23, and 24 put the second tab on it.** `dock.ts` is the strip; the notes were a

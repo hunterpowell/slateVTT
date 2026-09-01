@@ -344,7 +344,7 @@ async fn main() {
         .filter(|p| !p.is_empty())
     {
         Some(path) => match fs::read_to_string(&path).await {
-            Ok(text) => match serde_json::from_str::<Value>(&text) {
+            Ok(text) => match parse_foreign_json(&text) {
                 Ok(value) => Some(value),
                 Err(err) => {
                     warn!(%path, %err, "SLATE_BUILD_INFO is not valid JSON; ignoring it");
@@ -648,6 +648,19 @@ fn room_status_json(id: &str, name: &str, reported: Option<RoomStatus>) -> Value
     }
 }
 
+/// Parse one of the two files this server did not write.
+///
+/// **Tolerates a UTF-8 BOM**, and that is the whole reason it exists rather
+/// than a bare `from_str` at each call site. "Somebody else wrote it" includes
+/// a PowerShell on Windows, whose `Set-Content -Encoding utf8` emits one --
+/// and `serde_json` refuses a byte order mark before `{`, so a stamp that
+/// looked correct in every editor was dropped with one line in the journal.
+/// A file this server merely relays is not the place to be strict about three
+/// bytes every text editor hides.
+fn parse_foreign_json(text: &str) -> Result<Value, serde_json::Error> {
+    serde_json::from_str(text.trim_start_matches('\u{feff}'))
+}
+
 /// The host's vitals, as whatever wrote them left them.
 ///
 /// Three outcomes and they are deliberately different. No file configured is
@@ -661,7 +674,7 @@ async fn host_json(path: Option<&Path>) -> Value {
         return Value::Null;
     };
     match fs::read_to_string(path).await {
-        Ok(text) => match serde_json::from_str::<Value>(&text) {
+        Ok(text) => match parse_foreign_json(&text) {
             Ok(value) => value,
             Err(err) => json!({ "error": format!("{} is not valid JSON: {err}", path.display()) }),
         },
@@ -1234,6 +1247,29 @@ mod tests {
             row.get("here").is_none(),
             "nothing to report is not an empty list"
         );
+    }
+
+    #[tokio::test]
+    async fn a_file_written_by_powershell_still_parses() {
+        // Windows PowerShell 5.1 writes a UTF-8 BOM and calls it utf8. Both of
+        // the files this server relays are written on Windows or by a shell, so
+        // three bytes an editor hides must not be the difference between a
+        // build stamp and a blank card. This is the regression, not a nicety.
+        let path = std::env::temp_dir().join(format!(
+            "slate-bom-{}-{}.json",
+            std::process::id(),
+            Uuid::new_v4().simple()
+        ));
+        std::fs::write(&path, "﻿{\"sha\":\"395e1b6\"}".as_bytes()).expect("write");
+
+        let value = host_json(Some(&path)).await;
+        assert_eq!(
+            value["sha"], "395e1b6",
+            "a byte order mark is not a parse error here"
+        );
+        assert!(value.get("error").is_none());
+
+        let _ = std::fs::remove_file(&path);
     }
 
     #[tokio::test]

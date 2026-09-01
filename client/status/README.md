@@ -129,6 +129,14 @@ that still parses and still looks like data. Age is the only thing that can catc
 older than five minutes is an alarm — four missed runs of headroom, because a status page that cries
 wolf gets ignored, which is the only way one can fail.
 
+**Both relayed files are parsed leniently about one thing: a leading UTF-8 BOM.** Windows
+PowerShell 5.1's `Set-Content -Encoding utf8` writes one and calls it utf8, `serde_json` refuses
+a byte order mark before `{`, and the result was a stamp that read as correct JSON in every editor
+and arrived on the page as "No build stamp". The writer now asks for `UTF8Encoding($false)`
+explicitly, *and* `parse_foreign_json` strips the mark — both, because a file this server merely
+relays is not the place to be strict about three bytes every editor hides, and the next such file
+will be written by some other tool on some other machine.
+
 **The build stamp rolls back with the binary it names.** `install.sh` swaps it in with the rest and
 puts it back on a rollback. A stamp left pointing at the commit that failed would have this page
 state, confidently, that a rolled-back deploy had landed — which is the exact question it exists to
