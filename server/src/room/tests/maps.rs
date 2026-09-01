@@ -19,6 +19,7 @@ fn set_color(color: &str) -> ClientMsg {
         fog: UNFOGGED.0,
         vision_ft: UNFOGGED.1,
         lighting: Lighting::Dynamic,
+        grid_shape: GridShape::Square,
         staged: false,
     }
 }
@@ -34,6 +35,7 @@ fn set_area(area: Option<Rect>) -> ClientMsg {
         fog: UNFOGGED.0,
         vision_ft: UNFOGGED.1,
         lighting: Lighting::Dynamic,
+        grid_shape: GridShape::Square,
         staged: false,
     }
 }
@@ -51,6 +53,7 @@ fn calibrate(url: &str, grid_px: f32, offset: f32, color: &str) -> ClientMsg {
         fog: UNFOGGED.0,
         vision_ft: UNFOGGED.1,
         lighting: Lighting::Dynamic,
+        grid_shape: GridShape::Square,
         staged: false,
     }
 }
@@ -182,6 +185,63 @@ fn how_a_map_is_lit_comes_back_with_its_grid() {
     assert_eq!(state.map.lighting, Lighting::Room);
     assert!(state.map.fog, "and the switch it was remembered beside");
     assert_eq!(state.map.vision_ft, 40.0);
+}
+
+#[test]
+fn what_shape_a_maps_cells_are_comes_back_with_its_grid() {
+    // The isometric town and the square dungeon sit in the same folder, and the
+    // DM should no more have to remember which is which than they do for fog or
+    // lighting. Same table, same rule, and it costs `Prepared` nothing because
+    // the shape is a field of the calibration it already wraps.
+    let mut state = room();
+    let _dm = join_as_dm(&mut state, ClientId(1));
+
+    state.handle(
+        ClientId(1),
+        iso(set_map("/uploads/town.png", 48.0, 0.0, 0.0), 2.0),
+    );
+    state.handle(ClientId(1), set_map("/uploads/cave.png", 64.0, 0.0, 0.0));
+    assert_eq!(
+        state.map.grid_shape,
+        GridShape::Square,
+        "the cave's own, not the town's"
+    );
+
+    // Back to the town, with whatever the client happened to send.
+    state.handle(ClientId(1), set_map("/uploads/town.png", 64.0, 0.0, 0.0));
+    assert_eq!(state.map.grid_shape, GridShape::Iso { ratio: 2.0 });
+    assert_eq!(
+        state.map.grid_px, 48.0,
+        "and the size it was remembered beside"
+    );
+}
+
+#[test]
+fn an_unusable_isometric_ratio_is_refused() {
+    // `grid_px` is bounded and a cell's width is `grid_px * ratio`, so this is
+    // the same bound finished. Zero is the sharp one: it collapses the lattice
+    // to a line, and no point in image pixels resolves against it.
+    let mut state = room();
+    let _dm = join_as_dm(&mut state, ClientId(1));
+
+    for ratio in [0.0, -2.0, 40.0, f32::NAN] {
+        let before = state.map.url.clone();
+        state.handle(
+            ClientId(1),
+            iso(set_map("/uploads/town.png", 48.0, 0.0, 0.0), ratio),
+        );
+        assert_eq!(
+            state.map.url, before,
+            "a ratio of {ratio} should not have loaded a map"
+        );
+    }
+
+    // And the shape the bound exists to allow still goes through.
+    state.handle(
+        ClientId(1),
+        iso(set_map("/uploads/town.png", 48.0, 0.0, 0.0), 2.0),
+    );
+    assert_eq!(state.map.grid_shape, GridShape::Iso { ratio: 2.0 });
 }
 
 #[test]

@@ -23,7 +23,7 @@ use std::collections::{HashMap, HashSet};
 
 use serde::{Deserialize, Serialize};
 
-use crate::protocol::{Lighting, MapInfo, Pos, Px, Rect, ShapeKind, Wall};
+use crate::protocol::{GridShape, Lighting, MapInfo, Pos, Px, Rect, ShapeKind, Wall};
 use crate::room::{MAX_MAP_PX, MAX_SHAPE_CELLS};
 
 /// A cell of the grid, by its integer coordinates. The cell a token at
@@ -329,7 +329,7 @@ pub fn visible_cells(map: &MapInfo, walls: &[Wall], sources: &[Pos]) -> HashSet<
     }
 
     let radius_cells = (map.vision_ft / FEET_PER_CELL).max(0.0);
-    let radius = radius_cells * map.grid_px;
+    let radius = radius_cells * px_per_cell(map);
     let reach = radius_cells.ceil() as i32;
 
     let blockers: Vec<(Px, Px)> = walls
@@ -462,7 +462,7 @@ pub fn lit_cells(map: &MapInfo, walls: &[Wall], sources: &[Pos]) -> HashSet<Cell
     // In cells for the step test and in pixels for the wall cull, which is the
     // raycast's split and is there for its reason.
     let radius_cells = (map.vision_ft / FEET_PER_CELL).max(0.0);
-    let radius = radius_cells * map.grid_px;
+    let radius = radius_cells * px_per_cell(map);
 
     // Every segment, unlike the raycast's list one function up: a door bounds a
     // room whatever it is swung to, and what an open one passes is sight.
@@ -480,7 +480,7 @@ pub fn lit_cells(map: &MapInfo, walls: &[Wall], sources: &[Pos]) -> HashSet<Cell
         // except the first, which starts from wherever the token happens to be.
         let near: Vec<&(Px, Px)> = blockers
             .iter()
-            .filter(|(a, b)| distance_to_segment(source, *a, *b) <= radius + map.grid_px)
+            .filter(|(a, b)| distance_to_segment(source, *a, *b) <= radius + px_per_cell(map))
             .collect();
 
         let start = cell_of(map, source);
@@ -644,28 +644,98 @@ pub fn cell_on_board(map: &MapInfo, cell: Cell) -> bool {
     on_board(map.play_area, cell_centre(map, cell))
 }
 
+/// The two cell axes in image pixels: where `(1, 0)` and `(0, 1)` land.
+///
+/// **The one place `GridShape` is read on this side of the wire.** An isometric
+/// grid is an affine image of a square one, so every question below goes on being
+/// asked of a lattice and none of them learns there is more than one shape — the
+/// same discipline `sight_cells` keeps over `Lighting`. `gridBasis` in
+/// `client/src/scene.ts` is its twin and must agree with it exactly.
+///
+/// The square case is `((grid_px, 0), (0, grid_px))`, which reduces the three
+/// conversions below to the arithmetic they held before there was a basis. That
+/// is the argument that a board saved as squares is untouched by any of this.
+fn basis(map: &MapInfo) -> (Px, Px) {
+    match map.grid_shape {
+        GridShape::Square => (
+            Px {
+                x: map.grid_px,
+                y: 0.0,
+            },
+            Px {
+                x: 0.0,
+                y: map.grid_px,
+            },
+        ),
+        // A diamond `grid_px` tall and `grid_px * ratio` wide, so the two axes
+        // run to its right-hand and left-hand corners. Mirrored about vertical
+        // rather than free, which is what makes one dragged edge enough to
+        // calibrate one — see `docs/maps.md`.
+        GridShape::Iso { ratio } => {
+            let half_w = map.grid_px * ratio / 2.0;
+            let half_h = map.grid_px / 2.0;
+            (
+                Px {
+                    x: half_w,
+                    y: half_h,
+                },
+                Px {
+                    x: -half_w,
+                    y: half_h,
+                },
+            )
+        }
+    }
+}
+
+/// How far one cell of grid distance can reach in image pixels.
+///
+/// The largest singular value of the basis, which is exactly the number the wall
+/// culls below want: a ray of `n` cells cannot travel further than `n * scale`
+/// pixels, whichever direction it is cast. On a square grid it is `grid_px`, so
+/// the culls drop exactly the walls they always did.
+///
+/// Not `|u| + |v|`, which is also safe and is looser — on a square grid that
+/// would be `2 * grid_px` and would quietly halve the culling on every map in
+/// the project.
+fn px_per_cell(map: &MapInfo) -> f32 {
+    let (u, v) = basis(map);
+    let frobenius = u.x * u.x + u.y * u.y + v.x * v.x + v.y * v.y;
+    let det = (u.x * v.y - u.y * v.x).abs();
+    // `frobenius^2 - 4*det^2` is zero for a square grid and non-negative for any
+    // basis; `max(0.0)` is float slop rather than a real case.
+    ((frobenius + (frobenius * frobenius - 4.0 * det * det).max(0.0).sqrt()) / 2.0).sqrt()
+}
+
 /// The cell a point in image pixels falls in.
 pub fn cell_of(map: &MapInfo, at: Px) -> Cell {
+    let (u, v) = basis(map);
+    let det = u.x * v.y - u.y * v.x;
+    // Non-zero: `grid_px` is bounded away from zero and so is an isometric
+    // ratio, which is what `check` refuses a degenerate lattice for.
+    if det == 0.0 {
+        return (0, 0);
+    }
+    let dx = at.x - map.offset_x;
+    let dy = at.y - map.offset_y;
     (
-        ((at.x - map.offset_x) / map.grid_px).floor() as i32,
-        ((at.y - map.offset_y) / map.grid_px).floor() as i32,
+        ((dx * v.y - dy * v.x) / det).floor() as i32,
+        ((dy * u.x - dx * u.y) / det).floor() as i32,
     )
 }
 
 /// The middle of a cell, in image pixels — where every ray in this file points.
 fn cell_centre(map: &MapInfo, cell: Cell) -> Px {
-    Px {
-        x: map.offset_x + (cell.0 as f32 + 0.5) * map.grid_px,
-        y: map.offset_y + (cell.1 as f32 + 0.5) * map.grid_px,
-    }
+    grid_to_px(map, cell.0 as f32 + 0.5, cell.1 as f32 + 0.5)
 }
 
 /// A position in grid units as a point in image pixels. The one conversion
 /// between the two coordinate spaces on this side of the wire.
 pub fn grid_to_px(map: &MapInfo, x: f32, y: f32) -> Px {
+    let (u, v) = basis(map);
     Px {
-        x: map.offset_x + x * map.grid_px,
-        y: map.offset_y + y * map.grid_px,
+        x: map.offset_x + x * u.x + y * v.x,
+        y: map.offset_y + x * u.y + y * v.y,
     }
 }
 
@@ -968,6 +1038,88 @@ mod tests {
             vec![(3, 3), (4, 3), (3, 4), (4, 4)]
         );
         assert_eq!(covered_cells(4.5, 4.5, 3.0).len(), 9);
+    }
+
+    // The lattice itself. Everything below this point asks questions *of* a
+    // grid; these four ask what a grid is, which is the only thing an isometric
+    // map changed on this side of the wire.
+
+    /// A map whose cells are diamonds `grid_px` tall and `grid_px * ratio` wide.
+    fn iso_map(grid_px: f32, ratio: f32) -> MapInfo {
+        MapInfo {
+            grid_px,
+            grid_shape: GridShape::Iso { ratio },
+            ..MapInfo::default()
+        }
+    }
+
+    #[test]
+    fn a_square_basis_is_the_arithmetic_it_replaced() {
+        // The whole argument that no existing board moved. `grid_to_px` used to
+        // be `offset + n * grid_px` written out; if the basis does not reduce to
+        // exactly that, every token on every saved map is somewhere new.
+        let map = MapInfo {
+            grid_px: 70.0,
+            offset_x: 3.0,
+            offset_y: -4.0,
+            ..MapInfo::default()
+        };
+        for (x, y) in [(0.0, 0.0), (3.5, 12.5), (-2.0, 7.25)] {
+            let at = grid_to_px(&map, x, y);
+            assert_eq!((at.x, at.y), (3.0 + x * 70.0, -4.0 + y * 70.0));
+        }
+        assert_eq!(
+            px_per_cell(&map),
+            70.0,
+            "a square cell reaches exactly grid_px, or the wall culls tighten or slacken"
+        );
+    }
+
+    #[test]
+    fn an_isometric_cell_is_as_wide_as_its_ratio_and_as_tall_as_grid_px() {
+        // A diamond with its corners on the axes: one cell along `x` goes right
+        // and down by half of each, and one along `y` goes left and down.
+        let map = iso_map(64.0, 2.0);
+        let origin = grid_to_px(&map, 0.0, 0.0);
+        let right = grid_to_px(&map, 1.0, 0.0);
+        let left = grid_to_px(&map, 0.0, 1.0);
+        assert_eq!((right.x - origin.x, right.y - origin.y), (64.0, 32.0));
+        assert_eq!((left.x - origin.x, left.y - origin.y), (-64.0, 32.0));
+
+        // The diamond the two axes span: 128 across and 64 down, which is what
+        // "twice as wide as it is tall" has to mean for the DM's dragged edge.
+        let far = grid_to_px(&map, 1.0, 1.0);
+        assert_eq!((far.x - origin.x, far.y - origin.y), (0.0, 64.0));
+    }
+
+    #[test]
+    fn a_point_and_the_cell_it_falls_in_agree_on_an_isometric_grid() {
+        // `cell_of` is `grid_to_px` inverted and floored, and it is the pair the
+        // raycast leans on twice per ray. An inverse that is subtly wrong shows
+        // up as fog one cell out, which is hard to see and easy to ship.
+        let map = iso_map(48.0, 2.0);
+        for cell in [(0, 0), (3, 1), (-2, 5), (7, -4)] {
+            let centre = grid_to_px(&map, cell.0 as f32 + 0.5, cell.1 as f32 + 0.5);
+            assert_eq!(cell_of(&map, centre), cell, "the centre of {cell:?}");
+        }
+    }
+
+    #[test]
+    fn nothing_reaches_further_than_a_cell_can() {
+        // `px_per_cell` bounds the wall culls, so it has to be at least as long
+        // as the longest a cell's worth of grid distance can draw in pixels. Both
+        // diagonals of the diamond are that, and the wider one is the answer.
+        let map = iso_map(64.0, 2.0);
+        let scale = px_per_cell(&map);
+        let origin = grid_to_px(&map, 0.0, 0.0);
+        for (x, y) in [(1.0, 0.0), (0.0, 1.0), (0.707, 0.707), (0.707, -0.707)] {
+            let at = grid_to_px(&map, x, y);
+            let reach = hypot(at.x - origin.x, at.y - origin.y);
+            assert!(
+                reach <= scale + 1e-3,
+                "a unit of grid distance drew {reach} pixels against a bound of {scale}"
+            );
+        }
     }
 
     /// A map with the default grid: cell `(c, r)` centres on `(64c + 32, 64r + 32)`.

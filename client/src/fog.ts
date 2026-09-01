@@ -16,7 +16,6 @@
 //
 // Read `docs/fog.md` before changing how any of that works.
 
-import type { GridSpec } from './coords.js';
 import type { WireFog } from './protocol.js';
 
 /** Never seen, and drawn solid. Also every cell outside the packed rectangle. */
@@ -227,12 +226,3 @@ export function darkFill(isDm: boolean): string {
   return `rgba(${FOG_RGB}, ${isDm ? SHADE.dm[DARK] : SHADE.player[DARK]})`;
 }
 
-/** The rectangle the fog canvas covers, in world pixels. */
-export function fogRect(fog: Fog, grid: GridSpec): { x: number; y: number; w: number; h: number } {
-  return {
-    x: grid.offsetX + fog.x * grid.px,
-    y: grid.offsetY + fog.y * grid.px,
-    w: fog.w * grid.px,
-    h: fog.h * grid.px,
-  };
-}

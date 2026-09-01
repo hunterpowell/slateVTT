@@ -41,6 +41,10 @@ export interface WireMapInfo {
    *  the outdoor map keeps line of sight and the dungeon reveals a room at a
    *  time. */
   lighting: Lighting;
+  /** What shape this map's cells are. Remembered per URL with the rest of the
+   *  calibration, so the isometric town and the square dungeon can sit in the
+   *  same folder. `gridBasis` in `scene.ts` is the only place it is read. */
+  grid_shape: WireGridShape;
 }
 
 /**
@@ -52,6 +56,21 @@ export interface WireMapInfo {
  * board reads this.
  */
 export type Lighting = 'dynamic' | 'room';
+
+/**
+ * The shape of one cell — `GridShape` on the server.
+ *
+ * An isometric grid is an affine image of a square one, which is why this is a
+ * descriptor rather than a second coordinate system. `gridBasis` in `scene.ts`
+ * turns it into the two cell axes and is the only place either variant is read;
+ * `fog::basis` in Rust is its twin and the two must agree exactly.
+ *
+ * Flat: a diamond lattice, not a 2.5D renderer. Nothing here has a height.
+ */
+export type WireGridShape =
+  | { kind: 'square' }
+  /** A diamond `grid_px` tall and `grid_px * ratio` wide. */
+  | { kind: 'iso'; ratio: number };
 
 /**
  * What the party can see and what they have explored, packed one character per
@@ -591,6 +610,9 @@ export type ClientMsg =
       fog: boolean;
       vision_ft: number;
       lighting: Lighting;
+      /** What shape the cells are. Here for the reason the three above are: it
+       *  is a field of the map, remembered per URL with the rest of it. */
+      grid_shape: WireGridShape;
       staged: boolean;
     }
   /** Say something, to the table or to one person.

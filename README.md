@@ -166,6 +166,7 @@ screen and which token is standing on a given square.
 | `drive-rooms.mjs`  | Two rooms on one server — the picker, and one board's tokens being absent from the other | both     |
 | `drive-status.mjs` | The status page — its three states, that it fits an 800×480 panel, and that a join shows up on it | both     |
 | `drive-mirror.mjs` | Player view — the DM's own board redrawn as the table's, and put down again | DM       |
+| `drive-isometric.mjs` | Calibrating a map to diamonds, and the table getting the same lattice | both     |
 
 The ones marked *both* open two browsers at once, and that is the point of them: almost everything
 they assert is a **difference** between what two people are holding, which one client cannot see.

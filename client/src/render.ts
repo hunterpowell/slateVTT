@@ -1,11 +1,18 @@
 import type { Box } from './calibrate.js';
-import type { Camera, Rect, Vec2 } from './coords.js';
-import { firstLineAt, gridToWorld, playRect, worldToScreen } from './coords.js';
+import type { Camera, GridSpec, Rect, Vec2 } from './coords.js';
+import {
+  gridBounds,
+  gridToWorld,
+  gridTransform,
+  minSpan,
+  playRect,
+  worldToScreen,
+} from './coords.js';
 import type { Fog } from './fog.js';
-import { darkFill, fogRect } from './fog.js';
+import { darkFill } from './fog.js';
 import type { Identity } from './identity.js';
 import { ownsToken } from './identity.js';
-import { OVERRIDE_ALPHA, overrideRect, paintColor } from './overrides.js';
+import { OVERRIDE_ALPHA, paintColor } from './overrides.js';
 import type { Cursor } from './cursors.js';
 import { cursorAlpha } from './cursors.js';
 import type { Ping } from './pings.js';
@@ -286,7 +293,7 @@ export interface Frame {
    *  this overrides it. */
   colours: Colours;
   /** The DM's in-progress grid reference box. Null for everyone else. */
-  calibration: { box: Box; cells: number } | null;
+  calibration: { box: Box; cells: number; shape: 'square' | 'iso' } | null;
   /** The wall editor's state: whether it is armed, the run being traced, where
    *  the next corner would land, and which segment the pointer is over.
    *
@@ -507,27 +514,51 @@ function drawGrid(
   if (halo === null) return; // fully transparent: the DM turned the grid off
   if (grid.px <= 0 || area.w <= 0 || area.h <= 0) return;
 
-  // Lines fall on `offset + n * px` wherever the play area happens to start, so
-  // moving the board around never shifts the grid off the cells it describes.
-  // The slack on the far edge is float slop — the right and bottom edges are
-  // usually exact multiples, and dropping their line looks like a bug.
-  const right = area.x + area.w;
-  const bottom = area.y + area.h;
-  const slack = grid.px * 1e-6;
+  // Two families of parallel lines: the ones along which `x` is a whole number,
+  // and the ones along which `y` is. On a square grid they come out vertical and
+  // horizontal, which is what this used to say directly; on an isometric one
+  // they lean, and the play area no longer bounds either family axis by axis.
+  //
+  // So the extent is taken in *grid* space — the bounding box of the play area's
+  // four corners, which is what says how many lines of each family reach it —
+  // and the play area does the trimming as a clip. Intersecting each line with
+  // the rectangle by hand would be the same picture and much more arithmetic.
+  // Inward: the whole-numbered lines *inside* the play area. The slack is float
+  // slop, and it is why this is not a bare ceil/floor — an edge landing on an
+  // exact multiple is the common case, and dropping its line looks like a bug.
+  const reach = gridBounds(grid, area);
+  const slack = 1e-6;
+  const fromX = Math.ceil(reach.minX - slack);
+  const toX = Math.floor(reach.maxX + slack);
+  const fromY = Math.ceil(reach.minY - slack);
+  const toY = Math.floor(reach.maxY + slack);
+
+  ctx.save();
+  ctx.beginPath();
+  ctx.rect(area.x, area.y, area.w, area.h);
+  ctx.clip();
 
   ctx.beginPath();
-  for (let x = firstLineAt(area.x, grid.offsetX, grid.px); x <= right + slack; x += grid.px) {
-    ctx.moveTo(x, area.y);
-    ctx.lineTo(x, bottom);
+  for (let x = fromX; x <= toX; x++) {
+    const a = gridToWorld(grid, x, fromY);
+    const b = gridToWorld(grid, x, toY);
+    ctx.moveTo(a.x, a.y);
+    ctx.lineTo(b.x, b.y);
   }
-  for (let y = firstLineAt(area.y, grid.offsetY, grid.px); y <= bottom + slack; y += grid.px) {
-    ctx.moveTo(area.x, y);
-    ctx.lineTo(right, y);
+  for (let y = fromY; y <= toY; y++) {
+    const a = gridToWorld(grid, fromX, y);
+    const b = gridToWorld(grid, toX, y);
+    ctx.moveTo(a.x, a.y);
+    ctx.lineTo(b.x, b.y);
   }
 
   // Both widths stay constant on screen at any zoom: the transform scales world
   // units by cam.zoom, so n/zoom world units is always n CSS pixels.
-  if (grid.px * frame.cam.zoom >= HALO_MIN_CELL_PX) {
+  //
+  // `minSpan` rather than `px`, because what decides whether a halo is legible
+  // is the *shortest* a cell measures on screen — the same number on a square
+  // grid, and the diamond's height on an isometric one.
+  if (minSpan(grid) * frame.cam.zoom >= HALO_MIN_CELL_PX) {
     ctx.strokeStyle = halo;
     ctx.lineWidth = GRID_HALO_WIDTH / frame.cam.zoom;
     ctx.stroke();
@@ -537,6 +568,7 @@ function drawGrid(
   ctx.strokeStyle = board.gridColor;
   ctx.lineWidth = GRID_CORE_WIDTH / frame.cam.zoom;
   ctx.stroke();
+  ctx.restore();
 }
 
 /**
@@ -581,9 +613,6 @@ function drawFog(
   const faint = frame.solo === null && frame.identity.isDm && !frame.playerView;
   if (fog === null || area.w <= 0 || area.h <= 0) return;
 
-  const right = area.x + area.w;
-  const bottom = area.y + area.h;
-
   ctx.save();
   // Clipped so the bands below can be drawn generously without darkening the
   // margin outside the board, which has its own dim and its own reason for it.
@@ -600,13 +629,30 @@ function drawFog(
     return;
   }
 
-  const seen = fogRect(fog, board.grid);
-  const seenRight = seen.x + seen.w;
-  const seenBottom = seen.y + seen.h;
-  ctx.fillRect(area.x, area.y, area.w, seen.y - area.y);
-  ctx.fillRect(area.x, seenBottom, area.w, bottom - seenBottom);
-  ctx.fillRect(area.x, seen.y, seen.x - area.x, seen.h);
-  ctx.fillRect(seenRight, seen.y, right - seenRight, seen.h);
+  // Into grid space, where the packed rectangle *is* its own coordinates and the
+  // canvas of one pixel per cell stretches over it as a plain image. On a sheared
+  // lattice the matrix turns both into the right parallelograms; on a square one
+  // it is the arithmetic this used to do by hand.
+  //
+  // The clip above stays in world space, outside the transform, because it is
+  // the play area and the play area is a rectangle on the image.
+  ctx.transform(...gridTransform(board.grid));
+
+  // The four bands around the explored rectangle. Drawn out to the play area's
+  // own extent and padded a cell, which is generous in both directions on a
+  // sheared grid — the clip is what makes generous free.
+  const reach = gridBounds(board.grid, area);
+  const outLeft = Math.floor(reach.minX) - 1;
+  const outRight = Math.floor(reach.maxX) + 2;
+  const outTop = Math.floor(reach.minY) - 1;
+  const outBottom = Math.floor(reach.maxY) + 2;
+  const seenRight = fog.x + fog.w;
+  const seenBottom = fog.y + fog.h;
+  const across = outRight - outLeft;
+  ctx.fillRect(outLeft, outTop, across, fog.y - outTop);
+  ctx.fillRect(outLeft, seenBottom, across, outBottom - seenBottom);
+  ctx.fillRect(outLeft, fog.y, fog.x - outLeft, fog.h);
+  ctx.fillRect(seenRight, fog.y, outRight - seenRight, fog.h);
 
   // Smoothing left *on*, which is what feathers the fog edge. It is safe to
   // interpolate here only because `fogFromWire` draws each cell as a solid block
@@ -621,7 +667,7 @@ function drawFog(
   // asks who is reading: the four cases — the DM playing, the DM mirroring, the
   // DM checking one creature, and a player — pick the right shade between them
   // from `faint` alone.
-  ctx.drawImage(faint ? fog.shade : (fog.table ?? fog.shade), seen.x, seen.y, seen.w, seen.h);
+  ctx.drawImage(faint ? fog.shade : (fog.table ?? fog.shade), fog.x, fog.y, fog.w, fog.h);
   ctx.restore();
 }
 
@@ -645,12 +691,14 @@ function drawOverrides(ctx: CanvasRenderingContext2D, frame: Frame, board: Board
   const tool = frame.fog;
 
   if (overrides.tint !== null) {
-    const at = overrideRect(overrides, board.grid);
     ctx.save();
+    // In grid space, like the fog above and for the same reason: the tint is one
+    // pixel per cell, and the matrix is what turns those pixels into cells.
+    ctx.transform(...gridTransform(board.grid));
     ctx.globalAlpha = tool?.armed === true ? OVERRIDE_ALPHA.armed : OVERRIDE_ALPHA.idle;
     const smoothing = ctx.imageSmoothingEnabled;
     ctx.imageSmoothingEnabled = false;
-    ctx.drawImage(overrides.tint, at.x, at.y, at.w, at.h);
+    ctx.drawImage(overrides.tint, overrides.x, overrides.y, overrides.w, overrides.h);
     ctx.imageSmoothingEnabled = smoothing;
     ctx.restore();
   }
@@ -661,19 +709,43 @@ function drawOverrides(ctx: CanvasRenderingContext2D, frame: Frame, board: Board
   if (tool === null || tool.preview.length === 0) return;
   const { grid } = board;
   ctx.save();
-  ctx.beginPath();
-  for (let i = 0; i < tool.preview.length; i += 2) {
-    const corner = gridToWorld(grid, tool.preview[i] ?? 0, tool.preview[i + 1] ?? 0);
-    ctx.rect(corner.x, corner.y, grid.px, grid.px);
-  }
+  // In grid space, so a cell is the unit square and the lattice's own shear puts
+  // it where it belongs. `cellPath` builds it; the stroke below is why the
+  // transform is not simply left on — `lineWidth` would be sheared with it.
+  const path = cellPath(grid, tool.preview);
   ctx.globalAlpha = PREVIEW_FILL_ALPHA;
   ctx.fillStyle = paintColor(tool.paint);
-  ctx.fill();
+  ctx.fill(path);
   ctx.globalAlpha = 1;
   ctx.strokeStyle = paintColor(tool.paint);
   ctx.lineWidth = 1 / frame.cam.zoom;
-  ctx.stroke();
+  ctx.stroke(path);
   ctx.restore();
+}
+
+/**
+ * A path covering the given cells, in world coordinates.
+ *
+ * `cells` is a flat `[x, y, x, y, …]`, which is what the fog tool and the shape
+ * coverage rule both hand over. One `Path2D` of many cells and one `fill` is
+ * what makes a filled dungeon room affordable — a `fillRect` each would be a few
+ * thousand calls a frame.
+ *
+ * Built through the grid transform rather than by adding `grid.px` to a corner,
+ * which is the one thing that stopped being true when a cell stopped being a
+ * square: under the matrix, one cell is the unit square at `(cx, cy)` whatever
+ * shape the lattice is. Returned as a `Path2D` so the caller can stroke it
+ * *outside* the transform, where `lineWidth` still means screen pixels.
+ */
+function cellPath(grid: GridSpec, cells: readonly number[]): Path2D {
+  const inGrid = new Path2D();
+  for (let i = 0; i < cells.length; i += 2) {
+    inGrid.rect(cells[i] ?? 0, cells[i + 1] ?? 0, 1, 1);
+  }
+  const path = new Path2D();
+  const [a, b, c, d, e, f] = gridTransform(grid);
+  path.addPath(inGrid, { a, b, c, d, e, f });
+  return path;
 }
 
 /**
@@ -785,16 +857,9 @@ function paintShape(
     // hundred `rect`s into one path is the same picture for one of them.
     const cells = coveredCells(kind, origin, to);
     if (cells.length > 0) {
-      ctx.beginPath();
-      for (let i = 0; i < cells.length; i += 2) {
-        const cx = cells[i] ?? 0;
-        const cy = cells[i + 1] ?? 0;
-        const corner = gridToWorld(grid, cx, cy);
-        ctx.rect(corner.x, corner.y, grid.px, grid.px);
-      }
       ctx.globalAlpha = alpha * fillAlpha;
       ctx.fillStyle = color;
-      ctx.fill();
+      ctx.fill(cellPath(grid, cells));
     }
   }
 
@@ -1096,8 +1161,18 @@ function drawWallRun(
 function drawCalibration(
   ctx: CanvasRenderingContext2D,
   cam: Camera,
-  { box, cells }: { box: Box; cells: number },
+  { box, cells, shape }: { box: Box; cells: number; shape: 'square' | 'iso' },
 ): void {
+  // The isometric gesture is one cell *edge*, so the overlay is the diamond that
+  // edge describes rather than a box of squares. Drawing the square affordance
+  // for it says the DM is selecting a region, which is the wrong thing to aim —
+  // and the whole difficulty of this gesture is aiming it at art whose tiles are
+  // a few dozen pixels across.
+  if (shape === 'iso') {
+    drawCalibrationDiamond(ctx, cam, box);
+    return;
+  }
+
   const left = Math.min(box.x0, box.x1);
   const top = Math.min(box.y0, box.y1);
   const width = Math.abs(box.x1 - box.x0);
@@ -1128,6 +1203,37 @@ function drawCalibration(
   ctx.lineWidth = 2 / cam.zoom;
   ctx.strokeStyle = CAL_EDGE;
   ctx.strokeRect(left, top, width, height);
+}
+
+/**
+ * The one diamond a dragged edge describes, drawn where it was dragged.
+ *
+ * The drag runs from a corner to the next corner round, so it spans half the
+ * cell's width and half its height; the other three edges are that vector
+ * mirrored. Drawn from the *start* of the drag rather than from a bounding box,
+ * because which corner the DM began on is the thing they are aiming.
+ */
+function drawCalibrationDiamond(ctx: CanvasRenderingContext2D, cam: Camera, box: Box): void {
+  const halfW = Math.abs(box.x1 - box.x0);
+  const halfH = Math.abs(box.y1 - box.y0);
+  if (halfW <= 0 || halfH <= 0) return;
+
+  // Anchored so the dragged edge is one of the four, whichever way it went.
+  const top = { x: box.x0, y: Math.min(box.y0, box.y1) };
+  if (box.y1 < box.y0) top.x = box.x1;
+
+  ctx.beginPath();
+  ctx.moveTo(top.x, top.y);
+  ctx.lineTo(top.x + halfW, top.y + halfH);
+  ctx.lineTo(top.x, top.y + halfH * 2);
+  ctx.lineTo(top.x - halfW, top.y + halfH);
+  ctx.closePath();
+
+  ctx.fillStyle = CAL_FILL;
+  ctx.fill();
+  ctx.lineWidth = 2 / cam.zoom;
+  ctx.strokeStyle = CAL_EDGE;
+  ctx.stroke();
 }
 
 /**
@@ -1171,8 +1277,8 @@ function rulerBlocked(scene: Scene, board: Board, ruler: Ruler, at: Vec2): boole
  * and a cell is a thing on the map — it has to sit exactly on the grid at every
  * zoom, which is the opposite requirement from a label that must not shrink.
  *
- * One `beginPath` of `grid.px` rects and one `fill`, the trick `paintShape` and
- * the fog preview both use: a move is at most a few dozen squares, but there can
+ * One `cellPath` and one `fill`, the trick `paintShape` and the fog preview both
+ * use: a move is at most a few dozen squares, but there can
  * be one of these per token in flight and a `fillRect` each would be a few
  * hundred calls a frame for a picture one call draws.
  *
@@ -1209,18 +1315,14 @@ function drawTrails(ctx: CanvasRenderingContext2D, frame: Frame, board: Board): 
     // did it is a precision the hint does not have and does not need.
     const colour = rulerBlocked(scene, board, ruler, at) ? RULER_BLOCKED : TRAIL_FILL;
 
-    ctx.beginPath();
-    for (let i = 0; i < cells.length; i += 2) {
-      const corner = gridToWorld(grid, cells[i] ?? 0, cells[i + 1] ?? 0);
-      ctx.rect(corner.x, corner.y, grid.px, grid.px);
-    }
+    const path = cellPath(grid, cells);
     ctx.fillStyle = colour;
     ctx.strokeStyle = colour;
     ctx.globalAlpha = alpha * TRAIL_FILL_ALPHA;
-    ctx.fill();
+    ctx.fill(path);
     ctx.globalAlpha = alpha * TRAIL_EDGE_ALPHA;
     ctx.lineWidth = 1 / cam.zoom;
-    ctx.stroke();
+    ctx.stroke(path);
   }
   ctx.restore();
 }

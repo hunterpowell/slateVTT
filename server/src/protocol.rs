@@ -143,6 +143,13 @@ pub struct MapInfo {
     /// remembered per URL with them: the outdoor map keeps line of sight and the
     /// dungeon reveals a room at a time.
     pub lighting: Lighting,
+    /// What shape a cell is. Per map and remembered per URL like the rest of the
+    /// calibration — see `docs/maps.md`.
+    ///
+    /// `Square` is the default, which is what keeps a save written before this
+    /// field describing exactly the board it always did. Nothing downstream of
+    /// `fog::basis` knows there is more than one shape.
+    pub grid_shape: GridShape,
 }
 
 /// What "can the party see this cell" means on a given map.
@@ -171,6 +178,34 @@ pub enum Lighting {
     Room,
 }
 
+/// The shape of one cell, and so of the whole lattice.
+///
+/// **An isometric grid is an affine image of a square one**, which is the whole
+/// reason this is one field rather than a second coordinate system. `fog::basis`
+/// turns it into the two cell axes and is the only place either variant is read
+/// on this side of the wire; `gridBasis` in `client/src/scene.ts` is its twin.
+///
+/// A descriptor rather than the four numbers of a basis, because a basis has no
+/// honest `Default` — "square" depends on `grid_px`, which is a sibling field —
+/// and because `MIN_GRID_PX` has something to bound only while `grid_px` still
+/// means the size of a cell.
+///
+/// This is flat: a diamond lattice, not a 2.5D renderer. Nothing here has a
+/// height, and `Wall` is still a segment in image pixels — see `docs/maps.md`.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum GridShape {
+    /// An axis-aligned square of side `grid_px`. The shape every map had before
+    /// there were two, so a save that predates the field describes the same
+    /// board after loading it.
+    #[default]
+    Square,
+    /// A diamond `grid_px` tall and `grid_px * ratio` wide, for isometric art.
+    /// `2.0` is the common projection; the bound is checked on the server, where
+    /// `grid_px` is bounded, so the width cannot escape the same range.
+    Iso { ratio: f32 },
+}
+
 impl Default for MapInfo {
     fn default() -> Self {
         Self {
@@ -195,6 +230,10 @@ impl Default for MapInfo {
             // The mode every map had before there were two, so a save that
             // predates the field describes the same dungeon after loading it.
             lighting: Lighting::Dynamic,
+            // The same argument as `lighting`, and the stronger one: this decides
+            // where every cell *is*, so anything but `Square` here would move the
+            // tokens on a board saved before the field existed.
+            grid_shape: GridShape::Square,
         }
     }
 }
@@ -221,6 +260,7 @@ pub struct Calibration {
     pub fog: bool,
     pub vision_ft: f32,
     pub lighting: Lighting,
+    pub grid_shape: GridShape,
 }
 
 impl Default for Calibration {
@@ -242,6 +282,7 @@ impl From<MapInfo> for Calibration {
             fog: map.fog,
             vision_ft: map.vision_ft,
             lighting: map.lighting,
+            grid_shape: map.grid_shape,
         }
     }
 }
@@ -259,6 +300,7 @@ impl Calibration {
             fog: self.fog,
             vision_ft: self.vision_ft,
             lighting: self.lighting,
+            grid_shape: self.grid_shape,
         }
     }
 }
@@ -1161,6 +1203,11 @@ pub enum ClientMsg {
         fog: bool,
         vision_ft: f32,
         lighting: Lighting,
+        /// What shape this map's cells are. Here for the same reason as the
+        /// three above: it is a field of `MapInfo` and is remembered per URL
+        /// with the rest of the calibration, so it rides on the one command
+        /// that writes a calibration rather than racing a second one.
+        grid_shape: GridShape,
         /// Which slot this is about: the board the table is looking at, or the
         /// one the DM is preparing.
         ///

@@ -412,6 +412,7 @@ fn the_play_area_bounds_what_the_party_can_explore() {
             fog: true,
             vision_ft: 200.0,
             lighting: Lighting::Dynamic,
+            grid_shape: GridShape::Square,
             staged: false,
         },
     );
@@ -731,6 +732,7 @@ fn the_fringe_stops_at_the_edge_of_the_board() {
             fog: true,
             vision_ft: 200.0,
             lighting: Lighting::Dynamic,
+            grid_shape: GridShape::Square,
             staged: false,
         },
     );

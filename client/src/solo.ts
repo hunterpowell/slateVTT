@@ -31,7 +31,7 @@
 // shown, which is the rule `ResetFog` already greys itself for.
 
 import type { Rect, Vec2 } from './coords.js';
-import { gridToWorld, playRect } from './coords.js';
+import { gridBounds, gridToWorld, maxSpan, playRect } from './coords.js';
 import { fillFrom } from './overrides.js';
 import type { WireFog } from './protocol.js';
 import type { Board, Token } from './scene.js';
@@ -79,7 +79,10 @@ export function soloSight(
   // a radius set in feet is a whole number of cells, and the cells sitting
   // exactly on it must land the same way on both sides of the viewer.
   const radiusCells = board.visionFt / FEET_PER_CELL;
-  const radiusPx = radiusCells * grid.px;
+  // `maxSpan` rather than the cell size, because what the pixel radius bounds is
+  // the wall cull, and a ray of `n` cells reaches furthest along the lattice's
+  // longest axis. On a square grid the two are the same number.
+  const radiusPx = radiusCells * maxSpan(grid);
   if (radiusPx <= 0) return null;
 
   // The viewer's centre, which is what the server casts from too. A token's
@@ -89,20 +92,31 @@ export function soloSight(
   // The reach as whole cells, then clipped to the board: nothing past the play
   // area is somewhere the party can be, and a rectangle running off into the
   // void is the whole map's worth of characters for nothing.
-  const cell = (v: number, offset: number): number => Math.floor((v - offset) / grid.px);
-  const x0 = Math.max(cell(eye.x - radiusPx, grid.offsetX), cell(area.x, grid.offsetX));
-  const y0 = Math.max(cell(eye.y - radiusPx, grid.offsetY), cell(area.y, grid.offsetY));
-  const x1 = Math.min(cell(eye.x + radiusPx, grid.offsetX), cell(area.x + area.w, grid.offsetX));
-  const y1 = Math.min(cell(eye.y + radiusPx, grid.offsetY), cell(area.y + area.h, grid.offsetY));
+  // Both rectangles are axis-aligned in *pixels*, so each is turned into the
+  // cells it reaches and the two are intersected there — which is the same
+  // sentence as before on a square grid, and the only one that stays true when
+  // the two spaces disagree about which way is along.
+  const reach = gridBounds(grid, {
+    x: eye.x - radiusPx,
+    y: eye.y - radiusPx,
+    w: radiusPx * 2,
+    h: radiusPx * 2,
+  });
+  const within = gridBounds(grid, area);
+  // Floored at both ends: these are the cells each rectangle *touches*, and the
+  // cell holding the low edge is half inside it. Rounding that end up instead
+  // takes a column off one side of the viewer and not the other, which is
+  // exactly the asymmetry the circle test downstream exists to catch.
+  const x0 = Math.max(Math.floor(reach.minX), Math.floor(within.minX));
+  const y0 = Math.max(Math.floor(reach.minY), Math.floor(within.minY));
+  const x1 = Math.min(Math.floor(reach.maxX), Math.floor(within.maxX));
+  const y1 = Math.min(Math.floor(reach.maxY), Math.floor(within.maxY));
 
   const w = x1 - x0 + 1;
   const h = y1 - y0 + 1;
   if (w <= 0 || h <= 0) return { x: x0, y: y0, w: 0, h: 0, cells: '' };
 
-  const centreOf = (cx: number, cy: number): Vec2 => ({
-    x: grid.offsetX + (cx + 0.5) * grid.px,
-    y: grid.offsetY + (cy + 0.5) * grid.px,
-  });
+  const centreOf = (cx: number, cy: number): Vec2 => gridToWorld(grid, cx + 0.5, cy + 0.5);
 
   // Culled once per source rather than once per cell, which is the same bound
   // `fog.rs` takes and for the same reason: a wall further from the eye than the

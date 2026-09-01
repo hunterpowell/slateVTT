@@ -9,8 +9,9 @@ import assert from 'node:assert/strict';
 
 import { blocksSight, crossesWall, distanceToSegment, snapToCorner, wallAt } from './walls.js';
 import type { Wall } from './walls.js';
+import { squareGrid } from './coords.js';
 
-const GRID = { px: 10, offsetX: 0, offsetY: 0 };
+const GRID = squareGrid(10, 0, 0);
 
 function wall(id: string, x1: number, y1: number, x2: number, y2: number): Wall {
   return { id, from: { x: x1, y: y1 }, to: { x: x2, y: y2 }, door: null };
@@ -72,7 +73,7 @@ test('a client holding no walls sees no crossing, without being asked who it is'
 test('a corner snaps to the nearest grid corner, offset and all', () => {
   assert.deepEqual(snapToCorner(GRID, { x: 12, y: 8 }), { x: 10, y: 10 });
   assert.deepEqual(snapToCorner(GRID, { x: -12, y: -8 }), { x: -10, y: -10 });
-  assert.deepEqual(snapToCorner({ px: 10, offsetX: 3, offsetY: 3 }, { x: 12, y: 6 }), {
+  assert.deepEqual(snapToCorner(squareGrid(10, 3, 3), { x: 12, y: 6 }), {
     x: 13,
     y: 3,
   });

@@ -8,7 +8,9 @@ file because it is defined by not being a map.
 `SetMap` / `MapInfo` / `SetBackdrop` / `Prepared` on the server, or `RoomState::shelve` or
 `library::destination`** — the
 loading-versus-recalibrating rule below is depended on by four separate features now and is the arm
-that gets missed.
+that gets missed. **Also before touching `fog::basis`, `gridBasis` / `shapeOf`, `gridFromEdge` or
+`GridShape`** — see *The shape of a cell* below, and note that the two `basis` functions are one
+statement written in two languages.
 
 ## Maps and the map library
 
@@ -118,6 +120,143 @@ second way to serve files.
 `add` finishes by calling `pick` on the file it just wrote. One path from "a file in the library"
 to "a URL it is served at" is what guarantees an add and a later pick of the same file agree, which
 matters more than the wasted re-read: everything keyed on that URL is keyed on both.
+
+## The shape of a cell
+
+A map's cells are squares or they are isometric diamonds. `GridShape` on `MapInfo` says which, and
+it is remembered per URL with the rest of the calibration — so the isometric town and the square
+dungeon can sit in the same folder and the DM never has to remember which is which. **`Square` is
+the default**, which is invariant 2 doing the only job that matters here: a save written before the
+field describes exactly the board it always did. Anything else and every token on every saved map is
+somewhere new.
+
+**It is flat, and that boundary is the feature.** A diamond lattice, not a 2.5D renderer: no depth
+sorting, no wall height, no sprite anchoring, no elevation, no occlusion. Tokens are still upright
+discs, `Wall` is still a segment in image pixels with no height, and tokens still draw in list
+order. Read *Why the 2.5D version is refused* below before adding to any of that.
+
+### An isometric grid is an affine image of a square one
+
+That one sentence is why this was small. A diamond lattice is the square lattice with a 2×2 matrix
+applied, so **everything expressed in grid space was already lattice-agnostic and was not touched**:
+`snap_to_cell`, `covered_cells`, `shape_covers`, `contains_point`, `line_cells`, `with_fringe`, the
+fog packing, `snapOrigin` / `snapExtent`, `feetMoved`, `trailCells`, both `Diagonals` rules, and
+every line of wall segment math. What changed is five functions and the places that *draw*.
+
+The five are the whole grid-to-pixel bridge: `grid_to_px`, `cell_of` and `cell_centre` in `fog.rs`,
+and `gridToWorld` / `worldToGrid` in `coords.ts`. **`fog::basis` and `gridBasis` are the only two
+places either variant is read**, which is the discipline `sight_cells` already keeps over
+`Lighting` — and they are one statement in two languages, so a disagreement between them puts the
+fog the server packed a cell away from the walls that cast it. `drive-isometric.mjs` is what holds
+them together once a real frame has crossed the socket, because nothing else can see it.
+
+**The raycast needed nothing structural**, which was the surprise. Both fog algorithms already test
+the radius *in cells* and use pixels only for wall intersection — the split is deliberate and
+`visible_cells` says so in a comment. Only the once-per-source wall cull moved, from `grid_px` to
+`px_per_cell`, which is the basis's largest singular value. On a square grid that is `grid_px`
+exactly, and that is what keeps the culls dropping precisely the walls they always did. `|u| + |v|`
+would also be safe, and would quietly halve the culling on every map in the project.
+
+**`MapInfo` is the only thing on the wire that moved.** No new `ClientMsg` or `ServerMsg` variant,
+`protocol-tags.json` untouched, and `Cell` / `Pos` / `Px` / `Wall` / `FogView` / `OverrideView` all
+unchanged. `Prepared` wraps `Calibration`, which is where the shape lives, so an isometric map is
+remembered on the shelf with everything else at no cost at all.
+
+### One dragged edge, not two
+
+The DM drags along **one edge of one diamond**, corner to corner, and `gridFromEdge` reads that
+vector as half a cell's width across and half its height down. The second axis is the first mirrored
+about vertical, because real isometric art is symmetric and there is nothing for a second gesture to
+say. A free basis would express oblique lattices no map anybody loads actually has, at the cost of a
+second drag and a `Default` with no honest answer — "square" depends on `grid_px`, a sibling field,
+which is exactly why the wire carries a *descriptor* and each side derives the basis from it.
+
+It also means **the gesture cost nothing on the canvas**: `input.ts` hands over the same box either
+way, and the shape decides whether it is read as a rectangle of squares or as one diamond's edge.
+The square path — the box drag, the cell count, "use the whole image" — is untouched and still
+produces `Square`.
+
+Three panel rules came with it. The cell count and the whole-image shortcut are hidden under
+isometric, because both are answers to "how many squares across" and an isometric drag never asks
+it — the rail's rule about a way in to something that can do nothing, one level down. Changing
+the shape **abandons the drag** rather than reinterpreting it: a box read as four squares and the
+same box read as one diamond's edge are different claims about the map, and carrying it across would
+make the second one on the DM's behalf without saying so.
+
+And **an isometric drag has no play area in it**, which is the rule that was got wrong first time
+and is worth stating plainly. `repreview` reads a play area off the dragged box, and for squares
+that is right — the box is dragged *across* part of the board, so it is a region. The isometric
+gesture is two points along one cell edge: a direction and a length, nothing more. Deriving a
+region from it collapsed the playable area to a sliver the size of one diamond, so
+`drawOutsidePlayArea` dimmed the entire board and `drawGrid`, which rules only inside that area,
+drew a handful of lines in one corner. **The readout was perfect throughout**, which is what made
+it hard to see and is why the guard for it is a brightness reading off the canvas in
+`drive-isometric.mjs` rather than an assertion about the panel. Choosing a cell shape is not
+choosing a playable region, so the isometric path leaves it exactly as it found it.
+
+The overlay follows the same distinction. `drawCalibrationDiamond` draws **the one diamond the
+dragged edge describes**, where the square path draws a box divided into cells. Drawing the square
+affordance for an edge gesture tells the DM they are selecting a region, which is the wrong thing
+to aim — and aiming is the whole difficulty here, because a floor tile on real isometric art is a
+few dozen pixels across and the gesture is half of one.
+
+### The transform paid for itself
+
+Three places filled one `rect` per cell at a corner plus `grid_px`, and two stretched a
+one-pixel-per-cell canvas over a rectangle. All five now push the basis as a canvas transform and
+work in **cell units**, where one cell is the unit square whatever shape the lattice is — so
+`cellPath` replaced three loops, and `fogRect` and `overrideRect` became identities and were
+deleted. An affine transform of a per-cell raster is exactly correct, which is why the fog's
+`drawImage` got *simpler* rather than harder.
+
+Two things do not survive the transform, and they are the trap: `lineWidth` is in transformed units,
+so `cellPath` hands back a `Path2D` to be stroked *outside* it, and so is any text.
+
+`drawGrid` is the one place that got longer. It used to walk world coordinates ruling two families
+of axis-aligned lines; the lines now lean, so the extent is taken in grid space — `gridBounds`, the
+bounding box of the play area's four corners — and the play area does the trimming as a clip.
+`firstLineAt` fell out of use and was deleted with its test.
+
+**`gridBounds` is deliberately unrounded, and that is a bug fixed rather than a matter of style.**
+Its two callers want different things: ruling the grid wants the whole-numbered *lines inside* the
+rectangle, so it rounds inward; sweeping cells wants every cell the rectangle *touches*, so it
+floors both ends. Rounding the low end up for the second takes a column off one side of a viewer and
+not the other, which is exactly what `the circle is the same on both sides of the viewer` in
+`solo.test.ts` caught when the two were briefly conflated.
+
+### A token is an upright disc
+
+`grid_px` still means the size of a cell — a square's side, a diamond's **height** — so
+`grid.px * size / 2` goes on being a token's radius and `tokenAt` / `anchorTokenAt` are untouched.
+A disc fits the diamond's short axis and reads as a creature standing on the tile rather than a
+decal covering it, and portraits, name labels and hit point bars all stay upright and need no
+thought. The alternative, squashing the footprint to match the diamond, makes hit-testing an ellipse
+test that has to agree with what is drawn, and leaves the ring and the art disagreeing about shape.
+
+`GridSpec` carries `px` alongside the two axes for that reason, and the comment on it is the rule:
+**it is for sizing things that stand on the grid, never for placing them.** Anything that computes a
+position from it is assuming squares. `minSpan` is what a legibility threshold or a step size wants
+and `maxSpan` is what a wall cull wants; on a square grid all three are the same number, which is
+why nothing needed to tell them apart before.
+
+### Why the 2.5D version is refused
+
+The flat lattice above is what "isometric support" cost. What people usually mean by the phrase —
+tokens depth-sorted so they occlude correctly, walls with height, sprites anchored at their base —
+is a different renderer, and the reasons are structural rather than budgetary:
+
+- **`Wall` is a 2D segment in image pixels with no height**, and it is the type the raycast, both
+  lighting modes, the tracing tool and the override flood are all built on. Giving it a third
+  dimension is not additive.
+- **Fog aligned to the floor lattice would be visibly wrong.** In isometric art a wall occupies
+  screen space *above* its floor footprint, so clearing a room's floor leaves the tops of its walls
+  dark — or reveals wall tops the floor has not earned. Fixing that means giving fog a height model
+  too.
+- **Hit-testing would stop matching what is drawn.** A base-anchored sprite with vertical extent is
+  not a disc around a grid centre, and `mirror.ts` and `solo.ts`, which re-derive the board
+  client-side, inherit all of it.
+
+If it is ever wanted it needs its own milestone and its own argument. It is not more of this.
 
 ## The shelf
 

@@ -8,9 +8,34 @@
     "play_area": null,
     "fog": true,
     "vision_ft": 30.0,
-    "lighting": "dynamic"
+    "lighting": "dynamic",
+    "grid_shape": {
+      "kind": "square"
+    }
   },
-  "staged": null,
+  "staged": {
+    "url": "/uploads/test-c42ecd7f.webp",
+    "grid_px": 54.0,
+    "offset_x": 4.5834055,
+    "offset_y": 27.124779,
+    "grid_color": "#ffffff52",
+    "play_area": null,
+    "fog": false,
+    "vision_ft": 60.0,
+    "lighting": "dynamic",
+    "grid_shape": {
+      "kind": "iso",
+      "ratio": 1.7098768
+    },
+    "walls": [],
+    "overrides": {
+      "x": 0,
+      "y": 0,
+      "w": 0,
+      "h": 0,
+      "cells": ""
+    }
+  },
   "tokens": [
     {
       "id": "41f99d3db5244b9386f13b1061e00833",
@@ -27,7 +52,10 @@
         "current": 44,
         "max": 100
       },
-      "staged_pos": null,
+      "staged_pos": {
+        "x": 15.0,
+        "y": 0.0
+      },
       "staged_only": false
     },
     {
@@ -42,7 +70,10 @@
       "size": 1.0,
       "hidden": false,
       "hp": null,
-      "staged_pos": null,
+      "staged_pos": {
+        "x": 10.5,
+        "y": 1.5
+      },
       "staged_only": false
     }
   ],
@@ -81,24 +112,6 @@
   "show_cursors": true,
   "show_dm_cursor": true,
   "calibrations": {
-    "/uploads/the-field-551e4c12.png": {
-      "grid_px": 44.785713,
-      "offset_x": 0.0,
-      "offset_y": 0.0,
-      "grid_color": "#ffffff52",
-      "play_area": null,
-      "fog": true,
-      "vision_ft": 30.0,
-      "lighting": "dynamic",
-      "walls": [],
-      "overrides": {
-        "x": 0,
-        "y": 0,
-        "w": 0,
-        "h": 0,
-        "cells": ""
-      }
-    },
     "/assets/map.png": {
       "grid_px": 64.0,
       "offset_x": 0.0,
@@ -108,6 +121,52 @@
       "fog": false,
       "vision_ft": 60.0,
       "lighting": "dynamic",
+      "grid_shape": {
+        "kind": "square"
+      },
+      "walls": [],
+      "overrides": {
+        "x": 0,
+        "y": 0,
+        "w": 0,
+        "h": 0,
+        "cells": ""
+      }
+    },
+    "/uploads/the-field-551e4c12.png": {
+      "grid_px": 44.785713,
+      "offset_x": 0.0,
+      "offset_y": 0.0,
+      "grid_color": "#ffffff52",
+      "play_area": null,
+      "fog": true,
+      "vision_ft": 30.0,
+      "lighting": "dynamic",
+      "grid_shape": {
+        "kind": "square"
+      },
+      "walls": [],
+      "overrides": {
+        "x": 0,
+        "y": 0,
+        "w": 0,
+        "h": 0,
+        "cells": ""
+      }
+    },
+    "/uploads/test-c42ecd7f.webp": {
+      "grid_px": 54.0,
+      "offset_x": 4.5834055,
+      "offset_y": 27.124779,
+      "grid_color": "#ffffff52",
+      "play_area": null,
+      "fog": false,
+      "vision_ft": 60.0,
+      "lighting": "dynamic",
+      "grid_shape": {
+        "kind": "iso",
+        "ratio": 1.7098768
+      },
       "walls": [],
       "overrides": {
         "x": 0,

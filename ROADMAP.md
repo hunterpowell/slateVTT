@@ -26,7 +26,7 @@ Do not work ahead. Each milestone should run and be usable before starting the n
 6. Map upload and grid calibration UI.
 7. Package for Windows session hosting and deploy behind a Cloudflare Tunnel.
 
-**Everything through 28 is built, and so are 30 through 37; 29 is not.** 25, 26 and 34 were
+**Everything through 28 is built, and so are 30 through 38; 29 is not.** 25, 26, 34 and 38 were
 never planned and are out of order for the reasons their own entries give. 33 is *Multi-room*, which was
 unscheduled until a Halloween one-shot became the second room it was waiting for. Everything from 8 on was planned after the original
 seven; 17 and 18 were workshopped after 16 landed, 19–24 after 18, and 27–29 on 2026-08-18 after 26.
@@ -1595,6 +1595,68 @@ and 28 also overturned something *its own* design section said, which its entry 
     the next one will be written by another tool on another machine. It also says something about
     the diagnosis: the file was the right size *to the byte* for its contents plus a BOM plus a
     CRLF, which is what identified it.
+
+38. **Done**, on 2026-08-31. Isometric grids — a map's cells can be diamonds, so isometric art can
+    be played on with the grid actually landing on the drawn floor tiles. Never planned; it began
+    as a feasibility question and the answer was small enough to build. See *The shape of a cell*
+    in `docs/maps.md`.
+
+    **Unplanned and out of order like 25, 26 and 34, and for a different reason than any of
+    them**: those were things the design got wrong, and this is a thing the design had already made
+    cheap without anyone noticing. That is the entry's whole point.
+
+    **An isometric grid is an affine image of a square one.** One sentence, and it is why a feature
+    that sounds like a renderer rewrite is five functions. Every question asked in *grid* space was
+    already lattice-agnostic and none of it was touched — `snap_to_cell`, `covered_cells`,
+    `shape_covers`, `with_fringe`, `snapExtent`, `feetMoved`, `trailCells`, both `Diagonals` rules,
+    all of the wall math. The bridge between grid and pixels was already funnelled into three
+    functions in `fog.rs` and two in `coords.ts`, exactly as invariant 1 and `coords.ts`'s own
+    header said it was, and generalising those five is the entire mathematical content.
+
+    **The raycast was free, which nobody expected.** Both fog algorithms already measured their
+    radius *in cells* and used pixels only for wall intersection — a split made in milestone 16 for
+    a tie-breaking reason that had nothing to do with this, and commented as such. Only the
+    once-per-source wall cull moved. A decision taken for one reason paying out for an unrelated one
+    two years later is the argument for writing the reason down, and it is why `docs/` exists.
+
+    **The bug it shipped with is the one worth remembering.** `repreview` derives a play area from
+    the dragged box, which is right for squares — that box is a *region* of the board — and wrong
+    for an edge gesture, which is a direction and a length. So the playable area collapsed to one
+    diamond, `drawOutsidePlayArea` dimmed the whole board, and `drawGrid` ruled a few lines in a
+    corner: it looked exactly like "isometric just draws a normal grid". **The readout was correct
+    the entire time**, which is why every test passed — the driver asserted what the panel *said*
+    and never looked at the picture. The guard now is a brightness reading off the canvas, and the
+    lesson generalises: *a panel describing a board is not evidence about the board.*
+
+    **Two things it cost that the estimate did not name.** `drawGrid` got *longer* — ruling two
+    families of leaning lines against an axis-aligned play area means taking the extent in grid
+    space and clipping, where it used to walk world coordinates. And `gridBounds` had to stay
+    unrounded, because its two callers round in opposite directions: the grid wants the lines
+    *inside* a rectangle and a cell sweep wants every cell it *touches*. Conflating them shaved a
+    column off one side of a viewer's sight and not the other, which `solo.test.ts`'s
+    both-sides-of-the-viewer test caught immediately — a test written in milestone 34 for a
+    different bug entirely.
+
+    **The drawing side paid for itself.** Pushing the basis as a canvas transform and working in
+    cell units made three per-cell fill loops into one `cellPath`, turned `fogRect` and
+    `overrideRect` into identities that were deleted, and made the fog's `drawImage` simpler rather
+    than harder; `firstLineAt` went with them. That is four functions gone for one added. The
+    client still grew by about 400 lines net, and honestly: the new gesture, the shape control on
+    the map panel and the comments explaining the basis are all real additions. What did *not*
+    happen is the renderer doubling.
+
+    **The boundary is that it is flat, and it is written down in `docs/maps.md` rather than here.**
+    Depth sorting, wall height, sprite anchoring and elevation are refused, and not on cost: `Wall`
+    is a segment in image pixels with no height and it is the type the raycast, both lighting modes,
+    the tracing tool and the override flood are all built on. Fog aligned to the floor lattice is
+    also visibly wrong against art where a wall stands above its own footprint. That is a different
+    renderer, not more of this, and it would need its own milestone and its own argument.
+
+    **`MapInfo` is the only thing on the wire that moved** — no new message, `protocol-tags.json`
+    untouched — and `Prepared` wraps `Calibration`, so an isometric map is remembered on the shelf
+    for free. The gesture is **one dragged diamond edge**, mirrored about vertical, because real
+    isometric art is symmetric; `input.ts` never learned about it, since it hands over the same box
+    either way.
 
 ### The right dock
 

@@ -11,6 +11,7 @@ import type {
   Hp,
   Lighting,
   Owner,
+  WireGridShape,
   WireMapInfo,
   WireRoomView,
   WireStaged,
@@ -321,10 +322,54 @@ export function stagedFromWire(wire: WireStaged | null): StagedBoard | null {
   };
 }
 
+/**
+ * The two cell axes in world pixels: where `(1, 0)` and `(0, 1)` land.
+ *
+ * **The one place `WireGridShape` is read.** An isometric grid is an affine image
+ * of a square one, so everything downstream goes on asking its questions of a
+ * lattice and none of them learns there is more than one shape — the same
+ * discipline `shownBoard` keeps over which of the two boards is on screen.
+ * `fog::basis` in `server/src/fog.rs` is its twin and the two must agree exactly,
+ * or the fog the server packs lands somewhere else on the client's board.
+ *
+ * The square case is `(px, 0)` and `(0, px)`, which reduces `gridToWorld` to the
+ * arithmetic it held before there was a basis.
+ */
+export function gridBasis(map: WireMapInfo): GridSpec {
+  const shape = map.grid_shape;
+  const offsetX = map.offset_x;
+  const offsetY = map.offset_y;
+  if (shape.kind === 'iso') {
+    // A diamond `grid_px` tall and `grid_px * ratio` wide, so the two axes run
+    // to its right-hand and left-hand corners. Mirrored about vertical rather
+    // than free, which is what makes one dragged edge enough to calibrate one.
+    const halfW = (map.grid_px * shape.ratio) / 2;
+    const halfH = map.grid_px / 2;
+    return { px: map.grid_px, ax: halfW, ay: halfH, bx: -halfW, by: halfH, offsetX, offsetY };
+  }
+  return { px: map.grid_px, ax: map.grid_px, ay: 0, bx: 0, by: map.grid_px, offsetX, offsetY };
+}
+
+/**
+ * The shape a `GridSpec` describes — `gridBasis` read backwards.
+ *
+ * The client builds a basis to draw with and has to send a *shape* back, because
+ * the wire carries the descriptor. The two are exact inverses for the only two
+ * lattices that exist, which is what `a_grid_survives_the_round_trip_through_the_wire`
+ * holds; anything that constructs a `GridSpec` by hand rather than through
+ * `squareGrid` or `gridFromEdge` is what would break it.
+ */
+export function shapeOf(grid: GridSpec): WireGridShape {
+  // A square's second axis has no horizontal component and its first none
+  // vertical. Nothing else the client builds looks like that.
+  if (grid.ay === 0 && grid.bx === 0) return { kind: 'square' };
+  return { kind: 'iso', ratio: (grid.ax * 2) / grid.px };
+}
+
 export function boardFromWire(map: WireMapInfo): Board {
   return {
     mapUrl: map.url,
-    grid: { px: map.grid_px, offsetX: map.offset_x, offsetY: map.offset_y },
+    grid: gridBasis(map),
     gridColor: map.grid_color,
     playArea: map.play_area,
     fog: map.fog,

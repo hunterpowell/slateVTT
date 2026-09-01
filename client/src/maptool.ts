@@ -23,11 +23,21 @@
 // server re-checks every set_map regardless.
 
 import type { Box, Calibration } from './calibrate.js';
-import { gridFromBox, MAX_CELLS, MIN_GRID_PX, playAreaFromBox } from './calibrate.js';
+import {
+  gridFromBox,
+  gridFromEdge,
+  MAX_CELLS,
+  MAX_GRID_RATIO,
+  MIN_GRID_PX,
+  MIN_GRID_RATIO,
+  playAreaFromBox,
+} from './calibrate.js';
 import type { GridSpec, Rect } from './coords.js';
+import { squareGrid } from './coords.js';
 import { createLibraryList } from './library.js';
 import type { ClientMsg, Lighting } from './protocol.js';
 import type { Board, Scene } from './scene.js';
+import { shapeOf } from './scene.js';
 
 export interface MapToolUi {
   root: HTMLElement;
@@ -44,6 +54,11 @@ export interface MapToolUi {
   libraryList: HTMLElement;
   calibrate: HTMLButtonElement;
   cellsRow: HTMLElement;
+  shape: HTMLSelectElement;
+  /** The cell count and the whole-image shortcut, which are the square path's
+   *  and are hidden on the isometric one — a diamond is calibrated from an edge
+   *  rather than from a count. */
+  countRow: HTMLElement;
   cells: HTMLInputElement;
   cellsDown: HTMLButtonElement;
   cellsUp: HTMLButtonElement;
@@ -96,6 +111,8 @@ const DEFAULT_ALPHA_PCT = 32;
 /** Only reached before any board has loaded; the server has the same number. */
 const DEFAULT_VISION_FT = 60;
 const DRAG_HINT = 'Drag a box across that many whole squares.';
+/** The isometric gesture, which is one edge rather than a box of them. */
+const EDGE_HINT = 'Drag along one edge of one diamond, corner to corner.';
 /** Where the count starts for a box drawn by hand, as opposed to the image. */
 const HAND_DRAWN_CELLS = 4;
 
@@ -139,6 +156,26 @@ export function createMapTool(
    * for a hand-drawn one, so the next hand-drawn box must not inherit it.
    */
   let countFromWholeImage = false;
+
+  /**
+   * Which lattice the DM is calibrating. Read off the board by `refresh`, so
+   * re-opening the panel on an isometric map opens on isometric.
+   *
+   * The gesture is the same drag either way — `input.ts` hands over a box and
+   * this decides whether to read it as a rectangle of squares or as one
+   * diamond's edge — which is why nothing on the canvas side knows about this.
+   */
+  let shape: 'square' | 'iso' = 'square';
+
+  /** The grid a released box describes, under whichever shape is selected. */
+  const gridFromDrag = (box: Box): GridSpec | null =>
+    shape === 'iso' ? gridFromEdge(box) : gridFromBox(box, cellsAcross());
+
+  /** Why a drag was refused, which differs by shape because the gesture does. */
+  const dragRefusal = (): string =>
+    shape === 'iso'
+      ? `that drag is too small or too lopsided — a cell must be at least ${MIN_GRID_PX} px tall, and between ${MIN_GRID_RATIO} and ${MAX_GRID_RATIO} times as wide as it is tall`
+      : `that box is too small — each square must come out at ${MIN_GRID_PX} px or more`;
 
   // --- the grid colour ------------------------------------------------------
 
@@ -213,6 +250,10 @@ export function createMapTool(
       offset_x: grid.offsetX,
       offset_y: grid.offsetY,
       grid_color: color,
+      // Derived from the basis rather than read off the panel, so an unapplied
+      // shape change cannot be committed by a fiddle with the colour — which is
+      // the reason `sendColor` sends the *confirmed* grid in the first place.
+      grid_shape: shapeOf(grid),
       play_area: area,
       fog: fog?.on ?? board?.fog ?? false,
       vision_ft: fog?.visionFt ?? board?.visionFt ?? DEFAULT_VISION_FT,
@@ -226,16 +267,40 @@ export function createMapTool(
     const board = target();
     if (board === null || pending === null) return;
 
-    const grid = gridFromBox(pending, cellsAcross());
+    const grid = gridFromDrag(pending);
     if (grid === null) {
-      report(`that box is too small — each square must come out at ${MIN_GRID_PX} px or more`);
+      report(dragRefusal());
       return;
     }
     board.grid = grid;
+    // **An isometric drag has no play area in it.** The square gesture drags a
+    // box *across* part of the board, so the box is a region and reading a play
+    // area off it is right. The isometric gesture is two points along one cell
+    // edge — a direction and a length, nothing more — so deriving a region from
+    // it collapses the board to a sliver the size of one diamond, which is what
+    // it did until it was noticed on a real map. The playable region is simply
+    // not what choosing a cell shape is about, so it is left as it was found.
+    //
     // The whole image is stored as null rather than its own measurements, so it
     // stays true if the same URL is ever served a different-sized image.
-    board.playArea = pendingWholeImage ? null : playAreaFromBox(pending, grid);
+    if (shape !== 'iso') {
+      board.playArea = pendingWholeImage ? null : playAreaFromBox(pending, grid);
+    }
     showReadout();
+  };
+
+  /**
+   * The half of the calibration panel that belongs to the square path.
+   *
+   * A count and a whole-image shortcut are both answers to "how many squares
+   * across", which an isometric drag does not ask — so they go, rather than
+   * sitting there inert. The rail's rule about a tab that can do nothing, one
+   * level down.
+   */
+  const showShape = (): void => {
+    ui.shape.value = shape;
+    ui.countRow.hidden = shape === 'iso';
+    if (pending === null) ui.hint.textContent = shape === 'iso' ? EDGE_HINT : DRAG_HINT;
   };
 
   const setActive = (on: boolean): void => {
@@ -247,10 +312,32 @@ export function createMapTool(
     if (!on) {
       pending = null;
       ui.applyRow.hidden = true;
-      ui.hint.textContent = DRAG_HINT;
     }
+    showShape();
     showReadout();
   };
+
+  // Changing the shape abandons whatever was being tuned: a box read as four
+  // squares and the same box read as one diamond's edge are different claims
+  // about the map, and carrying the drag across would silently make the second
+  // one for the DM.
+  ui.shape.addEventListener('change', () => {
+    const next = ui.shape.value === 'iso' ? 'iso' : 'square';
+    if (next === shape) return;
+    shape = next;
+    pending = null;
+    pendingWholeImage = false;
+    ui.applyRow.hidden = true;
+    // Back to what the server confirmed, which is what a cancelled preview
+    // already does — the shape switch is one.
+    const board = target();
+    if (board !== null && confirmed !== null) {
+      board.grid = confirmed.grid;
+      board.playArea = confirmed.area;
+    }
+    showShape();
+    showReadout();
+  });
 
   /**
    * Offers the whole image as the reference box, which reduces calibration to a
@@ -358,11 +445,15 @@ export function createMapTool(
   const refresh = (): void => {
     const board = target();
     confirmed = board === null ? null : { grid: { ...board.grid }, area: board.playArea };
+    // The board's own shape, so re-opening the panel on an isometric map opens
+    // on isometric rather than offering to square it.
+    if (board !== null) shape = shapeOf(board.grid).kind === 'iso' ? 'iso' : 'square';
     // Whatever the server just said, or whichever slot is now selected,
     // supersedes anything being tried out here.
     pending = null;
     ui.applyRow.hidden = true;
     if (board !== null) showColor(board.gridColor);
+    showShape();
     showReadout();
     showMode();
   };
@@ -419,7 +510,7 @@ export function createMapTool(
     // server keys what it remembers on the URL, so a map calibrated in an
     // earlier session comes back the way it was left and the frame that lands
     // here overrides all of it.
-    sendMap({ px: from.grid.px, offsetX: 0, offsetY: 0 }, from.gridColor, null, url);
+    sendMap(squareGrid(from.grid.px, 0, 0), from.gridColor, null, url);
   };
 
   // --- upload ---------------------------------------------------------------
@@ -459,7 +550,11 @@ export function createMapTool(
     }
     const { px, offsetX, offsetY } = board.grid;
     const prefix = pending === null ? '' : 'preview · ';
-    ui.readout.textContent = `${prefix}${round(px)} px/cell · offset ${round(offsetX)}, ${round(offsetY)}`;
+    const of = shapeOf(board.grid);
+    // The ratio is the whole of what an isometric readout adds: `px/cell` is the
+    // diamond's height either way, and its width is the number beside it.
+    const kind = of.kind === 'iso' ? ` · iso ${round(of.ratio)}:1` : '';
+    ui.readout.textContent = `${prefix}${round(px)} px/cell${kind} · offset ${round(offsetX)}, ${round(offsetY)}`;
     ui.readout.classList.toggle('is-preview', pending !== null);
   }
 
@@ -472,6 +567,9 @@ export function createMapTool(
     },
     get cells() {
       return cellsAcross();
+    },
+    get shape() {
+      return shape;
     },
 
     drag(box) {
@@ -489,8 +587,8 @@ export function createMapTool(
         countFromWholeImage = false;
       }
 
-      if (gridFromBox(box, cellsAcross()) === null) {
-        report(`that box is too small — each square must come out at ${MIN_GRID_PX} px or more`);
+      if (gridFromDrag(box) === null) {
+        report(dragRefusal());
         return;
       }
 
@@ -499,7 +597,10 @@ export function createMapTool(
       pending = box;
       pendingWholeImage = false;
       ui.applyRow.hidden = false;
-      ui.hint.textContent = 'Correct the count until the lines match, then apply.';
+      ui.hint.textContent =
+        shape === 'iso'
+          ? 'Check the diamonds against the art, then apply.'
+          : 'Correct the count until the lines match, then apply.';
       repreview();
     },
 

@@ -289,8 +289,8 @@ mod tests {
     use super::*;
     use crate::fog::Override;
     use crate::protocol::{
-        Calibration, Hp, InitiativeEntry, Lighting, Origin, Owner, PlayerId, Pos, Px, Rect,
-        ShapeId, ShapeKind, TokenId, WallId, WallKind,
+        Calibration, GridShape, Hp, InitiativeEntry, Lighting, Origin, Owner, PlayerId, Pos, Px,
+        Rect, ShapeId, ShapeKind, TokenId, WallId, WallKind,
     };
 
     static NEXT: AtomicU32 = AtomicU32::new(0);
@@ -330,6 +330,7 @@ mod tests {
                 offset_x: 3.0,
                 offset_y: -4.0,
                 grid_color: "#33ff9980".to_owned(),
+                grid_shape: GridShape::Square,
                 play_area: Some(Rect {
                     x: 70.0,
                     y: 140.0,
@@ -453,6 +454,10 @@ mod tests {
                         fog: true,
                         vision_ft: 30.0,
                         lighting: Lighting::Room,
+                        // Isometric on purpose. The calibration rides on a
+                        // `#[serde(flatten)]` and this is an internally-tagged
+                        // enum, which is the combination worth round-tripping.
+                        grid_shape: GridShape::Iso { ratio: 2.0 },
                     },
                     // A map the DM prepared and then loaded away from. The
                     // calibration above rides on a flattened struct, so these
@@ -717,6 +722,11 @@ mod tests {
         assert_eq!(
             loaded.map.play_area, None,
             "a save predating the play area means the whole image"
+        );
+        assert_eq!(
+            loaded.map.grid_shape,
+            GridShape::Square,
+            "a save predating the cell shape is a square one, or every token on it moves"
         );
 
         let token = loaded.tokens.first().expect("the token");

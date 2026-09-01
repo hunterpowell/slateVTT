@@ -10,10 +10,11 @@ import assert from 'node:assert/strict';
 import { fillFrom } from './overrides.js';
 import { crossesWall } from './walls.js';
 import type { Wall } from './walls.js';
+import { squareGrid } from './coords.js';
 
 /** Ten pixels a cell, no offset, so cell `c` spans `10c` to `10c + 10` and its
  *  centre is at `10c + 5`. */
-const GRID = { px: 10, offsetX: 0, offsetY: 0 };
+const GRID = squareGrid(10, 0, 0);
 /** Five cells by five: centres from 5 to 45, and cell 5 would centre at 55. */
 const BOARD = { x: 0, y: 0, w: 50, h: 50 };
 const LIMIT = 1000;

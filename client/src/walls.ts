@@ -14,6 +14,7 @@
 // the grid. Calibrate first, then trace.
 
 import type { GridSpec, Vec2 } from './coords.js';
+import { gridToWorld, worldToGrid } from './coords.js';
 import type { WireWall } from './protocol.js';
 
 /** One traced segment. Flat, not the run it was drawn as — the run was how the
@@ -57,10 +58,11 @@ export function wallFromWire(wire: WireWall): Wall {
  * painted on the map.
  */
 export function snapToCorner(grid: GridSpec, at: Vec2): Vec2 {
-  return {
-    x: grid.offsetX + Math.round((at.x - grid.offsetX) / grid.px) * grid.px,
-    y: grid.offsetY + Math.round((at.y - grid.offsetY) / grid.px) * grid.px,
-  };
+  // Out to cells, rounded, and back. On a square grid that is the arithmetic
+  // this used to spell out; on a sheared one a corner is still a whole-numbered
+  // point of the lattice, and only the two conversions know the difference.
+  const cell = worldToGrid(grid, at.x, at.y);
+  return gridToWorld(grid, Math.round(cell.x), Math.round(cell.y));
 }
 
 /**

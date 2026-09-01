@@ -1491,6 +1491,21 @@
         color: #e8e6e1;
       }
 
+      #map-shape {
+        padding: 2px 4px;
+        border: 1px solid #2b3038;
+        border-radius: 3px;
+        background: #171a1f;
+        color: #d8d2c4;
+        font: inherit;
+        font-size: 12px;
+        cursor: pointer;
+      }
+
+      #map-count {
+        margin-top: 6px;
+      }
+
       #map-cells {
         width: 38px;
         padding: 2px 4px;
@@ -2216,14 +2231,23 @@
         <button id="map-calibrate" class="map-button" type="button">calibrate grid</button>
         <div id="map-cells-row" hidden>
           <div class="map-cells-label">
-            <span>cells across</span>
-            <span class="map-stepper">
-              <button id="map-cells-down" type="button" title="Fewer cells">&minus;</button>
-              <input id="map-cells" type="number" min="1" max="200" step="1" value="4" />
-              <button id="map-cells-up" type="button" title="More cells">+</button>
-            </span>
+            <span>cell shape</span>
+            <select id="map-shape" aria-label="Cell shape">
+              <option value="square">square</option>
+              <option value="iso">isometric</option>
+            </select>
           </div>
-          <button id="map-whole" class="map-subtle" type="button">use the whole image</button>
+          <div id="map-count">
+            <div class="map-cells-label">
+              <span>cells across</span>
+              <span class="map-stepper">
+                <button id="map-cells-down" type="button" title="Fewer cells">&minus;</button>
+                <input id="map-cells" type="number" min="1" max="200" step="1" value="4" />
+                <button id="map-cells-up" type="button" title="More cells">+</button>
+              </span>
+            </div>
+            <button id="map-whole" class="map-subtle" type="button">use the whole image</button>
+          </div>
           <p class="map-hint" id="map-hint">Drag a box across that many whole squares.</p>
           <div id="map-apply-row" hidden>
             <button id="map-apply" class="map-button map-primary" type="button">apply</button>

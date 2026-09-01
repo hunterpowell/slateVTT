@@ -23,6 +23,7 @@
 // Read `docs/fog.md` before changing any of it.
 
 import type { GridSpec, Rect, Vec2 } from './coords.js';
+import { gridToWorld, minSpan, worldToGrid } from './coords.js';
 import type { FogPaint, WireOverrides } from './protocol.js';
 import type { Wall } from './walls.js';
 
@@ -107,19 +108,6 @@ export function overridesFromWire(wire: WireOverrides): Overrides {
   return layer;
 }
 
-/** The rectangle the tint covers, in world pixels. `fogRect`'s twin. */
-export function overrideRect(
-  layer: Overrides,
-  grid: GridSpec,
-): { x: number; y: number; w: number; h: number } {
-  return {
-    x: grid.offsetX + layer.x * grid.px,
-    y: grid.offsetY + layer.y * grid.px,
-    w: layer.w * grid.px,
-    h: layer.h * grid.px,
-  };
-}
-
 /** The colour a brush paints in, for the panel's own swatches and for the fill
  *  preview — so the preview is drawn in the colour the commit will land in. */
 export function paintColor(paint: FogPaint | null): string {
@@ -202,10 +190,7 @@ export function fillFrom(
    */
   withinCells?: number,
 ): number[] {
-  const centre = (cx: number, cy: number): Vec2 => ({
-    x: grid.offsetX + (cx + 0.5) * grid.px,
-    y: grid.offsetY + (cy + 0.5) * grid.px,
-  });
+  const centre = (cx: number, cy: number): Vec2 => gridToWorld(grid, cx + 0.5, cy + 0.5);
   const onBoard = (p: Vec2): boolean =>
     p.x >= board.x && p.x <= board.x + board.w && p.y >= board.y && p.y <= board.y + board.h;
 
@@ -279,12 +264,15 @@ function index(walls: readonly Wall[], grid: GridSpec): Map<number, Wall[]> {
   for (const wall of walls) {
     const dx = wall.to.x - wall.from.x;
     const dy = wall.to.y - wall.from.y;
-    // Half a cell at a time, so no cell the segment passes through is skipped.
-    const steps = Math.ceil((Math.hypot(dx, dy) / grid.px) * 2) + 1;
+    // Half a cell at a time, so no cell the segment passes through is skipped —
+    // and half of the *shortest* a cell measures, which is what stops a diamond
+    // being stepped over the short way across.
+    const steps = Math.ceil((Math.hypot(dx, dy) / minSpan(grid)) * 2) + 1;
     for (let i = 0; i <= steps; i++) {
       const t = i / steps;
-      const cx = Math.floor((wall.from.x + dx * t - grid.offsetX) / grid.px);
-      const cy = Math.floor((wall.from.y + dy * t - grid.offsetY) / grid.px);
+      const cell = worldToGrid(grid, wall.from.x + dx * t, wall.from.y + dy * t);
+      const cx = Math.floor(cell.x);
+      const cy = Math.floor(cell.y);
       // And its eight neighbours: a wall running exactly along a cell boundary —
       // which `snapToCorner` makes the common case — belongs to the cells on
       // both sides of it, and floating point picks one of them arbitrarily.

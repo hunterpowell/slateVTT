@@ -14,7 +14,7 @@
 use super::*;
 // Only the tests name these; `check` and `apply` reach a `Rect` through the
 // `Option` on the message, and a `Px` through the `Vec` on a traced run.
-use crate::protocol::{Lighting, Px, Rect};
+use crate::protocol::{GridShape, Lighting, Px, Rect};
 
 const SECRET: &str = "test-secret";
 
@@ -294,6 +294,7 @@ fn set_map(url: &str, grid_px: f32, offset_x: f32, offset_y: f32) -> ClientMsg {
         fog: UNFOGGED.0,
         vision_ft: UNFOGGED.1,
         lighting: Lighting::Dynamic,
+        grid_shape: GridShape::Square,
         staged: false,
     }
 }
@@ -303,7 +304,14 @@ fn set_map(url: &str, grid_px: f32, offset_x: f32, offset_y: f32) -> ClientMsg {
 /// exactly as `staged` is how one asks for the other slot.
 fn fogged(msg: ClientMsg, vision_ft: f32) -> ClientMsg {
     match msg {
-        ClientMsg::SetMap { url, grid_px, .. } => ClientMsg::SetMap {
+        // The shape is carried through rather than reset, so `fogged(iso(..))`
+        // means what it reads as — the same reason `staged` carries everything.
+        ClientMsg::SetMap {
+            url,
+            grid_px,
+            grid_shape,
+            ..
+        } => ClientMsg::SetMap {
             url,
             grid_px,
             offset_x: 0.0,
@@ -313,6 +321,7 @@ fn fogged(msg: ClientMsg, vision_ft: f32) -> ClientMsg {
             fog: true,
             vision_ft,
             lighting: Lighting::Dynamic,
+            grid_shape,
             staged: false,
         },
         other => other,
@@ -334,6 +343,7 @@ fn room_lit(msg: ClientMsg) -> ClientMsg {
             fog,
             vision_ft,
             lighting: _,
+            grid_shape,
             staged,
         } => ClientMsg::SetMap {
             url,
@@ -345,6 +355,41 @@ fn room_lit(msg: ClientMsg) -> ClientMsg {
             fog,
             vision_ft,
             lighting: Lighting::Room,
+            grid_shape,
+            staged,
+        },
+        other => other,
+    }
+}
+
+/// The same command with the cells drawn as diamonds. `fogged` and `room_lit`'s
+/// third neighbour, and wrapped the same way, so an isometric test and the square
+/// test it mirrors differ by exactly this call.
+fn iso(msg: ClientMsg, ratio: f32) -> ClientMsg {
+    match msg {
+        ClientMsg::SetMap {
+            url,
+            grid_px,
+            offset_x,
+            offset_y,
+            grid_color,
+            play_area,
+            fog,
+            vision_ft,
+            lighting,
+            grid_shape: _,
+            staged,
+        } => ClientMsg::SetMap {
+            url,
+            grid_px,
+            offset_x,
+            offset_y,
+            grid_color,
+            play_area,
+            fog,
+            vision_ft,
+            lighting,
+            grid_shape: GridShape::Iso { ratio },
             staged,
         },
         other => other,
@@ -372,6 +417,7 @@ fn staged(msg: ClientMsg) -> ClientMsg {
             fog,
             vision_ft,
             lighting,
+            grid_shape,
             staged: _,
         } => ClientMsg::SetMap {
             url,
@@ -383,6 +429,7 @@ fn staged(msg: ClientMsg) -> ClientMsg {
             fog,
             vision_ft,
             lighting,
+            grid_shape,
             staged: true,
         },
         ClientMsg::AddWalls { points, door, .. } => ClientMsg::AddWalls {

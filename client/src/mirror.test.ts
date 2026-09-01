@@ -18,6 +18,7 @@ import type { Initiative } from './protocol.js';
 import type { Board, Scene, Token } from './scene.js';
 import type { Shape } from './shapes.js';
 import type { Wall } from './walls.js';
+import { squareGrid } from './coords.js';
 
 /** A four by four board packed one character per cell, the way the server sends
  *  it: `.` in sight, `o` explored, `#` never seen. The lit square is cell (1, 1)
@@ -31,7 +32,7 @@ function fog(over: Partial<Fog> = {}): Fog {
 function board(over: Partial<Board> = {}): Board {
   return {
     mapUrl: 'crypt.png',
-    grid: { px: 10, offsetX: 0, offsetY: 0 },
+    grid: squareGrid(10, 0, 0),
     gridColor: '#ffffff33',
     playArea: null,
     fog: true,

@@ -314,7 +314,16 @@ struct MapInfo {
     /// reach is worked out. Per map and remembered per URL with the rest — see
     /// `docs/fog.md`. `fog` defaults off and `lighting` defaults to `Dynamic`.
     fog: bool, vision_ft: f32, lighting: Lighting,
+    /// What shape a cell is: a square, or an isometric diamond. Per map and
+    /// remembered per URL like the rest. `fog::basis` is the one place it is
+    /// read — see `docs/maps.md`. Defaults to `Square`, which is what keeps
+    /// every saved board exactly where it was.
+    grid_shape: GridShape,
 }
+
+/// A square of side `grid_px`, or a diamond `grid_px` tall and `ratio` times as
+/// wide. Flat — a lattice, not a 2.5D renderer; see `docs/maps.md`.
+enum GridShape { Square, Iso { ratio: f32 } }
 
 struct Token {
     id: TokenId, name: String, x: f32, y: f32, owner: Owner, img: String, size: f32,
@@ -899,8 +908,25 @@ commands and `SetFogOverride` each carry `staged` — rather than on a mode. Eve
 hit-tests reads `shownBoard(scene)`, or its twins `shownWalls` and `shownOverrides`, never the live
 board directly.
 
+**A map's cells are squares or isometric diamonds**, and `GridShape` on `MapInfo` is the whole of
+it — remembered per URL with the rest of the calibration, defaulting to `Square` so every saved
+board stays exactly where it was. It was cheap because **an isometric grid is an affine image of a
+square one**: everything expressed in grid space — `snap_to_cell`, `covered_cells`, `shape_covers`,
+`with_fringe`, `snapExtent`, `feetMoved`, `trailCells`, both `Diagonals` rules, all of the wall
+math — is unchanged, and so is the raycast, which already measured its radius in cells. What moved
+is five functions, and **`fog::basis` and `gridBasis` are the only two places the shape is read**:
+one statement in two languages, which must agree or the fog lands a cell off the walls casting it.
+`MapInfo` is the only thing on the wire that changed. The DM calibrates one by dragging **one edge
+of one diamond**; the square box-and-count path is untouched.
+
+**It is flat and must stay flat**: no depth sorting, no wall height, no sprite anchoring, no
+elevation. Tokens are upright discs sized by the diamond's height, so `tokenAt` is unchanged. 2.5D
+is a different renderer and `docs/maps.md` refuses it — `Wall` has no height and the whole raycast
+is built on that.
+
 → **`docs/maps.md`** before touching `maptool.ts`, `calibrate.ts`, `library.rs`, `library.ts`,
-`drawBackdrop`, `shownBackdrop`, or `SetMap`/`MapInfo`/`SetBackdrop` on the server.
+`drawBackdrop`, `shownBackdrop`, `fog::basis`, `gridBasis`/`shapeOf`, `gridFromEdge`, or
+`SetMap`/`MapInfo`/`GridShape`/`SetBackdrop` on the server.
 
 ## Undo
 

@@ -17,10 +17,10 @@ use uuid::Uuid;
 
 use crate::fog::{self, Cell, FogView, Override, OverrideView};
 use crate::protocol::{
-    Calibration, ChatLine, ChatTo, ClientId, ClientMsg, Colours, Diagonals, Hp, Initiative,
-    InitiativeEntry, MapInfo, Origin, Owner, PALETTE, PlayerId, Pos, Prepared, RoomView,
-    RosterEntry, RosterSlot, ServerMsg, Shape, ShapeId, ShapeKind, StagedView, Token, TokenId,
-    TokenView, Wall, WallId, WallKind,
+    Calibration, ChatLine, ChatTo, ClientId, ClientMsg, Colours, Diagonals, GridShape, Hp,
+    Initiative, InitiativeEntry, MapInfo, Origin, Owner, PALETTE, PlayerId, Pos, Prepared,
+    RoomView, RosterEntry, RosterSlot, ServerMsg, Shape, ShapeId, ShapeKind, StagedView, Token,
+    TokenId, TokenView, Wall, WallId, WallKind,
 };
 use crate::store::{Saved, SavedNote, Store};
 
@@ -49,6 +49,14 @@ const MAX_UNDO: usize = 10;
 /// thousands of lines per frame and a locked-up browser.
 const MIN_GRID_PX: f32 = 4.0;
 const MAX_GRID_PX: f32 = 4096.0;
+/// How far from square an isometric diamond may be — its width over its height.
+///
+/// Bounded for the reason `grid_px` is, and against the same failure: the width
+/// is `grid_px * ratio`, so without this a legal `grid_px` and an absurd ratio
+/// would put a cell outside the range the bound above exists to keep it inside.
+/// `2.0` is the common projection and sits comfortably within these.
+const MIN_GRID_RATIO: f32 = 0.25;
+const MAX_GRID_RATIO: f32 = 4.0;
 /// Comfortably longer than anything the upload endpoint generates, short enough
 /// that nobody can grow the save file through this field.
 const MAX_URL_LEN: usize = 512;
@@ -2935,6 +2943,9 @@ impl RoomState {
                 // not one of the two variants, and either is a legitimate thing
                 // for the DM to ask for — what is said of `fog` below.
                 lighting: _,
+                // Unlike `lighting`, this one carries a number, so serde
+                // refusing the variant is not the whole check.
+                grid_shape,
                 staged: _,
             } => {
                 require_dm(client, "change the map")?;
@@ -2949,6 +2960,19 @@ impl RoomState {
                 }
                 if !is_hex_rgba(grid_color) {
                     return Err("a grid colour must look like #rrggbbaa".to_owned());
+                }
+                // A cell's width is `grid_px * ratio`, so the bound above only
+                // holds for both axes once this one does. A zero or negative
+                // ratio is the sharper case: it collapses the lattice, and
+                // `fog::basis` would hand back two parallel axes that no point
+                // in image pixels can be resolved against.
+                if let GridShape::Iso { ratio } = grid_shape {
+                    finite(&[*ratio])?;
+                    if !(MIN_GRID_RATIO..=MAX_GRID_RATIO).contains(ratio) {
+                        return Err(format!(
+                            "an isometric cell must be between {MIN_GRID_RATIO} and {MAX_GRID_RATIO} times as wide as it is tall"
+                        ));
+                    }
                 }
                 // `fog` needs no check — a bool has no bad value, and either
                 // state is a legitimate thing for the DM to ask for, which is
@@ -3558,6 +3582,7 @@ impl RoomState {
                 fog,
                 vision_ft,
                 lighting,
+                grid_shape,
                 staged,
             } => {
                 let given = Calibration {
@@ -3569,6 +3594,7 @@ impl RoomState {
                     fog,
                     vision_ft,
                     lighting,
+                    grid_shape,
                 };
 
                 // The URL alone says which of the two things this is. A URL the

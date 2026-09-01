@@ -13,10 +13,11 @@ import assert from 'node:assert/strict';
 import { soloSight } from './solo.js';
 import type { Board, Token } from './scene.js';
 import type { Wall } from './walls.js';
+import { squareGrid } from './coords.js';
 
 /** Ten pixels a cell, no offset, so cell `c` spans `10c` to `10c + 10` and its
  *  centre is at `10c + 5`. The same grid `overrides.test.ts` uses. */
-const GRID = { px: 10, offsetX: 0, offsetY: 0 };
+const GRID = squareGrid(10, 0, 0);
 /** Nine by nine, so a token in the middle at cell 4 has four cells of room in
  *  every direction. */
 const SIZE = { w: 90, h: 90 };
@@ -98,7 +99,7 @@ test('the circle is the same on both sides of the viewer', () => {
       [7, 13.5],
     ] as const) {
       for (const visionFt of [20, 25, 30]) {
-        const grid = { px, offsetX, offsetY };
+        const grid = squareGrid(px, offsetX, offsetY);
         // Room enough that nothing is clipped by the edge of the board, which is
         // the other thing that can make the answer lopsided and is meant to.
         const size = { w: offsetX + px * 41, h: offsetY + px * 41 };

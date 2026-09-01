@@ -151,6 +151,8 @@ interface Ui {
     libraryList: HTMLElement;
     calibrate: HTMLButtonElement;
     cellsRow: HTMLElement;
+    shape: HTMLSelectElement;
+    countRow: HTMLElement;
     cells: HTMLInputElement;
     cellsDown: HTMLButtonElement;
     cellsUp: HTMLButtonElement;
@@ -309,6 +311,8 @@ function findUi(): Ui {
       libraryList: need('#map-library-list'),
       calibrate: need<HTMLButtonElement>('#map-calibrate'),
       cellsRow: need('#map-cells-row'),
+      shape: need<HTMLSelectElement>('#map-shape'),
+      countRow: need('#map-count'),
       cells: need<HTMLInputElement>('#map-cells'),
       cellsDown: need<HTMLButtonElement>('#map-cells-down'),
       cellsUp: need<HTMLButtonElement>('#map-cells-up'),
@@ -1574,7 +1578,7 @@ async function start(
       currentTurn: room.initiative.current,
       calibration:
         mapTool !== null && mapTool.box !== null
-          ? { box: mapTool.box, cells: mapTool.cells }
+          ? { box: mapTool.box, cells: mapTool.cells, shape: mapTool.shape }
           : null,
       walls:
         wallTool === null
