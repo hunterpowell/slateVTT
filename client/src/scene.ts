@@ -39,6 +39,13 @@ export interface Token {
   hidden: boolean;
   /** The DM's running total, or null. Null on every token for a player. */
   hp: Hp | null;
+  /** How far this token lights the board, in feet, or null for one carrying no
+   *  light. Null on every token for a player, like `hp`.
+   *
+   *  Almost nothing on this side computes with it: the fog it casts is worked
+   *  out in the room and arrives already packed. `solo.ts` is the one reader,
+   *  because the DM's sight check casts rays of its own. */
+  lightFt: number | null;
   /** Where this token lands when the staged map is promoted, or null for one
    *  staying put. Null on every token for a player. In grid units like `x, y` —
    *  a plan is a cell, which is what makes recalibrating the staged map after
@@ -389,6 +396,7 @@ function tokenFromWire(t: WireToken): Token {
     size: t.size,
     hidden: t.hidden,
     hp: t.hp,
+    lightFt: t.light_ft,
     stagedPos: t.staged_pos,
     stagedOnly: t.staged_only,
   };

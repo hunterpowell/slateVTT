@@ -122,18 +122,32 @@ const pickShape = (value) =>
 await pickShape('iso');
 await dm.wait(200);
 
-// A count and a whole-image shortcut are both answers to "how many squares
-// across", which an isometric drag never asks. The rail's rule about a way in to
-// something that can do nothing, one level down.
+// The whole-image shortcut proposes a *region*, and an edge gesture has no
+// region in it — the rail's rule about a way in to something that can do
+// nothing, one level down. The count stays, because "how many cells did that
+// drag cross" is a question both gestures ask.
 check(
-  'choosing isometric puts the cell count away',
-  await dm.evaluate('document.querySelector("#map-count").hidden'),
+  'choosing isometric puts the whole-image shortcut away',
+  await dm.evaluate('document.querySelector("#map-whole").hidden'),
   true,
+);
+check(
+  'and keeps the cell count, which both gestures ask',
+  await dm.evaluate('document.querySelector("#map-count").hidden'),
+  false,
+);
+// One drag, one diamond, unless the DM says otherwise: the gesture as it was
+// before the count reached it. A 4 carried over from the square path would
+// divide the next traced edge into slivers.
+check(
+  'and starts at one cell rather than the square default',
+  await dm.evaluate('document.querySelector("#map-cells").value'),
+  '1',
 );
 check(
   'and the hint asks for an edge rather than a box',
   await dm.evaluate('document.querySelector("#map-hint").textContent'),
-  'Drag along one edge of one diamond, corner to corner.',
+  'Drag along that many diamond edges, corner to corner.',
 );
 
 // --- one dragged edge is the whole gesture ---------------------------------
@@ -207,11 +221,79 @@ await calibrate(); // off again
 await dm.wait(150);
 await calibrate(); // and back on, which is the state the rest of this needs
 await dm.wait(250);
+// And on the entry that *keeps* it where it is: the board came out at 2:1, so
+// re-opening on the free gesture would offer to re-aim a ratio that is already
+// right, which is the thing the fixed entry exists to stop.
 check(
   'the panel re-opens on isometric rather than offering to square it',
   await dm.evaluate('document.querySelector("#map-shape").value'),
-  'iso',
+  'iso-fixed',
 );
+
+// --- the fixed gesture takes the size and not the proportions ---------------
+
+// The same sloppy drag under both isometric entries. It is 120 across by 52
+// down, which is 2.3:1 — a couple of pixels off a real tile edge, which is what
+// aiming half of one on real art actually looks like. Free believes it; fixed
+// projects it onto the 2:1 edge and keeps the ratio, which is the whole feature
+// and is the difference between these two checks.
+const sloppy = () => dm.drag(x0, y0, x0 + 120, y0 + 52);
+
+await pickShape('iso');
+await dm.wait(200);
+await sloppy();
+await dm.wait(300);
+const free = await readout();
+note(`the free gesture previews: ${free}`);
+check('a sloppy drag read freely is not 2:1', /iso 2:1/.test(free), false);
+
+// Changing the entry abandons the drag, so this is a fresh reading of the same
+// gesture rather than the previous one reinterpreted.
+await pickShape('iso-fixed');
+await dm.wait(200);
+check(
+  'the fixed entry says which half of the gesture still matters',
+  await dm.evaluate('document.querySelector("#map-hint").textContent'),
+  'Drag along that many diamond edges — they stay 2:1.',
+);
+check(
+  'and it hides the whole-image shortcut like the free one does',
+  await dm.evaluate('document.querySelector("#map-whole").hidden'),
+  true,
+);
+await sloppy();
+await dm.wait(300);
+const fixed = await readout();
+note(`the fixed gesture previews: ${fixed}`);
+check('the same drag pinned comes out exactly 2:1', /preview .* iso 2:1/.test(fixed), true);
+
+// --- the count divides a traced run, after the fact --------------------------
+
+// Tracing the whole edge of a room and then saying how many tiles that was is
+// the easier gesture — a mistake in it is visible over the run rather than
+// hidden in one tile and multiplied across the map. So the count has to be
+// correctable *after* the drag, exactly as it is on the square path.
+const setCells = (n) =>
+  dm.evaluate(`(() => {
+    const c = document.querySelector('#map-cells');
+    c.value = '${n}';
+    c.dispatchEvent(new Event('input'));
+  })(); "ok"`);
+
+await dm.drag(x0, y0, x0 + 240, y0 + 104); // twice the sloppy run, still at one
+await dm.wait(300);
+const undivided = await readout();
+note(`the whole run at one cell reads: ${undivided}`);
+check('a run read as one cell is twice the cell', undivided !== fixed, true);
+
+await setCells(2);
+await dm.wait(300);
+const divided = await readout();
+note(`the same run split in two reads: ${divided}`);
+// The identical string, offsets and all: dividing the drag by two is the same
+// statement as the single edge, and the anchor is the corner the drag began on
+// either way. Anything less than equality here would be a lattice that moved.
+check('correcting the count after the drag divides it exactly', divided, fixed);
 
 // --- put the room back ------------------------------------------------------
 

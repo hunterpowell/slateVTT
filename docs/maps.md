@@ -176,12 +176,89 @@ way, and the shape decides whether it is read as a rectangle of squares or as on
 The square path — the box drag, the cell count, "use the whole image" — is untouched and still
 produces `Square`.
 
-Three panel rules came with it. The cell count and the whole-image shortcut are hidden under
-isometric, because both are answers to "how many squares across" and an isometric drag never asks
-it — the rail's rule about a way in to something that can do nothing, one level down. Changing
-the shape **abandons the drag** rather than reinterpreting it: a box read as four squares and the
-same box read as one diamond's edge are different claims about the map, and carrying it across would
-make the second one on the DM's behalf without saying so.
+Three panel rules came with it. The whole-image shortcut is hidden under isometric, because it
+proposes a *region* — the image's own bounds as the reference box — and an edge gesture has no
+region in it: the rail's rule about a way in to something that can do nothing, one level down.
+Changing the shape **abandons the drag** rather than reinterpreting it: a box read as four squares
+and the same box read as one diamond's edge are different claims about the map, and carrying it
+across would make the second one on the DM's behalf without saying so.
+
+*(The cell count was hidden here too at first, on the grounds that it answered "how many squares
+across" and an edge gesture never asked it. That was wrong — see below.)*
+
+### The count is both gestures'
+
+**It is often easier to trace the whole edge of a room and say how many tiles that was** than to
+aim at one tile and have the answer replicate across the map. So the edge gesture takes the same
+count the box gesture does, and `gridFromEdge` divides the drag by it.
+
+The count answers "how many cells did that drag cross", which **both** gestures ask; only the
+whole-image shortcut is the square path's alone. The first cut hid them together because they sit
+in one row, which is a layout fact rather than an argument — `#map-count` is no longer a thing the
+tool holds a reference to, and `wholeMap` is hidden on its own.
+
+Three things make it fit the gesture rather than merely apply to it:
+
+- **The overlay draws the whole chain.** `drawCalibrationDiamond` steps `cells` diamonds along the
+  drag, which is the edge gesture's version of the divisions the square path rules inside its box:
+  with the count right they land on the tiles printed on the art, and a wrong one is visible over
+  the whole run rather than hidden in a single tile and multiplied later. That is most of why the
+  long gesture is the easier one, so drawing one diamond and dividing silently would have given
+  away the reason for building it.
+- **It divides and nothing else.** Both readings are linear in the drag, so `isoDiamond` divides
+  the vector once at the top and the fixed shape's projection is unaffected — a run of four is
+  exactly the statement one edge of the same cell is, under either shape. The anchor is untouched
+  too: it is the corner the drag *began* on, which is a lattice point however many cells the drag
+  went on to cross.
+- **It resets to one on a shape change**, where the square path resets to four. The count means the
+  same kind of thing under both and not the same number, and one drag meaning one diamond is the
+  gesture as it was before the count reached it — a DM aiming a single tile must not have to
+  correct a 4 first. Carrying 26 across from a whole-image square calibration would divide the next
+  traced edge into slivers, which is the mistake `release` already refuses to make with a
+  hand-drawn box.
+
+One thing followed from it. `proposeWholeMap` now refuses under an isometric shape: `main.ts` calls
+it on a freshly loaded image, and a map with a remembered isometric calibration is one where that
+offer means nothing. It always meant nothing there — before the count reached the edge gesture it
+merely meant nothing quietly, where now it would divide the image's bounds by a count.
+
+### The 2:1 entry, which is the same gesture with the ratio pinned
+
+Aiming half a tile edge decides the *ratio*, and being two pixels out on a forty-pixel edge leaves
+the lattice 6% off — which is invisible under the first diamond and most of a cell of drift ten
+cells later. But almost every isometric map anybody loads is drawn on a 2:1 tileset, so on that art
+the ratio was never in question and only the size was. **`iso-fixed` is the select's third entry**:
+the same edge drag, with the diamond's proportions pinned to `STANDARD_RATIO` and only its size
+taken from the gesture.
+
+**It is not a second lattice and it is not on the wire.** What it produces is an ordinary
+`Iso { ratio }` with `ratio` equal to 2, so `MapInfo`, `gridBasis`, `fog::basis`, the calibration
+shelf and the server's bounds are all untouched — nothing downstream of `gridFromEdge` can tell
+which of the two gestures made a grid. It is a *client-side gesture*, not a state of the room, which
+is why there is nothing in `RoomState` about it and nothing to persist.
+
+The size comes from **projecting the drag onto the pinned edge** — the least-squares fit — rather
+than from the drag's vertical alone. Half a tile height is the smaller and harder-to-aim of the two
+components, so reading the size off it would throw away the better half of the gesture; with the
+projection, a drag exactly along a tile edge gives exactly that tile and one a few pixels off gives
+the same tile. `isoDiamond` is where that lives, and it is **the one place either isometric gesture
+decides anything**: `gridFromEdge` builds the lattice from it and `drawCalibrationDiamond` draws it,
+so the diamond the DM aims and the diamond that gets committed are one diamond by construction. That
+mattered more here than under the free gesture, where the drawn diamond is the one under the pointer
+anyway — under `iso-fixed` it deliberately is not, and two functions deriving it separately would
+disagree invisibly.
+
+Two smaller rules. The refusals differ, because **a pinned diamond cannot be lopsided**: a drag the
+free gesture has to refuse for being twenty times as wide as it is tall is an ordinary cell under
+this one, so it is not offered a reason that cannot apply to it. And `shapeFor` opens the panel on
+the entry the board is already on, which for a 2:1 board is this one — re-opening on the free
+gesture would offer to re-aim a ratio that is already right. It compares against a tolerance rather
+than for equality, because the ratio has been through an `f32` and back.
+
+The other standard is **true isometric** — a projected cube, edges at exactly 30°, ratio √3 — which
+is what a rendered map gives you rather than what a tileset is drawn on. There is one preset because
+a second one nobody picks is a menu; a map on any other projection is what the free gesture is still
+there for.
 
 And **an isometric drag has no play area in it**, which is the rule that was got wrong first time
 and is worth stating plainly. `repreview` reads a play area off the dragged box, and for squares

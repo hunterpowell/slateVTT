@@ -160,6 +160,10 @@ function damageField(token: Token, hp: Hp, send: (msg: ClientMsg) => void): HTML
       owner: token.owner,
       hidden: token.hidden,
       hp: { current: next, max: hp.max },
+      // Carried through unchanged, like every other field this row is not
+      // about: `update_token` replaces the token whole, so a field left out
+      // here is a lantern this box quietly blows out.
+      light_ft: token.lightFt,
     });
   });
 

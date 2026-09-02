@@ -1658,6 +1658,61 @@ and 28 also overturned something *its own* design section said, which its entry 
     isometric art is symmetric; `input.ts` never learned about it, since it hands over the same box
     either way.
 
+39. **Done**, on 2026-09-01. Light sources — a radius on a token, so a brazier lights the room
+    the party walks into and a lantern reaches further than the map allows. See *Light sources* in
+    `docs/fog.md`.
+
+    **It is one field on `Token` and no new anything else.** `light_ft: Option<f32>`, DM-only,
+    beside `hidden` and `hp`. It rides on `CreateToken` and `UpdateToken`, which are already `true`
+    in `moves_sight`, already persist and already carry undo labels — so there is **no new
+    command, no new event, no arm in `message_for`, and `protocol-tags.json` is untouched.** That
+    is the whole argument against the `Light` entity considered beside it, which would have needed
+    an id type, four commands, a rail tab, a filter arm and three enumerated-list entries to
+    re-implement drag, delete, staging and undo that `Token` already has.
+
+    **One field doing two things, and `fog::Source` is where they become one rule.** On a token a
+    player owns, `light_ft` replaces `MapInfo::vision_ft`; on anything else it is what makes the
+    token a source at all. `Source { at, radius_ft: Option<f32> }` carries the `?? vision_ft`
+    fallback, so `room.rs` hands over `token.light_ft` unchanged for a party member and for a
+    brazier alike, and `None` still means what every source in `fog.rs` meant before this existed.
+    The three sweeps took `&[Pos]` and read one radius above the loop; they take `&[Source]` and
+    read it inside. Nothing else in them moved.
+
+    **The gate is the design, and it is line of sight rather than reach.** Ungated, a light is a
+    disaster with a schedule: prepare a dungeon on a Tuesday, put a brazier in each room, promote on
+    the Saturday, and the table holds every lit chamber on the level through three walls, because
+    `visible` is a flat union of its sources with no *and somebody can see it* term in it. So the
+    term is applied to the **source list**. And it is unbounded line of sight, not the party's
+    radius: vision at thirty feet and a brazier at forty is a brazier they can plainly see. That was
+    Hunter's call and it made the feature *cheaper* — `in_line_of_sight` is a segment test per eye
+    with no radius and therefore no wall cull, where gating on `visible` would have been a second
+    sweep. The fallback beside it is the party's own sight, which is what carries `Lighting::Room`.
+
+    **No cascade, and it is not an optimisation.** The gate reads the sight the party has on their
+    own, computed before a single light joins the list, so one brazier cannot switch on the next —
+    otherwise a chain of torches down a corridor opens the level, which is the same failure arriving
+    one step later. `one_light_never_switches_on_the_next` is the test; opening the gate fails it
+    along with two others, which is how it was checked for being vacuous.
+
+    **This is the per-token vision deferred since 16a**, arriving for a different reason than the
+    one that was declined. It is still not darkvision: a radius on a token lights for *everybody*,
+    and a radius that lights for its owner alone is milestone 29's per-player `visible`. The
+    accommodation stopped at one field — no `Vision` struct.
+
+    **The damage box had to carry it through, and the compiler is what said so.** `panel.ts` builds
+    an `UpdateToken` from the token it already resolved, and that command replaces the token whole,
+    so a field left out of the send blows the lantern out on the first hit that lands. A required
+    field on a struct is a question somebody has to answer, which is `TokenView`'s argument running
+    in the other direction.
+
+    **What the driver could and could not be made to say.** `drive-fog.mjs` reads the lantern half
+    end to end in two browsers: the map's radius to its five-foot floor, the light on, and the
+    player's board brightens 48%. The *gated* half is not there — a brazier of the driver's own
+    lands in the first free cell out from the middle of the view, `spaceFor` picks that cell by
+    position rather than by footprint, and a large creature standing beside it takes the click that
+    would select it again for cleanup. A driver that cannot put back what it changed is worse than
+    one that says less, so it says less; the gate has three server tests instead.
+
 ### The right dock
 
 **Built in milestone 23, and 24 put the second tab on it.** `dock.ts` is the strip; the notes were a

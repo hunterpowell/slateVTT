@@ -55,6 +55,31 @@ pub const FEET_PER_CELL: f32 = 5.0;
 pub const MIN_VISION_FT: f32 = 5.0;
 pub const MAX_VISION_FT: f32 = 500.0;
 
+/// One thing that lights the board, and how far it reaches.
+///
+/// Grid units like `Pos` and unlike the walls, for the reason `visible_cells`
+/// gives at length: the radius is compared in cells because the four cells at
+/// exactly that distance are a tie, and scaling a tie into pixels answers it
+/// differently on each side.
+///
+/// **`radius_ft` is `None` for "as far as this map lets anyone see"** — which
+/// is what every source in this file was before milestone 39 put a lantern on a
+/// token. Keeping that fallback here rather than at the call sites is what lets
+/// `room.rs` hand over `token.light_ft` unchanged for a party member and for a
+/// brazier alike: the `?? vision_ft` rule exists once, in `radius_cells`.
+#[derive(Debug, Clone, Copy)]
+pub struct Source {
+    pub at: Pos,
+    pub radius_ft: Option<f32>,
+}
+
+impl Source {
+    /// The reach of this source, in cells, which is the space it is compared in.
+    fn radius_cells(&self, map: &MapInfo) -> f32 {
+        (self.radius_ft.unwrap_or(map.vision_ft) / FEET_PER_CELL).max(0.0)
+    }
+}
+
 /// How large the packed rectangle may get, in cells on a side.
 ///
 /// Defensive rather than a rule anybody meets: the box is the bounding box of
@@ -322,15 +347,11 @@ fn bounds(cells: impl Iterator<Item = Cell>) -> Option<(i32, i32, i32, i32)> {
 /// halves are bounded before the loop: walls further from the viewer than the
 /// radius cannot be crossed by any of its rays and are dropped once per source
 /// rather than once per cell, and the sweep is clipped to the play area.
-pub fn visible_cells(map: &MapInfo, walls: &[Wall], sources: &[Pos]) -> HashSet<Cell> {
+pub fn visible_cells(map: &MapInfo, walls: &[Wall], sources: &[Source]) -> HashSet<Cell> {
     let mut seen: HashSet<Cell> = HashSet::new();
     if sources.is_empty() || map.grid_px <= 0.0 {
         return seen;
     }
-
-    let radius_cells = (map.vision_ft / FEET_PER_CELL).max(0.0);
-    let radius = radius_cells * px_per_cell(map);
-    let reach = radius_cells.ceil() as i32;
 
     let blockers: Vec<(Px, Px)> = walls
         .iter()
@@ -339,9 +360,17 @@ pub fn visible_cells(map: &MapInfo, walls: &[Wall], sources: &[Pos]) -> HashSet<
         .chain(boundary(map.play_area))
         .collect();
 
-    for &eye in sources {
+    for src in sources {
+        // Each source brings its own reach since milestone 39, which is why this
+        // sits inside the loop where it used to sit above it. A source naming no
+        // radius takes the map's — see `Source`.
+        let eye = src.at;
+        let radius_cells = src.radius_cells(map);
+        let radius = radius_cells * px_per_cell(map);
+        let reach = radius_cells.ceil() as i32;
+
         // The rays are cast in pixels because that is the space the walls live
-        // in; the radius is checked in cells above, where it is exact.
+        // in; the radius is checked in cells, where it is exact.
         let source = grid_to_px(map, eye.x, eye.y);
         // Once per source, not once per ray. A dungeon is a couple of hundred
         // segments and a viewer stands within reach of a handful of them.
@@ -403,7 +432,7 @@ pub fn visible_cells(map: &MapInfo, walls: &[Wall], sources: &[Pos]) -> HashSet<
 /// It can never show less than `Dynamic` would, and it is what makes a doorway
 /// carry **sight** rather than light — see `lit_cells`, which stops at every
 /// segment the DM traced, open or shut.
-pub fn sight_cells(map: &MapInfo, walls: &[Wall], sources: &[Pos]) -> HashSet<Cell> {
+pub fn sight_cells(map: &MapInfo, walls: &[Wall], sources: &[Source]) -> HashSet<Cell> {
     match map.lighting {
         Lighting::Dynamic => visible_cells(map, walls, sources),
         Lighting::Room => {
@@ -412,6 +441,52 @@ pub fn sight_cells(map: &MapInfo, walls: &[Wall], sources: &[Pos]) -> HashSet<Ce
             lit
         }
     }
+}
+
+/// Whether any of `eyes` has a clear straight line to `at`, **at any distance**.
+///
+/// The gate on a light nobody is carrying, and milestone 39's whole answer to the
+/// question that would otherwise sink the feature: a brazier the DM placed while
+/// preparing a dungeon must not light a room the party cannot see, or promoting
+/// that map hands over every lit chamber on the level at once. `visible` is one
+/// flat union of its sources with no "and somebody can see it" term in it, so the
+/// term has to be applied to the source list before the sweep runs.
+///
+/// **It is deliberately not `visible_cells` narrowed to one cell, and the
+/// difference is the point.** This asks about the geometry and never about a
+/// radius: vision set at thirty feet and a brazier at forty is a brazier the party
+/// can plainly see, so gating on their reach would answer a question nobody asked.
+/// It is why there is no wall cull here — a cull is bounded by a radius, and
+/// there is none. It is also what makes this cheap: a segment test per eye, where
+/// gating on `visible` would have been a second sweep.
+///
+/// The same blockers the rays stop at, so an open door carries this exactly as it
+/// carries sight, and `crosses`'s permissive end ties come with it: a light traced
+/// onto a wall's corner activates rather than sitting dark against its own masonry.
+pub fn in_line_of_sight(map: &MapInfo, walls: &[Wall], eyes: &[Source], at: Pos) -> bool {
+    if eyes.is_empty() || map.grid_px <= 0.0 {
+        return false;
+    }
+
+    let target = grid_to_px(map, at.x, at.y);
+    // A light off the edge of the board lights nothing, which is the bound the
+    // sweeps clip to. The boundary is among the blockers as well, and that
+    // answers the other direction; this is for a party standing off the board.
+    if !on_board(map.play_area, target) {
+        return false;
+    }
+
+    let blockers: Vec<(Px, Px)> = walls
+        .iter()
+        .filter(|wall| wall.blocks())
+        .map(|wall| (wall.from, wall.to))
+        .chain(boundary(map.play_area))
+        .collect();
+
+    eyes.iter().any(|eye| {
+        let from = grid_to_px(map, eye.at.x, eye.at.y);
+        !blockers.iter().any(|(a, b)| crosses(from, target, *a, *b))
+    })
 }
 
 /// Every cell reachable on foot from one of `sources` without crossing anything
@@ -453,16 +528,11 @@ pub fn sight_cells(map: &MapInfo, walls: &[Wall], sources: &[Pos]) -> HashSet<Ce
 /// lit because its rays are independent; here skipping such a cell would stop this
 /// source expanding *through* it, and a fill that never enters the corridor never
 /// reaches the room past it.
-pub fn lit_cells(map: &MapInfo, walls: &[Wall], sources: &[Pos]) -> HashSet<Cell> {
+pub fn lit_cells(map: &MapInfo, walls: &[Wall], sources: &[Source]) -> HashSet<Cell> {
     let mut lit: HashSet<Cell> = HashSet::new();
     if sources.is_empty() || map.grid_px <= 0.0 {
         return lit;
     }
-
-    // In cells for the step test and in pixels for the wall cull, which is the
-    // raycast's split and is there for its reason.
-    let radius_cells = (map.vision_ft / FEET_PER_CELL).max(0.0);
-    let radius = radius_cells * px_per_cell(map);
 
     // Every segment, unlike the raycast's list one function up: a door bounds a
     // room whatever it is swung to, and what an open one passes is sight.
@@ -472,7 +542,14 @@ pub fn lit_cells(map: &MapInfo, walls: &[Wall], sources: &[Pos]) -> HashSet<Cell
         .chain(boundary(map.play_area))
         .collect();
 
-    for &eye in sources {
+    for src in sources {
+        // In cells for the step test and in pixels for the wall cull, which is
+        // the raycast's split and is there for its reason. Per source, as the
+        // raycast takes it, since milestone 39.
+        let eye = src.at;
+        let radius_cells = src.radius_cells(map);
+        let radius = radius_cells * px_per_cell(map);
+
         let source = grid_to_px(map, eye.x, eye.y);
         // Once per source, as the raycast does it. The margin is the half cell
         // between a token's position and the centre of the square it stands in:
@@ -1142,10 +1219,15 @@ mod tests {
     /// A viewer standing in the middle of `cell`, in the grid units the sweeps
     /// take. Half-integers, which is where `snap_to_cell` puts an odd-sized
     /// token and where the radius ties live.
-    fn at(cell: Cell) -> Pos {
-        Pos {
-            x: cell.0 as f32 + 0.5,
-            y: cell.1 as f32 + 0.5,
+    fn at(cell: Cell) -> Source {
+        Source {
+            at: Pos {
+                x: cell.0 as f32 + 0.5,
+                y: cell.1 as f32 + 0.5,
+            },
+            // The map's radius, which is what every source in this file was
+            // before a light could carry one of its own.
+            radius_ft: None,
         }
     }
 

@@ -14,18 +14,18 @@
     }
   },
   "staged": {
-    "url": "/uploads/test-c42ecd7f.webp",
-    "grid_px": 54.0,
-    "offset_x": 4.5834055,
-    "offset_y": 27.124779,
-    "grid_color": "#ffffff52",
+    "url": "/uploads/bridge-37c094e4.webp",
+    "grid_px": 88.8,
+    "offset_x": 26.920715,
+    "offset_y": 60.76377,
+    "grid_color": "#ffffff4d",
     "play_area": null,
     "fog": false,
     "vision_ft": 60.0,
     "lighting": "dynamic",
     "grid_shape": {
       "kind": "iso",
-      "ratio": 1.7098768
+      "ratio": 1.6186188
     },
     "walls": [],
     "overrides": {
@@ -52,28 +52,41 @@
         "current": 44,
         "max": 100
       },
-      "staged_pos": {
-        "x": 15.0,
-        "y": 0.0
+      "light_ft": null,
+      "staged_pos": null,
+      "staged_only": false
+    },
+    {
+      "id": "56dff0d307064073af8cc992e64d04d2",
+      "name": "torch",
+      "x": 12.5,
+      "y": 15.5,
+      "owner": {
+        "kind": "dm"
       },
+      "img": "/uploads/portrait-bluege-f77de1bf.png",
+      "size": 0.5,
+      "hidden": false,
+      "hp": null,
+      "light_ft": 10.0,
+      "staged_pos": null,
       "staged_only": false
     },
     {
       "id": "e0958f05ada5480fba801100e289229e",
       "name": "Corvus",
-      "x": 13.5,
-      "y": 20.5,
+      "x": 12.5,
+      "y": 27.5,
       "owner": {
-        "kind": "dm"
+        "kind": "player",
+        "id": "corvus"
       },
       "img": "/uploads/portrait-corvus-da4bc29c.png",
       "size": 1.0,
       "hidden": false,
       "hp": null,
-      "staged_pos": {
-        "x": 10.5,
-        "y": 1.5
-      },
+      "light_ft": null,
+      "staged_pos": null,
       "staged_only": false
     }
   ],
@@ -96,9 +109,9 @@
   "revealed": {
     "x": 0,
     "y": -1,
-    "w": 20,
-    "h": 28,
-    "cells": "########oo###############oooooooo###########oooooooooo#########oooooooooooo########oooooooooooo########oooooooooooo#######oooooooooooooo######ooooooooooooo######oooooooooooooo######oooooooooooooo######ooooooooooooo######ooooooooooooo########oooooooooooo########ooooooooooooo#######ooooooooooooo########oooooooooooo########ooooooooooooooo######ooooooooooooooo#####oooooooooooooooo####oooooooooooooooo#####ooooooooooooooo######ooooooooooooooo########ooooooooooo#########ooooooooooo#########ooooooooooo##########ooooooooo############ooooooo################o######"
+    "w": 23,
+    "h": 35,
+    "cells": "########oo##################oooooooo##############oooooooooo############oooooooooooo###########oooooooooooo###########oooooooooooo##########oooooooooooooo#########ooooooooooooo#########ooooooooooooooooo######ooooooooooooooooooo####oooooooooooooooooooo##ooooooooooooooooooooo###ooooooooooooooooooooo##ooooooooooooooooooooo##ooooooooooooooooooooo###ooooooooooooooooooooo##oooooooooooooooooooo####ooooooooooooooooooo####ooooooooooooooooooo####oooooooooooooooooo######ooooooooooooooooo#######ooooooooooooooo##########oooooooooooo###########oooooooooooo##########oooooooooooooo##########ooooooooooooo##########ooooooooooooo##########oooooooooooooo########oooooooooooooo##########ooooooooooooo##########ooooooooooooo##########oooooooooooo############oooooooooo##############ooooooo###################o##########"
   },
   "overrides": {
     "x": 0,
@@ -112,6 +125,114 @@
   "show_cursors": true,
   "show_dm_cursor": true,
   "calibrations": {
+    "/uploads/please-a4a8df16.jpg": {
+      "grid_px": 23.329184,
+      "offset_x": 0.0,
+      "offset_y": 0.0,
+      "grid_color": "#ffffff4d",
+      "play_area": null,
+      "fog": false,
+      "vision_ft": 60.0,
+      "lighting": "dynamic",
+      "grid_shape": {
+        "kind": "square"
+      },
+      "walls": [],
+      "overrides": {
+        "x": 0,
+        "y": 0,
+        "w": 0,
+        "h": 0,
+        "cells": ""
+      }
+    },
+    "/uploads/test-c42ecd7f.webp": {
+      "grid_px": 54.0,
+      "offset_x": 4.5834055,
+      "offset_y": 27.124779,
+      "grid_color": "#ffffff52",
+      "play_area": null,
+      "fog": false,
+      "vision_ft": 60.0,
+      "lighting": "dynamic",
+      "grid_shape": {
+        "kind": "iso",
+        "ratio": 1.7098768
+      },
+      "walls": [],
+      "overrides": {
+        "x": 0,
+        "y": 0,
+        "w": 0,
+        "h": 0,
+        "cells": ""
+      }
+    },
+    "/uploads/buh-2e020abc.webp": {
+      "grid_px": 54.0,
+      "offset_x": 0.0,
+      "offset_y": 0.0,
+      "grid_color": "#ffffffa3",
+      "play_area": null,
+      "fog": false,
+      "vision_ft": 60.0,
+      "lighting": "dynamic",
+      "grid_shape": {
+        "kind": "square"
+      },
+      "walls": [],
+      "overrides": {
+        "x": 0,
+        "y": 0,
+        "w": 0,
+        "h": 0,
+        "cells": ""
+      }
+    },
+    "/uploads/dungeon-iso-9167dae1.webp": {
+      "grid_px": 23.329184,
+      "offset_x": -5.8302383,
+      "offset_y": 14.151973,
+      "grid_color": "#ffffff4d",
+      "play_area": null,
+      "fog": false,
+      "vision_ft": 60.0,
+      "lighting": "dynamic",
+      "grid_shape": {
+        "kind": "iso",
+        "ratio": 1.8573334
+      },
+      "walls": [],
+      "overrides": {
+        "x": 0,
+        "y": 0,
+        "w": 0,
+        "h": 0,
+        "cells": ""
+      }
+    },
+    "/uploads/bridge-37c094e4.webp": {
+      "grid_px": 88.8,
+      "offset_x": 26.920715,
+      "offset_y": 60.76377,
+      "grid_color": "#ffffff4d",
+      "play_area": null,
+      "fog": false,
+      "vision_ft": 60.0,
+      "lighting": "dynamic",
+      "grid_shape": {
+        "kind": "iso",
+        "ratio": 1.6186188
+      },
+      "walls": [],
+      "overrides": {
+        "x": 0,
+        "y": 0,
+        "w": 0,
+        "h": 0,
+        "cells": ""
+      }
+    },
     "/assets/map.png": {
       "grid_px": 64.0,
       "offset_x": 0.0,
@@ -154,18 +275,38 @@
         "cells": ""
       }
     },
-    "/uploads/test-c42ecd7f.webp": {
-      "grid_px": 54.0,
-      "offset_x": 4.5834055,
-      "offset_y": 27.124779,
-      "grid_color": "#ffffff52",
+    "/uploads/ver-9eeeff2b.jpg": {
+      "grid_px": 23.329184,
+      "offset_x": 0.0,
+      "offset_y": 0.0,
+      "grid_color": "#ffffff4d",
       "play_area": null,
       "fog": false,
       "vision_ft": 60.0,
       "lighting": "dynamic",
       "grid_shape": {
-        "kind": "iso",
-        "ratio": 1.7098768
+        "kind": "square"
+      },
+      "walls": [],
+      "overrides": {
+        "x": 0,
+        "y": 0,
+        "w": 0,
+        "h": 0,
+        "cells": ""
+      }
+    },
+    "/uploads/maze-26da4ea6.webp": {
+      "grid_px": 54.0,
+      "offset_x": 0.0,
+      "offset_y": 0.0,
+      "grid_color": "#ffffffa3",
+      "play_area": null,
+      "fog": false,
+      "vision_ft": 60.0,
+      "lighting": "dynamic",
+      "grid_shape": {
+        "kind": "square"
       },
       "walls": [],
       "overrides": {

@@ -1476,3 +1476,221 @@ fn a_creature_dragged_around_in_the_dark_is_still_never_mentioned() {
         "nothing at all about a monster they were never shown, got {frames:?}"
     );
 }
+// --- light sources ------------------------------------------------------
+
+/// A light standing in row 1 at `x`, built the way the DM's panel builds one.
+///
+/// Through `handle` rather than inserted into the table, so the gate, the
+/// recompute and the frames the room decides to send are all in the reading.
+fn light_at(name: &str, x: f32, light_ft: f32) -> ClientMsg {
+    ClientMsg::CreateToken {
+        name: name.to_owned(),
+        img: String::new(),
+        size: 1.0,
+        owner: Owner::Dm,
+        x,
+        y: 1.5,
+        hidden: false,
+        hp: None,
+        light_ft: Some(light_ft),
+        staged: false,
+    }
+}
+
+#[test]
+fn a_light_the_party_can_see_reaches_further_than_their_own_torches() {
+    // The case the feature was asked for, in its own numbers: vision at thirty
+    // feet and a brazier at forty. The party cannot *reach* it and can plainly
+    // see it, so gating on their radius would answer a question nobody asked.
+    let mut state = fog_room(30.0);
+    let _dm = join_as_dm(&mut state, ClientId(1));
+
+    assert!(
+        !state.visible.contains(&(12, 1)),
+        "six cells of vision does not reach eleven"
+    );
+
+    state.handle(ClientId(1), light_at("Brazier", 9.5, 30.0));
+
+    assert!(
+        state.visible.contains(&(12, 1)),
+        "the brazier lights its own surroundings once they can see it"
+    );
+    assert!(
+        state.revealed.contains(&(12, 1)),
+        "and it is a ray like any other, so the party remember it"
+    );
+}
+
+#[test]
+fn a_light_behind_a_wall_lights_nothing_and_the_table_is_told_nothing() {
+    // The failure that would sink the feature: a DM preparing a dungeon puts a
+    // brazier in every room, and ungated the promote hands the table every lit
+    // chamber on the level through three walls. `visible` is a flat union of
+    // its sources, so the gate has to be applied to the source list.
+    let mut state = fog_room(30.0);
+    let _dm = join_as_dm(&mut state, ClientId(1));
+    state.handle(ClientId(1), between(false));
+    let mut rx = join_as_player(&mut state, ClientId(2), "saelyn");
+    drain(&mut rx);
+
+    state.handle(ClientId(1), light_at("Brazier", 9.5, 30.0));
+
+    assert!(
+        !state.visible.contains(&(12, 1)),
+        "no line to it, so it is not a source"
+    );
+    let frames = drain(&mut rx);
+    assert!(
+        frames.is_empty(),
+        "and nothing about it leaves the room at all, got {frames:?}"
+    );
+}
+
+#[test]
+fn swinging_a_door_open_switches_the_light_behind_it_on() {
+    // The gate reading as it is meant to be explained: you see the light, and
+    // then you see what it lights. A door is what makes that happen at a table.
+    let mut state = fog_room(30.0);
+    let _dm = join_as_dm(&mut state, ClientId(1));
+    state.handle(ClientId(1), between(true));
+    let door = state.walls.first().expect("the door").id.clone();
+    state.handle(ClientId(1), light_at("Brazier", 9.5, 30.0));
+
+    assert!(!state.visible.contains(&(12, 1)), "traced shut");
+
+    state.handle(ClientId(1), swing(door));
+    assert!(
+        state.visible.contains(&(12, 1)),
+        "and an open one is a line of sight like any other"
+    );
+}
+
+#[test]
+fn a_lantern_on_a_player_token_replaces_the_maps_radius() {
+    // The other half of one field: on a token the party owns it is not a gate
+    // at all, it is how far that token sees. Never gated, because their own
+    // eyes are not something they have to catch sight of first.
+    let mut state = fog_room(10.0);
+    let _dm = join_as_dm(&mut state, ClientId(1));
+    assert!(!sees_the_ogre(&state), "two cells does not reach four");
+
+    let mut carrying = token(&state, "p");
+    carrying.light_ft = Some(60.0);
+    state.handle(ClientId(1), edit(&carrying));
+
+    assert!(
+        sees_the_ogre(&state),
+        "the lantern is what the party sees by now"
+    );
+}
+
+#[test]
+fn a_light_nobody_can_see_lights_nothing_whoever_is_holding_it() {
+    // `!unseen()`, the rule vision has always used, arriving for lights: a
+    // creature off the table's board lighting the room for everybody would
+    // want explaining. A staged one is the same sentence about the next map.
+    for take_away in [true, false] {
+        let mut state = fog_room(30.0);
+        let _dm = join_as_dm(&mut state, ClientId(1));
+        state.handle(ClientId(1), light_at("Brazier", 9.5, 30.0));
+        assert!(state.visible.contains(&(12, 1)), "lit to begin with");
+
+        let brazier = made(&state, "Brazier");
+        if take_away {
+            state.handle(ClientId(1), set_hidden(&brazier, true));
+        } else {
+            let Some(token) = state.tokens.get_mut(&brazier.id) else {
+                unreachable!("just built")
+            };
+            token.staged_only = true;
+            state.recompute_sight();
+        }
+
+        assert!(
+            !state.visible.contains(&(12, 1)),
+            "hidden: {take_away} left it lighting the board"
+        );
+    }
+}
+
+#[test]
+fn one_light_never_switches_on_the_next() {
+    // No cascade, and it is the failure the gate exists to prevent arriving one
+    // step later: a chain of torches down a corridor would open the level. The
+    // gate reads the sight the party has *on their own*, computed before a
+    // single light joins the list.
+    //
+    // The stub runs along the boundary below row 3 and reaches from x = 128 to
+    // x = 320, so it crosses the party's diagonal to the far light and misses
+    // the near light's own straight drop to it.
+    let mut state = fog_room(10.0);
+    let _dm = join_as_dm(&mut state, ClientId(1));
+    state.handle(ClientId(1), wall(128.0, 256.0, 320.0, 256.0, false));
+
+    // Near, in plain sight of the party, and reaching the far one's square.
+    state.handle(ClientId(1), light_at("Near", 5.5, 30.0));
+    // Far, around the stub, lighting a stretch only it could light.
+    state.handle(
+        ClientId(1),
+        ClientMsg::CreateToken {
+            name: "Far".to_owned(),
+            img: String::new(),
+            size: 1.0,
+            owner: Owner::Dm,
+            x: 5.5,
+            y: 5.5,
+            hidden: false,
+            hp: None,
+            light_ft: Some(30.0),
+            staged: false,
+        },
+    );
+
+    assert!(
+        state.visible.contains(&(5, 5)),
+        "the near light reaches the far one's square"
+    );
+    assert!(
+        !state.visible.contains(&(5, 9)),
+        "and the far one stays dark, because being lit is not being seen"
+    );
+}
+
+#[test]
+fn a_players_copy_of_a_token_never_carries_its_light() {
+    // What a light does reaches the table as fog; what it *is* is the DM's
+    // authoring, and goes the way the walls go. Both routes out, because
+    // filtering every delta correctly and then handing over the whole world on
+    // connect is the way this has gone wrong before.
+    let mut state = fog_room(30.0);
+    let _dm = join_as_dm(&mut state, ClientId(1));
+    let mut rx = join_as_player(&mut state, ClientId(2), "saelyn");
+    state.handle(ClientId(1), light_at("Brazier", 9.5, 30.0));
+
+    let seen = |view: &RoomView| {
+        view.tokens
+            .iter()
+            .find(|t| t.name == "Brazier")
+            .map(|t| t.light_ft)
+    };
+    assert_eq!(
+        seen(&state.snapshot_for(&Identity::Dm)),
+        Some(Some(30.0)),
+        "the DM's own client is what draws the panel"
+    );
+    assert_eq!(
+        seen(&state.snapshot_for(&as_player("saelyn"))),
+        Some(None),
+        "and a player is sent the token without its reach"
+    );
+
+    let told = drain(&mut rx)
+        .into_iter()
+        .filter_map(|msg| match msg {
+            ServerMsg::TokenChanged { token } if token.name == "Brazier" => Some(token.light_ft),
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(told, vec![None], "the delta beside it says as little");
+}

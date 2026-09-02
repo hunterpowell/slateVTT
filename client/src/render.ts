@@ -1,4 +1,5 @@
-import type { Box } from './calibrate.js';
+import type { Box, CalShape, IsoShape } from './calibrate.js';
+import { isoDiamond } from './calibrate.js';
 import type { Camera, GridSpec, Rect, Vec2 } from './coords.js';
 import {
   gridBounds,
@@ -293,7 +294,7 @@ export interface Frame {
    *  this overrides it. */
   colours: Colours;
   /** The DM's in-progress grid reference box. Null for everyone else. */
-  calibration: { box: Box; cells: number; shape: 'square' | 'iso' } | null;
+  calibration: { box: Box; cells: number; shape: CalShape } | null;
   /** The wall editor's state: whether it is armed, the run being traced, where
    *  the next corner would land, and which segment the pointer is over.
    *
@@ -1161,15 +1162,15 @@ function drawWallRun(
 function drawCalibration(
   ctx: CanvasRenderingContext2D,
   cam: Camera,
-  { box, cells, shape }: { box: Box; cells: number; shape: 'square' | 'iso' },
+  { box, cells, shape }: { box: Box; cells: number; shape: CalShape },
 ): void {
   // The isometric gesture is one cell *edge*, so the overlay is the diamond that
   // edge describes rather than a box of squares. Drawing the square affordance
   // for it says the DM is selecting a region, which is the wrong thing to aim —
   // and the whole difficulty of this gesture is aiming it at art whose tiles are
   // a few dozen pixels across.
-  if (shape === 'iso') {
-    drawCalibrationDiamond(ctx, cam, box);
+  if (shape !== 'square') {
+    drawCalibrationDiamond(ctx, cam, box, shape, cells);
     return;
   }
 
@@ -1206,28 +1207,63 @@ function drawCalibration(
 }
 
 /**
- * The one diamond a dragged edge describes, drawn where it was dragged.
+ * The chain of diamonds a dragged edge describes, drawn where it was dragged.
  *
- * The drag runs from a corner to the next corner round, so it spans half the
- * cell's width and half its height; the other three edges are that vector
- * mirrored. Drawn from the *start* of the drag rather than from a bounding box,
- * because which corner the DM began on is the thing they are aiming.
+ * The drag runs corner to corner along one lattice direction, so it spans
+ * `cells` whole cells; each is half a cell's width across and half its height
+ * down from the last, and the other edges of each are that vector mirrored.
+ * Drawn from the *start* of the drag rather than from a bounding box, because
+ * which corner the DM began on is the thing they are aiming.
+ *
+ * **The chain is the feedback the count needs**, and it is the edge gesture's
+ * version of the divisions the square path rules inside its box: with the count
+ * right, the diamonds land on the tiles printed on the art, and the DM can see
+ * that before releasing. Tracing a whole room and dividing it is the easier
+ * gesture precisely because a mistake in it is visible over the whole run
+ * rather than hidden in one tile and multiplied later.
+ *
+ * **What the drag says a diamond is comes from `isoDiamond`**, which is what
+ * `gridFromEdge` builds the lattice from — so under the fixed shape the drawn
+ * diamond is the pinned one and not the loose one under the pointer, and the DM
+ * aims the thing they are about to commit. Two functions deriving it separately
+ * is how a preview comes to disagree with its result.
  */
-function drawCalibrationDiamond(ctx: CanvasRenderingContext2D, cam: Camera, box: Box): void {
-  const halfW = Math.abs(box.x1 - box.x0);
-  const halfH = Math.abs(box.y1 - box.y0);
-  if (halfW <= 0 || halfH <= 0) return;
+function drawCalibrationDiamond(
+  ctx: CanvasRenderingContext2D,
+  cam: Camera,
+  box: Box,
+  shape: IsoShape,
+  cells: number,
+): void {
+  const diamond = isoDiamond(box, shape, cells);
+  if (diamond === null) return;
+  const { halfW, halfH } = diamond;
 
-  // Anchored so the dragged edge is one of the four, whichever way it went.
-  const top = { x: box.x0, y: Math.min(box.y0, box.y1) };
-  if (box.y1 < box.y0) top.x = box.x1;
+  // One cell along the drag, which is what separates one diamond in the chain
+  // from the next. Its horizontal sign is whichever way the DM dragged; its
+  // vertical is why the anchor below has two cases.
+  const stepX = box.x1 >= box.x0 ? halfW : -halfW;
+  const down = box.y1 >= box.y0;
+
+  // Anchored on the corner the drag *began* on, which is the one the DM aimed
+  // at a real one and the point `gridFromEdge` reduces into the origin cell.
+  // Dragging down from it makes it the first diamond's top corner and dragging
+  // up makes it the bottom one — the same lattice either way, since all four
+  // corners of a diamond are points of it, and the same lattice as the one
+  // being committed even under the fixed shape, where the far end of the drag
+  // is no longer a corner of anything.
+  const apex = { x: box.x0, y: down ? box.y0 : box.y0 - halfH * 2 };
 
   ctx.beginPath();
-  ctx.moveTo(top.x, top.y);
-  ctx.lineTo(top.x + halfW, top.y + halfH);
-  ctx.lineTo(top.x, top.y + halfH * 2);
-  ctx.lineTo(top.x - halfW, top.y + halfH);
-  ctx.closePath();
+  for (let i = 0; i < cells; i++) {
+    const x = apex.x + i * stepX;
+    const y = apex.y + i * (down ? halfH : -halfH);
+    ctx.moveTo(x, y);
+    ctx.lineTo(x + halfW, y + halfH);
+    ctx.lineTo(x, y + halfH * 2);
+    ctx.lineTo(x - halfW, y + halfH);
+    ctx.closePath();
+  }
 
   ctx.fillStyle = CAL_FILL;
   ctx.fill();

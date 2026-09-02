@@ -152,7 +152,6 @@ interface Ui {
     calibrate: HTMLButtonElement;
     cellsRow: HTMLElement;
     shape: HTMLSelectElement;
-    countRow: HTMLElement;
     cells: HTMLInputElement;
     cellsDown: HTMLButtonElement;
     cellsUp: HTMLButtonElement;
@@ -203,6 +202,7 @@ interface Ui {
     hidden: HTMLInputElement;
     hp: HTMLInputElement;
     hpMax: HTMLInputElement;
+    light: HTMLInputElement;
     art: HTMLInputElement;
     artText: HTMLElement;
     artPreview: HTMLElement;
@@ -312,7 +312,6 @@ function findUi(): Ui {
       calibrate: need<HTMLButtonElement>('#map-calibrate'),
       cellsRow: need('#map-cells-row'),
       shape: need<HTMLSelectElement>('#map-shape'),
-      countRow: need('#map-count'),
       cells: need<HTMLInputElement>('#map-cells'),
       cellsDown: need<HTMLButtonElement>('#map-cells-down'),
       cellsUp: need<HTMLButtonElement>('#map-cells-up'),
@@ -363,6 +362,7 @@ function findUi(): Ui {
       hidden: need<HTMLInputElement>('#token-hidden'),
       hp: need<HTMLInputElement>('#token-hp'),
       hpMax: need<HTMLInputElement>('#token-hp-max'),
+      light: need<HTMLInputElement>('#token-light'),
       art: need<HTMLInputElement>('#token-art'),
       artText: need('#token-art-text'),
       artPreview: need('#token-art-preview'),
@@ -708,6 +708,10 @@ function boot(ui: Ui, choice: RoomChoice): void {
             if (room !== null) {
               wallTool?.update(room.scene);
               fogTool?.update(room.scene);
+              // A third reader of the same field since milestone 39: the light
+              // box greys where there is no fog for a light to push back, and
+              // which board that is has just changed.
+              tokenTool?.update(room.scene);
             }
             // No prompt to size the grid — a staged map was offered one when it
             // was staged, and the live map when it arrived.
@@ -905,6 +909,8 @@ function boot(ui: Ui, choice: RoomChoice): void {
       // The two fog fields ride on the map, so this is also how the panel learns
       // the switch was flipped — including by the DM's other tab.
       fogTool?.update(scene);
+      // And how the token panel's light box learns it, for the same reason.
+      tokenTool?.update(scene);
       afterBoardChanged(wasShowing, newImage);
     },
 
@@ -985,6 +991,7 @@ function boot(ui: Ui, choice: RoomChoice): void {
       // just been swept out from under them.
       wallTool?.update(scene);
       fogTool?.update(scene);
+      tokenTool?.update(scene);
       afterBoardChanged(wasShowing, newImage);
     },
 

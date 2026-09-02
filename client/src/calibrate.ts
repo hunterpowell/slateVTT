@@ -27,6 +27,32 @@ export const MIN_GRID_RATIO = 0.25;
 export const MAX_GRID_RATIO = 4;
 
 /**
+ * The proportions the fixed isometric gesture pins a diamond to: twice as wide
+ * as it is tall.
+ *
+ * Almost every isometric tileset is drawn on it, so on that art the ratio is
+ * not something the DM should have to aim at — only the size is in question.
+ * The other standard is true isometric, a projected cube with edges at exactly
+ * 30° and a ratio of √3; it is what a rendered map gives you and not what the
+ * art this table plays on is drawn on. One preset, because a second one nobody
+ * picks is a menu.
+ */
+export const STANDARD_RATIO = 2;
+
+/**
+ * Which lattice a drag is being read as.
+ *
+ * The two isometric entries are **one gesture** — a cell edge, corner to corner
+ * — differing only in whether the diamond's proportions are read off the drag
+ * or pinned to `STANDARD_RATIO`. That is the whole of the second one: what it
+ * produces is an ordinary `Iso { ratio }`, and nothing downstream of
+ * `gridFromEdge` can tell which of the two made it.
+ */
+export type CalShape = 'square' | 'iso' | 'iso-fixed';
+/** The shapes the edge gesture covers, which is both isometric ones. */
+export type IsoShape = Exclude<CalShape, 'square'>;
+
+/**
  * What input.ts and render.ts need from the calibration tool. Both hold it
  * read-only; only the tool itself changes any of this.
  */
@@ -39,7 +65,7 @@ export interface Calibration {
   readonly cells: number;
   /** Which gesture is being made, so the overlay can draw the right thing: a
    *  box of squares, or the one diamond an edge describes. */
-  readonly shape: 'square' | 'iso';
+  readonly shape: CalShape;
   /** Pointer moved mid-drag. */
   drag(box: Box): void;
   /**
@@ -72,6 +98,61 @@ export function gridFromBox(box: Box, cells: number): GridSpec | null {
 }
 
 /**
+ * The half-width and half-height of the diamond a drag describes.
+ *
+ * **The one place the two isometric gestures differ**, and the only place the
+ * ratio is decided — `gridFromEdge` builds the lattice from this and
+ * `drawCalibrationDiamond` draws it, so the diamond the DM is aiming and the
+ * diamond that gets committed are the same diamond by construction rather than
+ * by two functions agreeing.
+ *
+ * Free reads the drag as-is: it runs from a diamond's top corner to one of its
+ * side corners, so it spans half the width and half the height. Which side
+ * corner does not matter — the sign is dropped, and a drag up-left describes
+ * the same lattice as a drag down-right.
+ *
+ * **Fixed keeps the ratio and takes only the size from the drag**, by
+ * projecting it onto the edge that ratio describes. That is the least-squares
+ * fit of the drag to the locked direction, so a drag exactly along a tile edge
+ * gives exactly that tile and one a few pixels off gives the same tile rather
+ * than a lattice a few percent out — which is the whole point, since being 3%
+ * out on the ratio is a cell and a half of drift twenty cells later. Both
+ * components are used, because half a tile height is the smaller and
+ * harder-to-aim of the two and reading the size off it alone would throw away
+ * the better half of the gesture.
+ *
+ * **`cells` is how many diamonds the drag ran along**, which is the edge
+ * gesture's half of the same question the square path asks with its box: it is
+ * often easier to trace the whole edge of a room and say how many tiles that
+ * was than to aim at one tile and have the answer replicate across the map. It
+ * divides and nothing else — both readings below are linear in the drag, so
+ * dividing the vector once here is the same as dividing the cell afterwards.
+ *
+ * Null for a degenerate drag or a count that is not one, which is what a stray
+ * click looks like. Both gestures ask for both components rather than just the
+ * one fixed needs: they are the same gesture, so a horizontal swipe is as much
+ * a slip on one as on the other.
+ */
+export function isoDiamond(
+  box: Box,
+  shape: IsoShape,
+  cells = 1,
+): { halfW: number; halfH: number } | null {
+  if (!Number.isInteger(cells) || cells < 1 || cells > MAX_CELLS) return null;
+
+  const dx = Math.abs(box.x1 - box.x0) / cells;
+  const dy = Math.abs(box.y1 - box.y0) / cells;
+  if (!Number.isFinite(dx) || !Number.isFinite(dy)) return null;
+  if (dx <= 0 || dy <= 0) return null;
+
+  if (shape === 'iso') return { halfW: dx, halfH: dy };
+
+  const r = STANDARD_RATIO;
+  const halfH = (dx * r + dy) / (r * r + 1);
+  return { halfW: halfH * r, halfH };
+}
+
+/**
  * Derives an isometric grid from one edge of one diamond, dragged corner to
  * corner.
  *
@@ -82,20 +163,20 @@ export function gridFromBox(box: Box, cells: number): GridSpec | null {
  * `gridFromBox` reads it as a rectangle, so the gesture cost nothing on the
  * canvas side.
  *
- * The dragged edge runs from a diamond's top corner to one of its side corners,
- * so it spans half the width and half the height: a cell is `2 * |dy|` tall and
- * `2 * |dx|` wide. Which side corner does not matter — the sign is dropped, and
- * a drag up-left describes the same lattice as a drag down-right.
+ * What the drag says about the diamond is `isoDiamond`'s — including how many
+ * of them it ran along — and that is also what the overlay draws; this turns
+ * that one diamond into a lattice. So neither the fixed gesture nor the count
+ * needed anything here: both produce an `Iso { ratio }` like any other, and the
+ * bounds below still get the last word.
  *
  * Null for a drag too small or too lopsided to have meant anything, which is
  * what a stray click looks like — `gridFromBox`'s rule, against bounds the
  * server enforces again.
  */
-export function gridFromEdge(box: Box): GridSpec | null {
-  const halfW = Math.abs(box.x1 - box.x0);
-  const halfH = Math.abs(box.y1 - box.y0);
-  if (!Number.isFinite(halfW) || !Number.isFinite(halfH)) return null;
-  if (halfW <= 0 || halfH <= 0) return null;
+export function gridFromEdge(box: Box, shape: IsoShape = 'iso', cells = 1): GridSpec | null {
+  const diamond = isoDiamond(box, shape, cells);
+  if (diamond === null) return null;
+  const { halfW, halfH } = diamond;
 
   const px = halfH * 2;
   if (px < MIN_GRID_PX || px > MAX_GRID_PX) return null;

@@ -1282,6 +1282,7 @@ fn an_edit_reaches_both_boards_at_once() {
             owner,
             hidden,
             hp,
+            light_ft,
             ..
         } => ClientMsg::UpdateToken {
             id,
@@ -1291,6 +1292,7 @@ fn an_edit_reaches_both_boards_at_once() {
             owner,
             hidden,
             hp,
+            light_ft,
         },
         other => other,
     };

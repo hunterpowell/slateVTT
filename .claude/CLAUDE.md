@@ -327,8 +327,11 @@ enum GridShape { Square, Iso { ratio: f32 } }
 
 struct Token {
     id: TokenId, name: String, x: f32, y: f32, owner: Owner, img: String, size: f32,
-    /// DM-only, both of them — see *Hidden tokens and hit points* in `docs/tokens.md`.
-    hidden: bool, hp: Option<Hp>,
+    /// DM-only, all three — see *Hidden tokens, hit points, and the light it
+    /// carries* in `docs/tokens.md`. `light_ft` is how far this token lights the
+    /// board: it replaces the map's `vision_ft` on a token a player owns, and
+    /// makes the token a source at all on anything else — see `docs/fog.md`.
+    hidden: bool, hp: Option<Hp>, light_ft: Option<f32>,
     /// DM-only, both of them — see *Preparing the next room* in `docs/tokens.md`.
     staged_pos: Option<Pos>, staged_only: bool,
 }
@@ -552,8 +555,9 @@ flag because every field on it is shared by both boards. `TokenChanged` covers c
 alike — an id the client has not seen is the creation. **Deleting a token takes its initiative row
 and its anchored drawings with it.**
 
-Four fields are DM-only: `hidden` and `hp` withhold a monster from the table; `staged_pos` and
-`staged_only` plan the next encounter without a second token collection.
+Five fields are DM-only: `hidden` and `hp` withhold a monster from the table; `light_ft` says how
+far it lights the board; `staged_pos` and `staged_only` plan the next encounter without a second
+token collection.
 
 **`RoomState::unseen_by_table(&Token)` is the only question any filter asks.** Three reasons compose
 in it: `Token::unseen()` is `hidden || staged_only`, both facts about the token, and the third is
@@ -745,6 +749,15 @@ property of a cell and a wall here is an arbitrary segment in image pixels; rast
 blocking cells would blind both sides of every wall traced along a cell boundary, which is most of
 them. The radius is Euclidean — a circle, agreeing with a drawn circle and not with the ruler.
 
+**A token may carry a light, and that is milestone 39.** `light_ft` on `Token` replaces
+`vision_ft` for a token a player owns — a lantern — and on anything else is what makes the token a
+source at all. A light nobody is carrying is **gated on the party having line of sight to it, at any
+distance rather than within their own reach**: ungated, promoting a prepared dungeon hands the table
+every lit room on it. The gate is applied to the source list in `sight_sources`, reads the party's
+own sight so one light can never switch on the next, and `fog::Source` holds the `?? vision_ft`
+fallback so nothing downstream knows there are two kinds of source. DM-only on the wire like `hp`,
+and it cost no command, no event and no entry in the three enumerated lists.
+
 `fog: bool`, `vision_ft` and `lighting` live on `MapInfo`, remembered per URL like the grid and sent
 on `SetMap` — there is no `SetFog`. **`fog` defaults off and `lighting` defaults to `Dynamic`**, which
 is what keeps an older save from going dark or changing shape. Nothing here knows the word
@@ -806,7 +819,8 @@ that killed it. Nothing above changes until 29 is built; read it before arguing 
 
 → **`docs/fog.md`** before touching `fog.rs`, `fog.ts`, `solo.ts`, `mirror.ts`, `overrides.ts`,
 `fogtool.ts`, `unseen_by_table`, `with_fringe`, `shape_seen`, `refresh_fog`,
-`sight_cells`/`lit_cells`, or `moves_sight`.
+`sight_cells`/`lit_cells`, `Source`/`in_line_of_sight`, `party_sources`/`sight_sources`, or
+`moves_sight`.
 
 ## Frontend
 
@@ -916,8 +930,20 @@ square one**: everything expressed in grid space — `snap_to_cell`, `covered_ce
 math — is unchanged, and so is the raycast, which already measured its radius in cells. What moved
 is five functions, and **`fog::basis` and `gridBasis` are the only two places the shape is read**:
 one statement in two languages, which must agree or the fog lands a cell off the walls casting it.
-`MapInfo` is the only thing on the wire that changed. The DM calibrates one by dragging **one edge
-of one diamond**; the square box-and-count path is untouched.
+`MapInfo` is the only thing on the wire that changed. The DM calibrates one by dragging **along a
+run of diamond edges** and saying how many it crossed — the square path's own cell count, shared,
+because tracing a room and dividing it beats aiming at one tile and having the answer replicate.
+The overlay draws the whole chain, which is what makes a wrong count visible. Only the whole-image
+shortcut is still the square path's alone; the box-and-count path itself is untouched.
+
+**That edge drag comes in two, and the second one pins the ratio.** Almost all isometric art is
+drawn on 2:1 tiles, where aiming half an edge decides a number that was never in question — so
+`iso-fixed` takes only the *size* from the drag and keeps the proportions. It is a **client-side
+gesture and not a state of the room**: what it produces is an ordinary `Iso { ratio }`, so nothing
+on the wire, in `RoomState` or on the calibration shelf knows it exists. `isoDiamond` is the one
+place either gesture decides anything — `gridFromEdge` builds from it and `drawCalibrationDiamond`
+draws it, so the aimed diamond and the committed one cannot diverge. One preset: a list of
+projections is a menu.
 
 **It is flat and must stay flat**: no depth sorting, no wall height, no sprite anchoring, no
 elevation. Tokens are upright discs sized by the diamond's height, so `tokenAt` is unchanged. 2.5D

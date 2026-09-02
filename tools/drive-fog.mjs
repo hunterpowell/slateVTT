@@ -470,13 +470,65 @@ if (traced !== 'nothing traced') {
     check('the ground the spur was hiding arrives on the table', round > 0.5, true);
   }
 
-  // The spur and the torch both go, in that order: `#wall-clear` is behind the
-  // confirm stubbed out further up, and the token is deleted through the panel
-  // that built it — selected by clicking its own square, since `token-delete`
-  // acts on whatever the panel is describing.
+  // The spur goes before the light check below, which wants a clear line from
+  // the party to whatever the DM builds next.
   await openTab(dm, 'walls');
   await dm.evaluate('document.querySelector("#wall-clear").click(); "ok"');
   await dm.wait(600);
+
+  // --- 39: light sources -----------------------------------------------------
+  //
+  // A radius on the token, read where it has to be true. The map's own reach
+  // goes down to the floor the room allows and the party's board still opens
+  // up, so what arrives can only be the lantern — which is the whole of what a
+  // per-token radius buys.
+  //
+  // It rides on the torch this driver already built, at a cell the calibration
+  // above already found. A brazier of its own would be the better subject and
+  // is not reachable from here: a new token lands in the first free cell out
+  // from the middle of the view, `spaceFor` picks that cell by position rather
+  // than by footprint, and a large creature standing beside it takes the click
+  // that would select it. The gate on a light nobody is carrying is a
+  // difference between two *source lists* rather than between two connections,
+  // so it is the server suite's to assert and not this file's.
+  if (party !== null) {
+    await openTab(dm, 'fog');
+    await setLighting(dm, 'sight');
+    await dm.wait(700);
+    await setVision(dm, '5');
+    await dm.wait(700);
+    await dm.evaluate('document.querySelector("#fog-clear").click(); "ok"');
+    await dm.wait(1000);
+    await mark(player);
+
+    check('the torch is what the panel is describing', await tokenAt(dm, grid, party), 'Lighting Test');
+    const lightBox = await dm.evaluate(`(() => {
+      const box = document.getElementById('token-light');
+      box.value = '60';
+      return box.disabled;
+    })()`);
+    check('the light box is live while the board is fogged', lightBox, false);
+    await dm.evaluate(`document.getElementById('token-save').click(); "ok"`);
+    await dm.wait(1400);
+
+    const lantern = await brightened(player);
+    note(`the lantern came on — player brightened ${lantern}%`);
+    check('a light on a token reaches past the map’s own radius', lantern > 0.5, true);
+
+    // The reach goes back before the token does, so a run that stops here
+    // leaves the board it found rather than one lit by a torch it invented.
+    await dm.evaluate(`(() => {
+      document.getElementById('token-light').value = '';
+      document.getElementById('token-save').click();
+      return 'ok';
+    })()`);
+    await dm.wait(900);
+  }
+
+  // The torch goes last, through the panel that built it — selected by clicking
+  // its own square, since `token-delete` acts on whatever the panel is
+  // describing. `#wall-clear` above is behind the confirm stubbed out further up.
+
   if (party !== null) {
     check('the driver’s torch is put away', await tokenAt(dm, grid, party), 'Lighting Test');
     await dm.evaluate('document.getElementById("token-delete").click(); "ok"');

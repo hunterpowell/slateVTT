@@ -101,6 +101,7 @@ fn create(name: &str, size: f32, owner: Owner) -> ClientMsg {
         y: 5.1,
         hidden: false,
         hp: None,
+        light_ft: None,
         staged: false,
     }
 }
@@ -124,6 +125,7 @@ fn with(msg: ClientMsg, set: impl FnOnce(&mut bool, &mut bool)) -> ClientMsg {
         x,
         y,
         hp,
+        light_ft,
     } = msg
     else {
         return msg;
@@ -138,6 +140,7 @@ fn with(msg: ClientMsg, set: impl FnOnce(&mut bool, &mut bool)) -> ClientMsg {
         y,
         hidden,
         hp,
+        light_ft,
         staged,
     }
 }
@@ -154,6 +157,7 @@ fn edit(token: &Token) -> ClientMsg {
         owner: token.owner.clone(),
         hidden: token.hidden,
         hp: token.hp,
+        light_ft: token.light_ft,
     }
 }
 
@@ -167,6 +171,7 @@ fn set_hidden(token: &Token, want: bool) -> ClientMsg {
             size,
             owner,
             hp,
+            light_ft,
             ..
         } => ClientMsg::UpdateToken {
             id,
@@ -176,6 +181,7 @@ fn set_hidden(token: &Token, want: bool) -> ClientMsg {
             owner,
             hidden: want,
             hp,
+            light_ft,
         },
         other => other,
     }

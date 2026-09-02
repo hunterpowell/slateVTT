@@ -212,5 +212,12 @@ function shapeSeen(scene: Scene, shown: ReadonlySet<string>, shape: Shape): bool
  * `filter` away and a mirror is exactly where that assumption would rot.
  */
 function redact(token: Token): Token {
-  return { ...token, hidden: false, hp: null, stagedPos: null, stagedOnly: false };
+  return {
+    ...token,
+    hidden: false,
+    hp: null,
+    lightFt: null,
+    stagedPos: null,
+    stagedOnly: false,
+  };
 }

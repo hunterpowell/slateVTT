@@ -5,7 +5,7 @@ nothing read them; this is what reads them.
 
 `.claude/CLAUDE.md` is loaded into every session; this file is not. **Read it before touching
 `fog.rs`, `fog.ts`, `solo.ts`, `mirror.ts`, `overrides.ts`, `fogtool.ts`, `unseen_by_table`,
-`with_fringe`, `recompute_sight`, `refresh_fog`, or the `moves_sight` gate** — six of those ten are the places a leak would go
+`with_fringe`, `recompute_sight`, `sight_sources`, `refresh_fog`, or the `moves_sight` gate** — six of those ten are the places a leak would go
 unnoticed, and the coordinate story in the first is the thing that looks like a mistake and is not.
 
 This covers the whole of milestone 16: automatic line of sight in 16a, and the DM's manual override
@@ -46,8 +46,14 @@ Vision comes from tokens a player *owns*, so handing a token over grants sight w
 and taking it back removes it. A player's own token is always visible to the table by construction
 rather than by rule: it is a vision source, so the cell it stands in is lit by it.
 
-`vision_sources` asks `Token::unseen` and deliberately not `unseen_by_table` — what the party can
-see cannot be an input to computing what the party can see.
+Since milestone 39 it also comes from **lights** — a radius on any other token, gated on the party
+being able to see it. See *Light sources* below; everything between here and there is unchanged by
+it, because the gate is applied to the source list and nothing downstream knows there are two kinds.
+
+`party_sources` asks `Token::unseen` and deliberately not `unseen_by_table` — what the party can
+see cannot be an input to computing what the party can see. `sight_sources` asks the same of a
+light, and then asks a second question that *is* about what the party can see, which is the one
+place in this file that ordering matters.
 
 ## One cell of fringe, so the wall is on the board
 
@@ -742,8 +748,15 @@ to zero and every restored room going pitch black. A switch that defaults to off
 mistake whatever `vision_ft` loads as, which frees the radius to default to a playable 60 feet
 rather than a defensive number.
 
-Nothing here knows the word "darkvision". One radius for the map; per-token vision is a larger
-feature and is not built.
+`vision_ft` is now the **fallback** rather than the only answer: a token carrying a `light_ft` sees
+by that instead, which is `fog::Source::radius_cells` and is the whole of what a lantern is. The map
+still owns the number every token without one takes, so a save that predates lights is unchanged and
+a map with no lights on it costs exactly what it did.
+
+Nothing here knows the word "darkvision" even so. A radius on a token is not a creature's eyes —
+it is a light, it lights for everybody, and a light nobody is carrying is gated on being seen. What
+per-token *darkvision* would need is a radius that lights for its owner alone, which is milestone
+29's per-player `visible` and is still not built.
 
 ## On screen
 
@@ -1043,12 +1056,100 @@ party changes by walking somewhere with no token of the DM's involved. Still one
 event — an unconditional `ShapesChanged` on every step would tell the table that *something happened*
 every time anybody moved, which is the fourth time that trap has come up.
 
+## Light sources
+
+Milestone 39. A radius on a token, and two things fall out of the one field:
+
+```rust
+light_ft: Option<f32>,   // on `Token`, DM-only, `None` for almost everything
+```
+
+- On a token **a player owns** it replaces `MapInfo::vision_ft` for that token. A lantern.
+- On **anything else** it is what makes the token a source at all. A brazier, a torch on a wall, a
+  goblin carrying one.
+
+`fog::Source` is where those become one rule: `radius_ft: Option<f32>`, `None` meaning *as far as
+this map lets anyone see*, which is what every source in `fog.rs` was before this existed. The
+sweeps took `&[Pos]` and read one radius above the loop; they take `&[Source]` and read it inside.
+Nothing else in `visible_cells` or `lit_cells` moved, and the cells-not-pixels comparison that *The
+radius is measured in cells* exists to protect is untouched.
+
+### The gate, and why it is line of sight rather than reach
+
+**A light nobody is carrying has to be gated on something.** Ungated it is a disaster with a
+schedule attached: the DM prepares a dungeon on a Tuesday, puts a brazier in each room, promotes on
+the Saturday, and the table is handed every lit chamber on the level through three walls. `visible`
+is a flat union of its sources with no *and somebody can see it* term anywhere in it, so the term
+has to be applied to the **source list**, before the sweep.
+
+**And the gate is line of sight at any distance, not the party's radius.** Vision set at thirty feet
+and a brazier at forty is a brazier the party can plainly see; refusing it because their own torches
+fall short answers a question nobody asked. So `fog::in_line_of_sight` asks only whether a straight
+line reaches the light, over the blockers the rays already stop at and with **no radius and
+therefore no wall cull**. That is also what makes it cheap: a segment test per party token per
+light, where gating on `visible` would have been a second sweep.
+
+The fallback beside it is the party's own sight, which is what carries `Lighting::Room` — a flood
+reaches round a corner no straight line does, and a brazier in the room you are standing in should
+light whether or not a pillar is in the way.
+
+```text
+party    player-owned tokens, radius light_ft ?? vision_ft   ungated
+lights   anything else with a light                          active when seen
+rays     sight_cells(party ∪ active)
+```
+
+**No cascade, deliberately.** The gate reads the sight the party has *on their own*, computed before
+a single light joins the list, so one brazier can never switch on the next. Otherwise a chain of
+torches down a corridor opens the level, which is the failure the gate exists to prevent arriving
+one step later. `one_light_never_switches_on_the_next` is the test, and it fails when the gate is
+opened.
+
+**A light nobody can see lights nothing, whoever is holding it** — `!unseen()`, the rule vision has
+always used. A hidden brazier would be a second reveal tool, and the DM already has one: the `Lit`
+brush, which does exactly that and is honest about being the DM's hand.
+
+### It cost nothing on the wire and nothing in the three lists
+
+`light_ft` rides on `CreateToken` and `UpdateToken`, which are already `true` in `moves_sight`,
+already persist, and already carry undo labels. **No new command, no new event, no new arm in
+`message_for`, and `protocol-tags.json` is untouched.** That is the whole argument for putting it on
+`Token` rather than building a `Light` beside it.
+
+It is **DM-only on the wire**, redacted in `Token::view_for` beside `hp`. What a light *does* reaches
+the table as fog; what it *is* is the DM's authoring, and goes the way the walls go — *the geometry
+is the secret and the shadow it casts is what the table plays with*, for the fourth time. `None` is
+therefore both "carries no light" and "you are not the DM".
+
+**A room with no lights on it costs exactly what it did.** `sight_sources` returns the party
+untouched when nothing carries a light, which is the overwhelming case; only when there is one does
+it pay for the extra sweep the gate reads.
+
+`solo.ts` carries the same `light_ft ?? visionFt` on the client, because the DM's sight check is a
+second raycast over the same data and the two have to agree. `mirror.ts` nulls it in `redact`, which
+is `view_for(false)` field for field. The client computes nothing else with it.
+
+### On the panel, and the one thing that bit
+
+One box on the token tab, in feet, blank for the overwhelming majority. Greyed while the board on
+screen carries no fog, the way the fog panel greys its own radius, with the placeholder carrying the
+reason — so `token_tool.update` joins `fogTool.update` at the three places a panel is told
+`MapInfo.fog` may have moved.
+
+**The damage box had to carry it through.** `panel.ts` sends an `UpdateToken` built from the token it
+already resolved, and `UpdateToken` replaces the token whole — so a field left out of that send is
+a lantern the box quietly blows out on the first hit that lands. The compiler caught it, which is the
+`TokenView` argument working in the other direction: a required field is a question the type system
+makes somebody answer.
+
 ## What this milestone did not do
 
 - **Walls block sight and never movement.** Decided, not deferred — see `ROADMAP.md` for the four
   reasons, the first of which is that a refused move hands back a floor plan to anybody who drags a
   token around and watches which moves stick.
-- No light sources, no per-token vision, no darkvision. One radius per map.
+- No light sources, no per-token vision, no darkvision. One radius per map. **The first of those
+  arrived in milestone 39 and took the second with it** — see *Light sources* below. The third is
+  still refused, and the section says why the two are not the same thing.
 - **No undo.** The fill previews instead, which is the cheaper answer to the same problem: the
   mistake worth protecting against is the one nobody sees coming, and a region shown in the colour it
   would land in before it lands is one the DM has already seen.

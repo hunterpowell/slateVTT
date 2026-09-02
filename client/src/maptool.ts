@@ -22,7 +22,7 @@
 // Players never see this. It is only created for a DM connection, and the
 // server re-checks every set_map regardless.
 
-import type { Box, Calibration } from './calibrate.js';
+import type { Box, Calibration, CalShape } from './calibrate.js';
 import {
   gridFromBox,
   gridFromEdge,
@@ -31,6 +31,7 @@ import {
   MIN_GRID_PX,
   MIN_GRID_RATIO,
   playAreaFromBox,
+  STANDARD_RATIO,
 } from './calibrate.js';
 import type { GridSpec, Rect } from './coords.js';
 import { squareGrid } from './coords.js';
@@ -55,13 +56,12 @@ export interface MapToolUi {
   calibrate: HTMLButtonElement;
   cellsRow: HTMLElement;
   shape: HTMLSelectElement;
-  /** The cell count and the whole-image shortcut, which are the square path's
-   *  and are hidden on the isometric one — a diamond is calibrated from an edge
-   *  rather than from a count. */
-  countRow: HTMLElement;
+  /** How many cells the drag crossed, which both gestures ask. */
   cells: HTMLInputElement;
   cellsDown: HTMLButtonElement;
   cellsUp: HTMLButtonElement;
+  /** The square path's alone: it proposes the image's own bounds as the
+   *  reference box, and an edge gesture has no region in it to propose. */
   wholeMap: HTMLButtonElement;
   hint: HTMLElement;
   applyRow: HTMLElement;
@@ -111,10 +111,39 @@ const DEFAULT_ALPHA_PCT = 32;
 /** Only reached before any board has loaded; the server has the same number. */
 const DEFAULT_VISION_FT = 60;
 const DRAG_HINT = 'Drag a box across that many whole squares.';
-/** The isometric gesture, which is one edge rather than a box of them. */
-const EDGE_HINT = 'Drag along one edge of one diamond, corner to corner.';
+/** The isometric gesture, which is a run of cell edges rather than a box. */
+const EDGE_HINT = 'Drag along that many diamond edges, corner to corner.';
+/** The same gesture with the proportions already decided, so the hint says which
+ *  half of it still matters. */
+const FIXED_HINT = `Drag along that many diamond edges — they stay ${STANDARD_RATIO}:1.`;
 /** Where the count starts for a box drawn by hand, as opposed to the image. */
 const HAND_DRAWN_CELLS = 4;
+/** Where it starts for an edge, which is the gesture as it was before the count
+ *  reached it: one drag, one diamond. Tracing a whole room and dividing it is
+ *  the thing being made *possible*, and aiming one tile is still the thing the
+ *  hint asks for, so a DM who wants that must not have to correct a 4 first. */
+const HAND_DRAWN_EDGES = 1;
+
+/** The select's value, which is a DOM string like any other. */
+function readShape(value: string): CalShape {
+  return value === 'iso' || value === 'iso-fixed' ? value : 'square';
+}
+
+/**
+ * Which entry a board already on screen opens on, so re-opening the panel on an
+ * isometric map opens on isometric rather than offering to square it — and on a
+ * 2:1 one opens on the fixed entry rather than on the gesture that entry exists
+ * to spare the DM.
+ *
+ * A tolerance rather than an equality. The ratio has been through an `f32` on
+ * the wire and back, and a board a hair off 2:1 is one somebody meant to be
+ * 2:1; anything further out was aimed by hand and stays free.
+ */
+function shapeFor(grid: GridSpec): CalShape {
+  const of = shapeOf(grid);
+  if (of.kind !== 'iso') return 'square';
+  return Math.abs(of.ratio - STANDARD_RATIO) < 1e-3 ? 'iso-fixed' : 'iso';
+}
 
 export function createMapTool(
   ui: MapToolUi,
@@ -164,18 +193,28 @@ export function createMapTool(
    * The gesture is the same drag either way — `input.ts` hands over a box and
    * this decides whether to read it as a rectangle of squares or as one
    * diamond's edge — which is why nothing on the canvas side knows about this.
+   * The two isometric entries are one gesture twice over: they differ only in
+   * whether the drag decides the diamond's proportions or only its size.
    */
-  let shape: 'square' | 'iso' = 'square';
+  let shape: CalShape = 'square';
 
   /** The grid a released box describes, under whichever shape is selected. */
   const gridFromDrag = (box: Box): GridSpec | null =>
-    shape === 'iso' ? gridFromEdge(box) : gridFromBox(box, cellsAcross());
+    shape === 'square'
+      ? gridFromBox(box, cellsAcross())
+      : gridFromEdge(box, shape, cellsAcross());
 
-  /** Why a drag was refused, which differs by shape because the gesture does. */
-  const dragRefusal = (): string =>
-    shape === 'iso'
-      ? `that drag is too small or too lopsided — a cell must be at least ${MIN_GRID_PX} px tall, and between ${MIN_GRID_RATIO} and ${MAX_GRID_RATIO} times as wide as it is tall`
-      : `that box is too small — each square must come out at ${MIN_GRID_PX} px or more`;
+  /** Why a drag was refused, which differs by shape because the gesture does —
+   *  and a fixed diamond cannot be lopsided, so it is not offered that reason. */
+  const dragRefusal = (): string => {
+    if (shape === 'square') {
+      return `that box is too small — each square must come out at ${MIN_GRID_PX} px or more`;
+    }
+    if (shape === 'iso-fixed') {
+      return `that drag is too small — a cell must come out at least ${MIN_GRID_PX} px tall`;
+    }
+    return `that drag is too small or too lopsided — a cell must be at least ${MIN_GRID_PX} px tall, and between ${MIN_GRID_RATIO} and ${MAX_GRID_RATIO} times as wide as it is tall`;
+  };
 
   // --- the grid colour ------------------------------------------------------
 
@@ -283,7 +322,7 @@ export function createMapTool(
     //
     // The whole image is stored as null rather than its own measurements, so it
     // stays true if the same URL is ever served a different-sized image.
-    if (shape !== 'iso') {
+    if (shape === 'square') {
       board.playArea = pendingWholeImage ? null : playAreaFromBox(pending, grid);
     }
     showReadout();
@@ -292,15 +331,19 @@ export function createMapTool(
   /**
    * The half of the calibration panel that belongs to the square path.
    *
-   * A count and a whole-image shortcut are both answers to "how many squares
-   * across", which an isometric drag does not ask — so they go, rather than
-   * sitting there inert. The rail's rule about a tab that can do nothing, one
-   * level down.
+   * **Only the whole-image shortcut is that half now.** It proposes a *region*
+   * — the image's own bounds as the reference box — and an edge gesture has no
+   * region in it, so it goes rather than sitting there inert: the rail's rule
+   * about a tab that can do nothing, one level down. The count stayed, because
+   * "how many cells did that drag cross" is a question both gestures ask.
    */
   const showShape = (): void => {
     ui.shape.value = shape;
-    ui.countRow.hidden = shape === 'iso';
-    if (pending === null) ui.hint.textContent = shape === 'iso' ? EDGE_HINT : DRAG_HINT;
+    ui.wholeMap.hidden = shape !== 'square';
+    if (pending === null) {
+      ui.hint.textContent =
+        shape === 'square' ? DRAG_HINT : shape === 'iso-fixed' ? FIXED_HINT : EDGE_HINT;
+    }
   };
 
   const setActive = (on: boolean): void => {
@@ -320,14 +363,24 @@ export function createMapTool(
   // Changing the shape abandons whatever was being tuned: a box read as four
   // squares and the same box read as one diamond's edge are different claims
   // about the map, and carrying the drag across would silently make the second
-  // one for the DM.
+  // one for the DM. That holds between the two isometric entries as well —
+  // "these are the proportions" and "the proportions are 2:1" are two claims,
+  // not one drag under two readings.
   ui.shape.addEventListener('change', () => {
-    const next = ui.shape.value === 'iso' ? 'iso' : 'square';
+    const next = readShape(ui.shape.value);
     if (next === shape) return;
     shape = next;
     pending = null;
     pendingWholeImage = false;
     ui.applyRow.hidden = true;
+    // The count means the same *kind* of thing under both gestures and not the
+    // same number: a hand-drawn box is a few squares across, while an edge is
+    // one diamond unless the DM says otherwise. Carrying 26 across from a
+    // whole-image square calibration would divide the next traced edge into
+    // slivers, which is the mistake `release` already refuses to make with a
+    // hand-drawn box.
+    ui.cells.value = String(shape === 'square' ? HAND_DRAWN_CELLS : HAND_DRAWN_EDGES);
+    countFromWholeImage = false;
     // Back to what the server confirmed, which is what a cancelled preview
     // already does — the shape switch is one.
     const board = target();
@@ -352,6 +405,12 @@ export function createMapTool(
   function proposeWholeMap(): void {
     const size = mapSize();
     if (target() === null || confirmed === null || size === null) return;
+    // The same rule that hides the button under an isometric shape, applied to
+    // the one caller that is not the button: `main.ts` offers this on a freshly
+    // loaded image, and a remembered isometric calibration is a map where that
+    // offer means nothing. It always meant nothing there; before the count
+    // reached the edge gesture it merely meant nothing quietly.
+    if (shape !== 'square') return;
 
     // The map is drawn from the world origin, so the image *is* this box.
     const box: Box = { x0: 0, y0: 0, x1: size.width, y1: size.height };
@@ -445,9 +504,9 @@ export function createMapTool(
   const refresh = (): void => {
     const board = target();
     confirmed = board === null ? null : { grid: { ...board.grid }, area: board.playArea };
-    // The board's own shape, so re-opening the panel on an isometric map opens
-    // on isometric rather than offering to square it.
-    if (board !== null) shape = shapeOf(board.grid).kind === 'iso' ? 'iso' : 'square';
+    // The board's own shape, so re-opening the panel on a map opens on the way
+    // it was calibrated rather than offering to change it.
+    if (board !== null) shape = shapeFor(board.grid);
     // Whatever the server just said, or whichever slot is now selected,
     // supersedes anything being tried out here.
     pending = null;
@@ -598,9 +657,9 @@ export function createMapTool(
       pendingWholeImage = false;
       ui.applyRow.hidden = false;
       ui.hint.textContent =
-        shape === 'iso'
-          ? 'Check the diamonds against the art, then apply.'
-          : 'Correct the count until the lines match, then apply.';
+        shape === 'square'
+          ? 'Correct the count until the lines match, then apply.'
+          : 'Correct the count until the diamonds match, then apply.';
       repreview();
     },
 

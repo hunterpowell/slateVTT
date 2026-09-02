@@ -2234,7 +2234,8 @@
             <span>cell shape</span>
             <select id="map-shape" aria-label="Cell shape">
               <option value="square">square</option>
-              <option value="iso">isometric</option>
+              <option value="iso-fixed">isometric 2:1</option>
+              <option value="iso">isometric (free)</option>
             </select>
           </div>
           <div id="map-count">
@@ -2299,6 +2300,22 @@
           <span class="token-hp-of">/</span>
           <input id="token-hp-max" type="number" step="1" placeholder="—" aria-label="Maximum hit points" />
         </div>
+        <!-- A radius on the token: a lantern for one the party owns, and what
+             makes a brazier a light at all for anything else. Blank for the
+             overwhelming majority, which carry none. -->
+        <label class="token-field">
+          <span>light</span>
+          <input
+            id="token-light"
+            type="number"
+            step="5"
+            min="5"
+            max="500"
+            placeholder="none"
+            aria-label="How far this token lights the board, in feet"
+          />
+          <span class="token-hp-of">ft</span>
+        </label>
         <label class="token-check">
           <input id="token-hidden" type="checkbox" />
           <span>hidden from the table</span>

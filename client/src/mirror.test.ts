@@ -55,6 +55,7 @@ function token(id: string, cx: number, cy: number, over: Partial<Token> = {}): T
     size: 1,
     hidden: false,
     hp: null,
+    lightFt: null,
     stagedPos: null,
     stagedOnly: false,
     ...over,
@@ -151,6 +152,7 @@ test('what survives is redacted, field for field', () => {
     tokens: [
       token('boss', 1, 1, {
         hp: { current: 30, max: 44 },
+        lightFt: 40,
         stagedPos: { x: 9, y: 9 },
       }),
     ],
@@ -158,6 +160,9 @@ test('what survives is redacted, field for field', () => {
 
   const shown = asTable(s).tokens[0];
   assert.equal(shown?.hp, null);
+  // A lantern is the DM's authoring like the walls are; what it does reaches
+  // the table as fog, which is already on the board underneath.
+  assert.equal(shown?.lightFt, null);
   assert.equal(shown?.stagedPos, null);
   assert.equal(shown?.stagedOnly, false);
   assert.equal(shown?.hidden, false);

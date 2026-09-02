@@ -25,7 +25,7 @@ import type { Vec2 } from './coords.js';
 import { createLibraryList } from './library.js';
 import type { ClientMsg, Hp, Owner, RosterEntry } from './protocol.js';
 import type { Scene, Token } from './scene.js';
-import { shownPos } from './scene.js';
+import { shownBoard, shownPos } from './scene.js';
 
 export interface TokenToolUi {
   root: HTMLElement;
@@ -36,6 +36,7 @@ export interface TokenToolUi {
   hidden: HTMLInputElement;
   hp: HTMLInputElement;
   hpMax: HTMLInputElement;
+  light: HTMLInputElement;
   art: HTMLInputElement;
   artText: HTMLElement;
   artPreview: HTMLElement;
@@ -113,6 +114,8 @@ export function createTokenTool(
     // most tokens most of the time — see `hitPoints`.
     ui.hp.value = token?.hp === undefined || token.hp === null ? '' : String(token.hp.current);
     ui.hpMax.value = token?.hp === undefined || token.hp === null ? '' : String(token.hp.max);
+    ui.light.value =
+      token?.lightFt === undefined || token.lightFt === null ? '' : String(token.lightFt);
     ui.hidden.checked = token?.hidden ?? false;
     art = token?.img ?? '';
 
@@ -179,6 +182,18 @@ export function createTokenTool(
     return { current, max };
   };
 
+  /**
+   * How far this token lights the board, or null for one carrying no light.
+   *
+   * Blank is the ordinary answer, and it is why this is a box rather than a
+   * switch and a number beside it: most tokens carry nothing, a player's own
+   * falls back to the map's radius, and there is no third state to say.
+   */
+  const lightFt = (): number | null => {
+    const ft = Number.parseFloat(ui.light.value);
+    return Number.isFinite(ft) ? ft : null;
+  };
+
   const save = (): void => {
     const name = ui.name.value.trim();
     if (name === '') {
@@ -198,6 +213,7 @@ export function createTokenTool(
         owner: owner(),
         hidden: ui.hidden.checked,
         hp: hitPoints(),
+        light_ft: lightFt(),
       });
       return;
     }
@@ -217,6 +233,7 @@ export function createTokenTool(
       y: at.y,
       hidden: ui.hidden.checked,
       hp: hitPoints(),
+      light_ft: lightFt(),
       // The slot on screen, exactly as `set_map` reads it. Building the
       // ambush for next week's room is standing on next week's map.
       staged: previewing(),
@@ -321,6 +338,15 @@ export function createTokenTool(
     update(next) {
       scene = next;
       const token = selected();
+
+      // Greyed while the board it would light carries no fog, the way the fog
+      // panel greys its own radius: a light casts nothing where there is no fog
+      // to push back, and a number that quietly does nothing is worse than a box
+      // that will not take one. The placeholder carries the reason, because the
+      // hint below is only rewritten when a token is put into the form.
+      const fogged = shownBoard(next).fog;
+      ui.light.disabled = !fogged;
+      ui.light.placeholder = fogged ? 'none' : 'unfogged map';
 
       // A token deleted out from under the panel — by this DM on another tab,
       // or by this one — leaves the form describing something that is gone.

@@ -1,6 +1,6 @@
 # Tokens
 
-The token struct, where a token settles, its two DM-only field pairs, and how one token change
+The token struct, where a token settles, its five DM-only fields, and how one token change
 leaves the room in several different shapes.
 
 `.claude/CLAUDE.md` is loaded into every session; this file is not. **Read it before touching
@@ -211,9 +211,9 @@ arrangement before this was the only violation of it. `table.ts` is fourteen lin
 `tools/drive-names.mjs` drives the whole of it in two browsers at once, because the half that matters
 happens on a connection the DM's client knows nothing about.
 
-## Hidden tokens and hit points
+## Hidden tokens, hit points, and the light it carries
 
-Two DM-only fields on a token, and the place per-field redaction was invented. Staging withholds
+Three DM-only fields on a token, and the place per-field redaction was invented. Staging withholds
 a whole message; these withhold a *field on a token the table otherwise sees*, which is why they
 came before fog — getting it wrong costs one monster's hit points rather than the entire map.
 
@@ -221,6 +221,15 @@ came before fog — getting it wrong costs one monster's hit points rather than 
 player's `snapshot_for`, its `TokenMoved` frames are dropped for them, and its initiative row is
 gone from their panel. It applies whoever owns the token; a uniform filter is worth more than a
 rule forbidding the DM from hiding a player's own token, which is merely a strange thing to do.
+
+**`light_ft: Option<f32>` is the third, and it is `hp`'s shape exactly.** How far this token lights
+the board: a lantern on one the party owns, and what makes a brazier a light at all on anything
+else. It reaches the DM and nobody else, and `None` is both "carries none" and "you are not the DM"
+— the table learns what a light does from the fog it casts, which is the argument the walls make.
+`docs/fog.md` has the rule and the gate; what belongs here is that **`UpdateToken` replaces the
+token whole**, so anything building one of those from a token it already holds has to carry this
+field through or it blows the lantern out. The damage box on the initiative row is the one that
+does, and it is the case the compiler caught.
 
 **`hp: Option<Hp>` reaches the DM and nobody else, on every token including a player's own.**
 `None` is both "the DM keeps no total on this one" — the usual state — and "you are not the DM",

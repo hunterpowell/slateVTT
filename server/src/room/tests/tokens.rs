@@ -75,6 +75,7 @@ fn resizing_a_token_moves_it_onto_the_right_lattice() {
             owner: Owner::Dm,
             hidden: false,
             hp: None,
+            light_ft: None,
         },
     );
 
@@ -109,6 +110,7 @@ fn an_edit_that_leaves_the_size_alone_leaves_the_position_alone() {
             owner: Owner::Dm,
             hidden: false,
             hp: None,
+            light_ft: None,
         },
     );
 
@@ -139,6 +141,7 @@ fn handing_a_token_to_a_player_lets_them_move_it_and_taking_it_back_does_not() {
         owner,
         hidden: false,
         hp: None,
+        light_ft: None,
     };
 
     state.handle(ClientId(1), hand_to(Owner::Player(PlayerId::new("saelyn"))));
@@ -169,6 +172,7 @@ fn a_player_cannot_touch_the_lifecycle_at_all() {
                 owner: Owner::Player(PlayerId::new("saelyn")),
                 hidden: false,
                 hp: None,
+                light_ft: None,
             },
             ClientMsg::DeleteToken {
                 id: TokenId::new("t1"),
@@ -205,6 +209,7 @@ fn a_players_refused_edit_changes_nothing() {
             owner: Owner::Player(PlayerId::new("saelyn")),
             hidden: false,
             hp: None,
+            light_ft: None,
         },
     );
 
@@ -302,6 +307,7 @@ fn a_token_that_does_not_exist_cannot_be_edited_or_deleted() {
                     owner: Owner::Dm,
                     hidden: false,
                     hp: None,
+                    light_ft: None,
                 }
             )
             .is_err()
@@ -376,6 +382,7 @@ fn token_art_has_to_live_on_this_server() {
         y: 0.0,
         hidden: false,
         hp: None,
+        light_ft: None,
         staged: false,
     };
 
@@ -594,6 +601,7 @@ fn a_hidden_monster_is_nowhere_in_the_json_a_player_is_sent() {
                     current: 4242,
                     max: 4242,
                 }),
+                light_ft: None,
                 staged,
             },
             other => other,
@@ -647,6 +655,7 @@ fn editing_an_already_hidden_token_tells_the_table_nothing() {
                 owner,
                 hidden,
                 hp,
+                light_ft,
                 ..
             } => ClientMsg::UpdateToken {
                 id,
@@ -656,6 +665,7 @@ fn editing_an_already_hidden_token_tells_the_table_nothing() {
                 owner,
                 hidden,
                 hp,
+                light_ft,
             },
             other => other,
         },
@@ -776,6 +786,7 @@ fn hit_points_reach_the_dm_and_nobody_else() {
                     current: 22,
                     max: 59,
                 }),
+                light_ft: None,
             },
             other => other,
         },
@@ -833,6 +844,7 @@ fn hit_points_are_bounded() {
             owner,
             hidden,
             hp,
+            light_ft: None,
         },
         other => other,
     };

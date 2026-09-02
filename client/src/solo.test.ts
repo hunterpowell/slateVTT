@@ -45,8 +45,8 @@ function board(over: Partial<Board> = {}): Board {
   };
 }
 
-/** A creature standing in the centre of cell `(cx, cy)`. */
-function token(cx: number, cy: number): Token {
+/** A creature standing in the centre of cell `(cx, cy)`, carrying `lightFt`. */
+function token(cx: number, cy: number, lightFt: number | null = null): Token {
   return {
     id: 't1',
     name: 'Rogue',
@@ -57,6 +57,7 @@ function token(cx: number, cy: number): Token {
     size: 1,
     hidden: false,
     hp: null,
+    lightFt,
     stagedPos: null,
     stagedOnly: false,
   };
@@ -83,6 +84,22 @@ test('an untraced board is lit to the radius and no further', () => {
   // cells diagonally is 2.83 cells away. A radius of light is a circle, which
   // agrees with a drawn circle and not with the movement ruler.
   assert.ok(!seen.has('6,6'), 'the reach is a circle and not a square');
+});
+
+test('a token carrying a light sees by that and not by the map', () => {
+  // `fog::Source::radius_cells` on the server, asked of the DM's own raycast:
+  // the sight check has to answer the question the fog it stands in for
+  // answers, and since milestone 39 that question has a per-token radius in it.
+  const dim = board({ visionFt: 10 });
+  assert.ok(!lit(soloSight(token(4, 4), dim, [], SIZE)).has('7,4'), 'two cells');
+
+  const carrying = lit(soloSight(token(4, 4, 30), dim, [], SIZE));
+  assert.ok(carrying.has('7,4'), 'six cells by its own lantern');
+  assert.ok(
+    lit(soloSight(token(4, 4, 5), board({ visionFt: 100 }), [], SIZE)).size <
+      lit(soloSight(token(4, 4), board({ visionFt: 100 }), [], SIZE)).size,
+    'and it replaces the map\'s number rather than widening it',
+  );
 });
 
 test('the circle is the same on both sides of the viewer', () => {

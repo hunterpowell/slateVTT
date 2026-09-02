@@ -1541,7 +1541,13 @@ fn is_hex_rgba(s: &str) -> bool {
 ///
 /// `hidden` needs no check at all: a bool has no bad value, and either state is
 /// a legitimate thing for the DM to ask for.
-fn token_fields(name: &str, img: &str, size: f32, hp: Option<Hp>) -> Result<(), String> {
+fn token_fields(
+    name: &str,
+    img: &str,
+    size: f32,
+    hp: Option<Hp>,
+    light_ft: Option<f32>,
+) -> Result<(), String> {
     let name = name.trim();
     if name.is_empty() || name.chars().count() > MAX_TOKEN_NAME_LEN {
         return Err(format!(
@@ -1568,6 +1574,19 @@ fn token_fields(name: &str, img: &str, size: f32, hp: Option<Hp>) -> Result<(), 
         return Err(format!(
             "hit points must be between {} and {MAX_HP}",
             -MAX_HP
+        ));
+    }
+    // The bounds `SetMap` already holds the map's radius to, reused rather than
+    // doubled: the sweep is quadratic in the reach, and a light is a source in
+    // the same sweep. `None` is the ordinary state — most tokens carry no light
+    // of their own and a player's takes the map's number.
+    if let Some(ft) = light_ft
+        && !(fog::MIN_VISION_FT..=fog::MAX_VISION_FT).contains(&ft)
+    {
+        return Err(format!(
+            "a light has to reach between {} and {} feet",
+            fog::MIN_VISION_FT,
+            fog::MAX_VISION_FT
         ));
     }
     Ok(())
@@ -2591,21 +2610,89 @@ impl RoomState {
     /// Asked of `Token::unseen` and deliberately not of `unseen_by_table`, which
     /// would be circular — what the party can see cannot be an input to computing
     /// what the party can see.
-    fn vision_sources(&self) -> Vec<Pos> {
-        let mut sources: Vec<Pos> = self
-            .tokens
-            .values()
-            .filter(|t| matches!(t.owner, Owner::Player(_)) && !t.unseen())
-            .map(|t| Pos { x: t.x, y: t.y })
-            .collect();
-        // `HashMap` order varies per process and the sweep short-circuits on
-        // cells another source already lit. The answer is the same either way,
-        // but two runs of the same room should do the same work.
+    ///
+    /// Since milestone 39 each one carries its own reach: `light_ft` if the token
+    /// has one and the map's `vision_ft` if it does not, which is the whole of
+    /// what a lantern is. `fog::Source` holds that fallback so this is one field
+    /// copied across rather than a rule spelled out here and in `light_sources`.
+    fn party_sources(&self) -> Vec<fog::Source> {
+        Self::ordered(
+            self.tokens
+                .values()
+                .filter(|t| matches!(t.owner, Owner::Player(_)) && !t.unseen())
+                .map(|t| fog::Source {
+                    at: Pos { x: t.x, y: t.y },
+                    radius_ft: t.light_ft,
+                })
+                .collect(),
+        )
+    }
+
+    /// `HashMap` order varies per process and the sweeps short-circuit on cells
+    /// another source already lit. The answer is the same either way, but two runs
+    /// of the same room should do the same work.
+    fn ordered(mut sources: Vec<fog::Source>) -> Vec<fog::Source> {
         sources.sort_by(|a, b| {
-            (a.x, a.y)
-                .partial_cmp(&(b.x, b.y))
+            (a.at.x, a.at.y)
+                .partial_cmp(&(b.at.x, b.at.y))
                 .unwrap_or(Ordering::Equal)
         });
+        sources
+    }
+
+    /// Everything lighting the live board: the party, plus whichever lights they
+    /// can see. Milestone 39, and the one place the gate lives.
+    ///
+    /// **A light nobody is carrying has to be gated, and on line of sight rather
+    /// than on reach.** Ungated, a DM who prepares a dungeon on a Tuesday and puts
+    /// a brazier in each room promotes it on the Saturday and hands the table
+    /// every lit chamber on the level through three walls, because `visible` is a
+    /// flat union of its sources with no "and somebody can see it" term in it. And
+    /// gated on the party's *radius* it would be wrong the other way: a brazier
+    /// forty feet off is one the party can plainly see with torches that reach
+    /// thirty. So the question is `fog::in_line_of_sight`, which asks only about
+    /// the geometry, and the fallback beside it is the party's own sight — which
+    /// is what carries `Lighting::Room`, where a flood reaches round a corner no
+    /// straight line does.
+    ///
+    /// **No cascade, deliberately.** The gate reads the sight the party has on
+    /// their own, computed before a single light joins the list, so one brazier
+    /// can never switch on the next. A chain of torches down a corridor would
+    /// otherwise open the level, which is the failure this whole function exists
+    /// to prevent, arriving one step later.
+    ///
+    /// A token's whole footprint is asked about, as `in_sight` asks it, so a
+    /// four-cell brazier leaning into the light counts.
+    fn sight_sources(&self) -> Vec<fog::Source> {
+        let mut sources = self.party_sources();
+
+        let lights: Vec<&Token> = self
+            .tokens
+            .values()
+            .filter(|t| t.light_ft.is_some() && !matches!(t.owner, Owner::Player(_)) && !t.unseen())
+            .collect();
+        // The overwhelmingly common case, and it costs exactly what this cost
+        // before there were lights: one sweep, no gate.
+        if lights.is_empty() {
+            return sources;
+        }
+
+        let reached = fog::sight_cells(&self.map, &self.walls, &sources);
+        let active: Vec<fog::Source> = lights
+            .into_iter()
+            .filter(|t| {
+                fog::in_line_of_sight(&self.map, &self.walls, &sources, Pos { x: t.x, y: t.y })
+                    || fog::covered_cells(t.x, t.y, t.size)
+                        .iter()
+                        .any(|cell| reached.contains(cell))
+            })
+            .map(|t| fog::Source {
+                at: Pos { x: t.x, y: t.y },
+                radius_ft: t.light_ft,
+            })
+            .collect();
+
+        sources.extend(Self::ordered(active));
         sources
     }
 
@@ -2660,7 +2747,7 @@ impl RoomState {
     /// and apply again the moment fog comes back.
     fn recompute_sight(&mut self) {
         if self.map.fog {
-            let rays = fog::sight_cells(&self.map, &self.walls, &self.vision_sources());
+            let rays = fog::sight_cells(&self.map, &self.walls, &self.sight_sources());
 
             self.revealed.extend(rays.iter().copied());
             self.known = fog::with_fringe(&self.map, &self.revealed);
@@ -2857,6 +2944,7 @@ impl RoomState {
                 x,
                 y,
                 hp,
+                light_ft,
                 staged,
                 ..
             } => {
@@ -2867,7 +2955,7 @@ impl RoomState {
                 if self.tokens.len() >= MAX_TOKENS {
                     return Err(format!("this room already holds {MAX_TOKENS} tokens"));
                 }
-                token_fields(name, img, *size, *hp)?;
+                token_fields(name, img, *size, *hp, *light_ft)?;
                 finite(&[*x, *y])
             }
 
@@ -2877,13 +2965,14 @@ impl RoomState {
                 img,
                 size,
                 hp,
+                light_ft,
                 ..
             } => {
                 require_dm(client, "change a token")?;
                 if !self.tokens.contains_key(id) {
                     return Err(format!("no such token: {}", id.0));
                 }
-                token_fields(name, img, *size, *hp)
+                token_fields(name, img, *size, *hp, *light_ft)
             }
 
             ClientMsg::DeleteToken { id } => {
@@ -3401,6 +3490,7 @@ impl RoomState {
                 y,
                 hidden,
                 hp,
+                light_ft,
                 staged,
             } => {
                 // The id is invented here rather than accepted from the client,
@@ -3424,6 +3514,7 @@ impl RoomState {
                         size,
                         hidden,
                         hp,
+                        light_ft,
                         staged_pos: staged.then_some(Pos { x, y }),
                         staged_only: staged,
                     },
@@ -3445,6 +3536,7 @@ impl RoomState {
                 owner,
                 hidden,
                 hp,
+                light_ft,
             } => {
                 // Read through `unseen_by_table`, which needs `&self`, so it has
                 // to happen before the mutable borrow below rather than beside
@@ -3466,6 +3558,7 @@ impl RoomState {
                 token.owner = owner;
                 token.hidden = hidden;
                 token.hp = hp;
+                token.light_ft = light_ft;
 
                 // Resizing moves which lattice the token belongs on — a 2×2
                 // settles on a cell corner where a 1×1 settles on a centre — so

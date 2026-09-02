@@ -375,6 +375,11 @@ mod tests {
                     current: 14,
                     max: 31,
                 }),
+                // A lantern, and set rather than left `None` for the reason
+                // `lighting` above is `Room`: `None` is what a save written
+                // before this field existed decodes to, so a round trip that
+                // dropped it entirely would pass.
+                light_ft: Some(30.0),
                 // Where the DM means this one to land when the map staged above
                 // becomes the board.
                 staged_pos: Some(Pos { x: 8.5, y: 2.5 }),

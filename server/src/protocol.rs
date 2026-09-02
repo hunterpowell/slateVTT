@@ -414,6 +414,21 @@ pub struct Token {
     /// The DM's note on a creature, and nobody else's business. `None` is the
     /// usual state — most tokens are party members the DM keeps no total for.
     pub hp: Option<Hp>,
+    /// How far this token lights the board, in feet, or `None` for a token that
+    /// carries no light of its own.
+    ///
+    /// One field doing two things, which is the whole of milestone 39. On a token
+    /// a player owns it *replaces* `MapInfo::vision_ft` — a lantern, and the
+    /// per-token radius this project spent five milestones not building. On
+    /// anything else it is what makes the token a source at all: a brazier, a
+    /// torch on a wall, a goblin carrying one. `fog::Source` is where the two
+    /// become one rule.
+    ///
+    /// DM-only, like `hp` beside it. What a light does reaches the table as fog,
+    /// which is the argument the walls already make — the geometry is the DM's
+    /// authoring and the shadow it casts is what the table plays with. So `None`
+    /// here is both "carries no light" and "you are not the DM".
+    pub light_ft: Option<f32>,
     /// Where this token lands when the staged map is promoted, in grid units
     /// like `x, y`. `None` is "staying where it is".
     ///
@@ -453,6 +468,7 @@ impl Default for Token {
             size: 1.0,
             hidden: false,
             hp: None,
+            light_ft: None,
             staged_pos: None,
             staged_only: false,
         }
@@ -487,6 +503,10 @@ pub struct TokenView {
     /// this creature — the two are indistinguishable from the client side, the
     /// way `staged` being `None` is both "nothing staged" and "not the DM".
     pub hp: Option<Hp>,
+    /// `None` for a player, always — and the table loses nothing by it, since
+    /// what a light does reaches them as fog. Also `None` for a DM's token that
+    /// carries none, indistinguishable in the way `hp` is.
+    pub light_ft: Option<f32>,
     /// `None` for a player, always — a plan for a map they cannot see is a fact
     /// about that map. Also `None` for a DM whose token is staying put.
     pub staged_pos: Option<Pos>,
@@ -514,6 +534,7 @@ impl Token {
             size: self.size,
             hidden: self.hidden,
             hp: if is_dm { self.hp } else { None },
+            light_ft: if is_dm { self.light_ft } else { None },
             staged_pos: if is_dm { self.staged_pos } else { None },
             staged_only: is_dm && self.staged_only,
         }
@@ -1081,6 +1102,9 @@ pub enum ClientMsg {
         /// when the party walks in is one command, not a create and a hide.
         hidden: bool,
         hp: Option<Hp>,
+        /// How far this token lights the board, or `None` for one carrying no
+        /// light. A brazier is built in one command like the ambush above it.
+        light_ft: Option<f32>,
         /// Built on the map the DM is preparing rather than on the board: `x, y`
         /// becomes the token's plan and it does not exist for the table, or for
         /// the DM's own live board, until the promote.
@@ -1108,6 +1132,9 @@ pub enum ClientMsg {
         owner: Owner,
         hidden: bool,
         hp: Option<Hp>,
+        /// Shared by both boards like every other field here: a lantern is a
+        /// fact about the creature and not about which map it is standing on.
+        light_ft: Option<f32>,
     },
     DeleteToken {
         id: TokenId,

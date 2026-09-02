@@ -160,6 +160,13 @@ export interface WireToken {
   /** Null for a player, always — and also null for a DM keeping no total on
    *  this creature. The two are indistinguishable from here, deliberately. */
   hp: Hp | null;
+  /** How far this token lights the board, in feet, or null for one carrying no
+   *  light of its own.
+   *
+   *  Null for a player, always, and they lose nothing by it: what a light does
+   *  reaches them as fog, which is how the walls reach them too. Also null for
+   *  a DM's token that carries none, indistinguishable the way `hp` is. */
+  light_ft: number | null;
   /** Where this token lands when the staged map is promoted, or null for one
    *  staying put. Null for a player always: a plan is a cell on a map they have
    *  not been shown. */
@@ -651,6 +658,7 @@ export type ClientMsg =
       y: number;
       hidden: boolean;
       hp: Hp | null;
+      light_ft: number | null;
       staged: boolean;
     }
   /** DM-only. Every editable field at once; position is `move_token`'s alone.
@@ -668,6 +676,7 @@ export type ClientMsg =
       owner: Owner;
       hidden: boolean;
       hp: Hp | null;
+      light_ft: number | null;
     }
   | { type: 'delete_token'; id: string }
   /** DM-only. Whether the board writes token names under them, for everyone.
