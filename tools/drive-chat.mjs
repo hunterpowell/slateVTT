@@ -243,6 +243,154 @@ check(
 );
 check('and Saelyn holds the other two', (await mine(saelyn)).length, 2);
 
+// --- the loaner die ---------------------------------------------------------
+//
+// The dice ride this file rather than getting their own because a roll *is* a
+// line of talk — the three browsers already open here are the rig the private
+// half needs, and there is still nothing to put back afterwards.
+//
+// **Counted rather than matched.** Every other assertion above looks for its
+// own text; a roll's text is the room's, and two d20s can legitimately come up
+// the same number. So what is counted is `.is-rolled` rows, which cannot
+// collide.
+
+const dice = (session) =>
+  session.evaluate(`[...document.querySelectorAll('#chat-dice .chat-die')].map(b => b.textContent)`);
+
+check('everybody has the bag, and it is seven dice', await dice(saelyn), [
+  'd4',
+  'd6',
+  'd8',
+  'd10',
+  'd12',
+  'd20',
+  'd%',
+]);
+// The dock is a fixed narrow column and this row is the widest thing in it.
+// The DOM is the only place a layout failure like that is visible, which is
+// what this driver is for.
+check(
+  'and the row fits the dock without spilling out of it',
+  await saelyn.evaluate(`(() => {
+    const row = document.getElementById('chat-dice');
+    return row.scrollWidth <= row.clientWidth + 1;
+  })()`),
+  true,
+);
+
+const thrown = (session) =>
+  session.evaluate(`document.querySelectorAll('#chat-log .chat-line.is-rolled').length`);
+
+// **Counted as a difference, for the reason the per-run text above exists.**
+// The room is memory that outlives a run, so a second run against the same
+// server starts with the first run's dice already in the log. An absolute
+// count would pass once and then fail forever, which is worse than not
+// asserting it.
+const before = { dm: await thrown(dm), saelyn: await thrown(saelyn), torrin: await thrown(torrin) };
+const since = async (session, who) => (await thrown(session)) - before[who];
+
+const roll = async (session, chip, die) => {
+  await session.evaluate(`[...document.querySelectorAll('#chat-to .chat-chip')]
+    .find(b => b.textContent === ${JSON.stringify(chip)}).click(); "ok"`);
+  await session.evaluate(`[...document.querySelectorAll('#chat-dice .chat-die')]
+    .find(b => b.textContent === ${JSON.stringify(die)}).click(); "ok"`);
+  await session.wait(500); // the round trip, and the echo that follows it
+};
+
+await roll(saelyn, 'table', 'd20');
+
+// **The patterns below use `[0-9]` rather than `\d` deliberately.** These
+// template literals are source code on its way to the browser, and `\d` is not
+// a recognised escape in one — it arrives as a bare `d`, so the pattern still
+// compiles, still runs, and quietly matches nothing. A character class cannot
+// be eaten that way.
+
+check('a shouted roll came back to whoever threw it', await since(saelyn, 'saelyn'), 1);
+check('and reached the DM', await since(dm, 'dm'), 1);
+check('and reached the other player', await since(torrin, 'torrin'), 1);
+check(
+  'and the room wrote the sentence, not the client',
+  await saelyn.evaluate(`(() => {
+    const rows = [...document.querySelectorAll('#chat-log .chat-line.is-rolled')];
+    return /^Saelyn: d20 → [0-9]+$/.test(rows.at(-1).textContent);
+  })()`),
+  true,
+);
+
+// The half a physical die cannot do, and it needed no picker of its own: the
+// destination is the chip that was already armed.
+await roll(saelyn, 'DM', 'd20');
+
+check('a roll whispered to the DM reached them', await since(dm, 'dm'), 2);
+check('and stayed with the person who threw it', await since(saelyn, 'saelyn'), 2);
+// The one that matters: Torrin's count did not move at all.
+check('and is nowhere in the other player’s page', await since(torrin, 'torrin'), 1);
+
+// **The DM's own ear, which is the half a server test cannot see.** The room
+// allowed this from the day it was written and there was no control for it —
+// `the_dm_may_roll_where_only_they_can_see_it` drives `RoomState` directly and
+// passed against a feature nobody could reach. This is the assertion that would
+// have caught it, and it belongs here rather than there for exactly that reason.
+
+check(
+  'only the DM is offered a hidden roll',
+  await saelyn.evaluate(`document.querySelectorAll('#chat-dice .chat-hide').length`),
+  0,
+);
+check(
+  'and the DM is',
+  await dm.evaluate(`document.querySelectorAll('#chat-dice .chat-hide').length`),
+  1,
+);
+
+// Pointed at the table on purpose: the toggle has to beat the armed chip, or it
+// is only a relabelling of the destination strip.
+await dm.evaluate(`[...document.querySelectorAll('#chat-to .chat-chip')]
+  .find(b => b.textContent === 'table').click(); "ok"`);
+await dm.evaluate(`document.querySelector('#chat-dice .chat-hide').click(); "ok"`);
+check(
+  'arming it marks the dice, not just the button',
+  await dm.evaluate(`document.getElementById('chat-dice').classList.contains('is-hidden-roll')`),
+  true,
+);
+
+const dmOnly = { dm: await thrown(dm), saelyn: await thrown(saelyn), torrin: await thrown(torrin) };
+await dm.evaluate(`[...document.querySelectorAll('#chat-dice .chat-die')]
+  .find(b => b.textContent === 'd20').click(); "ok"`);
+await dm.wait(500);
+
+check('a hidden roll reached the DM', (await thrown(dm)) - dmOnly.dm, 1);
+check(
+  'and no player was told, though the chip said table',
+  (await thrown(saelyn)) - dmOnly.saelyn + ((await thrown(torrin)) - dmOnly.torrin),
+  0,
+);
+
+// Put it down, or the handful below goes to the DM's own ear and the last check
+// reads nothing.
+await dm.evaluate(`document.querySelector('#chat-dice .chat-hide').click(); "ok"`);
+check(
+  'and it can be put back down',
+  await dm.evaluate(`document.getElementById('chat-dice').classList.contains('is-hidden-roll')`),
+  false,
+);
+
+// A handful says what each die did. `d%` is the hundred, which is what keeps
+// seven buttons on one row.
+await saelyn.evaluate(`(() => {
+  document.getElementById('chat-dice-count').value = '3';
+  return "ok";
+})()`);
+await roll(saelyn, 'table', 'd6');
+check(
+  'three dice report three faces and what they come to',
+  await torrin.evaluate(`(() => {
+    const rows = [...document.querySelectorAll('#chat-log .chat-line.is-rolled')];
+    return /^Saelyn: 3d6 → [0-9]+, [0-9]+, [0-9]+ [(][0-9]+[)]$/.test(rows.at(-1).textContent);
+  })()`),
+  true,
+);
+
 note('nothing here is persisted: the log dies with the server, so there is nothing to put back');
 
 const failures = verdict(dm);

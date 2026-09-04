@@ -6,9 +6,14 @@ Why the talking is the shape it is. Covers `ClientMsg::Say`, `ServerMsg::Said`, 
 
 The boundary of this feature is in `.claude/CLAUDE.md` and it is the specification, not a summary
 of one. Read it before adding anything here: **no player-to-player messages, no channels, no
-threads, no history between sessions, no formatting, no emotes, no commands, no dice.** The noun
-is "whisper and shout" rather than "chat" because chat is a thing that grows, and this is a file
+threads, no history between sessions, no formatting, no emotes, no commands.** The noun is
+"whisper and shout" rather than "chat" because chat is a thing that grows, and this is a file
 about a thing that must not.
+
+**Dice were on that list until milestone 40 and are the one item that came off it.** They came off
+as a *command* rather than as a syntax — there is still no parsing of anything anybody types, and
+`/roll` is exactly as absent as it ever was. What a thrown die produces is an ordinary `ChatLine`
+riding this feature's own path. See `docs/dice.md`, whose boundary is the one that matters now.
 
 ## What it is
 
@@ -200,9 +205,14 @@ nothing else in here wants the key.
 
 - **No player-to-player anything.** Not a chip, not a `ChatTo` variant, not a refusal that could be
   relaxed later without noticing.
-- **No coupling to the initiative panel.** A shouted number is text and a panel row is state. The
-  DM reads the number and types it. Parsing content to fill a row makes this reach into a subsystem
-  it otherwise touches none of, and it is the first step towards the thing the non-goal forbids.
+- **No commands, and no parsing of content at all.** Nothing anybody types is inspected for
+  meaning — not a slash, not a colon, not a die. Milestone 40 put dice in this log and did it with
+  a *command of its own*, precisely so that this line could stay true: `ClientMsg::Roll` is a
+  frame, not a syntax. The moment a message body is scanned for anything, this is a chat.
+- **No coupling to the initiative panel.** A shouted number is text and a panel row is state — and
+  a *thrown* one is still text, so milestone 40 changed nothing here. The DM reads the number and
+  types it. Parsing content to fill a row makes this reach into a subsystem it otherwise touches
+  none of, and it is the first step towards the thing the non-goal forbids.
 - **No fog gate.** Words are not on the board. `moves_sight` is false for `Say` and `Said` is in no
   visibility filter that reads a cell.
 - **No timestamps, no read receipts, no edit, no delete.** A line said is said.

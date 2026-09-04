@@ -575,6 +575,7 @@ fn paint(cells: &[Cell], state: Option<Override>) -> ClientMsg {
 
 mod chat;
 mod cursors;
+mod dice;
 mod drawings;
 mod fog_of_war;
 mod handshake;

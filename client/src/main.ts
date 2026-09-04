@@ -124,6 +124,7 @@ interface Ui {
     root: HTMLElement;
     log: HTMLElement;
     destinations: HTMLElement;
+    dice: HTMLElement;
     form: HTMLFormElement;
     text: HTMLInputElement;
     toast: HTMLElement;
@@ -284,6 +285,7 @@ function findUi(): Ui {
       root: need('#chat'),
       log: need('#chat-log'),
       destinations: need('#chat-to'),
+      dice: need('#chat-dice'),
       form: need<HTMLFormElement>('#chat-form'),
       text: need<HTMLInputElement>('#chat-text'),
       toast: need('#chat-toast'),

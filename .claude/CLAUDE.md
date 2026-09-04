@@ -33,6 +33,7 @@ them would load them into every session, which is what moving them out avoided.)
 - Lets the DM take back the last handful of things that changed the room
 - Lets anyone say something to the table, or whisper the DM — and the DM whisper any one player;
   two destinations and nothing else, kept for the evening and never written down
+- Lends a die to whoever came without one, thrown by the room and landing in that same log
 - Gives everyone a box to write in that no other screen is ever sent, the DM's included
 - Shows who is connected, tells you when it is your turn, picks the page back up when a
   socket drops, lets a player choose the colour they are drawn in, and draws everybody's
@@ -45,11 +46,20 @@ unless explicitly asked:
 
 - Character sheets, stat blocks, or any 5e rules knowledge. A hit point total the DM keeps on
   a monster is not a stat block and is in scope; anything that knows what a hit point *means* is not.
-- Dice rolling (the group uses physical dice)
+- **Dice rolling beyond a loaner.** The old rule here was "the group uses physical dice", which
+  was a fact about the table rather than an argument — and it stopped being true for one player
+  for one evening. What is built is a **bag of plastic and nothing else**, and the test for
+  anything proposed here is *could a bag of plastic do this?* Counts yes: `8d6` is a fireball.
+  Arithmetic no: **no modifiers, no expressions, no macros**, because a modifier is a character
+  sheet with one field filled in. Advantage is two d20s and a decision, so it needs no code and
+  gets none. No per-token dice, no parsing of anything typed, and no wiring into the initiative
+  panel. **Built**, as milestone 40 — see *The loaner die* below and `docs/dice.md`.
 - Voice and video (the group uses Discord). **Text is a bounded exception and the boundary is the
   whole of it** — a player may whisper the DM or shout to the table, and that is the entire feature.
   No player-to-player messages, no channels, no threads, no history between sessions, no formatting,
-  no emotes, no commands, no dice. Two destinations, so a player's box needs no recipient picker;
+  no emotes, no commands. (Dice were on this list too and came off it in milestone 40 — as a
+  command of their own, never as a syntax: nothing anybody types is parsed, then or now.) Two
+  destinations, so a player's box needs no recipient picker;
   the noun is "whisper and shout" rather than "chat" because chat is a thing that grows. **Built**,
   as milestone 23; its motivating case is six people posting initiative rolls without clogging
   voice, and the boundary above is the specification — see *Whisper and shout* below and
@@ -268,8 +278,10 @@ struct RoomState {
 }
 
 /// One thing somebody said. `to` is carried as well as `by` because a whisper has
-/// to look like one on the screens of *both* people party to it.
-struct ChatLine { by: Owner, to: ChatTo, text: String }
+/// to look like one on the screens of *both* people party to it. `rolled` says
+/// the room threw it rather than somebody typing it — styled, never filtered on,
+/// and free because this struct is session memory and `Serialize` only.
+struct ChatLine { by: Owner, to: ChatTo, text: String, rolled: bool }
 
 /// Two destinations and never a third: a player names the table or the DM, the DM
 /// names the table or one player. `Owner`'s neighbour rather than `Owner` itself,
@@ -519,7 +531,11 @@ never runs. `largest_override_fits_in_a_frame` is the one that exists.
 **`ClientMsg` and `ServerMsg` are written out by hand twice and nothing generates either from the
 other.** `protocol-tags.json` is the third copy both are checked against — an exhaustive `match` in
 Rust, a `Record<Msg['type'], true>` in TypeScript, so each language's own compiler refuses a variant
-that is not in the fixture. Variant-level only: a renamed *field* keeps its tag and is caught only by
+that is not in the fixture. **The Rust side holds two lists rather than one**, so a variant is four
+edits and not three: the exhaustive `match`, which stops the crate compiling, *and*
+`KNOWN_CLIENT_TAGS`/`KNOWN_SERVER_TAGS`, which is what the fixture is actually compared against —
+update only the first and it compiles, then fails the suite with a message that reads as though the
+fixture were wrong. Variant-level only: a renamed *field* keeps its tag and is caught only by
 the server rejecting the frame, which is a `console.error` on the client so that a browser driver
 fails on it.
 
@@ -1005,6 +1021,40 @@ A line renders identically for both people party to it, so there is no "am I the
 
 → **`docs/chat.md`** before touching `chat.ts`, `dock.ts`, `party_to`, `chat_for`, `RoomState::chat`,
 or `Say`/`Said`/`ChatTo`/`ChatLine` on the server.
+
+## The loaner die
+
+**A bag of plastic for whoever came without one, and that framing is the specification.** Read the
+non-goal above before changing anything here; the test it gives — *could a bag of plastic do
+this?* — is what keeps counts in and arithmetic out.
+
+**A roll is a line of talk, and that is the whole implementation.** `ClientMsg::Roll { sides,
+count, to }` produces an ordinary `ChatLine` and emits the **existing** `Event::Said`, so there is
+no `ServerMsg` beside it, no new `Event`, no new visibility rule, and no arm in `persists` or the
+`spoken` match — both key on `Event`. `party_to`, `chat_for`, the cap, the badge and the toast are
+reused untouched. It carries no sender, exactly as `Say` does not.
+
+**The room throws it, not the client**, because a number a client rolled for itself is one it could
+throw again until it liked the answer — and `ChatLine::rolled` is what makes that visible, since a
+witnessed number nobody can tell from a claimed one buys nothing. The entropy is `uuid`'s v4, which
+was already a dependency: **no `rand`, rejection-sampled**, because `byte % sides` biases low faces.
+
+**Private rolls cost nothing and are what beats plastic.** `to` was going to be on the command
+anyway, so a whisper-roll needed no code and no second picker — the die throws to whichever
+destination chip is already armed. `may_address` is the shared rule and **`Say` and `Roll` differ
+in exactly one arm**: the DM addressing themselves, refused for talk because a note to self is the
+scratchpad's job, allowed for a die because a monster's save has nowhere else to go. **It is reached
+by a toggle on the die row and not by a chip** — the chips are shared with the text box, which
+cannot send there; privacy is a property of the throw rather than of the conversation.
+
+**Two bounds, not one.** `DICE_SIDES` is a closed set checked on the server like `TOKEN_SIZES`, and
+`MAX_DICE` exists so the sentence a throw produces still fits `MAX_CHAT_LEN` —
+`the_largest_roll_fits_a_chat_line` measures the largest legal instance rather than trusting the
+two numbers relate.
+
+→ **`docs/dice.md`** before touching `Roll`/`ChatLine::rolled` on the server, `roll`,
+`rolled_text`, `may_address`, `RoomState::log`, `DICE_SIDES`/`MAX_DICE`, or the die row in
+`chat.ts`.
 
 ## The scratchpad
 

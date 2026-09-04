@@ -416,6 +416,12 @@ export interface WireChatLine {
   by: Owner;
   to: ChatTo;
   text: string;
+  /** The room threw this rather than somebody typing it.
+   *
+   *  Styled, never filtered on — `to`'s job exactly. A witnessed number and a
+   *  claimed one have to be tellable apart or the server doing the throwing
+   *  bought nothing anybody can see. */
+  rolled: boolean;
 }
 
 export interface RosterSlot {
@@ -629,6 +635,14 @@ export type ClientMsg =
    *  permission check is about. It carries no sender: who said it is what the
    *  socket already proved. */
   | { type: 'say'; to: ChatTo; text: string }
+  /** Throw `count` dice of `sides` faces and say the result to `to`.
+   *
+   *  The loaner die. It comes back as an ordinary `said`, because a roll is a
+   *  line of talk — so there is no frame to handle for it, and a private roll
+   *  to the DM is the destination chip that is already armed.
+   *
+   *  Counts and no modifiers: a dice bag has the first and not the second. */
+  | { type: 'roll'; sides: number; count: number; to: ChatTo }
   /** Replace our own scratchpad. It carries no key — the box it lands in is the
    *  one the socket belongs to, because a key we could name is a key we could
    *  name somebody else's with. */

@@ -43,12 +43,24 @@ import type { ChatTo, ClientMsg, Owner, RosterEntry, WireChatLine } from './prot
  *  become a wall over the board. */
 const TOAST_MS = 6000;
 
+/** The dice in the bag, and how many of one may be thrown at once.
+ *
+ *  Mirrors `DICE_SIDES` and `MAX_DICE` in `room.rs`, which is where they are
+ *  enforced — this is what the buttons are built from, the way `MAX_FILL_CELLS`
+ *  mirrors the room's override cap. A die missing from here is one nobody can
+ *  ask for; a die added that the room does not know is a red banner. */
+const DICE_SIDES = [4, 6, 8, 10, 12, 20, 100] as const;
+const MAX_DICE = 20;
+
 export interface ChatUi {
   root: HTMLElement;
   log: HTMLElement;
   /** The destination chips. Empty in the document — which ones exist depends on
    *  who is connected, so they are built here. */
   destinations: HTMLElement;
+  /** The die row. Empty in the document — the buttons are built here so the
+   *  bag and the room's `DICE_SIDES` are one list. */
+  dice: HTMLElement;
   form: HTMLFormElement;
   text: HTMLInputElement;
   /** The box beside the dock that an arriving line surfaces in. Outside the
@@ -142,6 +154,10 @@ export function createChat(
     // A whisper reads differently from a shout at a glance, which is the only
     // thing `to` is used for here — the filtering happened in the room.
     if (line.to.kind !== 'table') row.classList.add('is-whisper');
+    // And the same rule again for the other thing a line can be: the room threw
+    // this one, so it reads differently from a number somebody typed. Nothing
+    // here is filtered on it either.
+    if (line.rolled) row.classList.add('is-rolled');
 
     const who = document.createElement('span');
     who.className = 'chat-who';
@@ -152,7 +168,11 @@ export function createChat(
     if (line.to.kind !== 'table') {
       const arrow = document.createElement('span');
       arrow.className = 'chat-arrow';
-      arrow.textContent = ` → ${toName(line.to, roster)}`;
+      // **"DM → DM" is true and reads badly.** The only way both ends are the
+      // DM is a hidden roll — the room refuses `Say` there — so the label says
+      // what it is instead of naming the same person twice.
+      const self = line.by.kind === 'dm' && line.to.kind === 'dm';
+      arrow.textContent = self ? ' → hidden' : ` → ${toName(line.to, roster)}`;
       row.append(arrow);
     }
 
@@ -236,6 +256,81 @@ export function createChat(
     ui.destinations.append(chip);
   }
   showDestination();
+
+  // --- the loaner die -------------------------------------------------------
+
+  // How many of the next die. A whole number of dice is all a bag has, so this
+  // is a count and never an expression — there is no modifier here and there
+  // must not be one. See `docs/dice.md`.
+  // **DM-only: a throw nobody else is told about.**
+  //
+  // It lives on the die row rather than among the destination chips, and that is
+  // not a layout choice. Privacy here is a property of the *throw* and not of the
+  // conversation — and the room refuses `Say` to the DM's own ear, so a chip
+  // armed here would leave the text box pointing somewhere it cannot send, which
+  // is the same lie as a rail tab that opens a panel that can do nothing.
+  let hiddenRoll = false;
+
+  const count = document.createElement('input');
+  count.type = 'number';
+  count.id = 'chat-dice-count';
+  count.min = '1';
+  count.max = String(MAX_DICE);
+  count.value = '1';
+  count.title = `How many dice, up to ${MAX_DICE}.`;
+  count.setAttribute('aria-label', 'How many dice');
+  // `ui.text`'s argument, for `ui.text`'s reason: every tool in the project
+  // listens on `window`, and none of them should fire because somebody typed a
+  // 2 in here.
+  count.addEventListener('keydown', (e) => {
+    e.stopPropagation();
+    if (e.key === 'Escape') count.blur();
+  });
+  ui.dice.append(count);
+
+  for (const sides of DICE_SIDES) {
+    const die = document.createElement('button');
+    die.type = 'button';
+    die.className = 'chat-die';
+    // `d%` for the hundred, which is what the two ten-sided dice it replaces
+    // are called at a table, and what keeps seven buttons on one row.
+    die.textContent = sides === 100 ? 'd%' : `d${sides}`;
+    die.title = `Throw d${sides}.`;
+    // The die is the button: one click throws, because the common case is one
+    // die to the table and a second control in front of that would be a form
+    // for pressing a d20.
+    die.addEventListener('click', () => {
+      const many = Math.min(Math.max(Math.round(Number(count.value) || 1), 1), MAX_DICE);
+      // Written back so the box agrees with what was thrown — the room would
+      // refuse a 0 or a 40, and a refusal is worse than the box correcting
+      // itself in front of somebody.
+      count.value = String(many);
+      // Wherever the chips are already pointing. This is the whole of how a
+      // private roll works, and it is why there is no second picker here.
+      // The armed chip, unless the DM has said this one is theirs alone.
+      send({ type: 'roll', sides, count: many, to: hiddenRoll ? { kind: 'dm' } : to });
+    });
+    ui.dice.append(die);
+  }
+
+  if (identity.isDm) {
+    const secret = document.createElement('button');
+    secret.type = 'button';
+    secret.className = 'chat-hide';
+    secret.textContent = 'hidden roll';
+    secret.title = 'Throw where only you see the result.';
+    secret.setAttribute('aria-pressed', 'false');
+    secret.addEventListener('click', () => {
+      hiddenRoll = !hiddenRoll;
+      secret.classList.toggle('is-armed', hiddenRoll);
+      secret.setAttribute('aria-pressed', String(hiddenRoll));
+      // Said twice, exactly as a whisper is. The button is where the choice was
+      // made; the dice are what is being looked at when one is picked, and a
+      // sticky destination has one failure — forgetting which way it points.
+      ui.dice.classList.toggle('is-hidden-roll', hiddenRoll);
+    });
+    ui.dice.append(secret);
+  }
 
   // --- saying it ------------------------------------------------------------
 

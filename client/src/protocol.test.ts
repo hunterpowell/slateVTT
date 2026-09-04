@@ -49,6 +49,7 @@ const CLIENT_TAGS: Record<ClientMsg['type'], true> = {
   remove_shape: true,
   remove_wall: true,
   reset_fog: true,
+  roll: true,
   say: true,
   set_backdrop: true,
   set_colour: true,

@@ -142,6 +142,22 @@ const MAX_CHAT_LINES: usize = 200;
 /// table talking, not a journal, and the box is one line high on purpose.
 const MAX_CHAT_LEN: usize = 400;
 
+/// The dice in the bag.
+///
+/// A closed set rather than a range, exactly as `TOKEN_SIZES` is: seven buttons
+/// is a better answer to "which die" than a number field, and a d7 is not a
+/// thing anybody owns.
+const DICE_SIDES: [u8; 7] = [4, 6, 8, 10, 12, 20, 100];
+/// How many of one die may be thrown at once.
+///
+/// A fireball is 8d6 and a disintegrate is 12d6, so this is generous rather
+/// than tight — it is here so the formatted line stays inside `MAX_CHAT_LEN`,
+/// not to tell a table when to stop. That is the two-bounds rule: the count the
+/// room refuses past, and the bytes the line has to fit. See
+/// `dice::the_largest_roll_fits_a_chat_line`, which is what keeps the pair
+/// honest.
+const MAX_DICE: u8 = 20;
+
 /// How much one person may keep in their scratchpad.
 ///
 /// Four pages, which is far past what a box for "the innkeeper is called Doran"
@@ -1370,6 +1386,11 @@ fn undid(msg: &ClientMsg) -> Option<&'static str> {
         // free rather than argued: this persists nothing, so the pair would
         // never agree about it anyway.
         | ClientMsg::Say { .. }
+        // A thrown die is a said thing and is excluded for the identical reason
+        // — and it is the sharper case of it. Undoing a roll away would be the
+        // one button at this table that could un-throw a die somebody is
+        // reading the number off, which is worse than useless.
+        | ClientMsg::Roll { .. }
         // **The third exclusion, and the first that `persists` disagrees with.**
         // Milestone 22's rule is that the ring may only hold state the undoing
         // hand wrote, and a scratchpad is the case it was written for: undoing
@@ -1473,6 +1494,9 @@ fn moves_sight(msg: &ClientMsg) -> bool {
         // Words are not on the board at all. The fog does not apply to them and
         // they do not apply to it.
         | ClientMsg::Say { .. }
+        // Nor is a number somebody threw. It arrives in the log as a line of
+        // talk and the fog has no more to say about it than about any other.
+        | ClientMsg::Roll { .. }
         // A box of text on one person's screen is not on the board either, and
         // this one is not even in the room the others are looking at.
         | ClientMsg::SetNotes { .. }
@@ -1620,6 +1644,66 @@ fn drawn_by(client: &Client) -> Owner {
         Identity::Dm => Owner::Dm,
         Identity::Player(id) => Owner::Player(id.clone()),
     }
+}
+
+/// Throw `count` dice of `sides` faces, uniformly, and give back what each one
+/// landed on.
+///
+/// **The randomness is the one `uuid` already pulls in.** A v4 is sixteen bytes
+/// from the OS, which is what `main` mints the DM secret from, so this is a
+/// `rand` dependency that did not have to be added — the "could this be forty
+/// lines instead" question, answered at fifteen.
+///
+/// Rejection sampling rather than `byte % sides`, which biases low faces: 256 is
+/// not a multiple of 100, so on a d100 the bytes below 56 would land twice as
+/// often as the rest. `limit` is the largest multiple of `sides` that fits in a
+/// byte and anything at or above it is thrown away, which is at most 55 values
+/// in 256 — so one v4 covers a handful of dice and another is minted when it
+/// runs dry.
+///
+/// `check` has already bounded both arguments. The guard here is not that check
+/// repeated: it is what stops a `sides` of 0 dividing by zero if this is ever
+/// called from somewhere that has not been through `check`.
+fn roll(sides: u8, count: u8) -> Vec<u8> {
+    if sides == 0 {
+        return Vec::new();
+    }
+    let limit = 256 - (256 % sides as u16);
+    let mut faces = Vec::with_capacity(count as usize);
+    let mut bytes = Vec::new();
+    while faces.len() < count as usize {
+        let byte = match bytes.pop() {
+            Some(byte) => byte,
+            None => {
+                bytes.extend_from_slice(Uuid::new_v4().as_bytes());
+                continue;
+            }
+        };
+        if (byte as u16) < limit {
+            faces.push(byte % sides + 1);
+        }
+    }
+    faces
+}
+
+/// How a throw reads in the log.
+///
+/// One die is `d20 → 17`; a handful is `3d6 → 4, 1, 6 (11)`. **The individual
+/// dice are always shown**, so the total is a convenience rather than somewhere
+/// a number could hide — and the total is not a modifier and not a rule. Slate
+/// knowing that 4 and 1 and 6 make 11 is not Slate knowing what a hit point is;
+/// adding up eight of them by hand is simply the tedious part of a fireball.
+///
+/// The room authors this rather than the client, for `ChatLine::rolled`'s
+/// reason: the whole point of the throw happening here is that everybody is
+/// reading the same sentence about it.
+fn rolled_text(sides: u8, faces: &[u8]) -> String {
+    if let [only] = faces {
+        return format!("d{sides} → {only}");
+    }
+    let dice: Vec<String> = faces.iter().map(|face| face.to_string()).collect();
+    let total: u32 = faces.iter().map(|face| u32::from(*face)).sum();
+    format!("{}d{sides} → {} ({total})", faces.len(), dice.join(", "))
 }
 
 /// The permission rule for erasing. The DM may clear anything; everyone else may
@@ -2408,6 +2492,63 @@ impl RoomState {
     /// Invariant 3 with the sharpest teeth in the project: filtering the deltas
     /// and forgetting this would hand a joining player the whole evening's
     /// whispers in one frame.
+    /// Whether `identity` may address `to` at all.
+    ///
+    /// **The permission both `Say` and `Roll` are about, and it is a rule about
+    /// a destination rather than about a role** — it never asks whether this is
+    /// the DM in order to grant something, only in order to say which of the two
+    /// lists of destinations is theirs. Nobody may name another player, which is
+    /// the whole boundary of the feature.
+    ///
+    /// The DM addressing themselves is not decided here, because it is the one
+    /// thing the two callers disagree about: `Say` refuses it and `Roll` allows
+    /// it. Both handle that arm before reaching this.
+    ///
+    /// The refusals are worded as the boundary rather than as a restriction: a
+    /// player whose message bounces should learn that this is not a thing Slate
+    /// does, not that they lack a permission somebody else has.
+    fn may_address(&self, identity: &Identity, to: &ChatTo) -> Result<(), String> {
+        match (identity, to) {
+            // The one everybody has, and the second one a player has.
+            (_, ChatTo::Table) => Ok(()),
+            (Identity::Player(_), ChatTo::Dm) => Ok(()),
+            // The DM addressing one player, which is the only reason this
+            // variant exists — and it names a real slot, so a whisper cannot be
+            // addressed into nowhere.
+            (Identity::Dm, ChatTo::Player(id)) => {
+                if self.roster.iter().any(|entry| &entry.id == id) {
+                    Ok(())
+                } else {
+                    Err("nobody by that name is at this table".to_owned())
+                }
+            }
+            // Player to player, which is the line this feature is drawn to not
+            // cross.
+            (Identity::Player(_), ChatTo::Player(_)) => {
+                Err("you can whisper the DM or shout to the table".to_owned())
+            }
+            // Handled by both callers before they get here, and differently.
+            (Identity::Dm, ChatTo::Dm) => {
+                Err("you are the DM — shout, or whisper a player".to_owned())
+            }
+        }
+    }
+
+    /// Put a line in the log and tell whoever is party to it.
+    ///
+    /// Shared by `Say` and `Roll` so that the cap, the trim and the event are
+    /// written once. Everything that decides *who hears it* is downstream of
+    /// here, in `party_to`.
+    fn log(&mut self, line: ChatLine) -> Vec<Event> {
+        self.chat.push_back(line.clone());
+        // From the front: the cap is a cap on how much of the evening is still
+        // around, and the oldest of it is what nobody is looking for any more.
+        while self.chat.len() > MAX_CHAT_LINES {
+            self.chat.pop_front();
+        }
+        vec![Event::Said { line }]
+    }
+
     fn chat_for(&self, identity: &Identity) -> Vec<ChatLine> {
         self.chat
             .iter()
@@ -3137,31 +3278,46 @@ impl RoomState {
                     return Err(format!("that is longer than {MAX_CHAT_LEN} characters"));
                 }
                 match (&client.identity, to) {
-                    // The two everybody has, and the two a player has.
-                    (_, ChatTo::Table) => Ok(()),
-                    (Identity::Player(_), ChatTo::Dm) => Ok(()),
-                    // The DM whispering one player, which is the only reason
-                    // this variant exists — and it names a real slot, so a
-                    // whisper cannot be addressed into nowhere.
-                    (Identity::Dm, ChatTo::Player(id)) => {
-                        if self.roster.iter().any(|entry| &entry.id == id) {
-                            Ok(())
-                        } else {
-                            Err("nobody by that name is at this table".to_owned())
-                        }
-                    }
-                    // Player to player, which is the line this feature is drawn
-                    // to not cross.
-                    (Identity::Player(_), ChatTo::Player(_)) => {
-                        Err("you can whisper the DM or shout to the table".to_owned())
-                    }
-                    // The DM whispering themselves. Refused rather than quietly
-                    // delivered, for the reason a promote with nothing staged is
-                    // refused: it means a client and the room disagree about what
-                    // the controls are.
+                    // The DM saying something to themselves. Refused rather than
+                    // quietly delivered, for the reason a promote with nothing
+                    // staged is refused: it means a client and the room disagree
+                    // about what the controls are. A note to self is what the
+                    // scratchpad is for.
+                    //
+                    // **This is the one arm `Roll` does not share**, and the
+                    // asymmetry is deliberate: a secret roll has nowhere else to
+                    // go. See the arm below.
                     (Identity::Dm, ChatTo::Dm) => {
                         Err("you are the DM — shout, or whisper a player".to_owned())
                     }
+                    _ => self.may_address(&client.identity, to),
+                }
+            }
+
+            // The bag of plastic. Two bounds and a destination, and the
+            // destination is the same question `Say` asks — `may_address` is
+            // that question, and this arm exists to differ from `Say` in exactly
+            // one place.
+            ClientMsg::Roll { sides, count, to } => {
+                if !DICE_SIDES.contains(sides) {
+                    return Err("that is not a die in the bag".to_owned());
+                }
+                if *count == 0 {
+                    return Err("that is no dice at all".to_owned());
+                }
+                if *count > MAX_DICE {
+                    return Err(format!("that is more than {MAX_DICE} dice"));
+                }
+                match (&client.identity, to) {
+                    // **The divergence from `Say`, and the reason for it:** the
+                    // DM rolling a monster's save wants the number and wants
+                    // nobody else to have it, and there is no other destination
+                    // in this protocol that means that. `party_to`'s `Dm` arm
+                    // already resolves it correctly with no change — the DM
+                    // matches both halves of it and gets one copy, and no player
+                    // is party to a line addressed there.
+                    (Identity::Dm, ChatTo::Dm) => Ok(()),
+                    _ => self.may_address(&client.identity, to),
                 }
             }
 
@@ -4079,22 +4235,38 @@ impl RoomState {
                     // unattributable line is one nobody sent.
                     None => return Vec::new(),
                 };
-                let line = ChatLine {
+                self.log(ChatLine {
                     by,
                     to,
                     // Trimmed here as well as in `check`, because `check` only
                     // looked at a borrow — what goes in the log is what the room
                     // decided was sayable, not what arrived.
                     text: text.trim().to_owned(),
+                    // Somebody typed this.
+                    rolled: false,
+                })
+            }
+
+            // The room throws the dice, and what comes out is an ordinary line
+            // of talk. Everything after this point — who is party to it, the
+            // cap, the frame, the badge on somebody's dock — is the arm above's
+            // machinery reused without a change to any of it.
+            ClientMsg::Roll { sides, count, to } => {
+                let by = match self.clients.get(&origin) {
+                    Some(client) => drawn_by(client),
+                    // `check` proved this is a client, exactly as above: an
+                    // unattributable roll is one nobody threw.
+                    None => return Vec::new(),
                 };
-                self.chat.push_back(line.clone());
-                // From the front: the cap is a cap on how much of the evening is
-                // still around, and the oldest of it is what nobody is looking
-                // for any more.
-                while self.chat.len() > MAX_CHAT_LINES {
-                    self.chat.pop_front();
-                }
-                vec![Event::Said { line }]
+                let faces = roll(sides, count);
+                self.log(ChatLine {
+                    by,
+                    to,
+                    text: rolled_text(sides, &faces),
+                    // And the room threw this one, which is the only difference
+                    // between the two and the whole of what the flag says.
+                    rolled: true,
+                })
             }
 
             // Whose box this is comes from the socket, exactly as a line of

@@ -26,7 +26,7 @@ Do not work ahead. Each milestone should run and be usable before starting the n
 6. Map upload and grid calibration UI.
 7. Package for Windows session hosting and deploy behind a Cloudflare Tunnel.
 
-**Everything through 28 is built, and so are 30 through 38; 29 is not.** 25, 26, 34 and 38 were
+**Everything through 28 is built, and so are 30 through 40; 29 is not.** 25, 26, 34 and 38 were
 never planned and are out of order for the reasons their own entries give. 33 is *Multi-room*, which was
 unscheduled until a Halloween one-shot became the second room it was waiting for. Everything from 8 on was planned after the original
 seven; 17 and 18 were workshopped after 16 landed, 19–24 after 18, and 27–29 on 2026-08-18 after 26.
@@ -1712,6 +1712,96 @@ and 28 also overturned something *its own* design section said, which its entry 
     position rather than by footprint, and a large creature standing beside it takes the click that
     would select it again for cleanup. A driver that cannot put back what it changed is worse than
     one that says less, so it says less; the gate has three server tests instead.
+
+40. **Done**, on 2026-09-03. The loaner die — a bag of plastic for whoever came without one,
+    thrown by the room and landing in the chat log. See `docs/dice.md`.
+
+    Never planned, and the first milestone here that *removed* a non-goal. A player turned up on
+    2026-09-02 without his dice and the table rolled for him all evening.
+
+    **The non-goal it overturned was a fact rather than an argument, and that is why it could go.**
+    "Dice rolling (the group uses physical dice)" described the table, and the table changed for a
+    night. What had been missing was never a dice system; it was a spare bag. Naming it *the loaner
+    die* did the design work that "dice rolling" would have made impossible — the same trick as
+    "whisper and shout" over chat, and "the scratchpad" over a journal.
+
+    **The scope test is a physical object, and it answers the next three requests for free.** Could
+    a bag of plastic do this? A bag has counts, so `8d6` is in and is the case most wanting a
+    loaner — nobody owns eight d6. A bag has no arithmetic, so modifiers are out, and that is the
+    line the old non-goal was really guarding: `2d6+3` is a character sheet with one field filled
+    in. A bag throws two d20s and lets you pick, so advantage needs **no code**, which is the test
+    doing its best work — the obvious next feature is already answered with nothing to build.
+
+    **It is one `ClientMsg` variant and one `bool`, because a roll is a line of talk.** `Roll`
+    produces an ordinary `ChatLine` and emits the existing `Event::Said`, so there is **no new
+    `ServerMsg`, no new `Event`, no new visibility rule, nothing on disk, nothing on the undo ring,
+    and no arm in `persists` or the `spoken` match** — both key on `Event` and there is not a new
+    one. `party_to`, `chat_for`, the cap, the dock badge and the toast were all reused untouched.
+    That is milestone 33's lesson again: the cheap version of a feature is the one that decides,
+    early, to be an existing thing rather than a new one.
+
+    **The estimate missed the fourth copy of the protocol tag.** `.claude/CLAUDE.md` says the tag
+    lives in three places — the Rust enum, `protocol-tags.json`, and the TypeScript union — and
+    there is a fourth: `KNOWN_CLIENT_TAGS` in `protocol.rs`, which is what the fixture is actually
+    compared against. Adding the variant to `client_tag` compiles and the suite still fails, with a
+    message that reads like the fixture is wrong. The file's own summary is what is wrong, and it
+    now says four.
+
+    **The private roll is the part that beats plastic, and it cost nothing.** `to: ChatTo` was
+    going to be on the command regardless, so a whisper-roll needed no code — and on the client no
+    second picker either, because the die throws to whichever destination chip is already armed.
+    The sticky destination `docs/chat.md` argues for turned out to be load-bearing for a feature
+    written two milestones later.
+
+    **The DM's own ear shipped unreachable, and that is the miss worth recording.** The room
+    allowed `(Dm, ChatTo::Dm)` from the first commit and the DM's screen had no way to say it:
+    `destinations` gives them `[table, ...roster]` and no `dm` chip, because `Say` there is
+    refused. The server test passed the whole time, because it drives `RoomState` directly —
+    **a server test cannot see a missing button**, and putting the only assertion there was the
+    error rather than the code. Hunter found it by asking where the control was. The generalisation
+    is the one `.claude/CLAUDE.md` already half-states: a permission test proves the room *allows*
+    something, and only a driver proves anybody can *do* it.
+
+    **The fix was not the obvious one either.** A `dm` chip on the DM's list would arm a
+    destination the text box cannot send to, since the chips are shared — a panel half-dead in one
+    mode, which is what the rail rules argue against. So the control is a toggle on the die row:
+    privacy is a property of the *throw*, not of the conversation, and the driver arms `table`
+    first to prove the toggle beats the chip. Looking at it also caught `DM → DM` in the log, which
+    is true and reads badly; it says `DM → hidden` now.
+
+    **The one divergence is the DM's own ear, and it runs opposite to `Say`.** Talk refuses it
+    because a note to self is the scratchpad's job; a die allows it because a monster's save has
+    nowhere else to go. `party_to` needed no change at all — the DM matches both halves of its `Dm`
+    arm and gets exactly one copy. The test pins *both* directions, because widening one command
+    must not quietly widen the other through the rule they share.
+
+    **No new dependency, and that was luck worth checking for.** `uuid` was already in the tree
+    with `v4` enabled, which is sixteen bytes of OS entropy per call, so `rand` was never needed —
+    fifteen lines of rejection sampling instead, because `byte % sides` biases low faces and 256 is
+    not a multiple of 100. The habit that found it was reading `Cargo.toml` before proposing an
+    addition rather than after.
+
+    **The randomness test shipped broken, and the way it broke is the lesson.** The bounds are
+    easy and nearly worthless alone — a range check passes against a function returning 1 forever —
+    so the assertion that matters is that *every face is reachable*, and with no seedable RNG its
+    only defence is a margin. It claimed 4,000 faces per die and was measuring **seventeen**: a
+    test client's outbound mailbox is 16 deep, the room drops a client whose mailbox fills, and
+    from then on `apply` finds no sender and logs nothing. Undrained, the loop evaporated. It
+    failed about one run in six and read exactly like a biased RNG, which is the expensive part —
+    the symptom pointed at the code under test rather than at the fixture. The fix is a `drain`
+    inside the loop, and the guard is that **the sample size is now asserted rather than assumed**:
+    a test whose margin is its only defence has to prove the margin exists. That generalises past
+    dice — *a test that fills a mailbox is measuring something other than what it says.*
+
+    **What the driver could and could not assert.** It reads the whole feature in three browsers:
+    the row fits the dock, a shouted roll reaches all three, a whispered one reaches two and leaves
+    the third's count where it was, and the room wrote the sentence. One thing in it is a trap
+    worth recording:
+    **`\d` inside the template literal that carries JS to the browser is not a recognised escape
+    and arrives as a bare `d`**, so the pattern still compiles, still runs, and quietly matches
+    nothing. Character classes cannot be eaten that way. The dice counts in that file are also
+    *differences* rather than absolutes, for the reason its per-run text already existed: the room
+    is memory that outlives a run.
 
 ### The right dock
 

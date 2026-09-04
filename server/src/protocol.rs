@@ -789,8 +789,19 @@ pub struct ChatLine {
     pub by: Owner,
     pub to: ChatTo,
     /// Trimmed and length-checked on the way in. Text and nothing else: no
-    /// formatting, no emotes, no commands, no dice.
+    /// formatting, no emotes, no commands.
     pub text: String,
+    /// The room threw this rather than somebody typing it.
+    ///
+    /// **The whole of what the loaner die adds to the log**, and it is a fact
+    /// about the line rather than a flag guarding behaviour: a witnessed number
+    /// reads differently from a claimed one at a glance, which is the same rule
+    /// and the only rule `to` is used for on the client.
+    ///
+    /// It is free because this struct is session memory and `Serialize` only —
+    /// no disk, so no migration and no `#[serde(default)]`; not on `Saved`, so
+    /// not on the undo ring. See `docs/dice.md`.
+    pub rolled: bool,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -1356,6 +1367,28 @@ pub enum ClientMsg {
         text: String,
     },
 
+    /// Throw `count` dice of `sides` faces, and say the result to `to`.
+    ///
+    /// **The loaner die: a bag of plastic for whoever came without one.** It
+    /// produces an ordinary `ChatLine` and the existing `Event::Said`, so there
+    /// is no `ServerMsg` beside this, no new event, and no new visibility rule —
+    /// `party_to` already decides who is party to a line, and a private roll to
+    /// the DM costs nothing because `to` was going to be here anyway.
+    ///
+    /// It carries no sender, exactly as `Say` does not, and the room does the
+    /// throwing: a number a client rolled for itself is one it could throw again
+    /// until it liked the answer.
+    ///
+    /// `sides` is checked against a closed set and `count` against a cap, the
+    /// way `Token::size` is checked against `TOKEN_SIZES`. There is no modifier
+    /// and no expression here and there must not be: counts are what a dice bag
+    /// has and arithmetic is where a character sheet starts. See `docs/dice.md`.
+    Roll {
+        sides: u8,
+        count: u8,
+        to: ChatTo,
+    },
+
     /// Replace this client's own scratchpad with `text`.
     ///
     /// **It carries no key, and that is the whole security of the feature.** A
@@ -1912,6 +1945,7 @@ mod tests {
             ClientMsg::Ping { .. } => "ping",
             ClientMsg::MoveCursor { .. } => "move_cursor",
             ClientMsg::Say { .. } => "say",
+            ClientMsg::Roll { .. } => "roll",
             ClientMsg::SetNotes { .. } => "set_notes",
             ClientMsg::SetColour { .. } => "set_colour",
             ClientMsg::AddWalls { .. } => "add_walls",
@@ -2036,6 +2070,7 @@ mod tests {
         "remove_shape",
         "remove_wall",
         "reset_fog",
+        "roll",
         "say",
         "set_backdrop",
         "set_colour",

@@ -608,6 +608,94 @@
         color: #e8e6e1;
       }
 
+      #chat-dice {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 3px;
+        align-items: center;
+      }
+
+      /* Narrow on purpose: a count is one or two digits, and the seven dice
+         beside it are what the row is for. */
+      #chat-dice-count {
+        width: 34px;
+        flex: 0 0 auto;
+        box-sizing: border-box;
+        padding: 2px 4px;
+        border: 1px solid #2b3038;
+        border-radius: 4px;
+        background: #10131a;
+        color: #e8e6e1;
+        font: inherit;
+        font-size: 11px;
+      }
+
+      #chat-dice-count:focus {
+        outline: none;
+        border-color: #4a525e;
+      }
+
+      .chat-die {
+        flex: 1 1 auto;
+        min-width: 0;
+        padding: 2px 3px;
+        border: 1px solid #2b3038;
+        border-radius: 4px;
+        background: #171a1f;
+        color: #8d939c;
+        font: inherit;
+        font-size: 11px;
+        cursor: pointer;
+      }
+
+      .chat-die:hover {
+        border-color: #4a525e;
+        color: #d8d2c4;
+      }
+
+      /* Its own line under the dice — `flex: 0 0 100%` rather than a second
+         container, so the seven dice keep the full width they are tight in.
+         DM-only, and built in `chat.ts` because nobody else is sent it. */
+      .chat-hide {
+        flex: 0 0 100%;
+        padding: 2px 6px;
+        border: 1px solid #2b3038;
+        border-radius: 4px;
+        background: #171a1f;
+        color: #8d939c;
+        font: inherit;
+        font-size: 11px;
+        text-align: left;
+        cursor: pointer;
+      }
+
+      .chat-hide:hover {
+        color: #d8d2c4;
+      }
+
+      /* Amber, which is already this project's colour for "not what the table
+         is seeing" — the same reason a whisper tints the box below. */
+      .chat-hide.is-armed {
+        border-color: #7a6428;
+        background: #232830;
+        color: #c8a34a;
+      }
+
+      /* Said twice, like the whisper. The dice themselves carry the marking,
+         because they are what the eye is on when one is picked. */
+      #chat-dice.is-hidden-roll .chat-die {
+        border-color: #7a6428;
+      }
+
+      /* A number the room threw, rather than one somebody typed. The same rule
+         as `.is-whisper` above and drawn the same way — styled, never filtered
+         on. Off-white against the log's grey, because a witnessed roll is the
+         thing being looked for in a screenful of talk. */
+      .chat-line.is-rolled .chat-text {
+        color: #e8e6e1;
+        font-variant-numeric: tabular-nums;
+      }
+
       #chat-form {
         display: flex;
         gap: 4px;
@@ -659,7 +747,8 @@
 
       /* A frozen board must not look like a live one, and neither must a box
          that would swallow a sentence. */
-      body.offline #chat-form {
+      body.offline #chat-form,
+      body.offline #chat-dice {
         opacity: 0.45;
         pointer-events: none;
       }
@@ -2175,6 +2264,14 @@
                has the table and the DM, the DM has the table and each player,
                and nobody has another player. -->
           <div id="chat-to"></div>
+          <!-- The loaner die, for whoever came without their own. Built in
+               `chat.ts` so the buttons and the room's `DICE_SIDES` are one
+               list, and **outside `#chat-form` on purpose**: these are not a
+               way of composing a sentence, and inside the form every one of
+               them would be a submit button to argue with. It throws to
+               whichever destination chip is armed above, which is the whole of
+               how a private roll works. -->
+          <div id="chat-dice"></div>
           <form id="chat-form">
             <input
               id="chat-text"

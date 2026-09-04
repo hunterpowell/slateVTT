@@ -25,12 +25,15 @@ replaces Foundry for one group that only needs a shared map, tokens, and turn or
   any one player, and nobody messages anybody else — kept for the evening and never written to disk
 - A scratchpad each: one box of text, kept with the room, that no other screen is ever sent — the
   DM's is no different from anybody's
+- A loaner die: seven dice in the chat panel, thrown by the server, for whoever came without theirs
 - State is saved to a JSON file on disk and restored on restart
 
 See [CLAUDE.md](.claude/CLAUDE.md) for the architecture, invariants, and non-goals, and [docs/](docs/)
-for why each feature is the shape it is. This game does not include character sheets, dice rolling,
-or accounts — the group uses physical dice and Discord for the rest. The text above is not chat and
-the distinction is the design: two destinations, no player-to-player, no history between sessions.
+for why each feature is the shape it is. This game does not include character sheets or accounts —
+the group brings physical dice and uses Discord for the rest. The dice above are a loaner for the
+night somebody forgets theirs, and the scope is a bag of plastic: counts but no modifiers, no
+expressions, no macros. The text is not chat and the distinction is the design: two destinations,
+no player-to-player, no history between sessions.
 
 ## Stack
 
@@ -157,7 +160,7 @@ screen and which token is standing on a given square.
 | `drive-staged.mjs` | Tracing and painting the next dungeon, and the table not being told | both     |
 | `drive-undo.mjs`   | The DM's undo reaching the table, and not rebuilding their page    | both     |
 | `drive-panels.mjs` | The initiative panel folding, and the sight check no longer being offered | both     |
-| `drive-chat.mjs`   | Whisper and shout — and a whisper being absent from a *third* person's page | three    |
+| `drive-chat.mjs`   | Whisper and shout, and the loaner die — each being absent from a *third* person's page | three    |
 | `drive-notes.mjs`  | The scratchpad — one person in two tabs, and the DM holding none of it | three    |
 | `drive-presence.mjs` | Who is connected, the colour a player picks, and being told it is your turn | three    |
 | `drive-cursors.mjs` | Everybody's pointer, and the DM's *not* reaching the table over unexplored ground | both     |

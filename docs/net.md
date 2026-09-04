@@ -115,7 +115,10 @@ whichever driver is running.
 The enforcement on each side is the local compiler rather than the fixture:
 
 - Rust has an exhaustive `match` per union with no wildcard, so a new variant stops the crate
-  compiling until it is named.
+  compiling until it is named. **It then has a second list beside it** — `KNOWN_CLIENT_TAGS` and
+  `KNOWN_SERVER_TAGS` — and that is the one measured against the fixture. Naming a variant in the
+  match alone compiles cleanly and fails the test with "protocol-tags.json names a client tag the
+  server does not have", which points at the fixture and means the const.
 - TypeScript has `Record<Msg['type'], true>`, so a new variant stops the typecheck until it is named.
 
 Then a test on each side asserts its list and the fixture agree. Adding a variant to one language
