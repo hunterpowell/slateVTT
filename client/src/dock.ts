@@ -50,7 +50,7 @@
  */
 
 /** Which panels the dock can show. */
-export type DockTab = 'chat' | 'notes';
+export type DockTab = 'chat' | 'notes' | 'sound';
 
 export interface DockUi {
   root: HTMLElement;

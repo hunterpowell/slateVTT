@@ -50,6 +50,10 @@ export interface Handlers {
    *  every connection, like the three above. Nothing about the board arrives
    *  with it and nothing needs to — the board is being covered, not changed. */
   onBackdropChanged(url: string | null): void;
+  /** The room is playing a track now, or it is not. Called on every connection,
+   *  like the one above. Whether this browser makes a sound about it is decided
+   *  further down, in `sound.ts`. */
+  onAudioChanged(url: string | null): void;
   /** The staged slot whole — map, walls and paint. Only ever called on a DM
    *  connection; the server sends no such frame to a player. Null means the slot
    *  is now empty, indistinguishably from not being the DM. */
@@ -237,6 +241,9 @@ export function connect(roomId: string, on: Handlers): Net {
         break;
       case 'backdrop_changed':
         on.onBackdropChanged(msg.url);
+        break;
+      case 'audio_changed':
+        on.onAudioChanged(msg.url);
         break;
       case 'staged_changed':
         on.onStagedChanged(msg.board);

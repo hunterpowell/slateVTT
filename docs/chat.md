@@ -217,3 +217,6 @@ nothing else in here wants the key.
   visibility filter that reads a cell.
 - **No timestamps, no read receipts, no edit, no delete.** A line said is said.
 - **No sound.** Not argued against — simply not built, and worth an argument before it is.
+  Milestone 41 put *music* in the room and did not answer this: a bed playing under the scene
+  and a ding when a whisper lands are different features, and `docs/sound.md` says so from the
+  other side. The argument is still owed.

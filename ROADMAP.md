@@ -4,9 +4,10 @@ What is not built yet, and the order it gets built in.
 
 `.claude/CLAUDE.md` holds the rules that hold across every feature and is loaded into every
 session. This file is not, deliberately — it is design for features that do not exist, and it
-would otherwise cost context in every session that has nothing to do with it. The twelve files in
+would otherwise cost context in every session that has nothing to do with it. The fourteen files in
 `docs/` — `maps.md`, `tokens.md`, `drawings.md`, `walls.md`, `fog.md`, `undo.md`, `chat.md`,
-`notes.md`, `presence.md`, `rooms.md`, `frontend.md` and `net.md` — are out of context for the same
+`dice.md`, `notes.md`, `sound.md`, `presence.md`, `rooms.md`, `frontend.md` and `net.md` — are out
+of context for the same
 reason from the other direction: they are why each built feature is the shape it is, and only the
 session touching that subsystem needs them.
 
@@ -26,7 +27,7 @@ Do not work ahead. Each milestone should run and be usable before starting the n
 6. Map upload and grid calibration UI.
 7. Package for Windows session hosting and deploy behind a Cloudflare Tunnel.
 
-**Everything through 28 is built, and so are 30 through 40; 29 is not.** 25, 26, 34 and 38 were
+**Everything through 28 is built, and so are 30 through 41; 29 is not.** 25, 26, 34 and 38 were
 never planned and are out of order for the reasons their own entries give. 33 is *Multi-room*, which was
 unscheduled until a Halloween one-shot became the second room it was waiting for. Everything from 8 on was planned after the original
 seven; 17 and 18 were workshopped after 16 landed, 19–24 after 18, and 27–29 on 2026-08-18 after 26.
@@ -1803,9 +1804,95 @@ and 28 also overturned something *its own* design section said, which its entry 
     *differences* rather than absolutes, for the reason its per-run text already existed: the room
     is memory that outlives a run.
 
+41. **Done**, on 2026-09-06. The room's music — one looping track the DM picks, playing on every
+    screen that asked for it. See `docs/sound.md`.
+
+    **The second milestone to take something off the non-goal list, and it went the way milestone
+    40 went.** "Audio" was on that list named and dropped with no argument attached — and, exactly
+    like "dice rolling", it was a *category* broad enough that nothing could be designed against
+    it until it was renamed to the thing actually wanted. The moment the ask became "one bed under
+    the scene" rather than "audio", the design was the backdrop's and the argument was over.
+    Generalise it as: **a non-goal that names a category rather than a behaviour cannot be
+    reasoned about, only obeyed** — and the first useful move is to find out which behaviour was
+    meant. `docs/chat.md` had already said the interesting half out loud, that sound was *"not
+    argued against — simply not built, and worth an argument before it is"*, so this was a debt
+    the project had written down rather than a refusal being overturned.
+
+    **The whole feature is `SetBackdrop` copied, and the one line that differs is the one worth
+    reading.** Same `Option<String>`, same `require_dm`, same `MAX_URL_LEN`, same unfiltered
+    `message_for` arm, same place on `RoomView`. The deviation: **`audio` is not on `Saved`**,
+    because `audio.src = url` is not idempotent the way `drawImage` is. A backdrop survives being
+    re-adopted on every `Restored` for free; re-assigning an audio source starts the file again
+    from the top. On the ring, the DM undoing a wall trace would have restarted the boss theme on
+    seven machines mid-fight.
+
+    **What that bought is the cheap version of a rule this file has paid for twice.** The
+    scratchpad and a player's colour each need *two* lines to stay off the undo ring — a `None` in
+    `undid` and an exemption in the `Undo` arm of `apply` — because they are persisted state
+    somebody else wrote. Music needed **neither**: `adopt` assigns only `Saved` fields, so a
+    restore cannot reach a field that is not on one. The rule underneath is worth stating in the
+    general form, because it is now three for three: **the cheapest way to keep something off the
+    ring is to keep it off the disk, and the two questions are the same question.**
+    `an_undo_does_not_change_the_music` and `the_music_is_not_in_the_save_file` are the pair that
+    hold it, and the second is the one that fails loudly the day somebody adds the field to
+    `store.rs` for the look of the thing.
+
+    Four things cost more than the state model, and one cost nothing at all.
+
+    - **The format gate was the only new server code**, and it is where `Library` stopped being
+      image-shaped. "What may a library hold" had been a const asked in three places — the
+      listing, the stem-strip in `filename`, and `image_format`'s magic bytes — none of which knew
+      which library it was serving. It is now `library::Formats` threaded through, **a table
+      rather than a boolean**, and `Library::formats()` is one *grouped* arm: that grouping is the
+      guarantee that a fourth library was added rather than the other three changed, and there is
+      a test saying so. The pair worth keeping is
+      `a_riff_container_is_a_webp_here_and_a_wav_there` — the same twelve leading bytes are an
+      image in one library and audio in another, which is only unambiguous because each sniffs
+      against its own table.
+    - **`.m4a` was refused deliberately and the reason is not cost.** An MP4 `ftyp` brand does not
+      say whether there is a *video* track beside the audio: `M4A ` is audio-only, but ordinary
+      AAC files carry `mp42` or `isom`, which is what a film carries. Accepting any `ftyp` lets a
+      film into the music library where it plays its soundtrack and reads as a bug; accepting only
+      `M4A ` refuses files that are fine. Re-export is the way out. The MP3 sniff is also the
+      loosest check in the codebase — eleven sync bits — and the code says so rather than
+      pretending otherwise.
+    - **Autoplay is the part no architecture fixes, and it collides with a decision made in
+      milestone 27.** A browser refuses to start audio no gesture asked for, and a dropped socket
+      **reloads the page**, so every reconnect spends whatever gesture that page had. At a table
+      on domestic broadband that is Tuesday, not an edge case. The answer is to attempt and then
+      **light the button when refused** — never fail silently, because silence with nothing on
+      screen to explain it cannot be told apart from the DM simply not having put music on. Chrome
+      grants autoplay by engagement history, which makes this intermittent and unreproducible;
+      the lit button is the half that is always correct.
+    - **WAV earned its place for a reason that has nothing to do with audio quality.** It is the
+      only audio format this repo can *generate*, so `gen-assets.mjs` writes a three-second drone
+      and `tracks/` is not an empty folder on a fresh clone. It is also the only one a plain
+      **Chromium** build can decode — `cdp.mjs`'s browser list includes `/usr/bin/chromium`, which
+      ships without the MP3 codec — so a driver whose fixture was an MP3 would fail on the format
+      rather than on anything this project wrote.
+    - **And the client cost nothing it was not already paying.** `sound.ts` is one module,
+      `Stage.reloadBackdrop`'s `if (url === playing) return;` copied into it — an optimisation
+      there and load-bearing here. Volume and on/off are `localStorage` for the initiative fold's
+      reason, and that is not a shortcut: everyone at this table is mixing against Discord voice
+      at their own level, so a room-wide volume would be wrong for six of the seven. It is the
+      one thing this has over a music bot, which is the competitor it actually had.
+
+    **Two counts worth checking against, since both are easy to get one short.** A protocol tag is
+    **six** copies once `protocol-tags.json` and the client's `Record` are counted with the Rust
+    four — and the Rust pair that does *not* stop the crate compiling is the one that fails the
+    suite reading as though the fixture were wrong. And `docs/` is now **fourteen** files: the two
+    lists naming them had already drifted, both still saying twelve and both omitting `dice.md`
+    from milestone 40.
+
+    **One wart, recorded rather than fixed.** `tools/audit-uploads.mjs` derives "in use" from the
+    save file, so a `track-` copy in `uploads/` is *always* listed as unreferenced — `audio` is not
+    on `Saved` and never can be found there. Following its `rm` while the room is playing gives a
+    404 on the next loop. Fixing it properly means the audit reading live room state, which is
+    exactly the reaper that file exists to refuse.
+
 ### The right dock
 
-**Built in milestone 23, and 24 put the second tab on it.** `dock.ts` is the strip; the notes were a
+**Built in milestone 23; 24 put the second tab on it and 41 the third.** `dock.ts` is the strip; the notes were a
 second entry in `DockTab` and a second entry in the array `main.ts` passes to `createDock`, which is
 what the rail's strip already costs a panel. Everything below held and is kept as the record of why
 — including the argument for why this is not a generalised `createRail`, which is in `docs/chat.md`.

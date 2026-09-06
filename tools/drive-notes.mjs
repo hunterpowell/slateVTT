@@ -47,10 +47,10 @@ const tabs = (session) =>
   session.evaluate(`[...document.querySelectorAll('#dock-tabs .dock-tab')]
     .map(b => b.firstChild.textContent)`);
 
-// Everybody's furniture, both of them. The DM's scratchpad is not a different
+// Everybody's furniture, all three. The DM's scratchpad is not a different
 // panel from anybody else's, which is most of what makes it one.
-check('the DM has both dock tabs', await tabs(dm), ['chat', 'notes']);
-check('and so does a player', await tabs(saelyn), ['chat', 'notes']);
+check('the DM has every dock tab', await tabs(dm), ['chat', 'notes', 'sound']);
+check('and so does a player', await tabs(saelyn), ['chat', 'notes', 'sound']);
 
 const openTab = (session, name) =>
   session.evaluate(`[...document.querySelectorAll('#dock-tabs .dock-tab')]

@@ -1,6 +1,7 @@
 // Generates the milestone-1 placeholder assets: one dungeon map and a disc per
 // token in the built-in room, plus one placeholder backdrop so `backdrops/` is
-// not an empty folder behind a picker. Deliberately dependency-free — raw PNG
+// not an empty folder behind a picker, and one placeholder track so `tracks/`
+// is not either. Deliberately dependency-free — raw PNG and raw WAV
 // encoding on top of node's built-in zlib. Run with `node tools/gen-assets.mjs`
 // from the repo root.
 //
@@ -15,6 +16,7 @@ import { fileURLToPath } from 'node:url';
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 const ASSETS = join(ROOT, 'client', 'assets');
 const BACKDROPS = join(ROOT, 'backdrops');
+const TRACKS = join(ROOT, 'tracks');
 
 // ---------------------------------------------------------------- PNG encoder
 
@@ -313,6 +315,53 @@ function generateBackdrop() {
 
 // ------------------------------------------------------------------------ run
 
+
+// -------------------------------------------------------------- WAV generator
+//
+// A few seconds of quiet tone, so `tracks/` is not an empty folder behind a
+// picker and so `drive-sound.mjs` has something to pick with no binary
+// committed to the repo. WAV rather than MP3 for two reasons, and the second is
+// the one that matters: nothing here could encode an MP3 without a dependency,
+// and a plain Chromium build ships without the codec to decode one — so a
+// driver running against `/usr/bin/chromium` would fail on the format rather
+// than on anything this project wrote.
+//
+// The length is a whole number of cycles, so the end meets the start and the
+// `loop` attribute does not produce a click every few seconds.
+
+const RATE = 22050;
+const TONE_HZ = 110;
+const CYCLES = 330; // 3 seconds exactly, and a whole number of periods.
+const AMPLITUDE = 0.12;
+
+function generateTrack() {
+  const frames = Math.round((RATE * CYCLES) / TONE_HZ);
+  const data = Buffer.alloc(frames * 2);
+  for (let i = 0; i < frames; i++) {
+    // Two partials, so it reads as a drone rather than a test tone.
+    const t = (i / RATE) * TONE_HZ * 2 * Math.PI;
+    const sample = Math.sin(t) * 0.75 + Math.sin(t * 2) * 0.25;
+    // A raised-cosine over the whole file would fight the loop; the sample
+    // count is a whole number of periods instead, so nothing has to be faded.
+    data.writeInt16LE(Math.round(sample * AMPLITUDE * 32767), i * 2);
+  }
+
+  const header = Buffer.alloc(44);
+  header.write('RIFF', 0);
+  header.writeUInt32LE(36 + data.length, 4);
+  header.write('WAVE', 8);
+  header.write('fmt ', 12);
+  header.writeUInt32LE(16, 16); // PCM chunk size
+  header.writeUInt16LE(1, 20); // PCM
+  header.writeUInt16LE(1, 22); // mono
+  header.writeUInt32LE(RATE, 24);
+  header.writeUInt32LE(RATE * 2, 28); // byte rate
+  header.writeUInt16LE(2, 32); // block align
+  header.writeUInt16LE(16, 34); // bits per sample
+  header.write('data', 36);
+  header.writeUInt32LE(data.length, 40);
+  return Buffer.concat([header, data]);
+}
 mkdirSync(join(ASSETS, 'tokens'), { recursive: true });
 
 const map = generateMap();
@@ -329,3 +378,8 @@ mkdirSync(BACKDROPS, { recursive: true });
 const backdrop = generateBackdrop();
 writeFileSync(join(BACKDROPS, 'dusk.png'), backdrop);
 console.log(`backdrops/dusk.png 960x540${' '.repeat(14)}${(backdrop.length / 1024).toFixed(0)} KB`);
+
+mkdirSync(TRACKS, { recursive: true });
+const track = generateTrack();
+writeFileSync(join(TRACKS, 'drone.wav'), track);
+console.log(`tracks/drone.wav   3s 22050Hz mono${' '.repeat(8)}${(track.length / 1024).toFixed(0)} KB`);

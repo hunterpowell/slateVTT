@@ -44,8 +44,23 @@ const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
  * from the last one — which matters more here than it looks: the client
  * remembers a claimed roster slot there, and a player session that reclaimed
  * last run's identity would skip the picker this is trying to test.
+ *
+ * `autoplay` drops the gesture requirement for media, which one driver needs
+ * and the rest must not have. It is an option rather than a default on purpose:
+ * a browser that can never refuse to start audio can never show the blocked
+ * state, and that state is half of what `drive-sound.mjs` is there to check.
+ *
+ * Note for anyone reaching for a synthetic click to unblock audio instead:
+ * `evaluate` below does not pass `userGesture`, so a `.click()` from a driver
+ * is not a user activation and will not do it. Adding that flag is a one-line
+ * change and is arguably right in general — but it silently changes what every
+ * existing driver's clicks mean, so it wants its own argument rather than
+ * riding in on a feature.
  */
-export async function open(url, { port = 9333, width = 1280, height = 860 } = {}) {
+export async function open(
+  url,
+  { port = 9333, width = 1280, height = 860, autoplay = false } = {},
+) {
   const profile = mkdtempSync(join(tmpdir(), 'slate-cdp-'));
   const browser = spawn(findBrowser(), [
     '--headless=new',
@@ -54,6 +69,7 @@ export async function open(url, { port = 9333, width = 1280, height = 860 } = {}
     `--window-size=${width},${height}`,
     '--no-first-run',
     '--disable-gpu',
+    ...(autoplay ? ['--autoplay-policy=no-user-gesture-required'] : []),
     url,
   ]);
 

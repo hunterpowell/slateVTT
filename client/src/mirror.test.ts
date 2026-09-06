@@ -94,6 +94,7 @@ function scene(over: Partial<Scene> = {}): Scene {
     showCursors: true,
     showDmCursor: true,
     backdrop: null,
+    audio: null,
     ...over,
   };
 }

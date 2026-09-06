@@ -467,6 +467,10 @@ enum Event {
     /// of these and identical to the three above in every respect, including
     /// that the frame reaches the DM who put it up.
     BackdropChanged,
+    /// The room is playing a track now, or it is not. The fifth of these and
+    /// identical to the four above on the wire — the difference is underneath,
+    /// where this one is the only member of the group that is not saved.
+    AudioChanged,
     /// Carries no payload on purpose: `message_for` has `&self` and builds the
     /// panel per recipient. That seam is now load-bearing — a hidden creature's
     /// row is dropped from the copy the table receives, and fog of war will hide
@@ -967,6 +971,15 @@ pub struct RoomState {
     /// behind the picture, so taking it down puts the table back exactly where
     /// they were. A backdrop is not a map: see `docs/maps.md`.
     backdrop: Option<String>,
+    /// The music the room is playing, or `None`. Room-wide, the DM's to set.
+    ///
+    /// **Memory only, like `chat` and unlike every other field around it** — off
+    /// `Saved`, so off the undo ring by construction rather than by an exemption
+    /// the way `notes` and `colours` needed one. Re-assigning an `<audio>` source
+    /// restarts the track, so a restore that swept the music back to a previous
+    /// pick would restart it mid-scene; and a room reopened on Saturday should
+    /// come back quiet rather than resuming Tuesday's prep. See `docs/sound.md`.
+    audio: Option<String>,
     /// Everything the DM has prepared on each map, keyed by its URL: the grid
     /// they calibrated, the walls they traced and the fog they painted.
     ///
@@ -1297,6 +1310,14 @@ fn persists(event: &Event) -> bool {
         | Event::CursorMoved { .. }
         | Event::Said { .. }
         | Event::PresenceChanged
+        // And music is `Said`'s neighbour rather than the ephemeral group's:
+        // the room *does* hold this one and still does not write it down. A
+        // track is a thing the room is doing rather than a thing it is, and a
+        // room reopened on Saturday should come back quiet instead of resuming
+        // whatever the DM was prepping to on Tuesday. That one decision is also
+        // what keeps it off the undo ring, since a snapshot is whatever `Saved`
+        // describes — no exemption needed, unlike the two arms below.
+        | Event::AudioChanged
         | Event::UndoChanged => false,
 
         // And the two that are `Said`'s opposite on this list: the room keeps
@@ -1408,7 +1429,15 @@ fn undid(msg: &ClientMsg) -> Option<&'static str> {
         // state the undoing hand wrote. The other half is in the `Undo` arm of
         // `apply`, and it is needed here for the identical reason — a colour
         // picked *between* two commands is on the snapshot the later one pushed.
-        | ClientMsg::SetColour { .. } => None,
+        | ClientMsg::SetColour { .. }
+        // **The fifth exclusion, and the only one `persists` already agrees
+        // with.** The four above are arguments; this one is arithmetic. Music is
+        // not on `Saved`, so a snapshot never held a track and a restore cannot
+        // change one — this arm is here because the list is exhaustive, not
+        // because anything would go wrong without it. Needing no second half in
+        // the `Undo` arm of `apply`, where the scratchpad and the colours each
+        // need one, is the whole of what staying off `Saved` bought.
+        | ClientMsg::SetAudio { .. } => None,
     }
 }
 
@@ -1479,6 +1508,9 @@ fn moves_sight(msg: &ClientMsg) -> bool {
         // literal sense available: the board is still there, still lit exactly
         // as it was, with something in front of it.
         | ClientMsg::SetBackdrop { .. }
+        // And music is not in the room at all in the sense this question means:
+        // there is nothing on the board to see it by.
+        | ClientMsg::SetAudio { .. }
         | ClientMsg::MoveCursor { .. }
         // A ruler is drawn over the light and never in it, and this only
         // changes what the ruler says.
@@ -1818,6 +1850,7 @@ impl RoomState {
             show_cursors: true,
             show_dm_cursor: true,
             backdrop: None,
+            audio: None,
             calibrations: HashMap::new(),
             undo: VecDeque::new(),
             chat: VecDeque::new(),
@@ -2118,6 +2151,7 @@ impl RoomState {
             // Nothing in front of the table, which is what a fresh room and
             // every room that predates this field are both looking at.
             backdrop: None,
+            audio: None,
             calibrations: HashMap::new(),
             undo: VecDeque::new(),
             chat: VecDeque::new(),
@@ -2437,6 +2471,7 @@ impl RoomState {
             // from anybody. A join that omitted it would put a fresh page back
             // on the board while the rest of the table looked at the campfire.
             backdrop: self.backdrop.clone(),
+            audio: self.audio.clone(),
             // And the same a sixth and seventh time. Neither is anybody's secret:
             // the point of one is that the table can see whether the DM is still
             // there, and the point of the other is that six other screens draw
@@ -3157,6 +3192,21 @@ impl RoomState {
                 Ok(())
             }
 
+            // The arm above's twin, bounded by the same one rule and for the
+            // same reason. There is nothing here about *what* the file is: the
+            // library route already refused anything that was not a track on the
+            // way in, and a URL this room never served is a picture of silence
+            // rather than a way into anything.
+            ClientMsg::SetAudio { url } => {
+                require_dm(client, "choose the music")?;
+                if let Some(url) = url
+                    && (url.is_empty() || url.len() > MAX_URL_LEN)
+                {
+                    return Err("that track URL is not a usable length".to_owned());
+                }
+                Ok(())
+            }
+
             // Which slot this is for makes no difference here: a grid size or a
             // play area is no more or less usable for being staged, so both go
             // through one set of bounds rather than two that could drift.
@@ -3815,6 +3865,16 @@ impl RoomState {
             ClientMsg::SetBackdrop { url } => {
                 self.backdrop = url;
                 vec![Event::BackdropChanged]
+            }
+
+            // The arm above's twin, and it stays this short for the same
+            // reason: nothing on the board is being changed, so nothing on the
+            // board is swept. The room holds a URL and not a playhead — where in
+            // the track each browser happens to be is that browser's business,
+            // and syncing playheads is the mixer this feature refuses to be.
+            ClientMsg::SetAudio { url } => {
+                self.audio = url;
+                vec![Event::AudioChanged]
             }
 
             // Tokens are deliberately untouched. They are stored in grid units,
@@ -4596,6 +4656,7 @@ impl RoomState {
                 | Event::NamesChanged
                 | Event::DiagonalsChanged
                 | Event::BackdropChanged
+                | Event::AudioChanged
                 | Event::InitiativeChanged
                 | Event::MapChanged
                 | Event::StagedChanged
@@ -5164,6 +5225,13 @@ impl RoomState {
             // it had.
             Event::BackdropChanged => Some(ServerMsg::BackdropChanged {
                 url: self.backdrop.clone(),
+            }),
+
+            // And a fifth time, unfiltered like the four above it, with the
+            // arm above's argument word for word: the music changes no map, no
+            // wall, no shape and no cell of fog, so this frame travels alone.
+            Event::AudioChanged => Some(ServerMsg::AudioChanged {
+                url: self.audio.clone(),
             }),
 
             // The filter doing its actual job. Every arm above drops a message

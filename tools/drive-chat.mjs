@@ -51,9 +51,9 @@ const tabs = (session) =>
     .map(b => b.firstChild.textContent)`);
 
 // The first time the two sides of this application have had the same furniture.
-// Neither of the dock's panels is the DM's, so this is not the rail.
-check('the DM has both dock tabs', await tabs(dm), ['chat', 'notes']);
-check('and so does a player', await tabs(saelyn), ['chat', 'notes']);
+// None of the dock's panels is the DM's, so this is not the rail.
+check('the DM has every dock tab', await tabs(dm), ['chat', 'notes', 'sound']);
+check('and so does a player', await tabs(saelyn), ['chat', 'notes', 'sound']);
 
 const openDock = (session) =>
   session.evaluate(`[...document.querySelectorAll('#dock-tabs .dock-tab')]

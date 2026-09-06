@@ -12,6 +12,12 @@
 // removed, which is deliberate: the board goes on being served (see
 // `docs/maps.md`).
 //
+// **A `track-` copy is always listed as unreferenced, and that is not a bug
+// here.** The room's music is session memory rather than saved state, so no save
+// file can ever mention one — see `docs/sound.md`. Do not follow the `rm` for a
+// track while the room is playing it. Reading live room state instead is exactly
+// the reaper refused above.
+//
 // **This deletes nothing and takes no arguments that could make it.** It reads
 // the save file and the directory and prints what it found; removing anything is
 // the DM's own `rm`, with the list in front of them. A reaper inside the room

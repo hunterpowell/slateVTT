@@ -53,6 +53,12 @@ export interface TableToolUi {
   /** Takes the picture down. Hidden when there is not one up, because a button
    *  that would do nothing is a button that says something is up. */
   backdropClear: HTMLButtonElement;
+  /** The track picker's disclosure button and list. The field above's twin, a
+   *  fourth folder over and the first one holding something that is not a
+   *  picture. */
+  track: Pick<LibraryUi, 'button' | 'list' | 'file' | 'fileText'>;
+  /** Stops the music, and hidden when there is none, for the reason above it. */
+  trackClear: HTMLButtonElement;
 }
 
 export interface TableTool {
@@ -141,6 +147,32 @@ export function createTableTool(
     send({ type: 'set_backdrop', url: null });
   });
 
+  // And a sixth time, over the one library that is not images. Everything about
+  // the widget is the same — the pick has already copied the file into the
+  // uploads directory and what goes on the wire is the URL it is served at — so
+  // the only thing this feature had to add on the client was somewhere for the
+  // sound to come out, which is `sound.ts` and is not on this panel.
+  const tracks = createLibraryList(
+    {
+      root: ui.root,
+      button: ui.track.button,
+      list: ui.track.list,
+      file: ui.track.file,
+      fileText: ui.track.fileText,
+    },
+    dmSecret,
+    'tracks',
+    (url) => send({ type: 'set_audio', url }),
+    report,
+  );
+
+  // Null rather than an empty string, exactly as above: the room is either
+  // playing something or it is not, and there is no paused state in between for
+  // a second command to name.
+  ui.trackClear.addEventListener('click', () => {
+    send({ type: 'set_audio', url: null });
+  });
+
   return {
     update(scene) {
       // Unconditionally: none of these is something the DM is halfway through
@@ -160,9 +192,12 @@ export function createTableTool(
       // second tab agrees with their first — and so an undo that takes a
       // backdrop down is reflected here without a line of its own.
       ui.backdropClear.hidden = scene.backdrop === null;
+      // The line above's twin, read off the room for the same reason.
+      ui.trackClear.hidden = scene.audio === null;
     },
     stop() {
       library.close();
+      tracks.close();
     },
   };
 }

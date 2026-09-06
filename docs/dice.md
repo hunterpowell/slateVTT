@@ -182,4 +182,5 @@ tellable apart. `a_typed_line_is_not_marked_as_thrown` is the assertion.
   cannot take one back either — `an_undo_does_not_take_back_a_throw` — which matters more here
   than for talk: un-throwing a die somebody is reading the number off is worse than useless.
 - **No animation and no sound.** Not argued against, simply not built. `docs/chat.md` says the
-  same of sound, and this inherits it.
+  same of sound, and this inherits it — including the note there that milestone 41's music is
+  a different feature and did not answer it.

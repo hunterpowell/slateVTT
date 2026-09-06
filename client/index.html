@@ -753,6 +753,121 @@
         pointer-events: none;
       }
 
+      /* --- the music --------------------------------------------------------- */
+
+      /* The quietest panel in the dock, and sized to say so: it holds three
+         controls that are touched once an evening, so unlike `#notes` it does
+         not ask for a share of the height. */
+      #sound {
+        box-sizing: border-box;
+        width: 100%;
+        padding: 10px;
+        border-radius: 6px;
+        background: rgba(12, 14, 18, 0.88);
+      }
+
+      #sound-now {
+        margin-bottom: 8px;
+        overflow: hidden;
+        color: #d8d2c4;
+        font-size: 13px;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+
+      #sound-now.is-quiet {
+        color: #6f7783;
+        font-style: italic;
+      }
+
+      .sound-controls {
+        display: flex;
+        gap: 10px;
+        align-items: center;
+      }
+
+      .sound-controls input {
+        flex: 1 1 auto;
+        min-width: 0;
+        /* The same one every checkbox in this file uses. Left to the browser
+           this is a saturated blue that belongs to no part of this palette,
+           which is the one thing in the panel that looked unfinished. */
+        accent-color: #78beff;
+      }
+
+      /* Square and quiet. It is not a `.map-button` any more: those are
+         full-width things with a sentence on them, and this is a state you read
+         at a glance and hit without looking. */
+      #sound-toggle {
+        display: flex;
+        flex: 0 0 auto;
+        align-items: center;
+        justify-content: center;
+        width: 34px;
+        height: 34px;
+        padding: 0;
+        border: 1px solid #333a44;
+        border-radius: 4px;
+        background: #171b21;
+        color: #8b93a0;
+        cursor: pointer;
+      }
+
+      #sound-toggle:hover {
+        border-color: #4a525e;
+        color: #d8d2c4;
+      }
+
+      /* The state, said by the icon rather than by a word. Off shows the cross a
+         mute key shows; on shows the waves. Exactly one of the two is ever
+         drawn, so there is no arrangement in which it says both or neither. */
+      .sound-icon {
+        width: 22px;
+        height: 22px;
+      }
+
+      .sound-cone {
+        fill: currentColor;
+      }
+
+      .sound-waves path,
+      .sound-cross path {
+        fill: none;
+        stroke: currentColor;
+        stroke-width: 1.8;
+        stroke-linecap: round;
+      }
+
+      .sound-waves {
+        display: none;
+      }
+
+      #sound-toggle.is-on {
+        color: #d8d2c4;
+      }
+
+      #sound-toggle.is-on .sound-waves {
+        display: inline;
+      }
+
+      #sound-toggle.is-on .sound-cross {
+        display: none;
+      }
+
+      /* Lit rather than red. Nothing has gone wrong when a browser declines to
+         start audio nobody asked for — it is the ordinary case after every
+         reconnect, and the button is an invitation rather than an error. */
+      #sound-toggle.is-blocked {
+        border-color: #c8934a;
+        color: #f0d9a8;
+      }
+
+      #sound-blocked {
+        margin: 8px 0 0;
+        color: #f0d9a8;
+        font-size: 12px;
+      }
+
       /* --- the scratchpad ---------------------------------------------------- */
 
       /* Shorter than the chat panel by default and shrinks the same way. Two
@@ -1530,11 +1645,12 @@
         font-size: 12px;
       }
 
-      /* All three panels' disclosure buttons. The list styles above are shared
+      /* All four panels' disclosure buttons. The list styles above are shared
          with them, which is why they are on `.map-library` rather than an id. */
       #map-library.is-active,
       #token-library.is-active,
-      #table-backdrop.is-active {
+      #table-backdrop.is-active,
+      #table-track.is-active {
         border-color: #4a525e;
         color: #e8e6e1;
       }
@@ -2159,6 +2275,15 @@
   </head>
   <body>
     <canvas id="stage"></canvas>
+    <!-- The room's one track. Declared here rather than built in `sound.ts` so
+         that it is one element for the life of the page — an element built per
+         track is an element that can end up playing two at once.
+
+         `loop` because a bed is a bed. `preload="none"` because six players who
+         never turn sound on must not each pull sixteen megabytes off a Pi
+         through a tunnel to sit there unplayed. No `controls`: the dock panel is
+         the control, and a second one would be a second answer to "is it on". -->
+    <audio id="sound-player" loop preload="none" hidden></audio>
     <div id="banner" hidden></div>
     <div id="whoami" hidden>
       <span id="whoami-name"></span>
@@ -2234,6 +2359,55 @@
            Nothing in here arms the canvas, so unlike the rail there is no
            `stop` to call as a panel closes. -->
       <div id="dock" hidden>
+        <!-- First of the panels, so it sits furthest from the strip: it is the
+             one nobody touches twice in an evening, where the chat box wants to
+             be nearest the bottom edge. What is in here is this browser's
+             opinion and none of it reaches the room — see `sound.ts`. -->
+        <section id="sound" hidden>
+          <div id="sound-now" class="is-quiet">nothing playing</div>
+          <!-- A speaker and a slider on one row, which is the arrangement every
+               media control anybody has used already is. The button carries no
+               words on purpose: "sound on" as a *label* reads as a statement of
+               what is currently true as easily as an offer to change it, and an
+               icon showing the state it is in cannot be read the wrong way
+               round. The words it cannot say live in `#sound-blocked` below. -->
+          <div class="sound-controls">
+            <button id="sound-toggle" type="button" aria-pressed="false" title="Turn the music on">
+              <!-- Drawn here rather than pulled in, like the favicon: two shapes
+                   over one cone, and `currentColor` throughout so it follows the
+                   button's own colour into the blocked state without a second
+                   copy of the icon. -->
+              <svg class="sound-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+                <path class="sound-cone" d="M3 9.5v5h3.8L11 18V6L6.8 9.5H3z" />
+                <g class="sound-waves">
+                  <path d="M14.3 9.3a4 4 0 0 1 0 5.4" />
+                  <path d="M17.1 6.7a7.7 7.7 0 0 1 0 10.6" />
+                </g>
+                <g class="sound-cross">
+                  <path d="M15 9.5l5.5 5" />
+                  <path d="M20.5 9.5l-5.5 5" />
+                </g>
+              </svg>
+            </button>
+            <input
+              id="sound-volume"
+              type="range"
+              min="0"
+              max="1"
+              step="0.01"
+              aria-label="How loud the music is on this screen"
+            />
+          </div>
+          <!-- The one thing an icon cannot say. A browser refuses to start audio
+               no gesture asked for, and a dropped socket reloads this page, so
+               this is the ordinary state after a reconnect rather than an error
+               — it is words because somebody has to know what to do about it. -->
+          <p id="sound-blocked" hidden>Click the speaker to start the music.</p>
+          <p class="map-hint">
+            Yours alone. Nobody else's screen hears what you set here, and the DM cannot set it
+            for you.
+          </p>
+        </section>
         <!-- One box of text, yours, and nobody else is ever sent it — see
              `notes.ts`. No title, no second page and no share button: a second
              document makes this a journal, which is the line the non-goal in
@@ -2596,6 +2770,32 @@
         <p class="map-hint">
           A picture in front of everyone's board, for the parts of an evening with nothing to move.
           The board keeps its walls, drawings and fog while it is up.
+        </p>
+        <!-- The same widget a fourth folder over, and the first one holding
+             something that is not a picture. It is on this panel because the
+             field it sets is room-wide: `RoomState` belongs to the table tab
+             the way `MapInfo` belongs to the map one.
+
+             There is no "the music is at this volume" control here, and there
+             will not be: what the DM sets is which track, and how loud it is on
+             each of seven screens is each of those seven people's business. -->
+        <label class="map-button">
+          <input
+            id="table-track-file"
+            type="file"
+            accept="audio/mpeg,audio/ogg,audio/wav"
+            hidden
+          />
+          <span id="table-track-upload-text">upload a track…</span>
+        </label>
+        <button id="table-track" class="map-button" type="button">put music on…</button>
+        <div id="table-track-list" class="map-library" hidden></div>
+        <button id="table-track-clear" class="map-subtle" type="button" hidden>
+          stop the music
+        </button>
+        <p class="map-hint">
+          One looping track for the room. Everyone hears it at whatever level they set, and
+          anybody who has not turned sound on hears nothing at all.
         </p>
       </aside>
       <!-- The one panel everybody gets, and the one that is not behind a tab.

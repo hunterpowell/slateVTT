@@ -995,9 +995,17 @@ pub struct RoomView {
     /// map and there is no `MapInfo` here — no grid, no walls, no fog, nothing to
     /// stand on — which is the whole reason the board underneath survives it.
     pub backdrop: Option<String>,
+    /// The music the room is playing, or `None` for silence.
+    ///
+    /// **The fifth of these, and the same value for everyone** for the reason the
+    /// four above are: who may put music on is a permission and which track it is
+    /// is not a secret. It is on the view and not only on the delta because a
+    /// reconnect is a fresh join — somebody coming back mid-session should hear
+    /// what the table is already hearing.
+    pub audio: Option<String>,
     /// Who is connected right now, the DM among them.
     ///
-    /// **The same value for everyone**, which puts it with the two fields above
+    /// **The same value for everyone**, which puts it with the fields above
     /// rather than with the six below — there is no permission here and nothing
     /// to withhold: a table that cannot tell whether the DM is still on the other
     /// end of the line is the whole reason this exists.
@@ -1216,6 +1224,21 @@ pub enum ClientMsg {
     /// be a second thing to keep in step, for nothing.
     SetBackdrop {
         /// Where the picture is served, or `None` for the board.
+        url: Option<String>,
+    },
+
+    /// Put music on for the room, or stop it. DM-only.
+    ///
+    /// `SetBackdrop`'s twin in every respect but one, and the exception is where
+    /// it is *not* kept: this is memory only, off `Saved` and so off the undo
+    /// ring by construction. A track is a thing the room is doing rather than a
+    /// thing it is, and re-assigning an `<audio>` source restarts it — so an undo
+    /// that swept the music back to a previous pick would restart it mid-scene.
+    ///
+    /// One field for the reason `SetBackdrop` has one: `None` is "stop", and
+    /// putting it back on is two clicks in the picker.
+    SetAudio {
+        /// Where the track is served, or `None` for silence.
         url: Option<String>,
     },
 
@@ -1639,6 +1662,16 @@ pub enum ServerMsg {
         url: Option<String>,
     },
 
+    /// The room is playing a track now, or it is not.
+    ///
+    /// `BackdropChanged`'s twin above: identical for every recipient, no filter,
+    /// echoed to the DM who chose it, and nothing travels with it. What each
+    /// client does about it is its own business — the volume this comes out at,
+    /// and whether it comes out at all, are on that browser and never here.
+    AudioChanged {
+        url: Option<String>,
+    },
+
     /// Pointers are drawn on every board now, or they are not.
     ///
     /// The two frames above it in every respect: identical for every recipient,
@@ -1935,6 +1968,7 @@ mod tests {
             ClientMsg::SetShowCursors { .. } => "set_show_cursors",
             ClientMsg::SetShowDmCursor { .. } => "set_show_dm_cursor",
             ClientMsg::SetBackdrop { .. } => "set_backdrop",
+            ClientMsg::SetAudio { .. } => "set_audio",
             ClientMsg::SetMap { .. } => "set_map",
             ClientMsg::PromoteStaged => "promote_staged",
             ClientMsg::ClearStaged => "clear_staged",
@@ -1974,6 +2008,7 @@ mod tests {
             ServerMsg::NamesChanged { .. } => "names_changed",
             ServerMsg::DiagonalsChanged { .. } => "diagonals_changed",
             ServerMsg::BackdropChanged { .. } => "backdrop_changed",
+            ServerMsg::AudioChanged { .. } => "audio_changed",
             ServerMsg::CursorsChanged { .. } => "cursors_changed",
             ServerMsg::DmCursorChanged { .. } => "dm_cursor_changed",
             ServerMsg::Presence { .. } => "presence",
@@ -2073,6 +2108,7 @@ mod tests {
         "roll",
         "say",
         "set_backdrop",
+        "set_audio",
         "set_colour",
         "set_diagonals",
         "set_fog_override",
@@ -2089,6 +2125,7 @@ mod tests {
     ];
     const KNOWN_SERVER_TAGS: &[&str] = &[
         "backdrop_changed",
+        "audio_changed",
         "choose_identity",
         "colours_changed",
         "cursor_moved",

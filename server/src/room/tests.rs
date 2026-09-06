@@ -586,6 +586,7 @@ mod notes;
 mod persistence;
 mod presence;
 mod rooms;
+mod sound;
 mod status;
 mod tokens;
 mod undo;

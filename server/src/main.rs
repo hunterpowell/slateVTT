@@ -36,6 +36,12 @@ const MAX_MAP_BYTES: usize = 25 * 1024 * 1024;
 /// Token art is drawn inside a circle a cell wide. Anything approaching this is
 /// already far more image than the board can show.
 const MAX_TOKEN_BYTES: usize = 4 * 1024 * 1024;
+/// A bed the table hears for an hour, not a stem to mix. Bounded well under the
+/// map cap because `copy_out` reads a whole file into memory and the box this
+/// runs on has a gigabyte of it, and because a track is fetched by seven
+/// browsers rather than drawn by one. They only fetch it once each: `/uploads`
+/// is `immutable` and a copy's name is a fingerprint of its bytes.
+const MAX_TRACK_BYTES: usize = 16 * 1024 * 1024;
 /// Protocol frames are tiny JSON commands. Keeping this bounded prevents a
 /// public WebSocket from using one frame to reserve an unreasonable buffer.
 ///
@@ -83,11 +89,15 @@ struct AppState {
     /// because an HTTP upload never reaches the room actor to be checked there.
     dm_secret: Arc<str>,
     uploads: Arc<Path>,
-    /// The three libraries the DM picks out of. None is served directly — a
+    /// The four libraries the DM picks out of. None is served directly — a
     /// pick copies into `uploads`, so there stays one kind of image URL.
     maps: Arc<Path>,
     portraits: Arc<Path>,
     backdrops: Arc<Path>,
+    /// The one that is not pictures, and the reason `library::Formats` exists:
+    /// everything above it is sniffed against `IMAGES` and this is sniffed
+    /// against `AUDIO`. See `docs/sound.md`.
+    tracks: Arc<Path>,
     /// The status page's own credential, or `None` — in which case
     /// `/api/status` is **not mounted at all**, which is why this is read
     /// before the router is built. Deliberately not the DM secret: it buys
@@ -124,6 +134,11 @@ enum Library {
     /// a picker over the maps is a list of things to play on, and mixing in the
     /// things you cannot play on is what makes both lists worse.
     Backdrops,
+    /// The music the room plays. A fourth folder for the third folder's reason,
+    /// and one it makes more sharply: nothing in here is a picture at all, so
+    /// this is the library that turned "what may a library hold" from a const
+    /// into a question each one answers.
+    Tracks,
 }
 
 impl Library {
@@ -134,6 +149,10 @@ impl Library {
             "maps" => Some(Self::Maps),
             "portraits" => Some(Self::Portraits),
             "backdrops" => Some(Self::Backdrops),
+            // **Exactly this plural.** `client/src/library.ts` derives the noun
+            // it puts in a refusal by dropping one letter from the segment, so
+            // this and `noun` below have to agree that way round.
+            "tracks" => Some(Self::Tracks),
             _ => None,
         }
     }
@@ -143,6 +162,7 @@ impl Library {
             Self::Maps => state.maps.clone(),
             Self::Portraits => state.portraits.clone(),
             Self::Backdrops => state.backdrops.clone(),
+            Self::Tracks => state.tracks.clone(),
         }
     }
 
@@ -152,6 +172,7 @@ impl Library {
             Self::Maps => "map",
             Self::Portraits => "portrait",
             Self::Backdrops => "backdrop",
+            Self::Tracks => "track",
         }
     }
 
@@ -163,6 +184,13 @@ impl Library {
             // window, so it is the same kind of picture as a battle map with
             // the grid left off.
             Self::Backdrops => MAX_MAP_BYTES,
+            // A loop the table hears for an hour, not a stem. Sixteen mebibytes
+            // is around seventeen minutes at 128 kbps and about ninety seconds
+            // of uncompressed WAV, which is the cap doing its job rather than
+            // failing at it: a DM who drops a five-minute WAV in gets one clear
+            // sentence back instead of a Pi reading fifty megabytes into a
+            // gigabyte of RAM.
+            Self::Tracks => MAX_TRACK_BYTES,
         }
     }
 
@@ -180,6 +208,7 @@ impl Library {
             Self::Maps => "",
             Self::Portraits => "portrait/",
             Self::Backdrops => "backdrop/",
+            Self::Tracks => "track/",
         }
     }
 
@@ -212,6 +241,23 @@ impl Library {
             // — so replacing the art in the folder can and should replace the
             // picture the table is looking at.
             Self::Backdrops => true,
+            // The backdrops' answer for the backdrops' reason: nothing is keyed
+            // on a track's URL, so re-encoding a loop in the folder and
+            // re-picking it should hand back the new bytes.
+            Self::Tracks => true,
+        }
+    }
+
+    /// What this library will list, accept and refuse.
+    ///
+    /// **The one grouped arm on this type, and that is the guarantee.** Three
+    /// libraries held pictures before there were four, and writing them as one
+    /// arm is what says a track library was added rather than the other three
+    /// changed. See `library::Formats`.
+    fn formats(self) -> &'static library::Formats {
+        match self {
+            Self::Maps | Self::Portraits | Self::Backdrops => &library::IMAGES,
+            Self::Tracks => &library::AUDIO,
         }
     }
 }
@@ -297,7 +343,8 @@ async fn main() {
 
     // Deliberately not created if any is absent. They hold files someone put
     // there on purpose, so an empty one conjured at boot would hide a mistyped
-    // SLATE_MAPS, SLATE_PORTRAITS or SLATE_BACKDROPS behind a picker that
+    // SLATE_MAPS, SLATE_PORTRAITS, SLATE_BACKDROPS or SLATE_TRACKS behind a
+    // picker that
     // simply looks empty.
     let maps_dir = std::env::var("SLATE_MAPS").unwrap_or_else(|_| "../maps".to_owned());
     if !Path::new(&maps_dir).is_dir() {
@@ -314,6 +361,11 @@ async fn main() {
         std::env::var("SLATE_BACKDROPS").unwrap_or_else(|_| "../backdrops".to_owned());
     if !Path::new(&backdrops_dir).is_dir() {
         warn!(%backdrops_dir, "no backdrop library there; the DM can show the board instead");
+    }
+
+    let tracks_dir = std::env::var("SLATE_TRACKS").unwrap_or_else(|_| "../tracks".to_owned());
+    if !Path::new(&tracks_dir).is_dir() {
+        warn!(%tracks_dir, "no track library there; the room plays in silence");
     }
 
     // Unset means the status page does not exist on this server: the route is
@@ -401,6 +453,7 @@ async fn main() {
         maps: Path::new(&maps_dir).into(),
         portraits: Path::new(&portraits_dir).into(),
         backdrops: Path::new(&backdrops_dir).into(),
+        tracks: Path::new(&tracks_dir).into(),
         status_key: status_key.map(Arc::from),
         host_status: host_status.map(|path| Path::new(&path).into()),
         build,
@@ -805,7 +858,7 @@ async fn listing(
     let which = library_named(&state, &headers, &segment, "browse")?;
 
     Ok(Json(Listing {
-        files: library::list(&which.dir(&state)).await,
+        files: library::list(&which.dir(&state), which.formats()).await,
     }))
 }
 
@@ -883,10 +936,10 @@ async fn copy_out(
     // Sniffed rather than taken from the name, for the same reason an add is:
     // the extension decides the `Content-Type` the copy is later served with, and
     // a file's name is not evidence of what is inside it.
-    let Some(extension) = image_format(&bytes) else {
+    let Some(extension) = library::sniff(which.formats(), &bytes) else {
         return Err((
             StatusCode::UNSUPPORTED_MEDIA_TYPE,
-            "that file is not a PNG, JPEG or WebP image".to_owned(),
+            format!("that file is not {}", which.formats().named),
         ));
     };
 
@@ -961,27 +1014,30 @@ async fn add(
         ));
     }
 
-    let Some(extension) = image_format(&body) else {
+    let Some(extension) = library::sniff(which.formats(), &body) else {
         return Err((
             StatusCode::UNSUPPORTED_MEDIA_TYPE,
-            "that has to be a PNG, JPEG or WebP image".to_owned(),
+            format!("that has to be {}", which.formats().named),
         ));
     };
 
     let dir = which.dir(&state);
-    let path = library::destination(&dir, &request.name, extension).map_err(|err| match err {
-        library::AddError::Rejected => {
-            warn!(name = %request.name, %noun, "refused a name a library could not hold");
-            (
-                StatusCode::BAD_REQUEST,
-                format!("that is not a name a {noun} can have"),
-            )
-        }
-        library::AddError::Taken => (
-            StatusCode::CONFLICT,
-            format!("there is already a {noun} called that"),
-        ),
-    })?;
+    let path =
+        library::destination(&dir, &request.name, extension, which.formats()).map_err(|err| {
+            match err {
+                library::AddError::Rejected => {
+                    warn!(name = %request.name, %noun, "refused a name a library could not hold");
+                    (
+                        StatusCode::BAD_REQUEST,
+                        format!("that is not a name a {noun} can have"),
+                    )
+                }
+                library::AddError::Taken => (
+                    StatusCode::CONFLICT,
+                    format!("there is already a {noun} called that"),
+                ),
+            }
+        })?;
 
     fs::write(&path, &body).await.map_err(|err| {
         error!(%err, path = %path.display(), "could not add that {noun}");
@@ -1051,35 +1107,21 @@ async fn remove(
     Ok(StatusCode::NO_CONTENT)
 }
 
-/// Identifies the format from its magic bytes, and deliberately not from the
-/// filename or the `Content-Type` header — the client controls both, and neither
-/// is evidence of what the file actually is. The extension this returns is what
-/// decides the `Content-Type` browsers are later served the file with.
-fn image_format(bytes: &[u8]) -> Option<&'static str> {
-    if bytes.starts_with(b"\x89PNG\r\n\x1a\n") {
-        Some("png")
-    } else if bytes.starts_with(&[0xff, 0xd8, 0xff]) {
-        Some("jpg")
-    } else if bytes.len() >= 12 && bytes.starts_with(b"RIFF") && &bytes[8..12] == b"WEBP" {
-        Some("webp")
-    } else {
-        None
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
 
     #[test]
-    fn only_the_three_libraries_are_named() {
+    fn only_the_four_libraries_are_named() {
         // The path segment is what routes twelve operations through four
         // handlers, so an unknown one has to be a 404 rather than something the
         // fallback quietly serves an index page for.
         assert!(Library::named("maps").is_some());
         assert!(Library::named("portraits").is_some());
         assert!(Library::named("backdrops").is_some());
-        for nonsense in ["map", "Maps", "uploads", "..", ""] {
+        // Exactly this plural: the client drops one letter to get "track".
+        assert!(Library::named("tracks").is_some());
+        for nonsense in ["map", "Maps", "track", "uploads", "..", ""] {
             assert!(
                 Library::named(nonsense).is_none(),
                 "{nonsense} is not a library"
@@ -1143,6 +1185,7 @@ mod tests {
             maps: Path::new("maps").into(),
             portraits: Path::new("portraits").into(),
             backdrops: Path::new("backdrops").into(),
+            tracks: Path::new("tracks").into(),
             status_key: status_key.map(Arc::from),
             host_status: None,
             build: None,
@@ -1293,9 +1336,18 @@ mod tests {
 
     #[test]
     fn formats_are_recognised_by_their_magic_bytes() {
-        assert_eq!(image_format(b"\x89PNG\r\n\x1a\n\x00\x00"), Some("png"));
-        assert_eq!(image_format(&[0xff, 0xd8, 0xff, 0xe0, 0x00]), Some("jpg"));
-        assert_eq!(image_format(b"RIFF\x00\x00\x00\x00WEBPVP8 "), Some("webp"));
+        assert_eq!(
+            library::sniff(&library::IMAGES, b"\x89PNG\r\n\x1a\n\x00\x00"),
+            Some("png")
+        );
+        assert_eq!(
+            library::sniff(&library::IMAGES, &[0xff, 0xd8, 0xff, 0xe0, 0x00]),
+            Some("jpg")
+        );
+        assert_eq!(
+            library::sniff(&library::IMAGES, b"RIFF\x00\x00\x00\x00WEBPVP8 "),
+            Some("webp")
+        );
     }
 
     /// The name `pick` would land on, without the filesystem it reads from.
@@ -1344,13 +1396,88 @@ mod tests {
 
     #[test]
     fn anything_else_is_not_a_map() {
-        assert_eq!(image_format(b""), None);
-        assert_eq!(image_format(b"GIF89a"), None);
-        assert_eq!(image_format(b"<!doctype html>"), None);
-        assert_eq!(image_format(b"\x7fELF"), None);
+        assert_eq!(library::sniff(&library::IMAGES, b""), None);
+        assert_eq!(library::sniff(&library::IMAGES, b"GIF89a"), None);
+        assert_eq!(library::sniff(&library::IMAGES, b"<!doctype html>"), None);
+        assert_eq!(library::sniff(&library::IMAGES, b"\x7fELF"), None);
         // A truncated RIFF header must not be read past the end.
-        assert_eq!(image_format(b"RIFF\x00\x00\x00"), None);
+        assert_eq!(library::sniff(&library::IMAGES, b"RIFF\x00\x00\x00"), None);
         // RIFF, but a wave file rather than an image.
-        assert_eq!(image_format(b"RIFF\x00\x00\x00\x00WAVEfmt "), None);
+        assert_eq!(
+            library::sniff(&library::IMAGES, b"RIFF\x00\x00\x00\x00WAVEfmt "),
+            None
+        );
+    }
+
+    #[test]
+    fn a_track_library_sniffs_audio() {
+        let audio = &library::AUDIO;
+        assert_eq!(library::sniff(audio, b"OggS\x00\x02\x00\x00"), Some("ogg"));
+        assert_eq!(library::sniff(audio, b"ID3\x04\x00\x00\x00"), Some("mp3"));
+        // A bare MPEG-1 Layer III frame: sync, version 11, layer 01.
+        assert_eq!(
+            library::sniff(audio, &[0xff, 0xfb, 0x90, 0x00]),
+            Some("mp3")
+        );
+        assert_eq!(
+            library::sniff(audio, b"RIFF\x00\x00\x00\x00WAVEfmt "),
+            Some("wav")
+        );
+    }
+
+    #[test]
+    fn the_reserved_mpeg_fields_are_not_a_track() {
+        let audio = &library::AUDIO;
+        // Sync, but MPEG version `01`, which is reserved.
+        assert_eq!(library::sniff(audio, &[0xff, 0xeb, 0x90, 0x00]), None);
+        // Sync, but layer `00`, which is reserved.
+        assert_eq!(library::sniff(audio, &[0xff, 0xf9, 0x90, 0x00]), None);
+        // Sync, but bitrate index `1111`, which is invalid.
+        assert_eq!(library::sniff(audio, &[0xff, 0xfb, 0xf0, 0x00]), None);
+        // Sync bits alone, with nothing after them to check.
+        assert_eq!(library::sniff(audio, &[0xff]), None);
+    }
+
+    #[test]
+    fn a_riff_container_is_a_webp_here_and_a_wav_there() {
+        // **The pair that keeps the four libraries from drifting into one.**
+        // Both files open with `RIFF` and each is refused by the other's table,
+        // which is the whole argument for the table being per-library rather
+        // than one list everything is checked against.
+        let webp = b"RIFF\x00\x00\x00\x00WEBPVP8 ";
+        let wav = b"RIFF\x00\x00\x00\x00WAVEfmt ";
+        assert_eq!(library::sniff(&library::IMAGES, webp), Some("webp"));
+        assert_eq!(library::sniff(&library::AUDIO, webp), None);
+        assert_eq!(library::sniff(&library::AUDIO, wav), Some("wav"));
+        assert_eq!(library::sniff(&library::IMAGES, wav), None);
+    }
+
+    #[test]
+    fn an_image_is_not_a_track_and_a_track_is_not_an_image() {
+        assert_eq!(
+            library::sniff(&library::AUDIO, b"\x89PNG\r\n\x1a\n\x00\x00"),
+            None
+        );
+        assert_eq!(library::sniff(&library::IMAGES, b"OggS\x00\x02"), None);
+        assert_eq!(library::sniff(&library::IMAGES, b"ID3\x04\x00"), None);
+    }
+
+    #[test]
+    fn every_library_but_the_tracks_holds_pictures() {
+        // The grouped arm in `Library::formats` said as an assertion: adding a
+        // library must not quietly change what the three older ones accept.
+        for which in [Library::Maps, Library::Portraits, Library::Backdrops] {
+            assert_eq!(
+                library::sniff(which.formats(), b"\x89PNG\r\n\x1a\n"),
+                Some("png"),
+                "{} must still take a PNG",
+                which.noun()
+            );
+            assert_eq!(library::sniff(which.formats(), b"OggS\x00\x02"), None);
+        }
+        assert_eq!(
+            library::sniff(Library::Tracks.formats(), b"\x89PNG\r\n\x1a\n"),
+            None
+        );
     }
 }

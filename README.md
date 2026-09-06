@@ -100,12 +100,13 @@ character is a change to the name alone and their tokens follow them.
 client/   TypeScript source, canvas rendering, esbuild config
 server/   axum server: room actor, wire protocol, JSON persistence
 tools/    check.mjs — every check that does not need a browser, in one command
-          gen-assets.mjs — placeholder map/token/backdrop art for local dev
+          gen-assets.mjs — placeholder map/token/backdrop art and one track, for local dev
           audit-uploads.mjs — what is in uploads/ and what the room still points at
           cdp.mjs, board.mjs, drive-*.mjs — drive the real client in a headless browser
 maps/     the map library — the DM picks from these in-app during play
 portraits/ the token-art library — the same, for faces rather than floors
 backdrops/ pictures shown *instead of* the board, for the parts of an evening with nothing to move
+tracks/   the music library — one looping track at a time, and the only one that is not pictures
 ```
 
 ## Testing
@@ -170,6 +171,7 @@ screen and which token is standing on a given square.
 | `drive-status.mjs` | The status page — its three states, that it fits an 800×480 panel, and that a join shows up on it | both     |
 | `drive-mirror.mjs` | Player view — the DM's own board redrawn as the table's, and put down again | DM       |
 | `drive-isometric.mjs` | Calibrating a map to diamonds, and the table getting the same lattice | both     |
+| `drive-sound.mjs`  | The room's music — the player's `<audio>` pointed at the DM's pick, and an undo not restarting it | both     |
 
 The ones marked *both* open two browsers at once, and that is the point of them: almost everything
 they assert is a **difference** between what two people are holding, which one client cannot see.

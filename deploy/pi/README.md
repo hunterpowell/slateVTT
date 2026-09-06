@@ -36,6 +36,7 @@ before Slate starts, the board sits around 166MB used of 905MB — there is room
   maps/                the DM's map picker library
   portraits/           the DM's token art library
   backdrops/           the DM's backdrop library
+  tracks/              the DM's music library
 
 /etc/slate/slate.env   root-only, holds the DM secret
 ```
@@ -137,7 +138,7 @@ root.
 sudo adduser --system --group --no-create-home --home /var/lib/slate --shell /usr/sbin/nologin slate
 
 sudo mkdir -p /opt/slate/{bin,client}
-sudo mkdir -p /var/lib/slate/{uploads,maps,portraits,backdrops}
+sudo mkdir -p /var/lib/slate/{uploads,maps,portraits,backdrops,tracks}
 
 sudo chown -R root:root /opt/slate
 sudo chown -R slate:slate /var/lib/slate
@@ -156,6 +157,7 @@ SLATE_CLIENT_DIR=/opt/slate/client
 SLATE_MAPS=/var/lib/slate/maps
 SLATE_PORTRAITS=/var/lib/slate/portraits
 SLATE_BACKDROPS=/var/lib/slate/backdrops
+SLATE_TRACKS=/var/lib/slate/tracks
 SLATE_STATE=/var/lib/slate/slate-state.json
 SLATE_UPLOADS=/var/lib/slate/uploads
 SLATE_DM_SECRET=$SECRET
@@ -421,13 +423,15 @@ before `npm ci`, so a missing cross-compiler costs a message rather than five mi
 
 ### Seeding the libraries — install time only
 
-`maps/`, `portraits/` and `backdrops/` are the DM's own folders and the deploy does not touch
+`maps/`, `portraits/`, `backdrops/` and `tracks/` are the DM's own folders and the deploy does not
+touch
 them. Seed them once, on the first install:
 
 ```bash
 scp -r maps      <user>@slate.local:stage/
 scp -r portraits <user>@slate.local:stage/
 scp -r backdrops <user>@slate.local:stage/
+scp -r tracks    <user>@slate.local:stage/
 ```
 
 ```bash
@@ -435,6 +439,7 @@ scp -r backdrops <user>@slate.local:stage/
 sudo -u slate cp -rn ~/stage/maps/.       /var/lib/slate/maps/
 sudo -u slate cp -rn ~/stage/portraits/.  /var/lib/slate/portraits/
 sudo -u slate cp -rn ~/stage/backdrops/.  /var/lib/slate/backdrops/
+sudo -u slate cp -rn ~/stage/tracks/.     /var/lib/slate/tracks/
 ```
 
 `-n` rather than a plain copy: it never overwrites, so running this again by mistake cannot
@@ -445,7 +450,7 @@ Upgrading a Pi that predates milestone 32 means moving what is already there, on
 
 ```bash
 sudo systemctl stop slate
-sudo mkdir -p /var/lib/slate/{maps,portraits,backdrops}
+sudo mkdir -p /var/lib/slate/{maps,portraits,backdrops,tracks}
 sudo cp -rn /opt/slate/maps/.       /var/lib/slate/maps/
 sudo cp -rn /opt/slate/portraits/.  /var/lib/slate/portraits/
 sudo chown -R slate:slate /var/lib/slate

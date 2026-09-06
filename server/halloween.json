@@ -125,7 +125,113 @@
   "show_cursors": true,
   "show_dm_cursor": true,
   "calibrations": {
+    "/assets/map.png": {
+      "grid_px": 64.0,
+      "offset_x": 0.0,
+      "offset_y": 0.0,
+      "grid_color": "#ffffff52",
+      "play_area": null,
+      "fog": false,
+      "vision_ft": 60.0,
+      "lighting": "dynamic",
+      "grid_shape": {
+        "kind": "square"
+      },
+      "walls": [],
+      "overrides": {
+        "x": 0,
+        "y": 0,
+        "w": 0,
+        "h": 0,
+        "cells": ""
+      }
+    },
+    "/uploads/bridge-37c094e4.webp": {
+      "grid_px": 88.8,
+      "offset_x": 26.920715,
+      "offset_y": 60.76377,
+      "grid_color": "#ffffff4d",
+      "play_area": null,
+      "fog": false,
+      "vision_ft": 60.0,
+      "lighting": "dynamic",
+      "grid_shape": {
+        "kind": "iso",
+        "ratio": 1.6186188
+      },
+      "walls": [],
+      "overrides": {
+        "x": 0,
+        "y": 0,
+        "w": 0,
+        "h": 0,
+        "cells": ""
+      }
+    },
     "/uploads/please-a4a8df16.jpg": {
+      "grid_px": 23.329184,
+      "offset_x": 0.0,
+      "offset_y": 0.0,
+      "grid_color": "#ffffff4d",
+      "play_area": null,
+      "fog": false,
+      "vision_ft": 60.0,
+      "lighting": "dynamic",
+      "grid_shape": {
+        "kind": "square"
+      },
+      "walls": [],
+      "overrides": {
+        "x": 0,
+        "y": 0,
+        "w": 0,
+        "h": 0,
+        "cells": ""
+      }
+    },
+    "/uploads/the-field-551e4c12.png": {
+      "grid_px": 44.785713,
+      "offset_x": 0.0,
+      "offset_y": 0.0,
+      "grid_color": "#ffffff52",
+      "play_area": null,
+      "fog": true,
+      "vision_ft": 30.0,
+      "lighting": "dynamic",
+      "grid_shape": {
+        "kind": "square"
+      },
+      "walls": [],
+      "overrides": {
+        "x": 0,
+        "y": 0,
+        "w": 0,
+        "h": 0,
+        "cells": ""
+      }
+    },
+    "/uploads/buh-2e020abc.webp": {
+      "grid_px": 54.0,
+      "offset_x": 0.0,
+      "offset_y": 0.0,
+      "grid_color": "#ffffffa3",
+      "play_area": null,
+      "fog": false,
+      "vision_ft": 60.0,
+      "lighting": "dynamic",
+      "grid_shape": {
+        "kind": "square"
+      },
+      "walls": [],
+      "overrides": {
+        "x": 0,
+        "y": 0,
+        "w": 0,
+        "h": 0,
+        "cells": ""
+      }
+    },
+    "/uploads/ver-9eeeff2b.jpg": {
       "grid_px": 23.329184,
       "offset_x": 0.0,
       "offset_y": 0.0,
@@ -168,27 +274,6 @@
         "cells": ""
       }
     },
-    "/uploads/buh-2e020abc.webp": {
-      "grid_px": 54.0,
-      "offset_x": 0.0,
-      "offset_y": 0.0,
-      "grid_color": "#ffffffa3",
-      "play_area": null,
-      "fog": false,
-      "vision_ft": 60.0,
-      "lighting": "dynamic",
-      "grid_shape": {
-        "kind": "square"
-      },
-      "walls": [],
-      "overrides": {
-        "x": 0,
-        "y": 0,
-        "w": 0,
-        "h": 0,
-        "cells": ""
-      }
-    },
     "/uploads/dungeon-iso-9167dae1.webp": {
       "grid_px": 23.329184,
       "offset_x": -5.8302383,
@@ -201,91 +286,6 @@
       "grid_shape": {
         "kind": "iso",
         "ratio": 1.8573334
-      },
-      "walls": [],
-      "overrides": {
-        "x": 0,
-        "y": 0,
-        "w": 0,
-        "h": 0,
-        "cells": ""
-      }
-    },
-    "/uploads/bridge-37c094e4.webp": {
-      "grid_px": 88.8,
-      "offset_x": 26.920715,
-      "offset_y": 60.76377,
-      "grid_color": "#ffffff4d",
-      "play_area": null,
-      "fog": false,
-      "vision_ft": 60.0,
-      "lighting": "dynamic",
-      "grid_shape": {
-        "kind": "iso",
-        "ratio": 1.6186188
-      },
-      "walls": [],
-      "overrides": {
-        "x": 0,
-        "y": 0,
-        "w": 0,
-        "h": 0,
-        "cells": ""
-      }
-    },
-    "/assets/map.png": {
-      "grid_px": 64.0,
-      "offset_x": 0.0,
-      "offset_y": 0.0,
-      "grid_color": "#ffffff52",
-      "play_area": null,
-      "fog": false,
-      "vision_ft": 60.0,
-      "lighting": "dynamic",
-      "grid_shape": {
-        "kind": "square"
-      },
-      "walls": [],
-      "overrides": {
-        "x": 0,
-        "y": 0,
-        "w": 0,
-        "h": 0,
-        "cells": ""
-      }
-    },
-    "/uploads/the-field-551e4c12.png": {
-      "grid_px": 44.785713,
-      "offset_x": 0.0,
-      "offset_y": 0.0,
-      "grid_color": "#ffffff52",
-      "play_area": null,
-      "fog": true,
-      "vision_ft": 30.0,
-      "lighting": "dynamic",
-      "grid_shape": {
-        "kind": "square"
-      },
-      "walls": [],
-      "overrides": {
-        "x": 0,
-        "y": 0,
-        "w": 0,
-        "h": 0,
-        "cells": ""
-      }
-    },
-    "/uploads/ver-9eeeff2b.jpg": {
-      "grid_px": 23.329184,
-      "offset_x": 0.0,
-      "offset_y": 0.0,
-      "grid_color": "#ffffff4d",
-      "play_area": null,
-      "fog": false,
-      "vision_ft": 60.0,
-      "lighting": "dynamic",
-      "grid_shape": {
-        "kind": "square"
       },
       "walls": [],
       "overrides": {

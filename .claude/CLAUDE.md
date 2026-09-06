@@ -10,8 +10,9 @@ deliberately, and neither is loaded for you:
 - **`ROADMAP.md`** — design for what is not built yet, and the milestone order. Read it when
   starting a milestone.
 - **`docs/maps.md`, `docs/tokens.md`, `docs/drawings.md`, `docs/walls.md`, `docs/fog.md`,
-  `docs/undo.md`, `docs/chat.md`, `docs/notes.md`, `docs/presence.md`, `docs/rooms.md`,
-  `docs/frontend.md`, `docs/net.md`** — why each built feature is the shape it is. Every section below that summarises a
+  `docs/undo.md`, `docs/chat.md`, `docs/dice.md`, `docs/notes.md`, `docs/sound.md`,
+  `docs/presence.md`, `docs/rooms.md`, `docs/frontend.md`, `docs/net.md`** — why each built
+  feature is the shape it is. Every section below that summarises a
   feature ends with a pointer to its file and the code that file covers.
 
 (All referenced in backticks on purpose: a bare `@` path here would be an import, and importing
@@ -34,6 +35,8 @@ them would load them into every session, which is what moving them out avoided.)
 - Lets anyone say something to the table, or whisper the DM — and the DM whisper any one player;
   two destinations and nothing else, kept for the evening and never written down
 - Lends a die to whoever came without one, thrown by the room and landing in that same log
+- Plays one looping track the DM picks, on every screen that asked for it, at whatever level
+  each person set for themselves
 - Gives everyone a box to write in that no other screen is ever sent, the DM's included
 - Shows who is connected, tells you when it is your turn, picks the page back up when a
   socket drops, lets a player choose the colour they are drawn in, and draws everybody's
@@ -73,11 +76,24 @@ unless explicitly asked:
   boundary is that the room holds **one** URL: a *list* of backdrops in the state model is the
   scene manager this refuses, wearing a different noun. The collection is the `backdrops/` folder,
   which costs the room nothing. See *Backdrop* below and `docs/maps.md`.
-- Compendiums, handouts, audio, and journals — **with one bounded exception**: a scratchpad.
+- Compendiums, handouts, and journals — **with one bounded exception**: a scratchpad.
   One box of text per person, private to whoever wrote it, and the DM's is no different from anyone
   else's. **A second document makes it a journal.** No titles, no pages, no sharing, no handout
   button. **Built**, as milestone 24, and the boundary above is the specification — see *The
   scratchpad* below and `docs/notes.md`.
+- **Audio beyond one track.** "Audio" was on the list above until milestone 41, named and dropped
+  with no argument — and, like "dice rolling", it was a *category* broad enough to make design
+  impossible until it was renamed to the thing actually wanted. What is built is **one looping
+  bed the DM puts on**, and the test for anything proposed here is *is this still one track?*
+  A second channel, a crossfade, a queue, a playlist, per-map ambience: each is the **mixer**
+  this refuses, arriving one field at a time. A one-shot sting is the near miss — it is a
+  gesture rather than state and would be cheap — and it is out because it wants to land
+  *together*, which needs a playhead the room deliberately does not hold. **No embeds**:
+  YouTube would put a third-party script on every client, needs a *visible* player, and would
+  play ads on six screens at the dramatic beat; the minimal version of that ask is to paste the
+  link in chat, which is already built. Notification sounds are a different feature and still
+  unbuilt — `docs/chat.md` and `docs/dice.md` each say so and are still owed the argument.
+  **Built**, as milestone 41 — see *The room's music* below and `docs/sound.md`.
 - Module or plugin systems
 - 5e reference lookup. The spell index at `/spells/` is **not an exception to this** — it is a
   static page under `client/spells/` that imports nothing from `client/src/`, has no entry in
@@ -271,6 +287,12 @@ struct RoomState {
     /// Room-wide, the DM's to set. **Nothing else in the room reads it** — the
     /// board goes on existing untouched behind it — see `docs/maps.md`.
     backdrop: Option<String>,
+    /// The one track the room is playing, or `None`. Room-wide, the DM's to set
+    /// and unfiltered like the backdrop — and **memory only**, unlike it, which
+    /// is where the two differ: `audio.src = url` is not idempotent, so an undo
+    /// that swept the music back would restart it mid-scene. Off `Saved`, so off
+    /// the ring by construction — see `docs/sound.md`.
+    audio: Option<String>,
     /// Identified clients, who are the only ones any event reaches, and the
     /// sockets that are connected but have not said who they are yet.
     clients: HashMap<ClientId, Client>,
@@ -1055,6 +1077,49 @@ two numbers relate.
 → **`docs/dice.md`** before touching `Roll`/`ChatLine::rolled` on the server, `roll`,
 `rolled_text`, `may_address`, `RoomState::log`, `DICE_SIDES`/`MAX_DICE`, or the die row in
 `chat.ts`.
+
+## The room's music
+
+**One looping track, and that framing is the specification.** Read the non-goal above before
+changing anything here; the test it gives — *is this still one track?* — is what keeps a mixer out.
+
+> The room holds **one** track. A list of tracks is a mixer, and a mixer is the scene system for
+> ears.
+
+Three songs in the folder is not a mixer: the collection is `tracks/`, exactly as the backdrop's
+presets are `backdrops/`, and the room holds only which one is up.
+
+**It is `SetBackdrop` copied, with one deviation.** `RoomState::audio` is an `Option<String>`,
+DM-only via `require_dm`, bounded by `MAX_URL_LEN`, **unfiltered** — `AudioChanged` sits beside
+`BackdropChanged` for that reason — and on `RoomView` so a reconnect hears what the table hears.
+The `check` and `apply` arms are the backdrop's word for word.
+
+**The deviation is that it is not persisted, and that is the whole design.** `audio` is off
+`Saved`, sitting with `chat`: in `empty`, `blank` and `snapshot_for`, absent from `adopt` and
+`to_saved`, so `store.rs` did not change. Two reasons, and the first would have been a visible bug:
+**`audio.src = url` is not idempotent the way `drawImage` is**, so on the ring an unrelated undo
+would restart the track mid-scene; and a room reopened on Saturday should come back quiet. What it
+bought is that where the scratchpad and a player's colour each need *two* lines to stay off the
+ring, this needs **none** — a restore cannot reach a field that is not on a `Saved`.
+
+**The client owns everything except which track.** Volume and on/off are `localStorage`, never on
+the wire — the initiative fold's rule, and right because everyone is mixing against Discord voice
+at their own level; a DM who could set it would set it wrong for six people. **Sound starts off**,
+because a browser refuses to play what no gesture asked for — and a dropped socket reloads the
+page, so every reconnect spends that gesture. `sound.ts` therefore *attempts* and **lights the
+button when refused**: silence with nothing on screen to explain it is the one way this fails
+invisibly. `update` returns early when the URL is unchanged, which is what stops a `Restored`
+restarting the track. Off means **paused**, not muted, because a muted element still streams.
+
+**The room holds a URL, not a playhead.** Two browsers are at different points in the same loop,
+which is correct for a bed and is why a one-shot sting is refused rather than merely unbuilt.
+
+`tracks/` is a fourth `Library` and the first holding something that is not a picture, which is
+what turned the format gate from a const into `library::Formats` — one grouped arm keeps the other
+three libraries exactly as they were.
+
+→ **`docs/sound.md`** before touching `RoomState::audio`, `SetAudio`/`AudioChanged`,
+`Library::Tracks`, `library::Formats`/`sniff`, `sound.ts`, or the `sound` tab in `dock.ts`.
 
 ## The scratchpad
 

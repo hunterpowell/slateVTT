@@ -52,6 +52,7 @@ const CLIENT_TAGS: Record<ClientMsg['type'], true> = {
   roll: true,
   say: true,
   set_backdrop: true,
+  set_audio: true,
   set_colour: true,
   set_diagonals: true,
   set_fog_override: true,
@@ -69,6 +70,7 @@ const CLIENT_TAGS: Record<ClientMsg['type'], true> = {
 
 const SERVER_TAGS: Record<ServerMsg['type'], true> = {
   backdrop_changed: true,
+  audio_changed: true,
   choose_identity: true,
   colours_changed: true,
   cursor_moved: true,

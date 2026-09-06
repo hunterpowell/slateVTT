@@ -181,6 +181,14 @@ export interface Scene {
    *  standing on it — is still exactly as it was while this is set, which is
    *  why putting the picture away needs nothing from the server. */
   backdrop: string | null;
+  /** The track the room is playing, or null.
+   *
+   *  Here for the field above's reason and read by nobody who draws — there is
+   *  no `shownAudio` twin beside `shownBackdrop`, because what the table hears
+   *  does not depend on which board the DM happens to be looking at. It is on
+   *  the scene at all so that `adoptView` carries it with no second field list,
+   *  and so the table panel can read back whether anything is playing. */
+  audio: string | null;
 }
 
 /**
@@ -285,6 +293,7 @@ function fromView(view: WireRoomView, isDm: boolean): Omit<Scene, 'previewing'> 
     showCursors: view.show_cursors,
     showDmCursor: view.show_dm_cursor,
     backdrop: view.backdrop,
+    audio: view.audio,
   };
 }
 

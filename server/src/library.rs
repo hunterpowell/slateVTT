@@ -32,10 +32,128 @@ const MAX_STEM_LEN: usize = 80;
 const MAX_DEPTH: usize = 8;
 const MAX_ENTRIES: usize = 500;
 
-/// What the listing offers. The pick itself identifies the real format from the
-/// file's magic bytes, exactly as an upload does — an extension is only a hint
-/// about what is worth showing the DM.
-const IMAGE_EXTENSIONS: [&str; 4] = ["png", "jpg", "jpeg", "webp"];
+/// One accepted format: the extension a copy is written under, and the predicate
+/// that recognises it from the file's leading bytes.
+///
+/// A predicate rather than an `(offset, literal)` table because MP3 is the one
+/// that needs masking — a bare MPEG frame header is eleven sync bits and a
+/// handful of reserved fields, not a string. Everything else is one or two
+/// `starts_with`s and would have fitted a table.
+pub struct Format {
+    pub extension: &'static str,
+    pub matches: fn(&[u8]) -> bool,
+}
+
+/// What one library will list, accept and refuse.
+///
+/// **The fourth axis a library differs by**, beside its folder, its cap and what
+/// a copy's name is fingerprinted over. Before this existed the answer was a
+/// single const and the question was never asked, which was correct exactly as
+/// long as every library held pictures.
+pub struct Formats {
+    /// Sniffed in order, first match wins. This is the truth about what a file
+    /// is; the list below is only a hint about what is worth showing.
+    pub formats: &'static [Format],
+    /// What the listing shows, and what `filename` will strip so `bed.mp3` does
+    /// not land as `bed.mp3.mp3`. A separate list because `.jpeg` is listed and
+    /// never written, and `.oga` and `.opus` are the same file as `.ogg`.
+    pub extensions: &'static [&'static str],
+    /// The noun phrase both refusals are built from, so there is one list here
+    /// and no sentence anywhere else that can drift out of step with it.
+    pub named: &'static str,
+}
+
+const PNG: Format = Format {
+    extension: "png",
+    matches: |bytes| bytes.starts_with(b"\x89PNG\r\n\x1a\n"),
+};
+const JPEG: Format = Format {
+    extension: "jpg",
+    matches: |bytes| bytes.starts_with(&[0xff, 0xd8, 0xff]),
+};
+const WEBP: Format = Format {
+    extension: "webp",
+    matches: |bytes| bytes.len() >= 12 && bytes.starts_with(b"RIFF") && &bytes[8..12] == b"WEBP",
+};
+
+/// Every Ogg page opens with the capture pattern, page zero included, so this is
+/// the same kind of check as PNG's. Vorbis and Opus are both Ogg here and both
+/// are written `.ogg`: the leading bytes are identical either way, the codec is
+/// named inside the stream, and browsers read it from there rather than from the
+/// extension.
+const OGG: Format = Format {
+    extension: "ogg",
+    matches: |bytes| bytes.starts_with(b"OggS"),
+};
+
+/// **The loosest check here, and the only one worth distrusting.** An ID3 tag is
+/// unambiguous and is what essentially every encoder writes, but a bare frame
+/// header is eleven sync bits — enough that some other file could open with one
+/// by accident. The three masks after it reject the combinations MPEG itself
+/// calls reserved or invalid, which is as far as the leading bytes can go. The
+/// consequence of a false positive here is a track the browser visibly refuses
+/// to play, on a route only the DM can reach.
+const MP3: Format = Format {
+    extension: "mp3",
+    matches: |bytes| {
+        if bytes.starts_with(b"ID3") {
+            return true;
+        }
+        bytes.len() >= 3
+            && bytes[0] == 0xff
+            // Eleven sync bits.
+            && (bytes[1] & 0xe0) == 0xe0
+            // MPEG version `01` is reserved.
+            && (bytes[1] & 0x18) != 0x08
+            // Layer `00` is reserved.
+            && (bytes[1] & 0x06) != 0x00
+            // Bitrate index `1111` is invalid.
+            && (bytes[2] & 0xf0) != 0xf0
+    },
+};
+
+/// WebP's check with four different bytes, which is only unambiguous because
+/// each library sniffs against its own table — a RIFF container is a WebP in
+/// `maps/` and a WAV in `tracks/`, and neither library is ever asked about the
+/// other's.
+const WAV: Format = Format {
+    extension: "wav",
+    matches: |bytes| bytes.len() >= 12 && bytes.starts_with(b"RIFF") && &bytes[8..12] == b"WAVE",
+};
+
+pub const IMAGES: Formats = Formats {
+    formats: &[PNG, JPEG, WEBP],
+    extensions: &["png", "jpg", "jpeg", "webp"],
+    named: "a PNG, JPEG or WebP image",
+};
+
+/// **`.m4a` is deliberately absent.** Its `ftyp` box carries a brand, and the
+/// brand does not say whether there is a video track beside the audio: `M4A ` is
+/// audio-only but plenty of ordinary AAC files are stamped `mp42` or `isom`,
+/// which is what an MP4 *video* carries too. Accepting any `ftyp` lets a film
+/// into the music library, where it plays its soundtrack and reads as a bug;
+/// accepting only `M4A ` refuses files that are fine. The way out is to
+/// re-export, and if that ever stops being acceptable the addition is one arm
+/// checking both boxes.
+pub const AUDIO: Formats = Formats {
+    formats: &[OGG, MP3, WAV],
+    extensions: &["ogg", "oga", "opus", "mp3", "wav"],
+    named: "an MP3, Ogg or WAV track",
+};
+
+/// The format these bytes actually are, as the extension a copy of them is
+/// written under, or `None` for something this library does not hold.
+///
+/// Deliberately not the filename and not the `Content-Type` header — the client
+/// controls both and neither is evidence of what the file is. What this returns
+/// is also what decides the `Content-Type` browsers are later served it with.
+pub fn sniff(formats: &Formats, bytes: &[u8]) -> Option<&'static str> {
+    formats
+        .formats
+        .iter()
+        .find(|format| (format.matches)(bytes))
+        .map(|format| format.extension)
+}
 
 #[derive(Debug, PartialEq, Eq)]
 pub enum PickError {
@@ -132,8 +250,13 @@ pub enum AddError {
 /// decides what the picker reads and what the copy's key is derived from; what
 /// is actually in the file decides how it is served. A `.png` holding a JPEG
 /// would otherwise be copied out under a name that lies about it.
-pub fn destination(dir: &Path, supplied: &str, extension: &str) -> Result<PathBuf, AddError> {
-    let name = filename(supplied, extension).ok_or(AddError::Rejected)?;
+pub fn destination(
+    dir: &Path,
+    supplied: &str,
+    extension: &str,
+    formats: &Formats,
+) -> Result<PathBuf, AddError> {
+    let name = filename(supplied, extension, formats).ok_or(AddError::Rejected)?;
     let path = dir.join(&name);
     // Refused rather than overwritten. Silently replacing a map is the one
     // outcome the DM cannot undo, and for a map it would not even work the way
@@ -154,7 +277,7 @@ pub fn destination(dir: &Path, supplied: &str, extension: &str) -> Result<PathBu
 /// spaces it strips on the way to disk — a name that arrives as `nul` or that
 /// silently becomes a different one is a file the DM cannot then remove by
 /// asking for the name they gave.
-fn filename(supplied: &str, extension: &str) -> Option<String> {
+fn filename(supplied: &str, extension: &str, formats: &Formats) -> Option<String> {
     if supplied.is_empty() || supplied.len() > MAX_PATH_LEN {
         return None;
     }
@@ -175,7 +298,7 @@ fn filename(supplied: &str, extension: &str) -> Option<String> {
     // not land as `cave.png.png`. Any other suffix is part of the name.
     let stem = only
         .rsplit_once('.')
-        .filter(|(_, ext)| IMAGE_EXTENSIONS.contains(&ext.to_ascii_lowercase().as_str()))
+        .filter(|(_, ext)| listed_extension(ext, formats))
         .map_or(only, |(stem, _)| stem);
 
     // Windows strips these on the way to disk, so a name ending in one would be
@@ -275,10 +398,19 @@ pub fn copy_name(key: &str, fingerprint: &[u8], extension: &str) -> String {
     format!("{readable}-{:08x}.{extension}", fnv1a(fingerprint))
 }
 
-fn is_image(name: &str) -> bool {
-    name.rsplit_once('.').is_some_and(|(_, extension)| {
-        IMAGE_EXTENSIONS.contains(&extension.to_ascii_lowercase().as_str())
-    })
+/// Whether this library would show a file with that extension. Case-insensitive
+/// because the DM's filenames are, and the one place both `listed` and the
+/// stem-strip in `filename` agree about what "an extension this library holds"
+/// means.
+fn listed_extension(extension: &str, formats: &Formats) -> bool {
+    formats
+        .extensions
+        .contains(&extension.to_ascii_lowercase().as_str())
+}
+
+fn listed(name: &str, formats: &Formats) -> bool {
+    name.rsplit_once('.')
+        .is_some_and(|(_, extension)| listed_extension(extension, formats))
 }
 
 /// Every map in the library, as paths relative to its root, with `/` separators.
@@ -288,7 +420,7 @@ fn is_image(name: &str) -> bool {
 ///
 /// An unreadable directory is skipped rather than failing the request — the rest
 /// of the library is still worth showing.
-pub async fn list(maps_dir: &Path) -> Vec<String> {
+pub async fn list(maps_dir: &Path, formats: &Formats) -> Vec<String> {
     let mut found: Vec<String> = Vec::new();
     let mut stack: Vec<(PathBuf, String, usize)> = vec![(maps_dir.to_path_buf(), String::new(), 0)];
 
@@ -327,7 +459,7 @@ pub async fn list(maps_dir: &Path) -> Vec<String> {
                 if depth + 1 < MAX_DEPTH {
                     stack.push((entry.path(), relative, depth + 1));
                 }
-            } else if kind.is_file() && is_image(&name) {
+            } else if kind.is_file() && listed(&name, formats) {
                 found.push(relative);
             }
         }
@@ -479,7 +611,8 @@ mod tests {
     fn a_plain_name_lands_directly_in_the_folder() {
         let library = TempLibrary::new();
 
-        let path = destination(library.path(), "Cragmaw Hideout.png", "png").expect("a place");
+        let path =
+            destination(library.path(), "Cragmaw Hideout.png", "png", &IMAGES).expect("a place");
         assert_eq!(path.parent(), Some(library.path()));
         assert_eq!(
             path.file_name().and_then(|n| n.to_str()),
@@ -494,7 +627,7 @@ mod tests {
         // that lies about it, and the copy's `Content-Type` comes from that name.
         let library = TempLibrary::new();
 
-        let path = destination(library.path(), "cave.png", "jpg").expect("a place");
+        let path = destination(library.path(), "cave.png", "jpg", &IMAGES).expect("a place");
         assert_eq!(path.file_name().and_then(|n| n.to_str()), Some("cave.jpg"));
     }
 
@@ -504,7 +637,7 @@ mod tests {
         // called `cave.v2` is a map called `cave.v2`, not one called `cave`.
         let library = TempLibrary::new();
 
-        let path = destination(library.path(), "cave.v2", "png").expect("a place");
+        let path = destination(library.path(), "cave.v2", "png", &IMAGES).expect("a place");
         assert_eq!(
             path.file_name().and_then(|n| n.to_str()),
             Some("cave.v2.png")
@@ -533,7 +666,7 @@ mod tests {
             "...png",
         ] {
             assert_eq!(
-                destination(library.path(), attempt, "png"),
+                destination(library.path(), attempt, "png", &IMAGES),
                 Err(AddError::Rejected),
                 "{attempt} should not be a name a library can hold"
             );
@@ -551,7 +684,7 @@ mod tests {
             "nul", "CON", "com1", "LPT9", "aux.png", "map:1", "what?", "a*b", "a|b",
         ] {
             assert_eq!(
-                destination(library.path(), attempt, "png"),
+                destination(library.path(), attempt, "png", &IMAGES),
                 Err(AddError::Rejected),
                 "{attempt} should not be a name a library can hold"
             );
@@ -560,7 +693,7 @@ mod tests {
         // And the ones that only look like devices are fine.
         for allowed in ["console", "com10", "nul2", "auxiliary"] {
             assert!(
-                destination(library.path(), allowed, "png").is_ok(),
+                destination(library.path(), allowed, "png", &IMAGES).is_ok(),
                 "{allowed} is an ordinary name"
             );
         }
@@ -575,12 +708,12 @@ mod tests {
         library.with("cave.png");
 
         assert_eq!(
-            destination(library.path(), "cave.png", "png"),
+            destination(library.path(), "cave.png", "png", &IMAGES),
             Err(AddError::Taken)
         );
         // Same file, named the way the DM might type it a second time.
         assert_eq!(
-            destination(library.path(), "cave", "png"),
+            destination(library.path(), "cave", "png", &IMAGES),
             Err(AddError::Taken)
         );
     }
@@ -591,7 +724,8 @@ mod tests {
         // file it just wrote, so what `destination` produces has to resolve.
         let library = TempLibrary::new();
 
-        let path = destination(library.path(), "Cragmaw Hideout.jpeg", "jpg").expect("a place");
+        let path =
+            destination(library.path(), "Cragmaw Hideout.jpeg", "jpg", &IMAGES).expect("a place");
         std::fs::write(&path, b"not really an image").expect("write it");
         let name = path.file_name().and_then(|n| n.to_str()).expect("a name");
 
@@ -714,7 +848,7 @@ mod tests {
             .with("top level.webp");
 
         assert_eq!(
-            list(library.path()).await,
+            list(library.path(), &IMAGES).await,
             vec![
                 "Digital/Arctic Tundra.jpg".to_owned(),
                 "Digital/Classic Dungeon.png".to_owned(),
@@ -732,7 +866,10 @@ mod tests {
             .with("README.md")
             .with("no extension");
 
-        assert_eq!(list(library.path()).await, vec!["map.jpg".to_owned()]);
+        assert_eq!(
+            list(library.path(), &IMAGES).await,
+            vec!["map.jpg".to_owned()]
+        );
     }
 
     #[tokio::test]
@@ -741,7 +878,7 @@ mod tests {
         let library = TempLibrary::new();
         library.with("Digital/Forest Encampment (night).jpg");
 
-        let listed = list(library.path()).await;
+        let listed = list(library.path(), &IMAGES).await;
         let entry = listed.first().expect("one map");
         assert!(resolve(library.path(), entry).is_ok());
     }
@@ -749,6 +886,50 @@ mod tests {
     #[tokio::test]
     async fn a_library_that_is_not_there_lists_nothing_rather_than_failing() {
         let library = TempLibrary::new();
-        assert!(list(&library.path().join("nope")).await.is_empty());
+        assert!(list(&library.path().join("nope"), &IMAGES).await.is_empty());
+    }
+
+    #[tokio::test]
+    async fn one_folder_lists_differently_to_two_libraries() {
+        // **The regression guard for the whole per-library gate.** The same
+        // folder, asked twice, must answer twice — if these ever agree, the
+        // four libraries have drifted back into one and a track has become
+        // something the map picker offers.
+        let library = TempLibrary::new();
+        library.with("cave.png").with("bed.ogg").with("boss.mp3");
+
+        assert_eq!(list(library.path(), &IMAGES).await, vec!["cave.png"]);
+        assert_eq!(
+            list(library.path(), &AUDIO).await,
+            vec!["bed.ogg".to_owned(), "boss.mp3".to_owned()]
+        );
+    }
+
+    #[test]
+    fn a_track_does_not_land_with_its_extension_twice() {
+        // The stem-strip in `filename` reading the right list. With the images'
+        // list it would not recognise `.mp3`, keep it as part of the name, and
+        // write `boss.mp3.mp3`.
+        let library = TempLibrary::new();
+        let path =
+            destination(library.path(), "boss.mp3", "mp3", &AUDIO).expect("a place for a track");
+        assert_eq!(
+            path.file_name().and_then(|name| name.to_str()),
+            Some("boss.mp3")
+        );
+    }
+
+    #[test]
+    fn a_suffix_this_library_does_not_hold_is_part_of_the_name() {
+        // The other half of the rule above, and why the strip has to be per
+        // library rather than "drop whatever is after the last dot": a track
+        // called `cave.png` keeps that name and gains the sniffed one.
+        let library = TempLibrary::new();
+        let path =
+            destination(library.path(), "cave.png", "ogg", &AUDIO).expect("a place for a track");
+        assert_eq!(
+            path.file_name().and_then(|name| name.to_str()),
+            Some("cave.png.ogg")
+        );
     }
 }

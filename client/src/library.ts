@@ -62,12 +62,12 @@ export function createLibraryList(
   ui: LibraryUi,
   dmSecret: string,
   /** The path segment under `/api`, and the plural in every message. */
-  kind: 'maps' | 'portraits' | 'backdrops',
+  kind: 'maps' | 'portraits' | 'backdrops' | 'tracks',
   /** What the panel does with the URL the copy is now served at. */
   onPicked: (url: string) => void,
   report: (message: string) => void,
 ): LibraryList {
-  /** "map" / "portrait" / "backdrop" — every plural loses exactly one letter. */
+  /** "map" / "portrait" / "backdrop" / "track" — every plural loses one letter. */
   const noun = kind.slice(0, -1);
 
   let open = false;

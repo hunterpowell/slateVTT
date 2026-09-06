@@ -28,6 +28,8 @@ import type { MapTool } from './maptool.js';
 import { createMapTool } from './maptool.js';
 import { createRail } from './rail.js';
 import { soloSight } from './solo.js';
+import type { Sound } from './sound.js';
+import { createSound } from './sound.js';
 import type { TableTool } from './table.js';
 import { createTableTool } from './table.js';
 import type { Net } from './net.js';
@@ -129,6 +131,14 @@ interface Ui {
     text: HTMLInputElement;
     toast: HTMLElement;
   };
+  sound: {
+    root: HTMLElement;
+    player: HTMLAudioElement;
+    toggle: HTMLButtonElement;
+    volume: HTMLInputElement;
+    now: HTMLElement;
+    blocked: HTMLElement;
+  };
   notes: {
     root: HTMLElement;
     text: HTMLTextAreaElement;
@@ -228,6 +238,13 @@ interface Ui {
       fileText: HTMLElement;
     };
     backdropClear: HTMLButtonElement;
+    track: {
+      button: HTMLButtonElement;
+      list: HTMLElement;
+      file: HTMLInputElement;
+      fileText: HTMLElement;
+    };
+    trackClear: HTMLButtonElement;
   };
 }
 
@@ -289,6 +306,14 @@ function findUi(): Ui {
       form: need<HTMLFormElement>('#chat-form'),
       text: need<HTMLInputElement>('#chat-text'),
       toast: need('#chat-toast'),
+    },
+    sound: {
+      root: need('#sound'),
+      player: need<HTMLAudioElement>('#sound-player'),
+      toggle: need<HTMLButtonElement>('#sound-toggle'),
+      volume: need<HTMLInputElement>('#sound-volume'),
+      now: need('#sound-now'),
+      blocked: need('#sound-blocked'),
     },
     notes: {
       root: need('#notes'),
@@ -389,6 +414,13 @@ function findUi(): Ui {
         fileText: need('#table-backdrop-upload-text'),
       },
       backdropClear: need<HTMLButtonElement>('#table-backdrop-clear'),
+      track: {
+        button: need<HTMLButtonElement>('#table-track'),
+        list: need('#table-track-list'),
+        file: need<HTMLInputElement>('#table-track-file'),
+        fileText: need('#table-track-upload-text'),
+      },
+      trackClear: need<HTMLButtonElement>('#table-track-clear'),
     },
   };
 }
@@ -470,6 +502,7 @@ function boot(ui: Ui, choice: RoomChoice): void {
   let chat: Chat | null = null;
   let notes: Notes | null = null;
   let dock: Dock | null = null;
+  let sound: Sound | null = null;
   // Everybody's too, and built before the chat panel because that one reads
   // through it — who is connected decides which destination chips are dimmed,
   // and what everyone picked decides what colour a line is written in.
@@ -649,6 +682,13 @@ function boot(ui: Ui, choice: RoomChoice): void {
       // the same reason: the DM's scratchpad is not different from anybody's.
       notes = createNotes(ui.notes, welcome.state.notes, (msg) => net.send(msg));
 
+      // Built for every connection, the DM's included: everyone at the table
+      // hears the same track, and this module is the same on all seven screens
+      // for the reason the scratchpad's is. `update` is idempotent on the URL,
+      // so handing it the joined state here is free even when nothing is on.
+      sound = createSound(ui.sound);
+      sound.update(welcome.state.audio);
+
       dock = createDock(ui.dock, [
         {
           tab: 'chat',
@@ -668,6 +708,19 @@ function boot(ui: Ui, choice: RoomChoice): void {
           // state, because nothing ever arrives in it that this client did not
           // type.
           opened: () => notes?.opened(),
+        },
+        {
+          tab: 'sound',
+          label: 'sound',
+          root: ui.sound.root,
+          // Last on the strip and first in the document, which are not the same
+          // order and are not meant to be: this is the panel touched least
+          // often in an evening, so it takes the far end of the strip and the
+          // far end of the stack from the box people type into.
+          //
+          // No `opened` and no badge. Nothing arrives in here — the three
+          // controls describe a state that was already correct whether anybody
+          // was looking at it or not.
         },
       ]);
 
@@ -974,6 +1027,18 @@ function boot(ui: Ui, choice: RoomChoice): void {
       tableTool?.update(room.scene);
     },
 
+    // The handler above's twin, and short for the same reason: the board is not
+    // being changed, it is being played over. Whether this browser makes a
+    // sound about it is `sound.ts`'s business and not decided here — a player
+    // who has never turned sound on runs this arm exactly as everyone else does
+    // and hears nothing.
+    onAudioChanged: (url) => {
+      if (room === null) return;
+      room.scene.audio = url;
+      sound?.update(url);
+      tableTool?.update(room.scene);
+    },
+
     // Never reaches a player: the server sends this frame to the DM alone.
     onStagedChanged: (board) => {
       if (room === null) return;
@@ -1185,6 +1250,13 @@ function boot(ui: Ui, choice: RoomChoice): void {
       afterBoardChanged(wasShowing, false);
       // An undo can put a backdrop up or take one down like any other step.
       stage?.reloadBackdrop();
+      // **This line can only ever do nothing, and it is here anyway.** Music is
+      // not on `Saved`, so `adopt` never touches it and a restore cannot have
+      // changed it — the same reason `presence.here` is adopted two lines up,
+      // said the other way round. It is free because `update` returns on the
+      // first line when the URL is unchanged, and forgetting it would be a trap
+      // the day that stops being true.
+      sound?.update(scene.audio);
     },
 
     // Only ever called on a DM connection.

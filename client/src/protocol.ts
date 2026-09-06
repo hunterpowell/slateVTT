@@ -330,6 +330,13 @@ export interface WireRoomView {
    *  there is no grid to draw on it, nothing standing on it and nothing traced
    *  across it, which is exactly why the board underneath survives it. */
   backdrop: string | null;
+  /** The track the room is playing, or null for silence.
+   *
+   *  The fifth of these and the same value for everyone, for the fourth's
+   *  reason. It is on the view and not only on the delta because a reconnect is
+   *  a fresh join: a dropped socket reloads this page, so without it somebody
+   *  who blinked comes back silent while the table is still listening. */
+  audio: string | null;
   /** Who is connected right now, the DM among them.
    *
    *  The same value for everyone, like the two fields above it: there is no
@@ -481,6 +488,12 @@ export type ServerMsg =
    *  rather than changed, so the map, walls, shapes and fog we already hold are
    *  still correct and no frame is owed for them. */
   | { type: 'backdrop_changed'; url: string | null }
+  /** The room is playing a track now, or it is not.
+   *
+   *  `backdrop_changed`'s twin above and nothing arrives with it either. What we
+   *  do about it is ours alone — the level it comes out at, and whether it comes
+   *  out at all, live in this browser and never on the wire. */
+  | { type: 'audio_changed'; url: string | null }
   /** The staged slot — map, walls and paint — or null once there is not one. DM
    *  connections only.
    *
@@ -722,6 +735,13 @@ export type ClientMsg =
    *  a `set_map` is a map *load*, which sweeps the walls, the drawings and
    *  everywhere the party has explored. Not doing any of that is the command. */
   | { type: 'set_backdrop'; url: string | null }
+  /** DM-only. Put music on for the room, or null to stop it.
+   *
+   *  The command above's twin, and it stays as small for the same reason. The
+   *  room holds a URL and not a playhead: where in the track each browser
+   *  happens to be is that browser's business, and syncing playheads is the
+   *  mixer this feature refuses to be. */
+  | { type: 'set_audio'; url: string | null }
   /** A shape being swept out right now: relayed to everyone watching, stored by
    *  nobody. `drawing: false` is the release that ends it.
    *
