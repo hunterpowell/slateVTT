@@ -12,6 +12,7 @@ import {
   containsPoint,
   coveredCells,
   feetOf,
+  hasExtent,
   isArea,
   labelFor,
   snapExtent,
@@ -158,6 +159,31 @@ test('a circle and a cone snap their length and keep their bearing', () => {
   assert.ok(Math.abs(c.x - c.y) < 1e-9, 'along the bearing it was swept on');
   assert.deepEqual(snapExtent('cone', at(3.2, 0)), { x: 3, y: 0 });
   assert.deepEqual(snapExtent('circle', at(0, 0)), { x: 0, y: 0 }, 'and no divide by zero');
+});
+
+test('a rectangle flat on one axis is not worth keeping', () => {
+  // The failure this is about: `snapExtent` rounds a drag a hair off the
+  // horizontal to a height of zero, and what that commits has no area. From a
+  // cell centre it tints a whole row and answers a click only along the line
+  // through the middle of it; from a corner it covers nothing at all. Either
+  // way "clear all" is the only way back off the board.
+  assert.deepEqual(snapExtent('rect', at(3.1, 0.4)), { x: 3, y: 0 });
+  assert.ok(!containsPoint('rect', at(3.5, 4.5), at(3, 0), 4.5, 4.6), 'the row is unclickable');
+  assert.deepEqual(coveredCells('rect', at(3, 4), at(3, 0)), [], 'and off a corner, invisible');
+
+  assert.ok(!hasExtent('rect', at(3, 0)));
+  assert.ok(!hasExtent('rect', at(0, -2)));
+  assert.ok(hasExtent('rect', at(1, 1)));
+  assert.ok(hasExtent('rect', at(-1, 4)));
+});
+
+test('every other kind reaches nothing only on both axes at once', () => {
+  // They snap their magnitude, so one axis at zero is a circle swept due east
+  // rather than a shape with no size.
+  for (const kind of ['circle', 'cone', 'line'] as const) {
+    assert.ok(hasExtent(kind, at(3, 0)), kind);
+    assert.ok(!hasExtent(kind, at(0, 0)), kind);
+  }
 });
 
 test('the far point is the origin plus the offset it stored', () => {

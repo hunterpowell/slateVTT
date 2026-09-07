@@ -12,7 +12,7 @@ import type { Rulers } from './ruler.js';
 import type { Scene, Token } from './scene.js';
 import { shownBoard, shownPos, shownWalls, showingStaged } from './scene.js';
 import type { Sketches } from './shapes.js';
-import { anchorable, clampExtent, erasableAt, snapExtent, snapOrigin } from './shapes.js';
+import { anchorable, clampExtent, erasableAt, hasExtent, snapExtent, snapOrigin } from './shapes.js';
 import type { WallTool } from './walltool.js';
 import { snapToCorner, wallAt } from './walls.js';
 
@@ -960,8 +960,10 @@ export function attachInput(
     // A sweep that snapped to nothing keeps nothing. The release above still
     // goes out — five other screens were shown this — but committing a shape
     // with no extent leaves something on the board that cannot be seen and can
-    // only be erased by clicking the square it is hiding in.
-    if (!d.keeps || (d.to.x === 0 && d.to.y === 0)) return;
+    // only be erased by clicking the square it is hiding in. `hasExtent` is
+    // where "nothing" is decided, because a rectangle can reach it on one axis
+    // alone and the shape that leaves is unclickable rather than invisible.
+    if (!d.keeps || !hasExtent(d.tool, d.to)) return;
     const from: WireOrigin =
       d.anchor === null ? { kind: 'point', at: d.at } : { kind: 'token', at: d.anchor };
     send({ type: 'add_shape', kind: d.tool, from, to: d.to, color: d.color });

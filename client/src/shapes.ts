@@ -233,6 +233,25 @@ export function isArea(kind: ShapeKind): boolean {
 }
 
 /**
+ * Whether a sweep has enough size to be worth keeping.
+ *
+ * The rule is one sentence — a shape nobody can see is a shape nobody can find
+ * to erase — and a rectangle is the kind that can fail it while still looking
+ * like something. A circle and a cone snap their *magnitude*, so the only way
+ * either reaches nothing is by reaching nothing on both axes at once; a
+ * rectangle snaps per axis, so a drag a hair off the horizontal keeps its three
+ * cells of width and rounds its height to zero. What is left has no area: it
+ * covers no cell centres from a corner origin, and from a centre origin it
+ * tints a whole row that `containsPoint` will answer for only along the exact
+ * line through it. Either way it can only be taken off the board with "clear
+ * all", which is what makes it a defect rather than a thin marker.
+ */
+export function hasExtent(kind: ShapeKind, to: Vec2): boolean {
+  if (kind === 'rect') return to.x !== 0 && to.y !== 0;
+  return to.x !== 0 || to.y !== 0;
+}
+
+/**
  * The reading a shape carries, in feet, rounded the way the table counts.
  *
  * Deliberately *not* the way `feetMoved` rounds. A movement ruler counts cells

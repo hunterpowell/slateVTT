@@ -195,7 +195,7 @@ const HALLOWEEN_ROSTER: [(&str, &str); 6] = [
     ("corvus", "Corvus Nevermore"),
     ("rostam", "Rostam"),
     ("ironbeak", "Iron Beak"),
-    ("player-5", "Player 5"),
+    ("baron", "Baron"),
     ("player-6", "Player 6"),
 ];
 

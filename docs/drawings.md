@@ -183,6 +183,16 @@ other screens were shown the sketch, but a zero extent is not committed: a shape
 nobody can see and nobody can find to erase. Rounding is what makes that reachable — free-hand, a
 sweep past the click slop always had *some* extent.
 
+**"Nothing" is per kind, and that is `hasExtent`.** A circle and a cone snap their magnitude, so
+either reaches nothing only by reaching nothing on both axes at once; a rectangle snaps per axis, so
+a drag a hair off the horizontal keeps its three cells of width and rounds its height to zero. What
+that commits has no *area*, and it fails the rule above in the half that is easy to miss: it is
+visible — from a cell-centre origin it tints a whole row — and it is not clickable, because
+`containsPoint` at zero slack answers for a flat rectangle only along the exact line through it. Off
+a corner origin it covers no cell centres at all and draws as a hairline. Either way "clear all" was
+the only way back off the board, which is why a rectangle needs both axes and the other three need
+one.
+
 Neither rule is the token rule written twice. `snap_to_cell` depends on how wide a token is — an
 even width settles on the corner four cells meet at — and it lives on the server as the only copy of
 itself; a shape has no width to settle by, so it is offered every point on the lattice and the hand

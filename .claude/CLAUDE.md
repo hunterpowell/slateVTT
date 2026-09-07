@@ -725,7 +725,7 @@ the wire. The sender is not echoed their own. **A ping off the edge of your view
 the edge of the screen**, never a camera pan.
 
 → **`docs/drawings.md`** before touching `shapes.ts`, `drawtool.ts`, `ruler.ts`, `pings.ts`,
-`snapOrigin`/`snapExtent`, `trailCells`, `crossesWall`, `edgeMarker`, `SetDiagonals`, or
+`snapOrigin`/`snapExtent`/`hasExtent`, `trailCells`, `crossesWall`, `edgeMarker`, `SetDiagonals`, or
 `Shape`/`ShapeKind`/`Sketch`/`Ping` on the server.
 
 ## Walls and doors
