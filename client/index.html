@@ -92,6 +92,28 @@
         border-bottom-color: #4a525e;
       }
 
+      /* Quiet, like the link it sits beside, because neither is a control the
+         eye should land on while a fight is running. A button rather than an
+         anchor, and everybody's: a player who has zoomed into a corner of the
+         map is exactly as lost as the DM is. */
+      #fit-board {
+        pointer-events: auto;
+        padding: 0;
+        border: none;
+        border-bottom: 1px solid #2b3038;
+        background: none;
+        color: #7d8590;
+        font: inherit;
+        font-size: 12px;
+        cursor: pointer;
+        user-select: none;
+      }
+
+      #fit-board:hover {
+        color: #cfe6ff;
+        border-bottom-color: #4a525e;
+      }
+
       #banner {
         position: fixed;
         top: 0;
@@ -1006,7 +1028,18 @@
         gap: 4px;
       }
 
-      #initiative button {
+      /* Every button in this panel except the marker swatches, which bring
+         their own round, coloured, mostly-transparent look and are not in the
+         chevron-and-turn-arrow family this describes.
+
+         Excluded here rather than overridden below them, because an id plus a
+         type beats any number of classes: `.marker.is-on` setting a fill lost
+         to this rule and every swatch on a row drew hollow whatever it was set
+         to, which reads as the toggle not working. That is `.map-library-pick`'s
+         trap one panel over — the comment there is the same lesson from the
+         other side, and naming the exception is what keeps the swatch rules
+         working wherever else they are used. */
+      #initiative button:not(.marker) {
         border: 1px solid #2b3038;
         border-radius: 4px;
         background: #171a1f;
@@ -1015,7 +1048,7 @@
         cursor: pointer;
       }
 
-      #initiative button:hover {
+      #initiative button:not(.marker):hover {
         border-color: #4a525e;
         color: #e8e6e1;
       }
@@ -1544,12 +1577,13 @@
         pointer-events: none;
       }
 
-      /* And the two readouts that describe the board go with it. A zoom
+      /* And everything else that describes the board goes with it. A zoom
          percentage and a cell coordinate floating over a campfire are the same
          lie a panel describing an off-screen token would be — and the hint
          below names three gestures that have just stopped working. */
       body.covered #hud,
-      body.covered #hint {
+      body.covered #hint,
+      body.covered #fit-board {
         display: none;
       }
 
@@ -1886,6 +1920,14 @@
         color: #c4b2ec;
       }
 
+      /* Out-specifies `.token-field > span`, which gives the *label* beside it
+         a fixed 40px column and would otherwise give this one too — the same
+         thing the hit point slash has to do one field up. */
+      .token-field > #token-markers {
+        width: auto;
+        flex: 1;
+      }
+
       .token-art {
         display: flex;
         align-items: center;
@@ -1919,6 +1961,11 @@
         margin-bottom: 0;
       }
 
+      #token-duplicate {
+        flex: none;
+        width: auto;
+      }
+
       #token-delete {
         flex: none;
         width: auto;
@@ -1928,6 +1975,83 @@
       #token-delete:hover {
         border-color: #7a2f2f;
         color: #f4c4c4;
+      }
+
+      /* --- markers (the token panel and the initiative rows) ---------------- */
+
+      /* Hollow for a mark a creature does not carry and filled for one it does,
+         so the six on offer and the ones that are set read as a single control
+         rather than as two. All six are always shown: the question is "which of
+         these is on", and a row that grew as it was used would move the swatch
+         out from under the pointer between two clicks. */
+      .markers {
+        display: flex;
+        align-items: center;
+        gap: 4px;
+      }
+
+      .marker {
+        width: 12px;
+        height: 12px;
+        flex: none;
+        padding: 0;
+        border: 1px solid var(--marker);
+        border-radius: 50%;
+        background: none;
+        cursor: pointer;
+      }
+
+      .marker.is-on {
+        background: var(--marker);
+      }
+
+      .marker:hover {
+        box-shadow: 0 0 0 2px rgba(255, 255, 255, 0.14);
+      }
+
+      /* `dead` is the one member that is not a colour, and the swatch says so
+         before anybody hovers it: an X rather than a disc, matching the X the
+         board draws across the portrait. The markup is identical to the other
+         six — `markerRow` sets `data-marker` on every swatch and branches on
+         nothing — so this is the whole of the difference. */
+      .marker[data-marker='dead'] {
+        border-radius: 2px;
+        border-color: rgba(232, 230, 225, 0.5);
+        position: relative;
+      }
+
+      .marker[data-marker='dead']::before {
+        content: '×';
+        position: absolute;
+        inset: 0;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        font-size: 13px;
+        line-height: 1;
+        color: var(--marker);
+      }
+
+      /* Filled the way the six are, so "on" reads the same across the row. The
+         glyph flips dark to stay legible against it. */
+      .marker[data-marker='dead'].is-on::before {
+        color: #1a1a1a;
+      }
+
+      .init-row .marker[data-marker='dead']::before {
+        font-size: 11px;
+      }
+
+      /* Tighter on a row than on the panel: this is a third line under a name
+         and a hit point bar, in a column whose height is already what the fold
+         exists to give back. */
+      .init-row .markers {
+        gap: 3px;
+      }
+
+      .init-row .marker {
+        width: 10px;
+        height: 10px;
       }
 
       /* --- draw tool (everyone) --------------------------------------------- */
@@ -2591,6 +2715,15 @@
           <input id="token-hidden" type="checkbox" />
           <span>hidden from the table</span>
         </label>
+        <!-- Six colours, and what any of them means tonight is between the DM
+             and the table. Slate draws a pip and knows nothing about it: a
+             swatch labelled "poisoned" is the 5e rules knowledge the non-goal
+             in `.claude/CLAUDE.md` refuses. The same row is on each initiative
+             row, which is where they get toggled mid-fight. -->
+        <div class="token-field">
+          <span>marks</span>
+          <span id="token-markers"></span>
+        </div>
         <div class="token-art">
           <span id="token-art-preview" class="token-art-preview"></span>
           <label class="map-button">
@@ -2609,8 +2742,13 @@
         <button id="token-library" class="map-button" type="button">choose from library…</button>
         <div id="token-library-list" class="map-library" hidden></div>
         <button id="token-art-clear" class="map-subtle" type="button" hidden>remove art</button>
+        <!-- The form already keeps its fields so six goblins is six clicks;
+             this is for the seventh that is a copy of one already built, art,
+             total, light and all. Hidden with delete, because both of them are
+             about a token that exists. -->
         <div class="token-actions">
           <button id="token-save" class="map-button map-primary" type="button">create</button>
+          <button id="token-duplicate" class="map-button" type="button" hidden>duplicate</button>
           <button id="token-delete" class="map-button" type="button" hidden>delete</button>
         </div>
         <button id="token-new" class="map-subtle" type="button" hidden>+ new token</button>
@@ -2828,6 +2966,11 @@
     <div id="turn-toast" hidden></div>
     <div id="corner">
       <div id="hint">drag token to move · drag map or middle-drag to pan · wheel to zoom</div>
+      <!-- The answer to the zoom percentage in `#hud`. It is out here for the
+           link's reason below, and it goes *before* the link so that the link
+           stays the last child: only `#hint` grows, so everything to its right
+           is what stays put. -->
+      <button id="fit-board" type="button" title="Fit the board in view (Home)">fit board</button>
       <!-- Everybody's, and outside every panel: it arms nothing, so it is
            neither a rail tab, which would owe a `stop`, nor a dock tab, which
            would stack and carry a count. See `client/spells/README.md`. -->

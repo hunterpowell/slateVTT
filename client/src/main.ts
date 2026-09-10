@@ -1,5 +1,5 @@
-import type { Camera, Vec2 } from './coords.js';
-import { gridToWorld, screenToWorld, worldToGrid } from './coords.js';
+import type { Camera, Rect, Vec2 } from './coords.js';
+import { gridToWorld, playRect, screenToWorld, worldToGrid } from './coords.js';
 import type { Chat } from './chat.js';
 import { createChat } from './chat.js';
 import type { Dock } from './dock.js';
@@ -78,7 +78,7 @@ import { createTokenTool } from './tokens.js';
 import type { Turn } from './turn.js';
 import { createTurn } from './turn.js';
 import type { Undo } from './undo.js';
-import { createUndo } from './undo.js';
+import { createUndo, typingIn } from './undo.js';
 import type { Wall } from './walls.js';
 import { wallFromWire } from './walls.js';
 import type { WallTool } from './walltool.js';
@@ -88,6 +88,9 @@ interface Ui {
   canvas: HTMLCanvasElement;
   ctx: CanvasRenderingContext2D;
   hud: HTMLElement;
+  /** In the bottom-right corner, and everybody's: the camera is per client and
+   *  so is this. */
+  fitBoard: HTMLButtonElement;
   banner: HTMLElement;
   picker: HTMLElement;
   roomPicker: HTMLElement;
@@ -220,7 +223,9 @@ interface Ui {
     artClear: HTMLButtonElement;
     library: HTMLButtonElement;
     libraryList: HTMLElement;
+    markers: HTMLElement;
     save: HTMLButtonElement;
+    duplicate: HTMLButtonElement;
     remove: HTMLButtonElement;
     fresh: HTMLButtonElement;
     hint: HTMLElement;
@@ -264,6 +269,7 @@ function findUi(): Ui {
     canvas,
     ctx,
     hud: need('#hud'),
+    fitBoard: need<HTMLButtonElement>('#fit-board'),
     banner: need('#banner'),
     picker: need('#picker'),
     roomPicker: need('#room-picker'),
@@ -396,7 +402,9 @@ function findUi(): Ui {
       artClear: need<HTMLButtonElement>('#token-art-clear'),
       library: need<HTMLButtonElement>('#token-library'),
       libraryList: need('#token-library-list'),
+      markers: need('#token-markers'),
       save: need<HTMLButtonElement>('#token-save'),
+      duplicate: need<HTMLButtonElement>('#token-duplicate'),
       remove: need<HTMLButtonElement>('#token-delete'),
       fresh: need<HTMLButtonElement>('#token-new'),
       hint: need('#token-hint'),
@@ -551,6 +559,21 @@ function boot(ui: Ui, choice: RoomChoice): void {
     const url = new URL(location.href);
     url.searchParams.delete('room');
     location.replace(`${url.pathname}${url.search}${url.hash}`);
+  });
+
+  // Both no-ops until a board exists, which is lookAt's arrangement: the stage
+  // owns the camera and it is not built until Welcome.
+  ui.fitBoard.addEventListener('click', () => stage?.fit());
+
+  // The third global key in this client, after Escape and Ctrl+Z, and the
+  // second to need typingIn: Home is start-of-line inside the chat box and the
+  // initiative value field, and a board that jumped while somebody was halfway
+  // through a whisper is the one way this can be actively annoying.
+  window.addEventListener('keydown', (e) => {
+    if (e.key !== 'Home') return;
+    if (typingIn(e.target)) return;
+    e.preventDefault();
+    stage?.fit();
   });
 
   /**
@@ -1351,6 +1374,14 @@ interface Stage {
    * the next map, asked for from a panel that is looking at this one.
    */
   lookAt(token: Token): void;
+  /**
+   * Frames the board on screen, for somebody who has panned off the edge of it.
+   *
+   * lookAt's counterpart at map scale, and here for the same reason: the camera
+   * belongs to the board. It does not go through the wire and never could -
+   * where one person is looking is nobody else's business.
+   */
+  fit(): void;
 }
 
 async function start(
@@ -1524,6 +1555,15 @@ async function start(
       if (at === null) return;
       const world = gridToWorld(shownBoard(scene).grid, at.x, at.y);
       centreOn(cam, syncCanvasSize(ui.canvas), world);
+    },
+    fit: () => {
+      // **The play area when the DM has drawn one, and deliberately not what
+      // reloadMap does.** A load frames the whole image because the next thing
+      // that happens to a new map is being calibrated, and the margin is part
+      // of what the DM is looking at. This is asked for mid-fight by somebody
+      // who has lost the board, and the board is the part ruled into cells.
+      const board = shownBoard(scene);
+      fitToRect(cam, syncCanvasSize(ui.canvas), playRect(board.playArea, map.width, map.height));
     },
   };
 
@@ -1734,9 +1774,28 @@ function syncCanvasSize(canvas: HTMLCanvasElement): Viewport {
 
 /** Centres the whole map in view without zooming past 1:1. */
 function fitToMap(cam: Camera, view: Viewport, mapW: number, mapH: number): void {
-  cam.zoom = Math.min(view.width / mapW, view.height / mapH, 1);
-  cam.x = mapW / 2 - view.width / (2 * cam.zoom);
-  cam.y = mapH / 2 - view.height / (2 * cam.zoom);
+  fitToRect(cam, view, { x: 0, y: 0, w: mapW, h: mapH });
+}
+
+/**
+ * Frames a rectangle of the image, without zooming past 1:1.
+ *
+ * The ceiling is what stops a small map - or a tight play area on a large one -
+ * filling the screen with four enormous cells: the art has a resolution and
+ * going past it buys blur rather than detail.
+ *
+ * The floor on the sides is not defensive tidiness. playRect clips to the image
+ * and returns a zero-width rectangle for a saved play area that no longer
+ * overlaps one - a map replaced with a smaller image - and dividing by that
+ * gives an infinite zoom and a camera at NaN, which is a board that does not
+ * come back without a refresh.
+ */
+function fitToRect(cam: Camera, view: Viewport, at: Rect): void {
+  const w = Math.max(1, at.w);
+  const h = Math.max(1, at.h);
+  cam.zoom = Math.min(view.width / w, view.height / h, 1);
+  cam.x = at.x + w / 2 - view.width / (2 * cam.zoom);
+  cam.y = at.y + h / 2 - view.height / (2 * cam.zoom);
 }
 
 /**

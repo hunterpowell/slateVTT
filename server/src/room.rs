@@ -18,7 +18,7 @@ use uuid::Uuid;
 use crate::fog::{self, Cell, FogView, Override, OverrideView};
 use crate::protocol::{
     Calibration, ChatLine, ChatTo, ClientId, ClientMsg, Colours, Diagonals, GridShape, Hp,
-    Initiative, InitiativeEntry, MapInfo, Origin, Owner, PALETTE, PlayerId, Pos, Prepared,
+    Initiative, InitiativeEntry, MapInfo, Marker, Origin, Owner, PALETTE, PlayerId, Pos, Prepared,
     RoomView, RosterEntry, RosterSlot, ServerMsg, Shape, ShapeId, ShapeKind, StagedView, Token,
     TokenId, TokenView, Wall, WallId, WallKind,
 };
@@ -1603,6 +1603,7 @@ fn token_fields(
     size: f32,
     hp: Option<Hp>,
     light_ft: Option<f32>,
+    markers: &[Marker],
 ) -> Result<(), String> {
     let name = name.trim();
     if name.is_empty() || name.chars().count() > MAX_TOKEN_NAME_LEN {
@@ -1644,6 +1645,30 @@ fn token_fields(
             fog::MIN_VISION_FT,
             fog::MAX_VISION_FT
         ));
+    }
+    // **The list is a set, and refusing duplicates is what bounds its length.**
+    // `Marker::ALL` is a closed set, so a list with no repeats cannot be longer
+    // than that however long the array on the wire was — which is the count
+    // bound `docs/net.md` asks of every command carrying a variable-length
+    // collection. The byte bound beside it is
+    // `tokens::the_largest_token_edit_fits_in_a_frame`.
+    //
+    // The length is tested *first* because the scan below is quadratic. The
+    // frame cap already keeps it to a few million comparisons at worst, so this
+    // is not the difference between safe and not; it is one comparison against a
+    // loop, and getting the cheap test out of the way first is free.
+    if markers.len() > Marker::ALL.len() {
+        return Err(format!(
+            "a token can carry at most {} markers",
+            Marker::ALL.len()
+        ));
+    }
+    if markers
+        .iter()
+        .enumerate()
+        .any(|(i, m)| markers[..i].contains(m))
+    {
+        return Err("a token cannot carry the same marker twice".to_owned());
     }
     Ok(())
 }
@@ -3121,6 +3146,7 @@ impl RoomState {
                 y,
                 hp,
                 light_ft,
+                markers,
                 staged,
                 ..
             } => {
@@ -3131,7 +3157,7 @@ impl RoomState {
                 if self.tokens.len() >= MAX_TOKENS {
                     return Err(format!("this room already holds {MAX_TOKENS} tokens"));
                 }
-                token_fields(name, img, *size, *hp, *light_ft)?;
+                token_fields(name, img, *size, *hp, *light_ft, markers)?;
                 finite(&[*x, *y])
             }
 
@@ -3142,13 +3168,14 @@ impl RoomState {
                 size,
                 hp,
                 light_ft,
+                markers,
                 ..
             } => {
                 require_dm(client, "change a token")?;
                 if !self.tokens.contains_key(id) {
                     return Err(format!("no such token: {}", id.0));
                 }
-                token_fields(name, img, *size, *hp, *light_ft)
+                token_fields(name, img, *size, *hp, *light_ft, markers)
             }
 
             ClientMsg::DeleteToken { id } => {
@@ -3697,6 +3724,7 @@ impl RoomState {
                 hidden,
                 hp,
                 light_ft,
+                markers,
                 staged,
             } => {
                 // The id is invented here rather than accepted from the client,
@@ -3718,6 +3746,7 @@ impl RoomState {
                         owner,
                         img,
                         size,
+                        markers,
                         hidden,
                         hp,
                         light_ft,
@@ -3743,6 +3772,7 @@ impl RoomState {
                 hidden,
                 hp,
                 light_ft,
+                markers,
             } => {
                 // Read through `unseen_by_table`, which needs `&self`, so it has
                 // to happen before the mutable borrow below rather than beside
@@ -3762,6 +3792,7 @@ impl RoomState {
                 token.name = name.trim().to_owned();
                 token.img = img;
                 token.owner = owner;
+                token.markers = markers;
                 token.hidden = hidden;
                 token.hp = hp;
                 token.light_ft = light_ft;

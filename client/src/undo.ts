@@ -32,15 +32,21 @@ export interface Undo {
 }
 
 /**
- * Whether a keystroke belongs to whatever the DM is typing in.
+ * Whether a keystroke belongs to whatever somebody is typing in.
  *
  * Ctrl+Z inside the token name, the hit point boxes or the initiative value is
  * the browser's own undo, and stealing it there would make a text field the one
  * place in the application where the standard shortcut does something violent
  * and unrelated. `isContentEditable` is in for completeness rather than because
  * this project has one.
+ *
+ * **Exported because it is the rule rather than this file's rule.** Every
+ * global key that is not Escape has to ask it - Home is start-of-line inside
+ * the chat box before it is anything to do with the camera - and the four
+ * Escape bindings get away without it only because the element-scoped handlers
+ * beside them call stopPropagation.
  */
-function typingIn(target: EventTarget | null): boolean {
+export function typingIn(target: EventTarget | null): boolean {
   if (!(target instanceof HTMLElement)) return false;
   return (
     target instanceof HTMLInputElement ||

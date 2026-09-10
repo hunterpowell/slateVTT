@@ -1,4 +1,4 @@
-//! The token lifecycle, the name switch, and the two DM-only fields.
+//! The token lifecycle, the name switch, the markers, and the DM-only fields.
 //! See `docs/tokens.md`.
 
 use super::*;
@@ -76,6 +76,7 @@ fn resizing_a_token_moves_it_onto_the_right_lattice() {
             hidden: false,
             hp: None,
             light_ft: None,
+            markers: Vec::new(),
         },
     );
 
@@ -111,6 +112,7 @@ fn an_edit_that_leaves_the_size_alone_leaves_the_position_alone() {
             hidden: false,
             hp: None,
             light_ft: None,
+            markers: Vec::new(),
         },
     );
 
@@ -142,6 +144,7 @@ fn handing_a_token_to_a_player_lets_them_move_it_and_taking_it_back_does_not() {
         hidden: false,
         hp: None,
         light_ft: None,
+        markers: Vec::new(),
     };
 
     state.handle(ClientId(1), hand_to(Owner::Player(PlayerId::new("saelyn"))));
@@ -173,6 +176,7 @@ fn a_player_cannot_touch_the_lifecycle_at_all() {
                 hidden: false,
                 hp: None,
                 light_ft: None,
+                markers: Vec::new(),
             },
             ClientMsg::DeleteToken {
                 id: TokenId::new("t1"),
@@ -210,6 +214,7 @@ fn a_players_refused_edit_changes_nothing() {
             hidden: false,
             hp: None,
             light_ft: None,
+            markers: Vec::new(),
         },
     );
 
@@ -308,6 +313,7 @@ fn a_token_that_does_not_exist_cannot_be_edited_or_deleted() {
                     hidden: false,
                     hp: None,
                     light_ft: None,
+                    markers: Vec::new(),
                 }
             )
             .is_err()
@@ -383,6 +389,7 @@ fn token_art_has_to_live_on_this_server() {
         hidden: false,
         hp: None,
         light_ft: None,
+        markers: Vec::new(),
         staged: false,
     };
 
@@ -602,6 +609,7 @@ fn a_hidden_monster_is_nowhere_in_the_json_a_player_is_sent() {
                     max: 4242,
                 }),
                 light_ft: None,
+                markers: Vec::new(),
                 staged,
             },
             other => other,
@@ -666,6 +674,7 @@ fn editing_an_already_hidden_token_tells_the_table_nothing() {
                 hidden,
                 hp,
                 light_ft,
+                markers: Vec::new(),
             },
             other => other,
         },
@@ -787,6 +796,7 @@ fn hit_points_reach_the_dm_and_nobody_else() {
                     max: 59,
                 }),
                 light_ft: None,
+                markers: Vec::new(),
             },
             other => other,
         },
@@ -845,6 +855,7 @@ fn hit_points_are_bounded() {
             hidden,
             hp,
             light_ft: None,
+            markers: Vec::new(),
         },
         other => other,
     };
@@ -1000,4 +1011,204 @@ fn a_hidden_token_and_its_hit_points_survive_the_save_file() {
         made(&restored, "Ambusher").hidden,
         "an ambush set up last week is still set up tonight"
     );
+}
+
+// --- markers ------------------------------------------------------------
+
+/// `edit` with a different set of marks on it.
+fn set_markers(token: &Token, want: &[Marker]) -> ClientMsg {
+    match edit(token) {
+        ClientMsg::UpdateToken {
+            id,
+            name,
+            img,
+            size,
+            owner,
+            hidden,
+            hp,
+            light_ft,
+            ..
+        } => ClientMsg::UpdateToken {
+            id,
+            name,
+            img,
+            size,
+            owner,
+            hidden,
+            hp,
+            light_ft,
+            markers: want.to_vec(),
+        },
+        other => other,
+    }
+}
+
+#[test]
+fn the_dm_marks_a_creature_and_the_table_is_shown_it() {
+    // **The opposite of `hp` beside it, and on purpose.** Every other field the
+    // DM alone may write is also one the table may not read; a mark nobody at
+    // the table can see is not a mark, so this is the one field on a token that
+    // `view_for` copies rather than redacts.
+    let mut state = room();
+    let _dm = join_as_dm(&mut state, ClientId(1));
+    let mut saelyn = join_as_player(&mut state, ClientId(2), "saelyn");
+
+    state.handle(
+        ClientId(1),
+        set_markers(&token(&state, "t6"), &[Marker::Red, Marker::Blue]),
+    );
+
+    assert_eq!(token(&state, "t6").markers, [Marker::Red, Marker::Blue]);
+    match drain(&mut saelyn).as_slice() {
+        [ServerMsg::TokenChanged { token }] => assert_eq!(
+            token.markers,
+            [Marker::Red, Marker::Blue],
+            "the table draws the pips, so the table is sent them"
+        ),
+        other => panic!("expected one TokenChanged, got {other:?}"),
+    }
+}
+
+#[test]
+fn a_mark_on_a_creature_the_table_cannot_see_reaches_nobody() {
+    // Markers are public and this still holds, because it is not a fact about
+    // the field: a token the table cannot see takes everything about it away,
+    // through `unseen_by_table` like every other field on it. Asserted because
+    // the claim is being made, not because anything here branches on it.
+    let mut state = room();
+    let _dm = join_as_dm(&mut state, ClientId(1));
+    state.handle(ClientId(1), set_hidden(&token(&state, "t6"), true));
+
+    let mut saelyn = join_as_player(&mut state, ClientId(2), "saelyn");
+    state.handle(
+        ClientId(1),
+        set_markers(&token(&state, "t6"), &[Marker::Purple]),
+    );
+
+    assert!(
+        drain(&mut saelyn).is_empty(),
+        "a creature they were never told about has no pips to show them"
+    );
+    let json = serde_json::to_string(&state.snapshot_for(&as_player("saelyn"))).expect("encodes");
+    assert!(
+        !json.contains("purple"),
+        "and it is absent from the snapshot too, which is invariant 3"
+    );
+}
+
+#[test]
+fn a_creature_cannot_carry_the_same_mark_twice() {
+    // The list is a set. Two of the same pip is not a thing the board can show,
+    // and refusing it is also what bounds the length of the list at all.
+    let mut state = room();
+    let _dm = join_as_dm(&mut state, ClientId(1));
+
+    assert!(
+        state
+            .check(
+                ClientId(1),
+                &set_markers(&token(&state, "t6"), &[Marker::Red, Marker::Red]),
+            )
+            .is_err()
+    );
+    assert!(
+        state
+            .check(
+                ClientId(1),
+                &set_markers(&token(&state, "t6"), &[Marker::Red, Marker::Blue]),
+            )
+            .is_ok(),
+        "two different ones are the ordinary case"
+    );
+}
+
+#[test]
+fn a_creature_cannot_carry_more_marks_than_there_are_markers() {
+    // Checked before the duplicate scan, which is quadratic, so a list long
+    // enough to be worth refusing is refused by one comparison.
+    let mut state = room();
+    let _dm = join_as_dm(&mut state, ClientId(1));
+
+    let too_many: Vec<Marker> = Marker::ALL.iter().copied().cycle().take(20).collect();
+    assert!(
+        state
+            .check(ClientId(1), &set_markers(&token(&state, "t6"), &too_many))
+            .is_err()
+    );
+    assert!(
+        state
+            .check(
+                ClientId(1),
+                &set_markers(&token(&state, "t6"), &Marker::ALL),
+            )
+            .is_ok(),
+        "every marker at once is legal, which is what makes the set the bound"
+    );
+}
+
+#[test]
+fn taking_back_a_mark_is_an_ordinary_undo() {
+    // The whole of what riding `UpdateToken` buys: no arm in `persists`, none
+    // in `undid`, and the ring already knows what to call it.
+    let mut state = booted(room());
+    let _dm = join_as_dm(&mut state, ClientId(1));
+
+    state.handle(
+        ClientId(1),
+        set_markers(&token(&state, "t6"), &[Marker::Red]),
+    );
+    assert_eq!(token(&state, "t6").markers, [Marker::Red]);
+
+    state.handle(ClientId(1), ClientMsg::Undo);
+    assert!(
+        token(&state, "t6").markers.is_empty(),
+        "the ring holds the whole room and a mark is part of it"
+    );
+}
+
+#[test]
+fn the_largest_token_edit_fits_in_a_frame() {
+    // `docs/net.md`'s rule, for the second command in this project to carry a
+    // variable-length collection. A refusal the socket dies before delivering
+    // is not a refusal, so the largest legal instance is measured rather than
+    // the bounds being trusted to relate to the frame cap.
+    let frame = serde_json::json!({
+        "type": "update_token",
+        "id": "t6",
+        "name": "x".repeat(MAX_TOKEN_NAME_LEN),
+        "img": format!("/{}", "y".repeat(MAX_URL_LEN - 1)),
+        "size": 4.0,
+        "owner": Owner::Dm,
+        "hidden": true,
+        "hp": Hp {
+            current: -MAX_HP,
+            max: MAX_HP,
+        },
+        "light_ft": fog::MAX_VISION_FT,
+        "markers": Marker::ALL,
+    });
+    let bytes = serde_json::to_vec(&frame).expect("encodes");
+
+    // The shape above is the server's own, not this test's idea of it.
+    let parsed: ClientMsg = serde_json::from_slice(&bytes).expect("the server parses its own");
+    assert!(
+        matches!(parsed, ClientMsg::UpdateToken { ref markers, .. }
+            if markers.len() == Marker::ALL.len()),
+        "the frame being measured is the command being capped",
+    );
+
+    assert!(
+        bytes.len() <= crate::MAX_WS_MESSAGE_BYTES,
+        "the largest legal token edit is {} bytes against a frame cap of {}, so \
+         the DM's socket would die on the read before `check` could refuse it",
+        bytes.len(),
+        crate::MAX_WS_MESSAGE_BYTES,
+    );
+
+    // **No assertion the other way, unlike `largest_override_fits_in_a_frame`.**
+    // That one guards a tuned number drifting far under what a frame holds,
+    // because a fill refused for nothing is a real cost. Here the bound is the
+    // closed marker set rather than a number chosen against the frame, so there
+    // is no headroom to have lost: this edit is orders of magnitude under the
+    // cap and is meant to stay there.
 }

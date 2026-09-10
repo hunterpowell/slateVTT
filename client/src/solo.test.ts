@@ -55,6 +55,7 @@ function token(cx: number, cy: number, lightFt: number | null = null): Token {
     owner: { kind: 'dm' },
     img: '',
     size: 1,
+    markers: [],
     hidden: false,
     hp: null,
     lightFt,

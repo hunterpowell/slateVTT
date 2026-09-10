@@ -171,6 +171,7 @@ screen and which token is standing on a given square.
 | `drive-status.mjs` | The status page — its three states, that it fits an 800×480 panel, and that a join shows up on it | both     |
 | `drive-mirror.mjs` | Player view — the DM's own board redrawn as the table's, and put down again | DM       |
 | `drive-isometric.mjs` | Calibrating a map to diamonds, and the table getting the same lattice | both     |
+| `drive-fit.mjs`    | The fit-board control and the Home key, on two cameras that are not the same camera | both     |
 | `drive-sound.mjs`  | The room's music — the player's `<audio>` pointed at the DM's pick, and an undo not restarting it | both     |
 
 The ones marked *both* open two browsers at once, and that is the point of them: almost everything

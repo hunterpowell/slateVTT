@@ -27,7 +27,7 @@ Do not work ahead. Each milestone should run and be usable before starting the n
 6. Map upload and grid calibration UI.
 7. Package for Windows session hosting and deploy behind a Cloudflare Tunnel.
 
-**Everything through 28 is built, and so are 30 through 41; 29 is not.** 25, 26, 34 and 38 were
+**Everything through 28 is built, and so are 30 through 43; 29 is not.** 25, 26, 34 and 38 were
 never planned and are out of order for the reasons their own entries give. 33 is *Multi-room*, which was
 unscheduled until a Halloween one-shot became the second room it was waiting for. Everything from 8 on was planned after the original
 seven; 17 and 18 were workshopped after 16 landed, 19–24 after 18, and 27–29 on 2026-08-18 after 26.
@@ -1889,6 +1889,153 @@ and 28 also overturned something *its own* design section said, which its entry 
     on `Saved` and never can be found there. Following its `rm` while the room is playing gives a
     404 on the next loop. Fixing it properly means the audit reading live room state, which is
     exactly the reaper that file exists to refuse.
+
+42. **Done**, on 2026-09-09. Duplicate and fit board — two small things found by playing rather
+    than by this file, built together because neither touches Rust. Milestone 18/26/36's shape a
+    fourth time. See *Tokens* in `docs/tokens.md` and *The bottom-right corner* in
+    `docs/frontend.md`.
+
+    **Duplicate is `create_token` with the fields read off a token instead of off the form**, and
+    the whole of what made it a client-only change is that the server already invents the id and
+    already snaps the position. A `DuplicateToken` command would have bought six protocol edits and
+    four enumerated arms to reach code that was already correct. The token panel had kept its
+    fields after a create since milestone 9 — six goblins is six clicks — so what was actually
+    missing was never the *form* state: it was the art, the total, the light, the owner and the
+    marks of a creature built earlier in the evening, which are read out of a token.
+
+    Two decisions worth keeping. It searches outward from **the original** rather than from the
+    middle of the view, which is the one place it differs from a create — a copy is a second of
+    something and belongs beside the first — and `spaceFor` already did the ring search, so that
+    was a changed argument rather than new code. And `staged_pos` is not on `CreateToken`, so a
+    copy arrives **unplanned**; that is right rather than a gap, since a plan is a cell and two
+    creatures do not want the same one.
+
+    **Fit board is the first control in `#corner` since the spells link**, and the link's own
+    comment turned out to be the argument for it: it arms nothing, so it owes the rail no `stop`,
+    and it carries no count, so it wants no dock tab. Three things came out of building it.
+
+    **It frames the play area, and a map load deliberately still frames the image.** Those look
+    like the same question and are not: a load is followed by calibrating, where the margin is part
+    of what the DM is looking at, and this is asked for mid-fight by somebody who has lost the
+    board. `fitToMap` became a wrapper over `fitToRect` rather than growing a branch.
+
+    **The floor on `fitToRect`'s sides is load-bearing.** `playRect` clips to the image and returns
+    a zero-width rectangle for a saved play area that no longer overlaps one — a map replaced with
+    a smaller image — and dividing by that gives an infinite zoom and a camera at `NaN`. A board
+    that does not come back without a refresh, from the control whose entire job is getting the
+    board back.
+
+    **`Home` is the third global key in this client and the second to need `typingIn`**, which was
+    exported from `undo.ts` rather than copied. Escape is bound four times and gets away without
+    the guard only because the element-scoped handlers beside it call `stopPropagation`; `Home` is
+    start-of-line inside the chat box, and a board that jumped while a whisper was half typed is
+    the one way this control can be actively annoying.
+
+    `tools/drive-fit.mjs` opens two browsers for one reason: this is **everybody's**, and the
+    failure it guards against is it being built inside the `identity.isDm` half of `onWelcome`
+    where nearly every other control lives.
+
+43. **Done**, on 2026-09-09; the pips became a band and gained `dead` on 2026-09-10. Token
+    markers — six colours and a dead mark the DM puts on a creature, and nothing anywhere that
+    knows what any of them means. See *Markers* in `docs/tokens.md`.
+
+    **It is the first public field on a token, and that is what is new about it.** Every asymmetry
+    on `Token` before this runs one way — `hp`, `light_ft`, `staged_pos` and `staged_only` all
+    reach the DM and nobody else — so `view_for` had only ever been asked to redact. This one is
+    copied unconditionally, because a mark nobody at the table can see is not a mark. It is
+    `NamesChanged` sitting beside `FogChanged` rather than beside `WallsChanged`, at token scale.
+
+    **The server half was milestone 39's shape and cost almost nothing.** Riding `CreateToken` and
+    `UpdateToken` meant no new command, no new event, no arm in `message_for`, no entry in
+    `persists`, `undid` or `moves_sight` — all three match `UpdateToken { .. }` — and
+    `protocol-tags.json` untouched. Undo came with the rest rather than needing the two lines the
+    scratchpad and a player's colour each needed.
+
+    Two things about the bound are worth keeping. `Marker` is a **fieldless serde enum**, so an
+    unknown marker fails to deserialize and `check` needs no arm for validity — `ShapeKind`'s
+    arrangement. And the **count bound is not a number**: `Marker::ALL` is closed at six and
+    duplicates are refused, so "no repeats" caps the list at six however long the array on the wire
+    was. That is `docs/net.md`'s two-bounds rule satisfied by the type rather than by a constant
+    tuned against the frame, which is the better shape wherever it is available — a constant is the
+    thing that drifts, and this one cannot.
+
+    Four things cost more than the state model, which was one enum and one field, and **all four
+    were on the client**.
+
+    **The permission check that is not free.** The hit point bar and the damage box on an
+    initiative row have no check for who is reading them, because `view_for` nulls `hp` for a
+    player and there is nothing to decline to draw — invariant 4 the safe way round, three times on
+    that panel. A public field leaves no null to fail safe on, so the row's toggles needed a real
+    `isDm`. `valueField` was the precedent rather than a new rule, but the general form is worth
+    having: **invariant 4's safe failure is a property of redaction, not of the panel**, and the
+    first public field on a redacted type is where that stops being free.
+
+    **The placement was wrong the first time, and only a picture said so.** The pips began as a
+    column down the token's right-hand edge — the one space around a token nothing else uses, since
+    the bar owns above and the name owns below — which is exactly what was wrong with it: two
+    creatures standing next to each other put one's pips against the other's rim, and in a fight
+    adjacent is the ordinary case. Centred above is what makes them unmistakably this token's, and
+    it is the argument the bar already makes, being wider than a one-cell token and legible anyway.
+    Six pips in a column also do not fit a one-cell token at 100%; centred, they overhang evenly.
+
+    **`#initiative button` beat `.marker.is-on`, and no suite could see it.** An id plus a type
+    outranks any number of classes, so the panel's shared button style won and every swatch on a
+    row drew hollow whatever it was set to — which reads as the toggle being broken. `aria-pressed`
+    was correct throughout and the driver asserting it passed; only a computed style says
+    otherwise. `#initiative button:not(.marker)` is the fix, `.map-library-pick` is the same trap
+    one panel over, and the lesson is that **a driver asserting the DOM is not asserting the
+    paint** — read `getComputedStyle` when what changed is a colour.
+
+    **The token panel had to render its swatches once on the way up.** Every other field in that
+    form is initialised by the markup and only rewritten by `show`, and `show` does not run until
+    something is selected — so a fresh page offered no swatches at all. There is no markup for six
+    generated buttons. A small bug, and the interesting part is how it was found: by trying to
+    photograph the feature, which is worth doing to anything with a look to it.
+
+    The sharpest check in `tools/drive-panels.mjs` is not the toggle but the **hit**: a `-3` typed
+    on a marked creature has to leave the marks alone, because `update_token` replaces the token
+    and the damage box builds a whole one. TypeScript catches the omission at the send site — the
+    field is required rather than optional for exactly that reason — but the failure it would have
+    been is silent, a beat later, in a different control.
+
+    **The pips lasted a day.** They were legible and they were in the wrong category: a dot beside
+    a creature reads as decoration, and a band on it reads as a state. That is not a complaint
+    making them bigger would have answered, which is worth recording because "too small" was the
+    obvious diagnosis and the wrong one. What shipped is a band of arcs stroked *inside* the
+    token's own rim — one mark takes the whole ring, more divide it evenly — so the footprint is
+    the same whether a creature carries one mark or seven.
+
+    **The band answers the hue collision by position, and that is the whole trick.** Three of the
+    six sit next to rings already in service: yellow against the gold that means *yours*, blue
+    against the blue that means *in progress*, purple against the violet that means *hidden*. The
+    original argument for pips was that a pip is not in the ring vocabulary at all — which is true
+    of a dot and false of anything ring-shaped, so a band had to answer it rather than inherit it.
+    Inside the rim is the one place on a token nothing else draws, and every state ring is outside
+    it, so gold lands immediately outside a yellow arc instead of competing with it. **A band drawn
+    outside the selection ring would have the collision back**, and would also be further from the
+    creature, which is the complaint it exists to answer. Two smaller things fell out: `HP_STACK_H`
+    and `HP_FONT_PX` had no reader left once nothing stacked above the numerals, and the arcs are
+    sorted into `MARKERS` order so two creatures carrying the same marks draw the same picture —
+    the room stores them in the order the DM added them and a row of pips did not care.
+
+    **`dead` is the seventh, added because the table needed it, and the interesting part is the
+    boundary rather than the code.** It is one enum variant, one entry in `Marker::ALL`, an X
+    across the portrait instead of an arc in the band, and one attribute selector for its swatch.
+    The rule it looks like it breaks — *a marker is named for its colour and nothing else* — turns
+    out to be the shape the real rule took while every member happened to be a colour. The real
+    rule is that **nothing in Slate knows what a mark means**, and the test is mechanical: does
+    anything *follow* from it? Nothing follows from `dead` — the creature still moves, still holds
+    its initiative row, still keeps its total. `Poisoned` fails that test the day after it is
+    added, because a condition is a promise that a duration or a saving throw or a subtracted
+    number is tracked somewhere, and none of that exists here. `Prone` and `Concentrating` get the
+    same answer. `drive-panels.mjs` asserts the negative half — a dead creature keeps its row and
+    its total — because that boundary *is* the feature and something should fail on the day it
+    stops holding.
+
+    **Its swatch is read with `getComputedStyle`.** An X rather than a disc is entirely a
+    stylesheet difference over identical markup, which is the same category as the
+    `#initiative button` collision above and just as invisible to `aria-pressed`. Applying that
+    lesson on purpose rather than after the fact is most of what it cost.
 
 ### The right dock
 

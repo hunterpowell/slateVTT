@@ -53,6 +53,7 @@ function token(id: string, cx: number, cy: number, over: Partial<Token> = {}): T
     owner: { kind: 'dm' },
     img: '',
     size: 1,
+    markers: [],
     hidden: false,
     hp: null,
     lightFt: null,

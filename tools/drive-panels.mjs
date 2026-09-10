@@ -1,5 +1,5 @@
-// Drives the initiative panel folding away — one of the two things milestone 26
-// added that only a browser can see.
+// Drives the initiative panel folding away, the damage box, and the markers —
+// the three things on this panel that only a browser can see.
 //
 //   cd server && SLATE_DM_SECRET=test-secret cargo run
 //   node tools/drive-panels.mjs                     # or: ... http://host:port secret
@@ -308,6 +308,159 @@ check(
   await player.evaluate(`document.querySelectorAll('.init-damage').length`),
   0,
 );
+
+
+// ============================================================================
+// Markers — the one field on a token that the table is shown
+// ============================================================================
+//
+// Four things only a browser can say, and the first is the one this feature
+// would most plausibly have shipped broken:
+//
+//   * a hit landing on a marked creature leaves the marks alone. `update_token`
+//     replaces the token whole, so the damage box has to carry them through, and
+//     the failure is silent, a beat later, in a different control.
+//   * the toggles are the DM's. Unlike the bar beside them this needs a real
+//     check for who is reading it, because markers are *public* — a player's
+//     copy of the token genuinely carries them, so there is no null here to make
+//     the branch fail safe the way `hp` does.
+//   * the pips reach the table's own board, which is the whole difference
+//     between this field and `hp` and is pixels on somebody else's canvas.
+//   * and taking one off puts that board back.
+
+/** Whether a row's swatch reads as set. A string, so a missing row or a missing
+ *  swatch reports as itself rather than as `false`. */
+const swatch = (page, name, marker) =>
+  page.evaluate(`(() => {
+    const row = [...document.querySelectorAll('.init-row')]
+      .find(r => r.querySelector('.init-name').textContent === ${JSON.stringify(name)});
+    if (!row) return 'missing row';
+    const pip = row.querySelector('.marker[data-marker="${marker}"]');
+    return pip === null ? 'missing swatch' : pip.getAttribute('aria-pressed');
+  })()`);
+
+/** Clicks it. The panel is rebuilt on the room's echo, so every call re-queries
+ *  rather than holding an element across one. */
+const mark = async (name, marker) => {
+  const ok = await dm.evaluate(`(() => {
+    const row = [...document.querySelectorAll('.init-row')]
+      .find(r => r.querySelector('.init-name').textContent === ${JSON.stringify(name)});
+    if (!row) return 'missing row';
+    const pip = row.querySelector('.marker[data-marker="${marker}"]');
+    if (pip === null) return 'missing swatch';
+    pip.click();
+    return 'ok';
+  })()`);
+  await dm.wait(500);
+  return ok;
+};
+
+const remember = (session) =>
+  session.evaluate(`(() => {
+    const c = document.getElementById('stage');
+    window.__before = c.getContext('2d').getImageData(0, 0, c.width, c.height).data;
+    return c.width * c.height;
+  })()`);
+
+const changed = (session) =>
+  session.evaluate(`(() => {
+    const c = document.getElementById('stage');
+    const now = c.getContext('2d').getImageData(0, 0, c.width, c.height).data;
+    const was = window.__before;
+    let n = 0;
+    for (let i = 0; i < now.length; i += 4) {
+      if (now[i] !== was[i] || now[i + 1] !== was[i + 1] || now[i + 2] !== was[i + 2]) n++;
+    }
+    return n;
+  })()`);
+
+check('a creature starts unmarked', await swatch(dm, HURT, 'red'), 'false');
+check('clicking a swatch marks it', await mark(HURT, 'red'), 'ok');
+check('and the room agreed, which is what put it back on the rebuilt row', await swatch(dm, HURT, 'red'), 'true');
+
+// The carry-through. `-3` off 9 is 6, and the mark has to still be there
+// afterwards: the damage box builds a whole `update_token` off the token the row
+// resolved, so a field left out of it is wiped by the next hit that lands.
+check('a hit lands on a marked creature', await damage(HURT, '-3'), 'ok');
+check('and the total moved', await hpText(dm, HURT), '6/27');
+check('the mark survived the hit', await swatch(dm, HURT, 'red'), 'true');
+
+// The negative assertion, and unlike the damage box above it this one is
+// defended rather than free — see the note at the top of this section.
+await player.wait(800);
+check(
+  'the table is not offered the toggles',
+  await player.evaluate(`document.querySelectorAll('.marker').length`),
+  0,
+);
+
+// And the positive one, which is what makes this field different from every
+// other DM-only thing on a token. Taken as a difference across the player's
+// whole canvas rather than as a reading of a box in the DM's coordinates: the
+// two cameras are not the same camera, and a box measured over there names
+// nothing.
+const boardPixels = await remember(player);
+note(`the table's board is ${boardPixels} pixels`);
+
+await mark(HURT, 'blue');
+await player.wait(900);
+const lit = await changed(player);
+note(`${lit} pixels moved on the table's canvas`);
+check('a second mark reaches the board the table is looking at', lit > 20, true);
+
+// Against the same baseline, not a fresh one — so this says the board came back
+// to where it started rather than merely that it moved again.
+await mark(HURT, 'blue');
+await player.wait(900);
+const back = await changed(player);
+note(`${back} pixels differ from the baseline once it is off again`);
+check('and taking it off puts their board back where it was', back < 20, true);
+
+// ---------------------------------------------------------------------------
+// `dead`, the one mark that is not a colour
+// ---------------------------------------------------------------------------
+//
+// It draws as an X across the portrait rather than as an arc in the band, and
+// its swatch is an X rather than a disc — which is a *stylesheet* difference
+// over identical markup, so it is exactly the kind of thing milestone 43 already
+// shipped broken once. `#initiative button` beat `.marker.is-on` that time and
+// no suite could see it, because `aria-pressed` was correct throughout. The
+// lesson was to read the computed style when what changed is paint, so that is
+// what this does.
+
+const deadGlyph = (page, name) =>
+  page.evaluate(`(() => {
+    const row = [...document.querySelectorAll('.init-row')]
+      .find(r => r.querySelector('.init-name').textContent === ${JSON.stringify(name)});
+    if (!row) return 'missing row';
+    const pip = row.querySelector('.marker[data-marker="dead"]');
+    if (pip === null) return 'missing swatch';
+    const before = getComputedStyle(pip, '::before');
+    // The content string comes back quoted, and the glyph is U+00D7, not an x.
+    return before.content.includes('×') ? 'x' : before.content;
+  })()`);
+
+check('the seventh swatch is offered', await swatch(dm, HURT, 'dead'), 'false');
+check('and it draws as an X rather than a disc', await deadGlyph(dm, HURT), 'x');
+
+// The board half. Taken against a fresh baseline, and the X is a big mark on a
+// small token, so this moves considerably more than an arc does.
+await remember(player);
+check('marking a creature dead is accepted', await mark(HURT, 'dead'), 'ok');
+check('and the room agreed', await swatch(dm, HURT, 'dead'), 'true');
+await player.wait(900);
+const crossed = await changed(player);
+note(`${crossed} pixels moved on the table's canvas`);
+check('the X reaches the table, because a mark is public', crossed > 20, true);
+
+// The thing `dead` must *not* do. It is a picture and nothing follows from it —
+// the creature still holds its initiative row and still keeps its total — and a
+// variant that started skipping turns is where this stops being a mark. Cheap to
+// assert and the whole boundary of the feature.
+check('a dead creature keeps its initiative row', await hpText(dm, HURT), '6/27');
+
+// Left marked in red on purpose: the sweep at the bottom deletes both creatures,
+// so the marks go with them and there is nothing here to put back by hand.
 
 // ============================================================================
 // Tidying up, and the one check left about the fog panel

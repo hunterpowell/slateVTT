@@ -10,6 +10,7 @@ import type {
   Diagonals,
   Hp,
   Lighting,
+  Marker,
   Owner,
   WireGridShape,
   WireMapInfo,
@@ -33,6 +34,10 @@ export interface Token {
   img: string;
   /** Width and height in grid cells. */
   size: number;
+  /** The DM's marks on this creature, in the order they were added. Public,
+   *  unlike the three fields below it, because a mark the table cannot see is
+   *  not a mark. */
+  markers: Marker[];
   /** The table cannot see this one. Only ever true on the DM's client — a
    *  player is never sent a hidden token, so nothing here has to defend
    *  against drawing one. The DM's board marks it instead. */
@@ -403,6 +408,7 @@ function tokenFromWire(t: WireToken): Token {
     owner: t.owner,
     img: t.img,
     size: t.size,
+    markers: t.markers,
     hidden: t.hidden,
     hp: t.hp,
     lightFt: t.light_ft,

@@ -23,7 +23,8 @@
 
 import type { Vec2 } from './coords.js';
 import { createLibraryList } from './library.js';
-import type { ClientMsg, Hp, Owner, RosterEntry } from './protocol.js';
+import { markerRow } from './markers.js';
+import type { ClientMsg, Hp, Marker, Owner, RosterEntry } from './protocol.js';
 import type { Scene, Token } from './scene.js';
 import { shownBoard, shownPos } from './scene.js';
 
@@ -43,7 +44,9 @@ export interface TokenToolUi {
   artClear: HTMLButtonElement;
   library: HTMLButtonElement;
   libraryList: HTMLElement;
+  markers: HTMLElement;
   save: HTMLButtonElement;
+  duplicate: HTMLButtonElement;
   remove: HTMLButtonElement;
   fresh: HTMLButtonElement;
   hint: HTMLElement;
@@ -84,6 +87,9 @@ export function createTokenTool(
   let selectedId: string | null = null;
   /** The art the form currently describes. Empty means a plain named disc. */
   let art = '';
+  /** The marks the form currently describes. Form state like `art`, so a
+   *  creature can be built already marked and a duplicate keeps them. */
+  let marks: Marker[] = [];
 
   /** The board on screen is the staged one, so a new token belongs to it. */
   const previewing = (): boolean => scene !== null && scene.previewing && scene.staged !== null;
@@ -118,14 +124,50 @@ export function createTokenTool(
       token?.lightFt === undefined || token.lightFt === null ? '' : String(token.lightFt);
     ui.hidden.checked = token?.hidden ?? false;
     art = token?.img ?? '';
+    marks = token?.markers ?? [];
 
     ui.head.textContent = token === null ? headingForNew() : token.name;
     ui.save.textContent = token === null ? 'create' : 'save';
+    ui.duplicate.hidden = token === null;
     ui.remove.hidden = token === null;
     ui.fresh.hidden = token === null;
     ui.hint.textContent = hintFor(token);
     showArt();
+    showMarks();
   };
+
+  /**
+   * The six toggles, rebuilt wholesale rather than updated in place.
+   *
+   * `markerRow` is shared with the initiative panel so that the swatch here and
+   * the pip on the board cannot come to disagree about which colour `blue` is -
+   * `hpColour`'s argument, one field over.
+   */
+  const showMarks = (): void => {
+    ui.markers.replaceChildren(
+      markerRow(
+        marks,
+        (marker) => `Mark this creature ${marker}`,
+        (next) => {
+          marks = next;
+          showMarks();
+          // Committed on the spot for a token that exists, exactly as the
+          // hidden switch and a chosen portrait are: marking a creature happens
+          // *while* something is going on, and a mark that needs a second click
+          // to take lands a beat after the thing it is about.
+          if (selected() !== null) save();
+        },
+      ),
+    );
+  };
+
+  // **Once on the way up, which nothing else in this form needs.** Every other
+  // field is initialised by the markup and only rewritten by `show`, and `show`
+  // does not run until something is selected or "+ new token" is pressed - so a
+  // panel opened on a fresh page would offer no swatches at all until the DM
+  // happened to click a token. There is no markup for six generated buttons,
+  // so this is where their empty state comes from.
+  showMarks();
 
   /** Names the slot a token would be built into, since the two differ in what
    *  they produce: one goes on the board, the other on the next map only. */
@@ -214,6 +256,7 @@ export function createTokenTool(
         hidden: ui.hidden.checked,
         hp: hitPoints(),
         light_ft: lightFt(),
+        markers: marks,
       });
       return;
     }
@@ -234,6 +277,7 @@ export function createTokenTool(
       hidden: ui.hidden.checked,
       hp: hitPoints(),
       light_ft: lightFt(),
+      markers: marks,
       // The slot on screen, exactly as `set_map` reads it. Building the
       // ambush for next week's room is standing on next week's map.
       staged: previewing(),
@@ -263,6 +307,61 @@ export function createTokenTool(
   // to take effect is a hide that happens a beat too late.
   ui.hidden.addEventListener('change', () => {
     if (selected() !== null) save();
+  });
+
+  /**
+   * The seventh goblin, when it is a copy of one already built.
+   *
+   * The form deliberately keeps its fields after a create, so a run of
+   * identical monsters is already cheap - what it cannot keep is the art, the
+   * total, the radius and the owner of a creature that was built earlier in the
+   * evening, because those are read out of a *token* rather than typed. This is
+   * that same send with the fields taken off the selection instead of the form.
+   *
+   * **No `duplicate_token` on the wire.** The server already invents the id and
+   * already snaps the position, so a command of its own would buy a protocol
+   * tag, four enumerated arms and nothing at all.
+   *
+   * `create_token` carries every field but the plan, so the copy arrives
+   * unplanned. That is right rather than a gap: a plan is a cell, and two
+   * creatures do not want the same one.
+   *
+   * It searches out from the *original* rather than from the middle of the view
+   * the way a create does, which is the one place the two differ. A copy is a
+   * second of something, and the second goblin belongs beside the first rather
+   * than wherever the camera happens to be pointed.
+   */
+  ui.duplicate.addEventListener('click', () => {
+    const token = selected();
+    if (token === null || scene === null) return;
+
+    // The view centre is the fallback for a token standing nowhere on the board
+    // on screen, which is what `spaceFor` would have been given anyway.
+    const at = spaceFor(scene, shownPos(scene, token) ?? viewCentre());
+    if (at === null) {
+      report('the board is still loading');
+      return;
+    }
+
+    send({
+      type: 'create_token',
+      name: token.name,
+      img: token.img,
+      size: token.size,
+      owner: token.owner,
+      x: at.x,
+      y: at.y,
+      hidden: token.hidden,
+      hp: token.hp,
+      light_ft: token.lightFt,
+      markers: token.markers,
+      // The slot on screen, exactly as the create above reads it. Copying the
+      // ambush's first goblin is standing on next week's map.
+      staged: previewing(),
+    });
+    // The panel stays on the token that was copied rather than following the
+    // copy: the id is the server's to invent and has not arrived yet, and
+    // duplicating twice is the ordinary case.
   });
 
   ui.remove.addEventListener('click', () => {

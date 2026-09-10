@@ -1493,6 +1493,7 @@ fn light_at(name: &str, x: f32, light_ft: f32) -> ClientMsg {
         hidden: false,
         hp: None,
         light_ft: Some(light_ft),
+        markers: Vec::new(),
         staged: false,
     }
 }
@@ -1643,6 +1644,7 @@ fn one_light_never_switches_on_the_next() {
             hidden: false,
             hp: None,
             light_ft: Some(30.0),
+            markers: Vec::new(),
             staged: false,
         },
     );

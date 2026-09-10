@@ -16,9 +16,10 @@ import { ownsToken } from './identity.js';
 import { OVERRIDE_ALPHA, paintColor } from './overrides.js';
 import type { Cursor } from './cursors.js';
 import { cursorAlpha } from './cursors.js';
+import { isColour, MARKER_HUES, MARKERS } from './markers.js';
 import type { Ping } from './pings.js';
 import { colourOf, EDGE_INSET_PX, edgeMarker, nameOf, ringAlpha, ringRadius } from './pings.js';
-import type { Colours, FogPaint, Hp, RosterEntry } from './protocol.js';
+import type { Colours, FogPaint, Hp, Marker, RosterEntry } from './protocol.js';
 import type { Ruler } from './ruler.js';
 import { feetMoved, rulerAlpha, trailCells } from './ruler.js';
 import type { Board, Scene, Token } from './scene.js';
@@ -64,6 +65,27 @@ const SELECTED_RING = 'rgba(120, 190, 255, 0.9)';
 const TURN_RING = 'rgba(255, 255, 255, 0.95)';
 const LABEL_TEXT = '#e8e6e1';
 const LABEL_HALO = 'rgba(0, 0, 0, 0.85)';
+/**
+ * The marker band, in screen pixels so it holds its weight as the camera zooms
+ * — every ring on a token does the same.
+ *
+ * `MARKER_BAND_W` is how thick the arcs are stroked and the band is centred
+ * that far inside the token's own rim, so it sits in the one place on a token
+ * nothing else draws. Everything that means something about *state* — gold for
+ * yours, white for the turn, dashed blue for the selection — is outside the
+ * rim, which is what keeps a yellow arc from reading as ownership.
+ */
+const MARKER_BAND_W = 4;
+/** Between two arcs, in radians, so a band of three reads as three. */
+const MARKER_ARC_GAP = 0.16;
+/** A continuous dark track under the arcs, like the one under the hit point
+ *  bar. It does the work a halo would and one thing a halo would not: it makes
+ *  the *gaps* read as gaps rather than as portrait showing through. */
+const MARKER_TRACK = 'rgba(0, 0, 0, 0.6)';
+/** How far across the portrait the X reaches, as a fraction of the radius, and
+ *  how thickly. Screen pixels for the second, like everything above. */
+const DEAD_X_REACH = 0.62;
+const DEAD_X_W = 3.5;
 /** The calibration box, in the same blue as a drag: both mean "in progress". */
 const CAL_FILL = 'rgba(120, 190, 255, 0.10)';
 const CAL_EDGE = 'rgba(120, 190, 255, 0.95)';
@@ -142,6 +164,15 @@ const HP_BAR_MAX_W = 92;
 /** Between the token's edge and the bar, and between the bar and the numbers. */
 const HP_BAR_GAP = 6;
 const HP_TEXT_GAP = 2;
+/**
+ * There used to be an `HP_FONT_PX` beside this and an `HP_STACK_H` under it,
+ * summing the numbers above into how far the hit point chrome reached above a
+ * token so the pip row could stack on top of it rather than through it. The
+ * marks moved onto the creature, so nothing stacks over the numerals any more
+ * and the sum had no reader. That is the structural win of the band, small but
+ * real: the column over a token is a bar and a total again, and how tall it is
+ * is nobody else's business.
+ */
 const HP_FONT = '600 11px ui-sans-serif, system-ui, sans-serif';
 const HP_TRACK = 'rgba(0, 0, 0, 0.55)';
 const HP_EDGE = 'rgba(0, 0, 0, 0.85)';
@@ -986,6 +1017,15 @@ function drawTokens(ctx: CanvasRenderingContext2D, frame: Frame, board: Board): 
 
     ctx.restore();
 
+    // Over the art and inside the rim, which is why it is here rather than in
+    // `drawTokenChrome` with the name and the numerals: a mark is a property of
+    // the creature, so it is drawn on the creature. Everything below is a
+    // property of the *situation* — being dragged, whose turn it is, what this
+    // gesture is about — and all of it draws outside.
+    if (token.markers.length > 0) {
+      drawMarks(ctx, centre, radius, cam.zoom, token.markers);
+    }
+
     // One ring, five meanings now: being dragged, not on the board yet, hidden,
     // yours, or none of them. The dash is separate from the colour and says
     // hidden on its own, so a token that is both teal and dashed reads as both
@@ -1717,6 +1757,104 @@ function drawHitPoints(
   ctx.strokeText(text, top.x, y - HP_TEXT_GAP);
   ctx.fillStyle = LABEL_TEXT;
   ctx.fillText(text, top.x, y - HP_TEXT_GAP);
+}
+
+/**
+ * The DM's marks on a creature: a band of arcs stroked inside the token's own
+ * rim, and an X across the portrait for `dead`.
+ *
+ * **Rules-neutral by construction and not by discipline**: this draws arcs and
+ * two lines, and there is nowhere in it for a rule to live. Nothing here knows
+ * what any mark means — including `dead`, which changes nothing about how the
+ * token behaves and is a picture like the other six. That is the whole boundary
+ * the feature is built inside; see the non-goal in `.claude/CLAUDE.md`.
+ *
+ * No check for who is reading it, unlike the hit point bar and like the name.
+ * Markers are public: `view_for` copies them for everybody, so a player's copy
+ * of a token carries the same list and draws the same band. That is the point
+ * rather than an oversight — a mark the table cannot see is not a mark.
+ *
+ * World space, unlike the name and the numerals, because these are drawn *on*
+ * the token rather than pinned above it; the widths divide by `zoom` so they
+ * still hold a constant weight on screen, exactly as the rings do. The caller
+ * has already set `globalAlpha`, so a hidden creature fades its marks with the
+ * rest of it for free.
+ */
+function drawMarks(
+  ctx: CanvasRenderingContext2D,
+  centre: Vec2,
+  radius: number,
+  zoom: number,
+  markers: readonly Marker[],
+): void {
+  // **Sorted into `MARKERS` order, not the order the DM added them in.** The
+  // room stores the list unsorted and has no opinion about it, so two creatures
+  // carrying red and blue can carry them either way round. A row of pips did
+  // not care; a band does, because recognising the same state on two monsters
+  // at a glance is the entire reason this stopped being pips.
+  const arcs = markers
+    .filter(isColour)
+    .sort((a, b) => MARKERS.indexOf(a) - MARKERS.indexOf(b));
+
+  ctx.save();
+
+  if (arcs.length > 0) {
+    // Centred half a band's width inside the rim, so the band's outer edge
+    // meets it and the two read as one edge rather than as two rings.
+    const r = radius - MARKER_BAND_W / 2 / zoom;
+    // A guard rather than an assumption: a 0.5-cell token zoomed a long way out
+    // has a radius smaller than the band is thick, and an arc at a negative
+    // radius throws.
+    if (r > 0) {
+      ctx.lineWidth = (MARKER_BAND_W + 2) / zoom;
+      ctx.strokeStyle = MARKER_TRACK;
+      ctx.beginPath();
+      ctx.arc(centre.x, centre.y, r, 0, TAU);
+      ctx.stroke();
+
+      // One mark takes the whole band and there is no gap to leave; two or more
+      // divide it evenly from twelve o'clock clockwise. Dividing rather than
+      // stacking is what keeps the footprint identical whether a creature
+      // carries one mark or six — the failure the old right-hand pip column had
+      // and the reason a ring per marker was never on the table.
+      ctx.lineWidth = MARKER_BAND_W / zoom;
+      const step = TAU / arcs.length;
+      const gap = arcs.length > 1 ? MARKER_ARC_GAP : 0;
+
+      arcs.forEach((marker, i) => {
+        const from = -Math.PI / 2 + i * step + gap / 2;
+        ctx.beginPath();
+        ctx.arc(centre.x, centre.y, r, from, from + step - gap);
+        ctx.strokeStyle = MARKER_HUES[marker];
+        ctx.stroke();
+      });
+    }
+  }
+
+  // Across the portrait rather than round it, because it is not one of the
+  // arcs and must not be mistaken for one. Haloed the way a name is — that is
+  // the convention on this canvas for anything that has to read on parchment
+  // and on a cave floor alike, and using it here is what makes the X look like
+  // a label and the arcs look like a ring.
+  if (markers.includes('dead')) {
+    const reach = radius * DEAD_X_REACH;
+    ctx.lineCap = 'round';
+    for (const [w, colour] of [
+      [DEAD_X_W + 3, LABEL_HALO],
+      [DEAD_X_W, MARKER_HUES.dead],
+    ] as const) {
+      ctx.lineWidth = w / zoom;
+      ctx.strokeStyle = colour;
+      ctx.beginPath();
+      ctx.moveTo(centre.x - reach, centre.y - reach);
+      ctx.lineTo(centre.x + reach, centre.y + reach);
+      ctx.moveTo(centre.x + reach, centre.y - reach);
+      ctx.lineTo(centre.x - reach, centre.y + reach);
+      ctx.stroke();
+    }
+  }
+
+  ctx.restore();
 }
 
 /**

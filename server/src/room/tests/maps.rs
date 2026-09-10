@@ -1293,6 +1293,7 @@ fn an_edit_reaches_both_boards_at_once() {
             hidden,
             hp,
             light_ft,
+            markers: Vec::new(),
         },
         other => other,
     };

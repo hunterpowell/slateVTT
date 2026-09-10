@@ -123,12 +123,18 @@ check(
   await player.evaluate(`getComputedStyle(document.getElementById('stage')).pointerEvents`),
   'none',
 );
-// And the readouts that describe the board go with it. A zoom percentage and a
+// And everything that describes the board goes with it. A zoom percentage and a
 // cell coordinate over a campfire are the same lie as a panel describing a
-// token that is not on screen.
+// token that is not on screen, and an offer to frame a board nobody is looking
+// at is a third.
 check(
   'the board readout is not floating over the picture',
   await player.evaluate(`document.getElementById('hud').offsetParent === null`),
+  true,
+);
+check(
+  'and neither is the offer to fit a board that is not on screen',
+  await player.evaluate(`document.getElementById('fit-board').offsetParent === null`),
   true,
 );
 

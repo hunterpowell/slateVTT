@@ -1,11 +1,11 @@
 # Tokens
 
-The token struct, where a token settles, its five DM-only fields, and how one token change
-leaves the room in several different shapes.
+The token struct, where a token settles, its five DM-only fields, its one public one, and how one
+token change leaves the room in several different shapes.
 
 `.claude/CLAUDE.md` is loaded into every session; this file is not. **Read it before touching
-`tokens.ts`, `panel.ts`, `library.ts`, `snap_to_cell`, `SetShowNames`, `Token` / `TokenView`, or any
-`message_for` arm** — the per-recipient filtering below is where a leak would come from, and the arms
+`tokens.ts`, `panel.ts`, `markers.ts`, `library.ts`, `snap_to_cell`, `SetShowNames`, `Token` /
+`TokenView`, or any `message_for` arm** — the per-recipient filtering below is where a leak would come from, and the arms
 that drop a message entirely are the ones that get missed.
 
 ## Tokens
@@ -32,6 +32,16 @@ two commands beside it: every field on it is shared by both boards. `TokenChange
 an id the client has not seen is the creation. That is one message instead of two that would have
 to be kept in step, and it is what a hidden token becomes a `TokenRemoved` for players and a
 `TokenChanged` for the DM out of.
+
+**Duplicating one is `create_token` with the fields read off a token instead of off the form**, and
+it is client-only: the server already invents the id and already snaps the position, so a
+`DuplicateToken` command would buy a protocol tag and four enumerated arms and nothing else. The
+form already keeps its fields after a create — six goblins is six clicks — so what this adds is the
+art, the total, the light, the owner and the marks of a creature built earlier in the evening, which
+are read out of a *token* rather than typed. It searches outward from the original rather than from
+the middle of the view, which is the one place it differs from a create: a copy is a second of
+something and belongs beside the first. `staged_pos` is not on `CreateToken` and is not carried, so
+a copy arrives unplanned — a plan is a cell, and two creatures do not want the same one.
 
 **Deleting a token takes its initiative row and its anchored drawings with it.** The order
 otherwise holds a row naming something that no longer exists, which the panel draws as a bare id
@@ -478,3 +488,165 @@ dashed — three marks for three independent facts, none cancelling another.
 absent from the board on screen, and every draw and hit-test goes through it. That indirection is
 the whole client-side feature: without it a planned position gets written into the live one by a
 single missing branch.
+
+## Markers
+
+Six colours and `dead`, and **the naming is the whole feature.** What "red" means tonight is
+between the DM and the table. A variant called `Poisoned` would be the 5e rules knowledge this
+project refuses, and the moment one exists something downstream wants to know what it *does* — how
+long it lasts, what it subtracts, whether it ends on a save. Slate draws arcs and an X and knows
+nothing about any of it, and there is nowhere in `drawMarks` or `markers.ts` for a rule to live.
+
+### Why `dead` is admissible and `Poisoned` is not
+
+It was added a day after the six, because the table needed it and a marker that means "this one is
+out of the fight" is a coin flipped onto a mini rather than a rules engine. It is worth being
+precise about the line it does not cross, because the obvious reading is that it crosses it.
+
+**The rule was never "colours only".** That was the *shape* the rule took when every member happened
+to be a colour, and reading it as the rule itself is what would make `dead` look like a breach. The
+rule is that **nothing in Slate knows what a mark means**, and the test is mechanical: *does anything
+follow from it?* Nothing follows from `dead`. The creature still moves, still holds its initiative
+row, still keeps whatever total the DM has on it, still blocks nothing and lights nothing. The X is
+a picture, exactly as a red arc is a picture.
+
+**`Poisoned` fails that test on the day after it is added**, and that is the whole difference. A
+condition is a promise that something is tracked — a duration, a saving throw, a number it
+subtracts — and none of those exist here, so the field would either sit inert and lie about what the
+tool does, or grow the thing this project refuses. `Prone` and `Concentrating` are the same
+argument and get the same answer.
+
+`drive-panels.mjs` asserts the negative half directly: a creature marked dead keeps its initiative
+row and its total. That check is cheap and slightly odd-looking, and it is there because **this
+boundary is the feature** — the day a variant starts skipping a turn is the day the argument above
+stopped being true, and something should fail when it does.
+
+**It is the only field on a token that is public.** Every asymmetry on `Token` before this runs one
+way — `hp`, `light_ft`, `staged_pos` and `staged_only` all reach the DM and nobody else — so
+`view_for` had only ever been asked to redact. This one is copied unconditionally, because *a mark
+nobody at the table can see is not a mark*. That is `NamesChanged` sitting beside `FogChanged`
+rather than beside `WallsChanged`, at token scale: who may set it is a permission and what it says
+is not a secret.
+
+It needs no filter of its own and could not usefully have one. A creature the table cannot see
+takes its marks with it through `unseen_by_table`, like every other fact about it, so the negative
+assertion holds without a line of code defending it —
+`a_mark_on_a_creature_the_table_cannot_see_reaches_nobody` asserts it because the claim is being
+made, not because anything branches on it.
+
+**A closed set checked by serde rather than by hand.** `Marker` is a fieldless enum, so an unknown
+marker fails to deserialize and `check` needs no arm for validity — `ShapeKind` and `Diagonals`'
+arrangement, and `check` already says so in as many words. Adding `dead` was one variant in that
+enum and one entry in `Marker::ALL`; no command, no event, no filter and no `protocol-tags.json`
+entry, because the closed set is where a marker's whole surface lives. The hues are `MARKER_HUES` in
+`markers.ts` and the server has no opinion about what any of them looks like, exactly as
+`PLAYER_HUES` is the client's alone.
+
+**The list is a set, and refusing duplicates is what bounds its length.** There is no `MAX_MARKERS`
+beside `MAX_TOKENS` and there does not need to be: `Marker::ALL` is a closed set, so "no repeats"
+caps the list at its length however long the array on the wire was — and that held with no edit at
+all when the set grew from six to seven, which is the point of a bound that is a type rather than a
+number. That is the count bound `docs/net.md`
+asks of every command carrying a variable-length collection, and `UpdateToken` is the second
+command in the project to need one — see that file for the byte bound beside it.
+
+**It rides `CreateToken` and `UpdateToken`, which is milestone 39's shape and is what made it
+cheap.** No new command, no new event, no arm in `message_for`, no entry in `persists`, `undid` or
+`moves_sight` — all three match `UpdateToken { .. }` — and `protocol-tags.json` is untouched. Undo
+comes free with the rest: `taking_back_a_mark_is_an_ordinary_undo` is the whole of what that buys.
+`UpdateToken`'s own doc comment is the argument against a `SetMarkers` beside it, the same one that
+keeps `SetHp` from existing.
+
+### Where they are toggled, and the check that is not free
+
+**Two places, which is `hp`'s arrangement exactly**: the token tab is where a creature is built,
+and the initiative row is what the DM is looking at while a fight is running. That is *The damage
+box* below, one field over — a control that costs a tab and two clicks during a turn is a control
+nobody uses. `markerRow` in `markers.ts` builds both, so the swatch on the panel and the mark on the
+board cannot come to disagree about which colour `blue` is; that is `hpColour`'s argument.
+
+**It is the first control on an initiative row that needs a real check for who is reading it.** The
+bar and the damage box get away with none because `view_for` nulls `hp` for a player, so their copy
+of a token has nothing to draw — invariant 4 the safe way round, three times on this panel. Markers
+are public, so a player's copy genuinely carries them and there is no null to make the branch fail
+safe. `if (isDm && token !== undefined)` is that check, and `valueField` is the precedent rather
+than a new rule: the player's initiative number is a span for the same reason.
+
+**The token panel renders its swatches once on the way up**, which nothing else in that form needs.
+Every other field is initialised by the markup and only rewritten by `show`, and `show` does not run
+until something is selected — so a panel opened on a fresh page offered no swatches at all. There is
+no markup for six generated buttons, so that call is where their empty state comes from.
+
+### On screen
+
+**A band of arcs stroked inside the token's own rim, and an X across the portrait for `dead`.** Both
+in `drawMarks`, called from `drawTokens` rather than from `drawTokenChrome` — which is the one-line
+statement of what these are: a mark is a property of the *creature*, so it is drawn on the creature,
+where everything in `drawTokenChrome` is a property of the situation and draws around it. World
+space, unlike the name and the numerals, with the widths divided by `zoom` so they still hold a
+constant weight on screen exactly as the rings do; the caller has already set `globalAlpha`, so a
+hidden creature fades its marks with the rest of it for free.
+
+**Two arrangements were wrong before this one, and each was only visible in a picture.** The first
+was a column down the token's right-hand edge — the only space around a token nothing else uses,
+since the bar and the numerals own above and the name owns below — and that was exactly what was
+wrong with it: two creatures standing next to each other put one's pips against the other's rim, and
+in a fight adjacent is the ordinary case. Centring the pips above fixed that and left the second
+problem, which is that **a dot beside a creature reads as decoration and a band on it reads as a
+state**. That is not a legibility complaint and making the pips bigger would not have answered it.
+
+**Arcs divide one band; they never stack.** One mark takes the whole ring, two or more split it
+evenly from twelve o'clock clockwise with `MARKER_ARC_GAP` between them. Dividing is what keeps the
+footprint identical whether a creature carries one mark or six, which is the property the pip column
+lacked and the reason **a ring per marker was never on the table** — three state rings plus six of
+these turns a half-cell token into a target. A continuous dark track under the arcs does the work a
+halo would and one thing a halo would not: it makes the *gaps* read as gaps rather than as portrait
+showing through.
+
+**The hues overlap the player palette and they overlap the ring vocabulary**, and three sit close
+enough to matter: yellow against the gold that means *yours*, blue against the blue that means *in
+progress*, purple against the violet that means *hidden*. `pings.ts` closes its own set to stop
+exactly that collision, and the marks cannot, because the six are the DM's to mean anything.
+
+**What separates them is position, not hue, and that is the load-bearing sentence in this
+section.** The band is stroked inside the rim — the one place on a token nothing else draws — and
+every state ring is outside it, so ownership in gold lands immediately outside a yellow arc rather
+than competing with it for the same slot. Move the band outward past the rim and the collision is
+real again, because hue is then all a reader has. That is also the reason the band was chosen over
+a ring outside the selection: further out is further from the creature, which is the complaint it
+was built to answer.
+
+**The X is drawn like a label, not like a ring**, and the difference is deliberate: `MARKER_HUES.dead`
+is the bone the names are written in and it is haloed the way they are, which is this canvas's
+convention for anything that has to read on parchment and on a cave floor alike. So `dead` looks
+like a different kind of mark before anybody has worked out which colour is which — and it composes,
+since a creature can be marked dead *and* red and the two do not share a slot.
+
+**The list is sorted into `MARKERS` order before drawing, and the room's order is left alone.** A
+token's marks are stored in the order the DM added them and the server has no opinion about it, so
+two creatures both marked red and blue can hold them either way round. A row of pips did not care;
+a band does, because recognising the same state on two monsters at a glance is the entire reason
+this stopped being pips. The sort is client-side and changes no state.
+
+**`HP_STACK_H` is gone, and its absence is the small structural win.** It existed only so the pip
+row could stack above the hit point chrome without drawing through it; nothing is stacked over the
+numerals any more, so the sum had no reader and `HP_FONT_PX` went with it. The column over a token
+is a bar and a total again, and how tall it is is nobody else's business.
+
+**The swatches had to be excluded from `#initiative button` by name.** An id plus a type beats any
+number of classes, so `.marker.is-on` setting a fill lost to the panel's shared button style and
+every swatch on a row drew hollow whatever it was set to — which reads as the toggle not working.
+`#initiative button:not(.marker)` is the fix and `.map-library-pick` is the same trap one panel
+over. It is not visible in any suite: `aria-pressed` was correct throughout, and only a computed
+style says otherwise.
+
+`tools/drive-panels.mjs` drives all of it. Its sharpest check is not the toggle but the *hit*: a
+`-3` typed on a marked creature has to leave the marks alone, because `update_token` replaces the
+token and the damage box builds a whole one. That failure is silent, a beat later, in a different
+control.
+
+**The `dead` swatch is read with `getComputedStyle`, not with `aria-pressed`.** It is an X rather
+than a disc, and that difference is entirely a stylesheet's — identical markup, one attribute
+selector — which is the same category of thing as the `#initiative button` collision above, right
+down to being invisible to every assertion about the DOM. Reading the computed `::before` content is
+the lesson from that bug applied on purpose rather than after the fact.

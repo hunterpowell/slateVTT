@@ -4,6 +4,7 @@
 // rows and only changes when the DM does something deliberate.
 
 import type { Identity } from './identity.js';
+import { markerRow } from './markers.js';
 import { asTable, tableInitiative } from './mirror.js';
 import type { ClientMsg, Hp, Initiative } from './protocol.js';
 // The only thing this panel takes from the renderer, and it takes it so that the
@@ -162,8 +163,10 @@ function damageField(token: Token, hp: Hp, send: (msg: ClientMsg) => void): HTML
       hp: { current: next, max: hp.max },
       // Carried through unchanged, like every other field this row is not
       // about: `update_token` replaces the token whole, so a field left out
-      // here is a lantern this box quietly blows out.
+      // here is a lantern this box quietly blows out - or, now, every mark on
+      // the creature, wiped by the next hit that lands on it.
       light_ft: token.lightFt,
+      markers: token.markers,
     });
   });
 
@@ -414,6 +417,48 @@ export function createPanel(
             body.append(line, track);
           } else {
             body.append(line);
+          }
+
+          // **The one control on this row that needs a real check for who is
+          // reading it**, which is why it is not inside the `hp` branch above.
+          // The bar and the damage box get away without one because `view_for`
+          // nulls `hp` for a player, so their copy of a token has nothing to
+          // draw; markers are public by design, so a player's copy genuinely
+          // carries them and the toggles have to be refused by hand. It is
+          // `valueField`'s rule rather than a new one - the player's row is a
+          // span there for the same reason.
+          //
+          // On the row because the row is what the DM is looking at mid-fight,
+          // which is the damage box's argument exactly: the token tab is two
+          // clicks and a tab away, and a control that costs that much during a
+          // turn is a control nobody uses. The token tab keeps its own copy,
+          // where a creature is built.
+          if (isDm && token !== undefined) {
+            const marks = token;
+            body.append(
+              markerRow(
+                marks.markers,
+                (marker) => `Mark ${marks.name} ${marker}`,
+                (next) => {
+                  // Read-modify-write off the token the row already resolved,
+                  // exactly as `damageField` does, and for the same reason:
+                  // `update_token` carries every editable field together, so
+                  // there is no `set_markers` and nothing on the wire is new.
+                  send({
+                    type: 'update_token',
+                    id: marks.id,
+                    name: marks.name,
+                    img: marks.img,
+                    size: marks.size,
+                    owner: marks.owner,
+                    hidden: marks.hidden,
+                    hp: marks.hp,
+                    light_ft: marks.lightFt,
+                    markers: next,
+                  });
+                },
+              ),
+            );
           }
 
           row.append(value, art, body);

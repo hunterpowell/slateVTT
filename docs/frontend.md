@@ -19,6 +19,19 @@ standalone against a hardcoded map with no networking, before any WebSocket code
 why the two functions are a file of their own with a unit test beside them: everything downstream
 trusts them, and a sign error in either is visible only as "the board feels wrong".
 
+**The camera is a local in `start()` and nothing outside the board holds one.** Anything that wants
+to move it asks through `Stage` — `lookAt` for a creature, `fit` for the whole board — which is what
+`createRail` returning `void` is at rail scale: the rule is in the shape rather than in a comment.
+`fit` frames the **play area** where the DM has drawn one and the whole image otherwise, and that is
+deliberately not what a map load does. A load frames the image because the next thing that happens
+to a new map is being calibrated and the margin is part of what the DM is looking at; the control is
+asked for mid-fight by somebody who has lost the board, and the board is the part ruled into cells.
+
+`fitToRect` puts a floor of one pixel on each side, which is not defensive tidiness: `playRect` clips
+to the image and returns a zero-width rectangle for a saved play area that no longer overlaps one —
+a map replaced with a smaller image — and dividing by that gives an infinite zoom and a camera at
+`NaN`, which is a board that does not come back without a refresh.
+
 ## The left rail: one panel at a time
 
 **The rail shows one of the DM's editing panels at a time, behind a tab strip.** A new panel is an
@@ -72,6 +85,24 @@ agree"; a tab wrongly greyed is the same defect as a tab wrongly live.
 **The draw tool is deliberately not on the strip.** It is the one panel everybody has and it is used
 in the middle of a fight, so it stays pinned to the bottom of the rail. Same reasoning as a door
 swinging with no tool in hand: a thing used mid-combat does not get put behind a mode.
+
+## The bottom-right corner: the third place a control can live
+
+`#corner` is a right-anchored row holding the gesture hint and the `/spells/` link, and since the
+fit control it holds three things. **What they have in common is the argument for being out here at
+all**: each arms nothing, so none of them owes the rail a `stop`, and none carries an unread count,
+so none of them wants a dock tab. That is written on the spells link in the markup and it is the
+whole test — a control that fits it belongs in the corner rather than in either strip.
+
+Two rules come with the row. **Only `#hint` grows**, so everything to its right keeps its position
+and everything to its left would slide; that is why the link is last and why the fit control went
+*before* it rather than after. And **anything here that describes the board hides with the board**:
+`body.covered` takes the zoom readout, the hint and the fit control together, because a zoom
+percentage over a campfire and an offer to frame a board nobody is looking at are the same lie.
+
+The fit control is also **everybody's**, unlike almost everything else with a button — a player who
+has zoomed into a corner is exactly as lost as the DM — so it is built outside the `identity.isDm`
+half of `onWelcome`. `tools/drive-fit.mjs` opens two browsers for that one reason.
 
 ## The right-hand column: three things, in this order
 

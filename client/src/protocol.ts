@@ -139,6 +139,22 @@ export interface WirePos {
   y: number;
 }
 
+/**
+ * A mark the DM puts on a creature: six colours, and `dead`.
+ *
+ * A closed set, checked by serde on the Rust side - an unknown marker does not
+ * deserialize. What "red" means tonight is between the DM and the table: a
+ * member called `poisoned` would be the 5e rules knowledge this project
+ * refuses, and the hues live in `MARKER_HUES` in `markers.ts` because the
+ * server has no opinion about what any of them looks like.
+ *
+ * **`dead` is the one member that is not a colour**, and the rule that admits
+ * it is that nothing in Slate knows what a mark *means*: it draws an X across
+ * the portrait and stops there. The creature still moves, still holds its
+ * initiative row, still keeps its total. See *Markers* in `docs/tokens.md`.
+ */
+export type Marker = 'red' | 'orange' | 'yellow' | 'green' | 'blue' | 'purple' | 'dead';
+
 /** A token as *this* client may see it — `TokenView` on the Rust side, not
  *  `Token`. A token the table cannot see never arrives at all, and `hp` and the
  *  two staged fields are redacted out on the way to anyone but the DM, so the
@@ -154,6 +170,12 @@ export interface WireToken {
   img: string;
   /** Width and height in grid cells. One of 0.5, 1, 2, 3, 4 — see TOKEN_SIZES. */
   size: number;
+  /** What the DM has marked this creature with.
+   *
+   *  **The same value for every recipient**, alone among the fields below it: a
+   *  mark nobody at the table can see is not a mark. There is nothing to redact
+   *  here because a token the table cannot see never arrives at all. */
+  markers: Marker[];
   /** The table cannot see this token. Only ever true on a DM connection: a
    *  player is not sent one, so their copy is false by construction. */
   hidden: boolean;
@@ -686,6 +708,9 @@ export type ClientMsg =
       hidden: boolean;
       hp: Hp | null;
       light_ft: number | null;
+      /** Usually empty. It is here so that duplicating a marked creature is one
+       *  command, which is the only way it is ever anything else. */
+      markers: Marker[];
       staged: boolean;
     }
   /** DM-only. Every editable field at once; position is `move_token`'s alone.
@@ -704,6 +729,11 @@ export type ClientMsg =
       hidden: boolean;
       hp: Hp | null;
       light_ft: number | null;
+      /** The whole set, not a toggle. This command replaces the token, so every
+       *  sender has to carry this through - which is what makes a `set_markers`
+       *  beside it unnecessary, and it is required rather than optional here so
+       *  that the compiler is the thing that says so. */
+      markers: Marker[];
     }
   | { type: 'delete_token'; id: string }
   /** DM-only. Whether the board writes token names under them, for everyone.

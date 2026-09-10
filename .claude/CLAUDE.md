@@ -321,6 +321,14 @@ enum Override { Explored, Lit, Dark }
 /// in `docs/drawings.md`.
 enum Diagonals { Equal, Alternating }
 
+/// A mark on a creature: six colours and `dead`. The rule is not "colours only"
+/// — it is that **nothing knows what a mark means**, and the test is whether
+/// anything *follows* from it. Nothing follows from `dead`: the creature still
+/// moves, still holds its row, still keeps its total. `Poisoned` fails that test
+/// and is the rules knowledge this project refuses — see `docs/tokens.md`.
+/// `Marker::ALL` is the closed set, and its length is the bound on a token's list.
+enum Marker { Red, Orange, Yellow, Green, Blue, Purple, Dead }
+
 /// Which question a fogged map asks: does a straight line reach the cell, or
 /// does a walk. `Dynamic` is the default — see `docs/fog.md`.
 enum Lighting { Dynamic, Room }
@@ -361,6 +369,12 @@ enum GridShape { Square, Iso { ratio: f32 } }
 
 struct Token {
     id: TokenId, name: String, x: f32, y: f32, owner: Owner, img: String, size: f32,
+    /// What the DM has marked this creature with. **The only public field here**
+    /// — a mark nobody at the table can see is not a mark — so `view_for` copies
+    /// it rather than redacting, and a token the table cannot see takes its pips
+    /// with it. A set in practice: duplicates are refused, which is what bounds
+    /// the length. See `docs/tokens.md`.
+    markers: Vec<Marker>,
     /// DM-only, all three — see *Hidden tokens, hit points, and the light it
     /// carries* in `docs/tokens.md`. `light_ft` is how far this token lights the
     /// board: it replaces the map's `vision_ft` on a token a player owns, and
@@ -590,12 +604,28 @@ is, and that rule lives in `snap_to_cell` on the server and nowhere else — the
 Creating, deleting and editing are DM-only, and the id is the server's to invent. `UpdateToken`
 carries every editable field *except* position, which `MoveToken` owns, and carries no `staged`
 flag because every field on it is shared by both boards. `TokenChanged` covers creation and editing
-alike — an id the client has not seen is the creation. **Deleting a token takes its initiative row
+alike — an id the client has not seen is the creation. **Duplicating one is an ordinary
+`CreateToken` with the fields read off a token**, client-side and nothing on the wire: the server
+already invents the id and already snaps. **Deleting a token takes its initiative row
 and its anchored drawings with it.**
 
 Five fields are DM-only: `hidden` and `hp` withhold a monster from the table; `light_ft` says how
 far it lights the board; `staged_pos` and `staged_only` plan the next encounter without a second
 token collection.
+
+**`markers` is the one that runs the other way, and it is the only public field on a token.** Six
+colours and `dead`, rules-neutral by construction — Slate draws arcs and an X, and the rule that
+keeps the set closed is that **nothing follows from a mark**: a variant that skipped a turn or
+locked a token is the rules knowledge the non-goals refuse, where `Poisoned` fails and `dead`
+does not. It rides `CreateToken`/`UpdateToken`, so there is **no new
+command, no new event, no `message_for` arm and no `protocol-tags.json` entry**, and `persists`,
+`undid` and `moves_sight` are untouched. Toggled from the token tab *and* from the initiative row —
+`hp`'s arrangement, for the damage box's reason — and the row's toggles are **the first control
+there that needs a real `is_dm` check**, because a public field leaves no null to fail safe on.
+**On the board they are a band of arcs inside the token's own rim**, with the X across the portrait
+for `dead`: the marks are drawn *on* the creature and every state ring is outside it, which is what
+keeps a yellow arc from reading as the gold that means ownership. Position is the separator, not
+hue — moving the band outside the rim puts the collision back.
 
 **`RoomState::unseen_by_table(&Token)` is the only question any filter asks.** Three reasons compose
 in it: `Token::unseen()` is `hidden || staged_only`, both facts about the token, and the third is
@@ -657,8 +687,9 @@ grabbing a token outside one clears it, and a click on empty map or Escape gives
 ordinary drag gained a second meaning. The group does not feed the token panel, and a group draws **one** ruler on
 the dragger's screen and one per token on everyone else's.
 
-→ **`docs/tokens.md`** before touching `tokens.ts`, `panel.ts`, `library.ts`, `snap_to_cell`,
-`Token`/`TokenView`, the `selection` set in `input.ts`, or any `message_for` arm.
+→ **`docs/tokens.md`** before touching `tokens.ts`, `panel.ts`, `markers.ts`, `library.ts`,
+`snap_to_cell`, `Token`/`TokenView`/`Marker`, the `selection` set in `input.ts`, or any
+`message_for` arm.
 
 ## Drawings and distance
 
@@ -890,6 +921,14 @@ The draw tool is deliberately *not* on the strip. It is the one panel everybody 
 in the middle of a fight, so it stays pinned to the bottom of the rail — the same reason a door
 swings with no tool in hand.
 
+**The bottom-right corner is the third place a control can live**, and `#corner` holds the gesture
+hint, the fit-board control and the `/spells/` link. What they share is the argument for being out
+there: each arms nothing, so none owes the rail a `stop`, and none carries a count, so none wants a
+dock tab. **Fit is everybody's** — a player who has zoomed into a corner is as lost as the DM — and
+it goes through `Stage.fit` because the camera belongs to the board and is never on the wire. It
+frames the play area where one is drawn and the whole image otherwise, which is deliberately not
+what a map load does. `Home` is its key and it is the second binding to need `typingIn`.
+
 **The right-hand column holds three things and their order is not a layout choice**: the presence
 strip is pinned at the top because that is the one edge that never moves, since the initiative panel
 folds and the dock grows upward.
@@ -900,8 +939,8 @@ an unread count, and **its panels stack**: rail panels are editing *modes* and n
 one. It grows *upward* from the bottom, so opening it never moves the initiative panel, and **its
 strip is its last child** rather than its first.
 
-→ **`docs/frontend.md`** before touching `coords.ts`, `rail.ts`, `dock.ts`, or the order of the
-right-hand column. `docs/presence.md`, `docs/chat.md` and `docs/notes.md` cover what sits in them.
+→ **`docs/frontend.md`** before touching `coords.ts`, `rail.ts`, `dock.ts`, `Stage.fit`/`fitToRect`,
+`#corner`, or the order of the right-hand column. `docs/presence.md`, `docs/chat.md` and `docs/notes.md` cover what sits in them.
 
 ## Maps
 

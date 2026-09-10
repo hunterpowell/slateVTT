@@ -210,6 +210,11 @@ function shapeSeen(scene: Scene, shown: ReadonlySet<string>, shape: Shape): bool
  * is reached, so the flag is always false by the time anything reads it. Said
  * here rather than assumed, because the two lines that make it true are one
  * `filter` away and a mirror is exactly where that assumption would rot.
+ *
+ * `markers` is left alone for the opposite reason and is the only field on a
+ * token that is: it is public, so `view_for` copies it whoever is asking, and
+ * blanking it here would make player view show *less* than the table can see.
+ * The spread is what carries it, which is why this is written down.
  */
 function redact(token: Token): Token {
   return {

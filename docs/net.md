@@ -87,13 +87,27 @@ So the rule, and it is the durable output of that bug:
 > checks and the bytes the socket will accept — and **a test must serialise the largest legal
 > instance and assert it fits.** Driving `check` is not that test. `check` never runs.
 
-`room::tests::fog_of_war::largest_override_fits_in_a_frame` is that assertion for the one command
-that needs it today. It builds the frame as text rather than serialising a `ClientMsg`, which is
+`room::tests::fog_of_war::largest_override_fits_in_a_frame` is that assertion for the command the
+rule was written for. It builds the frame as text rather than serialising a `ClientMsg`, which is
 inbound and carries no `Serialize`, and deserialises it back — so the shape being measured is proven
 to be the shape the server parses. It asserts in both directions: over the frame is the bug, and far
 under it is a fill the DM is refused for nothing.
 
-Adding a second such command means a second test beside it. Raising the frame cap is the other lever
+**`UpdateToken` is the second such command**, since a token carries a list of markers, and
+`room::tests::tokens::the_largest_token_edit_fits_in_a_frame` is its assertion. Two things about it
+are worth reading before writing a third.
+
+Its **count bound is not a number**. `Marker::ALL` is a closed set of six and `token_fields` refuses
+duplicates, so "no repeats" caps the list at six however long the array on the wire was — the bound
+falls out of the type rather than being chosen. That is the better shape where it is available: a
+constant tuned against the frame is the thing that drifts, and this one cannot.
+
+So it **asserts in one direction only**, unlike its neighbour. The other half of that test guards a
+tuned number drifting far under what a frame holds, because a fill refused for nothing is a real
+cost to the DM. Here there is no headroom to have lost: the largest legal token edit is orders of
+magnitude under the cap and is meant to stay there.
+
+Adding a further such command means a further test beside it. Raising the frame cap is the other lever
 and it is not free — it is also what an unidentified socket may push before `Hello`, which is
 acceptable behind a tunnel with a DM secret and is written down at the constant rather than left to
 be rediscovered.

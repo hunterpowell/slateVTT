@@ -385,6 +385,60 @@ pub struct Px {
     pub y: f32,
 }
 
+/// A mark the DM puts on a creature, named for its colour and nothing else.
+///
+/// **The naming is the whole feature.** What "red" means tonight is between the
+/// DM and the table; a variant called `Poisoned` would be the 5e rules
+/// knowledge this project refuses, and the moment one exists something
+/// downstream wants to know what it *does* - how long it lasts, what it
+/// subtracts, whether it ends on a save. Slate draws a pip and knows nothing.
+///
+/// A closed set checked by serde rather than by hand, like `ShapeKind`: an
+/// unknown marker fails to deserialize, so `check` needs no arm for validity.
+/// The server has no opinion about what any of them looks like - the hues live
+/// in `MARKER_HUES` on the client, the way `PLAYER_HUES` does.
+///
+/// **Six colours and one state**, and the rule that keeps the set closed is not
+/// "colours only" - it is that *nothing in Slate knows what a mark means*. That
+/// still holds of `Dead`: it changes nothing a token can do, which is the test
+/// to apply to an eighth. See *Markers* in `docs/tokens.md`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Marker {
+    Red,
+    Orange,
+    Yellow,
+    Green,
+    Blue,
+    Purple,
+    /// Not a colour, and the only member that is not.
+    ///
+    /// It is drawn as an X across the portrait rather than as an arc in the
+    /// band, so it reads as a different kind of mark on the board as well as
+    /// here. Nothing follows from it: the creature still moves, still holds its
+    /// initiative row, still keeps whatever total the DM has on it. A variant
+    /// that *did* follow with something - a row skipped, a token undraggable -
+    /// is where this stops being a mark and starts being a rules engine.
+    Dead,
+}
+
+impl Marker {
+    /// Every marker there is, in the order the client offers them.
+    ///
+    /// Here rather than as a `MAX_MARKERS` beside `MAX_TOKENS` so that the
+    /// closed set and the bound on a token's list cannot drift apart: with
+    /// duplicates refused, the number of variants *is* the length cap.
+    pub const ALL: [Marker; 7] = [
+        Marker::Red,
+        Marker::Orange,
+        Marker::Yellow,
+        Marker::Green,
+        Marker::Blue,
+        Marker::Purple,
+        Marker::Dead,
+    ];
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Token {
@@ -404,6 +458,18 @@ pub struct Token {
     /// knowledge. It is a count of squares, and the only thing it changes
     /// besides the drawing is where the token settles: see `snap_to_cell`.
     pub size: f32,
+    /// What the DM has marked this creature with, in the order they were added.
+    ///
+    /// **Public, unlike the four fields below it**, and that is the point rather
+    /// than an oversight: a mark nobody at the table can see is not a mark. It
+    /// needs no filtering of its own because it cannot outlive its token - a
+    /// creature the table cannot see takes its pips with it, through
+    /// `unseen_by_table` like everything else about it.
+    ///
+    /// A list, which nothing else on a token is. It is a *set* in practice:
+    /// `token_fields` refuses duplicates, which is also what bounds its length,
+    /// since `Marker::ALL` is a closed set.
+    pub markers: Vec<Marker>,
     /// The table cannot see this token at all. Not drawn-but-faint: it is absent
     /// from a player's snapshot, its moves are not relayed to them, and its
     /// initiative row is filtered out of their panel — invariant 4.
@@ -456,7 +522,8 @@ impl Default for Token {
     /// `hidden` is the opposite case and the derived `false` is right: a token
     /// saved before the field existed was one the table could see, and defaulting
     /// it to `true` would make an upgrade empty the board. `staged_only` is the
-    /// same shape and takes the same answer.
+    /// same shape and takes the same answer, and so is `markers`: a token saved
+    /// before it existed carried none, and empty is what says so.
     fn default() -> Self {
         Self {
             id: TokenId::default(),
@@ -466,6 +533,7 @@ impl Default for Token {
             owner: Owner::default(),
             img: String::new(),
             size: 1.0,
+            markers: Vec::new(),
             hidden: false,
             hp: None,
             light_ft: None,
@@ -496,6 +564,11 @@ pub struct TokenView {
     pub owner: Owner,
     pub img: String,
     pub size: f32,
+    /// **The same value for every recipient**, alone among the fields below it.
+    /// It is `FogChanged`'s argument at token scale: who may set a mark is a
+    /// permission, and what it says is not a secret. A player holding a token
+    /// they cannot see is not a case, so there is nothing here to redact.
+    pub markers: Vec<Marker>,
     /// Only ever true on the DM's copy. A player is not sent a hidden token at
     /// all, so this is false for them by construction rather than by rule.
     pub hidden: bool,
@@ -532,6 +605,7 @@ impl Token {
             owner: self.owner.clone(),
             img: self.img.clone(),
             size: self.size,
+            markers: self.markers.clone(),
             hidden: self.hidden,
             hp: if is_dm { self.hp } else { None },
             light_ft: if is_dm { self.light_ft } else { None },
@@ -1124,6 +1198,10 @@ pub enum ClientMsg {
         /// How far this token lights the board, or `None` for one carrying no
         /// light. A brazier is built in one command like the ambush above it.
         light_ft: Option<f32>,
+        /// What it is marked with. Usually empty on a create; it is here rather
+        /// than left to a follow-up edit so that duplicating a marked creature
+        /// is one command, which is the only way it is ever non-empty.
+        markers: Vec<Marker>,
         /// Built on the map the DM is preparing rather than on the board: `x, y`
         /// becomes the token's plan and it does not exist for the table, or for
         /// the DM's own live board, until the promote.
@@ -1154,6 +1232,11 @@ pub enum ClientMsg {
         /// Shared by both boards like every other field here: a lantern is a
         /// fact about the creature and not about which map it is standing on.
         light_ft: Option<f32>,
+        /// The whole set, not a toggle. This command replaces the token, so a
+        /// client sending it has to carry every field through - which is what
+        /// makes a `SetMarkers` beside it unnecessary and a marker toggle an
+        /// ordinary edit, exactly as the damage box's is.
+        markers: Vec<Marker>,
     },
     DeleteToken {
         id: TokenId,

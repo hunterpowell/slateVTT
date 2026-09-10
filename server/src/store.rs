@@ -289,8 +289,8 @@ mod tests {
     use super::*;
     use crate::fog::Override;
     use crate::protocol::{
-        Calibration, GridShape, Hp, InitiativeEntry, Lighting, Origin, Owner, PlayerId, Pos, Px,
-        Rect, ShapeId, ShapeKind, TokenId, WallId, WallKind,
+        Calibration, GridShape, Hp, InitiativeEntry, Lighting, Marker, Origin, Owner, PlayerId,
+        Pos, Px, Rect, ShapeId, ShapeKind, TokenId, WallId, WallKind,
     };
 
     static NEXT: AtomicU32 = AtomicU32::new(0);
@@ -380,6 +380,12 @@ mod tests {
                 // before this field existed decodes to, so a round trip that
                 // dropped it entirely would pass.
                 light_ft: Some(30.0),
+                // Two of them, and set for `light_ft`'s reason: an empty vec is
+                // what a save written before this field existed decodes to, so a
+                // round trip that dropped the list entirely would pass. Two
+                // rather than one, because a list is the first thing on a token
+                // that can round-trip its length wrongly.
+                markers: vec![Marker::Red, Marker::Blue],
                 // Where the DM means this one to land when the map staged above
                 // becomes the board.
                 staged_pos: Some(Pos { x: 8.5, y: 2.5 }),
@@ -754,6 +760,10 @@ mod tests {
         assert_eq!(
             token.hp, None,
             "a save predating hit points means the DM keeps no total, not zero"
+        );
+        assert!(
+            token.markers.is_empty(),
+            "a token saved before markers existed carried none"
         );
 
         assert_eq!(
