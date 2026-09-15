@@ -33,6 +33,9 @@
     "conc": false,
     "ritual": false,
     "src": { "book": "TCE", "page": null },
+    "save": null,
+    "attack": null,
+    "damage": ["thunder"],
     "area": { "type": "sphere", "size": 5 },
     "verified": false
   },
@@ -50,6 +53,9 @@
     "conc": false,
     "ritual": false,
     "src": { "book": "XGE", "page": null },
+    "save": null,
+    "attack": null,
+    "damage": [],
     "area": null,
     "verified": false
   },
@@ -67,6 +73,9 @@
     "conc": true,
     "ritual": false,
     "src": { "book": "XGE", "page": null },
+    "save": "dex",
+    "attack": null,
+    "damage": ["fire"],
     "area": null,
     "verified": false
   },
@@ -104,6 +113,9 @@
     "conc": false,
     "ritual": false,
     "src": { "book": "XGE", "page": null },
+    "save": "con",
+    "attack": null,
+    "damage": ["cold"],
     "area": null,
     "verified": false
   },
@@ -121,6 +133,9 @@
     "conc": false,
     "ritual": false,
     "src": { "book": "TCE", "page": null },
+    "save": null,
+    "attack": null,
+    "damage": ["fire"],
     "area": { "type": "sphere", "size": 5 },
     "verified": false
   },
@@ -138,6 +153,9 @@
     "conc": false,
     "ritual": false,
     "src": { "book": "XGE", "page": null },
+    "save": "str",
+    "attack": null,
+    "damage": [],
     "area": null,
     "verified": false
   },
@@ -155,6 +173,9 @@
     "conc": false,
     "ritual": false,
     "src": { "book": "XGE", "page": null },
+    "save": "con",
+    "attack": null,
+    "damage": ["poison"],
     "area": null,
     "verified": false
   },
@@ -172,6 +193,9 @@
     "conc": false,
     "ritual": false,
     "src": { "book": "TCE", "page": null },
+    "save": "str",
+    "attack": null,
+    "damage": ["lightning"],
     "area": { "type": "sphere", "size": 15 },
     "verified": false
   },
@@ -189,6 +213,9 @@
     "conc": false,
     "ritual": false,
     "src": { "book": "XGE", "page": null },
+    "save": null,
+    "attack": "ranged",
+    "damage": ["bludgeoning"],
     "area": null,
     "verified": false
   },
@@ -206,6 +233,9 @@
     "conc": false,
     "ritual": false,
     "src": { "book": "TCE", "page": null },
+    "save": "int",
+    "attack": null,
+    "damage": ["psychic"],
     "area": null,
     "verified": false
   },
@@ -223,6 +253,9 @@
     "conc": false,
     "ritual": false,
     "src": { "book": "XGE", "page": null },
+    "save": null,
+    "attack": null,
+    "damage": [],
     "area": null,
     "verified": false
   },
@@ -240,6 +273,9 @@
     "conc": false,
     "ritual": false,
     "src": { "book": "XGE", "page": null },
+    "save": null,
+    "attack": "melee",
+    "damage": ["acid"],
     "area": null,
     "verified": false
   },
@@ -257,6 +293,9 @@
     "conc": false,
     "ritual": false,
     "src": { "book": "XGE", "page": null },
+    "save": null,
+    "attack": null,
+    "damage": [],
     "area": null,
     "verified": false
   },
@@ -274,6 +313,9 @@
     "conc": false,
     "ritual": false,
     "src": { "book": "TCE", "page": null },
+    "save": "dex",
+    "attack": null,
+    "damage": ["force"],
     "area": { "type": "sphere", "size": 5 },
     "verified": false
   },
@@ -291,6 +333,9 @@
     "conc": false,
     "ritual": false,
     "src": { "book": "PHB", "page": null },
+    "save": null,
+    "attack": "melee",
+    "damage": ["piercing"],
     "area": null,
     "verified": false
   },
@@ -308,6 +353,9 @@
     "conc": false,
     "ritual": false,
     "src": { "book": "XGE", "page": null },
+    "save": "con",
+    "attack": null,
+    "damage": ["thunder"],
     "area": null,
     "verified": false
   },
@@ -325,6 +373,9 @@
     "conc": false,
     "ritual": false,
     "src": { "book": "XGE", "page": null },
+    "save": "wis",
+    "attack": null,
+    "damage": ["necrotic"],
     "area": null,
     "verified": false
   },
@@ -342,6 +393,9 @@
     "conc": false,
     "ritual": false,
     "src": { "book": "XGE", "page": null },
+    "save": "con",
+    "attack": null,
+    "damage": ["radiant"],
     "area": null,
     "verified": false
   },
@@ -359,6 +413,9 @@
     "conc": false,
     "ritual": false,
     "src": { "book": "XGE", "page": null },
+    "save": null,
+    "attack": null,
+    "damage": ["acid", "cold", "fire", "lightning", "thunder"],
     "area": null,
     "verified": false
   },
@@ -416,6 +473,9 @@
     "conc": true,
     "ritual": false,
     "src": { "book": "XGE", "page": null },
+    "save": null,
+    "attack": null,
+    "damage": [],
     "area": null,
     "verified": false
   },
@@ -433,6 +493,9 @@
     "conc": false,
     "ritual": false,
     "src": { "book": "XGE", "page": null },
+    "save": "dex",
+    "attack": null,
+    "damage": ["bludgeoning"],
     "area": null,
     "verified": false
   },
@@ -450,6 +513,9 @@
     "conc": true,
     "ritual": false,
     "src": { "book": "XGE", "page": null },
+    "save": "wis",
+    "attack": null,
+    "damage": [],
     "area": null,
     "verified": false
   },
@@ -467,6 +533,9 @@
     "conc": false,
     "ritual": true,
     "src": { "book": "XGE", "page": null },
+    "save": null,
+    "attack": null,
+    "damage": [],
     "area": null,
     "verified": false
   },
@@ -484,6 +553,9 @@
     "conc": false,
     "ritual": false,
     "src": { "book": "XGE", "page": null },
+    "save": null,
+    "attack": "ranged",
+    "damage": ["acid", "cold", "fire", "force", "lightning", "poison", "psychic", "thunder"],
     "area": null,
     "verified": false
   },
@@ -561,6 +633,9 @@
     "conc": false,
     "ritual": false,
     "src": { "book": "XGE", "page": null },
+    "save": "dex",
+    "attack": null,
+    "damage": ["bludgeoning"],
     "area": null,
     "verified": false
   },
@@ -638,6 +713,9 @@
     "conc": false,
     "ritual": false,
     "src": { "book": "XGE", "page": null },
+    "save": "dex",
+    "attack": "ranged",
+    "damage": ["piercing", "cold"],
     "area": null,
     "verified": false
   },
@@ -695,6 +773,9 @@
     "conc": false,
     "ritual": false,
     "src": { "book": "XGE", "page": null },
+    "save": "dex",
+    "attack": null,
+    "damage": [],
     "area": null,
     "verified": false
   },
@@ -712,6 +793,9 @@
     "conc": true,
     "ritual": false,
     "src": { "book": "TCE", "page": null },
+    "save": "dex",
+    "attack": null,
+    "damage": ["acid"],
     "area": { "type": "line", "size": 30 },
     "verified": false
   },
@@ -789,6 +873,9 @@
     "conc": true,
     "ritual": false,
     "src": { "book": "XGE", "page": null },
+    "save": null,
+    "attack": null,
+    "damage": ["force"],
     "area": null,
     "verified": false
   },
@@ -806,6 +893,9 @@
     "conc": false,
     "ritual": false,
     "src": { "book": "XGE", "page": null },
+    "save": "dex",
+    "attack": null,
+    "damage": ["fire"],
     "area": null,
     "verified": false
   },
@@ -863,6 +953,9 @@
     "conc": false,
     "ritual": false,
     "src": { "book": "PHB", "page": null },
+    "save": "dex",
+    "attack": null,
+    "damage": ["piercing"],
     "area": null,
     "verified": false
   },
@@ -900,6 +993,9 @@
     "conc": true,
     "ritual": false,
     "src": { "book": "XGE", "page": null },
+    "save": "dex",
+    "attack": null,
+    "damage": ["acid", "cold", "fire", "lightning", "poison"],
     "area": null,
     "verified": false
   },
@@ -917,6 +1013,9 @@
     "conc": true,
     "ritual": false,
     "src": { "book": "XGE", "page": null },
+    "save": "str",
+    "attack": null,
+    "damage": ["bludgeoning"],
     "area": null,
     "verified": false
   },
@@ -934,6 +1033,9 @@
     "conc": true,
     "ritual": false,
     "src": { "book": "XGE", "page": null },
+    "save": "str",
+    "attack": null,
+    "damage": [],
     "area": null,
     "verified": false
   },
@@ -951,6 +1053,9 @@
     "conc": true,
     "ritual": false,
     "src": { "book": "XGE", "page": null },
+    "save": null,
+    "attack": null,
+    "damage": [],
     "area": null,
     "verified": false
   },
@@ -968,6 +1073,9 @@
     "conc": true,
     "ritual": false,
     "src": { "book": "XGE", "page": null },
+    "save": "str",
+    "attack": null,
+    "damage": ["bludgeoning"],
     "area": null,
     "verified": false
   },
@@ -985,6 +1093,9 @@
     "conc": true,
     "ritual": false,
     "src": { "book": "XGE", "page": null },
+    "save": "wis",
+    "attack": null,
+    "damage": ["psychic"],
     "area": null,
     "verified": false
   },
@@ -1002,6 +1113,9 @@
     "conc": true,
     "ritual": false,
     "src": { "book": "PHB", "page": null },
+    "save": "int",
+    "attack": null,
+    "damage": ["psychic"],
     "area": null,
     "verified": false
   },
@@ -1019,6 +1133,9 @@
     "conc": false,
     "ritual": false,
     "src": { "book": "XGE", "page": null },
+    "save": "con",
+    "attack": null,
+    "damage": [],
     "area": null,
     "verified": false
   },
@@ -1036,6 +1153,9 @@
     "conc": true,
     "ritual": false,
     "src": { "book": "XGE", "page": null },
+    "save": null,
+    "attack": null,
+    "damage": ["psychic"],
     "area": null,
     "verified": false
   },
@@ -1053,6 +1173,9 @@
     "conc": true,
     "ritual": true,
     "src": { "book": "XGE", "page": null },
+    "save": null,
+    "attack": null,
+    "damage": [],
     "area": null,
     "verified": false
   },
@@ -1070,6 +1193,9 @@
     "conc": false,
     "ritual": false,
     "src": { "book": "XGE", "page": null },
+    "save": "dex",
+    "attack": null,
+    "damage": ["cold"],
     "area": null,
     "verified": false
   },
@@ -1087,6 +1213,9 @@
     "conc": true,
     "ritual": false,
     "src": { "book": "TCE", "page": null },
+    "save": null,
+    "attack": null,
+    "damage": [],
     "area": null,
     "verified": false
   },
@@ -1104,6 +1233,9 @@
     "conc": false,
     "ritual": false,
     "src": { "book": "TCE", "page": null },
+    "save": "int",
+    "attack": null,
+    "damage": ["psychic"],
     "area": null,
     "verified": false
   },
@@ -1121,6 +1253,9 @@
     "conc": true,
     "ritual": false,
     "src": { "book": "XGE", "page": null },
+    "save": null,
+    "attack": null,
+    "damage": [],
     "area": null,
     "verified": false
   },
@@ -1178,6 +1313,9 @@
     "conc": false,
     "ritual": false,
     "src": { "book": "XGE", "page": null },
+    "save": null,
+    "attack": null,
+    "damage": [],
     "area": null,
     "verified": false
   },
@@ -1255,6 +1393,9 @@
     "conc": true,
     "ritual": false,
     "src": { "book": "XGE", "page": null },
+    "save": "int",
+    "attack": null,
+    "damage": [],
     "area": null,
     "verified": false
   },
@@ -1272,6 +1413,9 @@
     "conc": false,
     "ritual": false,
     "src": { "book": "XGE", "page": null },
+    "save": "dex",
+    "attack": null,
+    "damage": ["bludgeoning"],
     "area": null,
     "verified": false
   },
@@ -1289,6 +1433,9 @@
     "conc": false,
     "ritual": true,
     "src": { "book": "PHB", "page": null },
+    "save": null,
+    "attack": null,
+    "damage": [],
     "area": null,
     "verified": false
   },
@@ -1306,6 +1453,9 @@
     "conc": true,
     "ritual": false,
     "src": { "book": "XGE", "page": null },
+    "save": null,
+    "attack": null,
+    "damage": ["fire"],
     "area": null,
     "verified": false
   },
@@ -1323,6 +1473,9 @@
     "conc": true,
     "ritual": false,
     "src": { "book": "PHB", "page": null },
+    "save": "dex",
+    "attack": null,
+    "damage": ["cold", "acid"],
     "area": null,
     "verified": false
   },
@@ -1340,6 +1493,9 @@
     "conc": true,
     "ritual": false,
     "src": { "book": "TCE", "page": null },
+    "save": null,
+    "attack": null,
+    "damage": [],
     "area": null,
     "verified": false
   },
@@ -1357,6 +1513,9 @@
     "conc": false,
     "ritual": false,
     "src": { "book": "XGE", "page": null },
+    "save": null,
+    "attack": null,
+    "damage": ["necrotic"],
     "area": null,
     "verified": false
   },
@@ -1394,6 +1553,9 @@
     "conc": true,
     "ritual": false,
     "src": { "book": "XGE", "page": null },
+    "save": "dex",
+    "attack": null,
+    "damage": ["fire"],
     "area": null,
     "verified": false
   },
@@ -1411,6 +1573,9 @@
     "conc": true,
     "ritual": false,
     "src": { "book": "TCE", "page": null },
+    "save": null,
+    "attack": null,
+    "damage": ["radiant", "necrotic", "cold"],
     "area": null,
     "verified": false
   },
@@ -1428,6 +1593,9 @@
     "conc": true,
     "ritual": false,
     "src": { "book": "TCE", "page": null },
+    "save": null,
+    "attack": null,
+    "damage": [],
     "area": null,
     "verified": false
   },
@@ -1445,6 +1613,9 @@
     "conc": true,
     "ritual": false,
     "src": { "book": "XGE", "page": null },
+    "save": null,
+    "attack": null,
+    "damage": [],
     "area": null,
     "verified": false
   },
@@ -1462,6 +1633,9 @@
     "conc": true,
     "ritual": false,
     "src": { "book": "TCE", "page": null },
+    "save": null,
+    "attack": null,
+    "damage": [],
     "area": null,
     "verified": false
   },
@@ -1479,6 +1653,9 @@
     "conc": true,
     "ritual": false,
     "src": { "book": "TCE", "page": null },
+    "save": null,
+    "attack": null,
+    "damage": [],
     "area": null,
     "verified": false
   },
@@ -1496,6 +1673,9 @@
     "conc": false,
     "ritual": false,
     "src": { "book": "XGE", "page": null },
+    "save": "con",
+    "attack": null,
+    "damage": ["thunder"],
     "area": null,
     "verified": false
   },
@@ -1513,6 +1693,9 @@
     "conc": false,
     "ritual": false,
     "src": { "book": "XGE", "page": null },
+    "save": "dex",
+    "attack": null,
+    "damage": ["bludgeoning"],
     "area": null,
     "verified": false
   },
@@ -1530,6 +1713,9 @@
     "conc": false,
     "ritual": false,
     "src": { "book": "XGE", "page": null },
+    "save": null,
+    "attack": null,
+    "damage": [],
     "area": null,
     "verified": false
   },
@@ -1547,6 +1733,9 @@
     "conc": true,
     "ritual": false,
     "src": { "book": "XGE", "page": null },
+    "save": null,
+    "attack": null,
+    "damage": [],
     "area": null,
     "verified": false
   },
@@ -1564,6 +1753,9 @@
     "conc": true,
     "ritual": false,
     "src": { "book": "XGE", "page": null },
+    "save": null,
+    "attack": null,
+    "damage": [],
     "area": null,
     "verified": false
   },
@@ -1621,6 +1813,9 @@
     "conc": false,
     "ritual": false,
     "src": { "book": "XGE", "page": null },
+    "save": "wis",
+    "attack": null,
+    "damage": [],
     "area": null,
     "verified": false
   },
@@ -1638,6 +1833,9 @@
     "conc": true,
     "ritual": false,
     "src": { "book": "XGE", "page": null },
+    "save": "con",
+    "attack": null,
+    "damage": ["acid", "cold", "fire", "lightning", "thunder"],
     "area": null,
     "verified": false
   },
@@ -1655,6 +1853,9 @@
     "conc": false,
     "ritual": false,
     "src": { "book": "XGE", "page": null },
+    "save": null,
+    "attack": null,
+    "damage": [],
     "area": null,
     "verified": false
   },
@@ -1692,6 +1893,9 @@
     "conc": true,
     "ritual": false,
     "src": { "book": "XGE", "page": null },
+    "save": null,
+    "attack": null,
+    "damage": ["force"],
     "area": null,
     "verified": false
   },
@@ -1709,6 +1913,9 @@
     "conc": true,
     "ritual": false,
     "src": { "book": "XGE", "page": null },
+    "save": null,
+    "attack": null,
+    "damage": ["necrotic"],
     "area": null,
     "verified": false
   },
@@ -1726,6 +1933,9 @@
     "conc": true,
     "ritual": false,
     "src": { "book": "XGE", "page": null },
+    "save": "con",
+    "attack": null,
+    "damage": ["radiant"],
     "area": null,
     "verified": false
   },
@@ -1763,6 +1973,9 @@
     "conc": true,
     "ritual": false,
     "src": { "book": "XGE", "page": null },
+    "save": "str",
+    "attack": "ranged",
+    "damage": ["bludgeoning", "lightning"],
     "area": null,
     "verified": false
   },
@@ -1780,6 +1993,9 @@
     "conc": true,
     "ritual": false,
     "src": { "book": "TCE", "page": null },
+    "save": null,
+    "attack": null,
+    "damage": [],
     "area": null,
     "verified": false
   },
@@ -1797,6 +2013,9 @@
     "conc": true,
     "ritual": false,
     "src": { "book": "TCE", "page": null },
+    "save": null,
+    "attack": null,
+    "damage": [],
     "area": null,
     "verified": false
   },
@@ -1814,6 +2033,9 @@
     "conc": true,
     "ritual": false,
     "src": { "book": "TCE", "page": null },
+    "save": null,
+    "attack": null,
+    "damage": [],
     "area": null,
     "verified": false
   },
@@ -1831,6 +2053,9 @@
     "conc": true,
     "ritual": false,
     "src": { "book": "XGE", "page": null },
+    "save": null,
+    "attack": null,
+    "damage": [],
     "area": null,
     "verified": false
   },
@@ -1848,6 +2073,9 @@
     "conc": false,
     "ritual": false,
     "src": { "book": "XGE", "page": null },
+    "save": "dex",
+    "attack": null,
+    "damage": ["acid"],
     "area": null,
     "verified": false
   },
@@ -1865,6 +2093,9 @@
     "conc": true,
     "ritual": false,
     "src": { "book": "XGE", "page": null },
+    "save": "str",
+    "attack": null,
+    "damage": [],
     "area": null,
     "verified": false
   },
@@ -1942,6 +2173,9 @@
     "conc": true,
     "ritual": false,
     "src": { "book": "XGE", "page": null },
+    "save": "str",
+    "attack": null,
+    "damage": [],
     "area": null,
     "verified": false
   },
@@ -1959,6 +2193,9 @@
     "conc": true,
     "ritual": false,
     "src": { "book": "XGE", "page": null },
+    "save": null,
+    "attack": null,
+    "damage": [],
     "area": null,
     "verified": false
   },
@@ -1976,6 +2213,9 @@
     "conc": true,
     "ritual": false,
     "src": { "book": "XGE", "page": null },
+    "save": "con",
+    "attack": null,
+    "damage": ["radiant"],
     "area": null,
     "verified": false
   },
@@ -2013,6 +2253,9 @@
     "conc": true,
     "ritual": false,
     "src": { "book": "XGE", "page": null },
+    "save": "dex",
+    "attack": null,
+    "damage": ["necrotic"],
     "area": null,
     "verified": false
   },
@@ -2030,6 +2273,9 @@
     "conc": true,
     "ritual": false,
     "src": { "book": "XGE", "page": null },
+    "save": null,
+    "attack": null,
+    "damage": [],
     "area": null,
     "verified": false
   },
@@ -2047,6 +2293,9 @@
     "conc": true,
     "ritual": false,
     "src": { "book": "XGE", "page": null },
+    "save": "con",
+    "attack": null,
+    "damage": ["radiant"],
     "area": null,
     "verified": false
   },
@@ -2064,6 +2313,9 @@
     "conc": true,
     "ritual": false,
     "src": { "book": "XGE", "page": null },
+    "save": "dex",
+    "attack": null,
+    "damage": ["fire"],
     "area": null,
     "verified": false
   },
@@ -2081,6 +2333,9 @@
     "conc": true,
     "ritual": false,
     "src": { "book": "XGE", "page": null },
+    "save": null,
+    "attack": null,
+    "damage": [],
     "area": null,
     "verified": false
   },
@@ -2098,6 +2353,9 @@
     "conc": true,
     "ritual": false,
     "src": { "book": "XGE", "page": null },
+    "save": "str",
+    "attack": null,
+    "damage": ["bludgeoning"],
     "area": null,
     "verified": false
   },
@@ -2115,6 +2373,9 @@
     "conc": false,
     "ritual": false,
     "src": { "book": "XGE", "page": null },
+    "save": "con",
+    "attack": null,
+    "damage": ["necrotic"],
     "area": null,
     "verified": false
   },
@@ -2132,6 +2393,9 @@
     "conc": true,
     "ritual": false,
     "src": { "book": "XGE", "page": null },
+    "save": null,
+    "attack": null,
+    "damage": [],
     "area": null,
     "verified": false
   },
@@ -2149,6 +2413,9 @@
     "conc": false,
     "ritual": false,
     "src": { "book": "XGE", "page": null },
+    "save": null,
+    "attack": "melee",
+    "damage": ["force"],
     "area": null,
     "verified": false
   },
@@ -2166,6 +2433,9 @@
     "conc": true,
     "ritual": false,
     "src": { "book": "TCE", "page": null },
+    "save": null,
+    "attack": null,
+    "damage": [],
     "area": null,
     "verified": false
   },
@@ -2203,6 +2473,9 @@
     "conc": false,
     "ritual": false,
     "src": { "book": "XGE", "page": null },
+    "save": "int",
+    "attack": null,
+    "damage": ["psychic"],
     "area": null,
     "verified": false
   },
@@ -2220,6 +2493,9 @@
     "conc": false,
     "ritual": false,
     "src": { "book": "PHB", "page": null },
+    "save": null,
+    "attack": null,
+    "damage": [],
     "area": null,
     "verified": false
   },
@@ -2237,6 +2513,9 @@
     "conc": false,
     "ritual": false,
     "src": { "book": "XGE", "page": null },
+    "save": "dex",
+    "attack": null,
+    "damage": ["bludgeoning"],
     "area": null,
     "verified": false
   },
@@ -2254,6 +2533,9 @@
     "conc": true,
     "ritual": false,
     "src": { "book": "XGE", "page": null },
+    "save": "con",
+    "attack": "ranged",
+    "damage": ["radiant"],
     "area": null,
     "verified": false
   },
@@ -2271,6 +2553,9 @@
     "conc": true,
     "ritual": false,
     "src": { "book": "XGE", "page": null },
+    "save": "dex",
+    "attack": "ranged",
+    "damage": ["slashing", "bludgeoning"],
     "area": null,
     "verified": false
   },
@@ -2288,6 +2573,9 @@
     "conc": true,
     "ritual": false,
     "src": { "book": "PHB", "page": null },
+    "save": null,
+    "attack": null,
+    "damage": [],
     "area": null,
     "verified": false
   },
@@ -2305,6 +2593,9 @@
     "conc": false,
     "ritual": false,
     "src": { "book": "XGE", "page": null },
+    "save": "dex",
+    "attack": null,
+    "damage": ["bludgeoning"],
     "area": null,
     "verified": false
   },
@@ -2322,6 +2613,9 @@
     "conc": false,
     "ritual": false,
     "src": { "book": "XGE", "page": null },
+    "save": null,
+    "attack": null,
+    "damage": ["piercing"],
     "area": null,
     "verified": false
   },
@@ -2339,6 +2633,9 @@
     "conc": false,
     "ritual": false,
     "src": { "book": "XGE", "page": null },
+    "save": null,
+    "attack": null,
+    "damage": [],
     "area": null,
     "verified": false
   },
@@ -2356,6 +2653,9 @@
     "conc": true,
     "ritual": false,
     "src": { "book": "XGE", "page": null },
+    "save": "dex",
+    "attack": null,
+    "damage": ["fire"],
     "area": null,
     "verified": false
   },
@@ -2373,6 +2673,9 @@
     "conc": true,
     "ritual": false,
     "src": { "book": "XGE", "page": null },
+    "save": "con",
+    "attack": null,
+    "damage": ["cold"],
     "area": null,
     "verified": false
   },
@@ -2390,6 +2693,9 @@
     "conc": true,
     "ritual": false,
     "src": { "book": "XGE", "page": null },
+    "save": "dex",
+    "attack": null,
+    "damage": [],
     "area": null,
     "verified": false
   },
@@ -2407,6 +2713,9 @@
     "conc": true,
     "ritual": false,
     "src": { "book": "XGE", "page": null },
+    "save": "con",
+    "attack": null,
+    "damage": ["bludgeoning"],
     "area": null,
     "verified": false
   },
@@ -2424,6 +2733,9 @@
     "conc": true,
     "ritual": false,
     "src": { "book": "XGE", "page": null },
+    "save": "int",
+    "attack": null,
+    "damage": ["psychic"],
     "area": null,
     "verified": false
   },
@@ -2441,6 +2753,9 @@
     "conc": true,
     "ritual": false,
     "src": { "book": "XGE", "page": null },
+    "save": null,
+    "attack": null,
+    "damage": [],
     "area": null,
     "verified": false
   },
@@ -2458,6 +2773,9 @@
     "conc": false,
     "ritual": false,
     "src": { "book": "XGE", "page": null },
+    "save": "wis",
+    "attack": null,
+    "damage": [],
     "area": null,
     "verified": false
   },
@@ -2475,6 +2793,9 @@
     "conc": false,
     "ritual": false,
     "src": { "book": "XGE", "page": null },
+    "save": null,
+    "attack": null,
+    "damage": [],
     "area": null,
     "verified": false
   },
@@ -2492,6 +2813,9 @@
     "conc": true,
     "ritual": false,
     "src": { "book": "TCE", "page": null },
+    "save": null,
+    "attack": null,
+    "damage": [],
     "area": null,
     "verified": false
   },
@@ -2509,6 +2833,9 @@
     "conc": true,
     "ritual": false,
     "src": { "book": "TCE", "page": null },
+    "save": null,
+    "attack": null,
+    "damage": [],
     "area": null,
     "verified": false
   },
@@ -2526,6 +2853,9 @@
     "conc": true,
     "ritual": false,
     "src": { "book": "XGE", "page": null },
+    "save": null,
+    "attack": null,
+    "damage": ["force"],
     "area": null,
     "verified": false
   },
@@ -2543,6 +2873,9 @@
     "conc": false,
     "ritual": false,
     "src": { "book": "XGE", "page": null },
+    "save": null,
+    "attack": "ranged",
+    "damage": ["radiant"],
     "area": null,
     "verified": false
   },
@@ -2560,6 +2893,9 @@
     "conc": false,
     "ritual": false,
     "src": { "book": "TCE", "page": null },
+    "save": null,
+    "attack": null,
+    "damage": [],
     "area": null,
     "verified": false
   },
@@ -2577,6 +2913,9 @@
     "conc": false,
     "ritual": false,
     "src": { "book": "XGE", "page": null },
+    "save": "con",
+    "attack": null,
+    "damage": [],
     "area": null,
     "verified": false
   },
@@ -2594,6 +2933,9 @@
     "conc": false,
     "ritual": false,
     "src": { "book": "XGE", "page": null },
+    "save": "cha",
+    "attack": null,
+    "damage": [],
     "area": null,
     "verified": false
   },
@@ -2611,6 +2953,9 @@
     "conc": true,
     "ritual": false,
     "src": { "book": "XGE", "page": null },
+    "save": "dex",
+    "attack": null,
+    "damage": ["bludgeoning"],
     "area": null,
     "verified": false
   },
@@ -2628,6 +2973,9 @@
     "conc": false,
     "ritual": false,
     "src": { "book": "XGE", "page": null },
+    "save": "con",
+    "attack": null,
+    "damage": ["necrotic"],
     "area": null,
     "verified": false
   },
@@ -2645,6 +2993,9 @@
     "conc": true,
     "ritual": false,
     "src": { "book": "XGE", "page": null },
+    "save": "int",
+    "attack": null,
+    "damage": ["acid", "cold", "fire", "lightning", "necrotic", "poison"],
     "area": null,
     "verified": false
   },
@@ -2662,6 +3013,9 @@
     "conc": true,
     "ritual": false,
     "src": { "book": "XGE", "page": null },
+    "save": "wis",
+    "attack": null,
+    "damage": ["psychic"],
     "area": null,
     "verified": false
   },
@@ -2679,6 +3033,9 @@
     "conc": false,
     "ritual": false,
     "src": { "book": "XGE", "page": null },
+    "save": null,
+    "attack": null,
+    "damage": [],
     "area": null,
     "verified": false
   },
@@ -2696,6 +3053,9 @@
     "conc": true,
     "ritual": false,
     "src": { "book": "PHB", "page": null },
+    "save": "str",
+    "attack": null,
+    "damage": ["bludgeoning"],
     "area": null,
     "verified": false
   },
@@ -2713,6 +3073,9 @@
     "conc": true,
     "ritual": false,
     "src": { "book": "TCE", "page": null },
+    "save": null,
+    "attack": "melee",
+    "damage": ["force"],
     "area": null,
     "verified": false
   },
@@ -2730,6 +3093,9 @@
     "conc": true,
     "ritual": false,
     "src": { "book": "XGE", "page": null },
+    "save": null,
+    "attack": null,
+    "damage": [],
     "area": null,
     "verified": false
   },
@@ -2747,6 +3113,9 @@
     "conc": true,
     "ritual": false,
     "src": { "book": "XGE", "page": null },
+    "save": "wis",
+    "attack": null,
+    "damage": [],
     "area": null,
     "verified": false
   },
@@ -2764,6 +3133,9 @@
     "conc": false,
     "ritual": false,
     "src": { "book": "PHB", "page": null },
+    "save": null,
+    "attack": null,
+    "damage": [],
     "area": null,
     "verified": false
   },
@@ -2781,6 +3153,9 @@
     "conc": false,
     "ritual": false,
     "src": { "book": "XGE", "page": null },
+    "save": "int",
+    "attack": null,
+    "damage": ["psychic"],
     "area": null,
     "verified": false
   }

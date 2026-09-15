@@ -9,11 +9,11 @@ deliberately, and neither is loaded for you:
 
 - **`ROADMAP.md`** — design for what is not built yet, and the milestone order. Read it when
   starting a milestone.
-- **`docs/maps.md`, `docs/tokens.md`, `docs/drawings.md`, `docs/walls.md`, `docs/fog.md`,
-  `docs/undo.md`, `docs/chat.md`, `docs/dice.md`, `docs/notes.md`, `docs/sound.md`,
-  `docs/presence.md`, `docs/rooms.md`, `docs/frontend.md`, `docs/net.md`** — why each built
-  feature is the shape it is. Every section below that summarises a
-  feature ends with a pointer to its file and the code that file covers.
+- **`docs/*.md`** — one file per subsystem (`maps`, `tokens`, `drawings`, `walls`, `fog`, `undo`,
+  `chat`, `dice`, `notes`, `sound`, `presence`, `rooms`, `frontend`, `net`): why each built
+  feature is the shape it is. Every feature section below ends with a pointer to its file and the
+  code that file covers. **The summaries here are enough to use a feature and not enough to
+  redesign one** — the mechanism, the failure modes and the arguments are in `docs/`.
 
 (All referenced in backticks on purpose: a bare `@` path here would be an import, and importing
 them would load them into every session, which is what moving them out avoided.)
@@ -24,87 +24,56 @@ them would load them into every session, which is what moving them out avoided.)
 - Shows tokens on that map; the DM moves any token, players move only their own
 - Tracks initiative order and the current turn
 - Lets the DM prepare the next map out of sight of the table, then promote it
-- Lets the DM put a picture in front of everyone's board — a campsite, a treeline — for the
-  stretches of an evening with nothing to move, without costing the encounter underneath it
-- Lets anyone measure a distance or draw a spell area on the board, or point at a spot on it so
-  everyone else sees where
-- Lets the DM trace the walls and doors of a map, and limits what the table can see to what their
-  own tokens have line of sight on — or, on a map set that way, to the whole room each token is
-  standing in — and lets the DM overrule either by hand, square by square or a room at a time
+- Lets the DM put a picture in front of everyone's board for the stretches of an evening with
+  nothing to move, without costing the encounter underneath it
+- Lets anyone measure a distance, draw a spell area, or point at a spot so everyone sees where
+- Lets the DM trace walls and doors, and limits what the table sees to what their own tokens have
+  line of sight on — or, per map, to the whole room each token stands in — with a hand override
 - Lets the DM take back the last handful of things that changed the room
-- Lets anyone say something to the table, or whisper the DM — and the DM whisper any one player;
+- Lets anyone say something to the table or whisper the DM, and the DM whisper any one player —
   two destinations and nothing else, kept for the evening and never written down
-- Lends a die to whoever came without one, thrown by the room and landing in that same log
-- Plays one looping track the DM picks, on every screen that asked for it, at whatever level
-  each person set for themselves
-- Gives everyone a box to write in that no other screen is ever sent, the DM's included
-- Shows who is connected, tells you when it is your turn, picks the page back up when a
-  socket drops, lets a player choose the colour they are drawn in, and draws everybody's
-  pointer on everybody's board
+- Lends a die to whoever came without one, thrown by the room into that same log
+- Plays one looping track the DM picks, at whatever level each person set for themselves
+- Gives everyone a private box to write in that no other screen is ever sent, the DM's included
+- Shows who is connected, tells you when it is your turn, recovers a dropped socket, lets a
+  player choose their colour, and draws everybody's pointer on everybody's board
 
 ## Non-goals
 
-These are out of scope. Do not add them, do not scaffold for them, do not suggest them
-unless explicitly asked:
+Out of scope. Do not add them, do not scaffold for them, do not suggest them unless asked. Several
+have a **bounded exception** that is built; the boundary is the specification, and the test named
+beside each is what keeps it closed.
 
-- Character sheets, stat blocks, or any 5e rules knowledge. A hit point total the DM keeps on
-  a monster is not a stat block and is in scope; anything that knows what a hit point *means* is not.
-- **Dice rolling beyond a loaner.** The old rule here was "the group uses physical dice", which
-  was a fact about the table rather than an argument — and it stopped being true for one player
-  for one evening. What is built is a **bag of plastic and nothing else**, and the test for
-  anything proposed here is *could a bag of plastic do this?* Counts yes: `8d6` is a fireball.
-  Arithmetic no: **no modifiers, no expressions, no macros**, because a modifier is a character
-  sheet with one field filled in. Advantage is two d20s and a decision, so it needs no code and
-  gets none. No per-token dice, no parsing of anything typed, and no wiring into the initiative
-  panel. **Built**, as milestone 40 — see *The loaner die* below and `docs/dice.md`.
-- Voice and video (the group uses Discord). **Text is a bounded exception and the boundary is the
-  whole of it** — a player may whisper the DM or shout to the table, and that is the entire feature.
-  No player-to-player messages, no channels, no threads, no history between sessions, no formatting,
-  no emotes, no commands. (Dice were on this list too and came off it in milestone 40 — as a
-  command of their own, never as a syntax: nothing anybody types is parsed, then or now.) Two
-  destinations, so a player's box needs no recipient picker;
-  the noun is "whisper and shout" rather than "chat" because chat is a thing that grows. **Built**,
-  as milestone 23; its motivating case is six people posting initiative rolls without clogging
-  voice, and the boundary above is the specification — see *Whisper and shout* below and
+- **Character sheets, stat blocks, or any 5e rules knowledge.** A hit point total the DM keeps on
+  a monster is in scope; anything that knows what a hit point *means* is not.
+- **Dice beyond a loaner.** Test: *could a bag of plastic do this?* Counts yes (`8d6`); arithmetic
+  no — no modifiers, no expressions, no macros, no parsing of anything typed, no per-token dice,
+  no wiring into initiative. A modifier is a character sheet with one field filled in. See
+  `docs/dice.md`.
+- **Voice and video** (the group uses Discord). Text is the bounded exception: a player may whisper
+  the DM or shout to the table, and that is the whole feature. No player-to-player, no channels,
+  no threads, no history between sessions, no formatting, no emotes, no commands. See
   `docs/chat.md`.
-- **A scene system.** Several maps each owning their own walls, fog and token positions, switched
-  between during play. `docs/maps.md` refuses it and the refusal stands: it would turn every
-  `staged` flag into a scene id, fork token positions per scene and multiply `snapshot_for`. The
-  **backdrop** is not a first step toward it and is what makes it unnecessary for the case that
-  asked — a picture shown *instead of* the board, with no grid, no tokens, no walls, no fog, no
-  pan and no zoom, so there is nothing in it to switch between. **Built**, as milestone 30, and the
-  boundary is that the room holds **one** URL: a *list* of backdrops in the state model is the
-  scene manager this refuses, wearing a different noun. The collection is the `backdrops/` folder,
-  which costs the room nothing. See *Backdrop* below and `docs/maps.md`.
-- Compendiums, handouts, and journals — **with one bounded exception**: a scratchpad.
-  One box of text per person, private to whoever wrote it, and the DM's is no different from anyone
-  else's. **A second document makes it a journal.** No titles, no pages, no sharing, no handout
-  button. **Built**, as milestone 24, and the boundary above is the specification — see *The
-  scratchpad* below and `docs/notes.md`.
-- **Audio beyond one track.** "Audio" was on the list above until milestone 41, named and dropped
-  with no argument — and, like "dice rolling", it was a *category* broad enough to make design
-  impossible until it was renamed to the thing actually wanted. What is built is **one looping
-  bed the DM puts on**, and the test for anything proposed here is *is this still one track?*
-  A second channel, a crossfade, a queue, a playlist, per-map ambience: each is the **mixer**
-  this refuses, arriving one field at a time. A one-shot sting is the near miss — it is a
-  gesture rather than state and would be cheap — and it is out because it wants to land
-  *together*, which needs a playhead the room deliberately does not hold. **No embeds**:
-  YouTube would put a third-party script on every client, needs a *visible* player, and would
-  play ads on six screens at the dramatic beat; the minimal version of that ask is to paste the
-  link in chat, which is already built. Notification sounds are a different feature and still
-  unbuilt — `docs/chat.md` and `docs/dice.md` each say so and are still owed the argument.
-  **Built**, as milestone 41 — see *The room's music* below and `docs/sound.md`.
-- Module or plugin systems
-- 5e reference lookup. The spell index at `/spells/` is **not an exception to this** — it is a
-  static page under `client/spells/` that imports nothing from `client/src/`, has no entry in
-  esbuild's build and touches no room state; it shares the `ServeDir` fallback and one anchor in
-  the client's bottom-right corner, and that is the whole of the coupling. **The anchor is the
-  boundary rather than a first step**: a link out costs no import, no build entry and no room
-  state, and anything that reads spell data *into* Slate — an in-window panel, a search box on the
-  board, a spell that places its own area — is the lookup this refuses. Do not connect it to
-  Slate. See `client/spells/README.md`.
-- User accounts, email, password reset, OAuth
-- Mobile-first design (desktop browser is the target; don't break touch, don't optimize for it)
+- **A scene system** — several maps each owning walls, fog and token positions, switched between
+  in play. It would turn every `staged` flag into a scene id and fork token positions per scene.
+  The **backdrop** is not a first step toward it: a picture shown *instead of* the board with
+  nothing in it to switch between. The room holds **one** URL; a *list* of backdrops in the state
+  model is the scene manager wearing a different noun. See `docs/maps.md`.
+- **Compendiums, handouts, journals.** Exception: one scratchpad per person, private, the DM's no
+  different. **A second document makes it a journal** — no titles, pages, sharing, or handout
+  button. See `docs/notes.md`.
+- **Audio beyond one track.** Test: *is this still one track?* A second channel, a crossfade, a
+  queue, a playlist, per-map ambience: each is a mixer arriving one field at a time. No one-shot
+  stings (they want a playhead the room does not hold), **no embeds** (a third-party script on
+  every client, playing ads on six screens at the dramatic beat — paste the link in chat instead).
+  Notification sounds are a different, unbuilt feature. See `docs/sound.md`.
+- **Module or plugin systems.**
+- **5e reference lookup.** The spell index at `/spells/` is not an exception: a static page under
+  `client/spells/` that imports nothing from `client/src/`, has no esbuild entry and touches no
+  room state. The one anchor in the client's corner is the boundary, not a first step; anything
+  that reads spell data *into* Slate is the lookup this refuses. See `client/spells/README.md`.
+- **User accounts, email, password reset, OAuth.**
+- **Mobile-first design.** Desktop browser is the target; don't break touch, don't optimise for it.
 
 Scope creep is the primary risk to this project. When a request could be satisfied by a
 smaller change, propose the smaller change.
@@ -119,28 +88,16 @@ than esbuild. If a dependency is proposed, justify it against "could this be 40 
 
 Persistence: `serde_json` snapshot to a file on disk, debounced. No database.
 
-Deployment target: **self-hosted on hardware in the room**, behind a Cloudflare Tunnel — a
-Raspberry Pi 3B on the home network, which receives a cross-compiled binary from a Windows
-machine and runs it under `systemd`. There is no cloud and no recurring cost, and that is a
-constraint rather than a stage: a VPS was the better answer for uptime and was declined on it.
+Deployment: **self-hosted on a Raspberry Pi 3B in the room**, behind a Cloudflare Tunnel, running a
+cross-compiled binary under `systemd`. No cloud, no recurring cost — a constraint, not a stage. It
+is **always on** so the DM can prepare the next dungeon on a Tuesday; that is what the staged map
+and wall editor are for. Scale is still seven clients on a 1GB board. Procedure and backups in
+`deploy/pi/README.md`; `deploy/windows/` hosts a game away from home.
 
-It is **always on**, so the DM can prepare the next dungeon on a Tuesday without anyone else
-being involved. That is what the staged map and the wall editor are for, and it is why the box
-stopped being a PC somebody starts before a session. Scale expectations are unchanged — seven
-clients on a 1GB board — so this buys availability and not headroom.
-
-The procedure lives in `deploy/pi/README.md`, which also covers backups of `/var/lib/slate`;
-`deploy/windows/` still hosts a session from a PC and is kept for a game away from home.
-
-**How the box is doing is `/status/`, and it is not part of Slate.** A static page and one
-read-only `/api/status`, behind `SLATE_STATUS_KEY` — **a second credential, not the DM secret**,
-so a display on a shelf cannot reach the map library, and **unset means the route is not mounted at
-all**. It reports the rooms (asked over each actor's own `mpsc`, with a **timeout**, because the
-moment it matters is the moment a wedged room would hang it), the process, and two files *somebody
-else* wrote: the host's vitals from a systemd timer and the running commit from the deploy. **Slate
-reports only what Slate knows** — it never learns what `/sys/class/thermal` is, and a monitoring
-feature inside the room actor is the scope creep this refuses. Read-only, and a control on it would
-need a much harder argument. See `client/status/README.md`.
+**`/status/` is how the box is doing, and it is not part of Slate**: a static page and one
+read-only `/api/status` behind `SLATE_STATUS_KEY` (a second credential, not the DM secret; unset
+means the route is not mounted). Slate reports only what Slate knows; host vitals come from files
+somebody else wrote. See `client/status/README.md`.
 
 ## Architecture
 
@@ -153,32 +110,14 @@ client's own `mpsc` sender.
 
 **There is more than one room, and they are fixed at boot.** `ROOMS` is a const — an id, a display
 name and a roster each — so `AppState` holds an `Arc<HashMap<String, RoomHandle>>` built once in
-`main` and only ever read, and **there is still no lock**: a lock guards a table that changes, and
-nothing changes this one. The `RwLock` this file used to budget for is what a room the DM could
-*create at runtime* would need. Do not build it before there is a reason.
-
-Two rooms share no field, no channel and no lock — which is why this is **not the scene system**
-refused above, and why there is no cross-room leak to filter: a reference that does not exist cannot
-be written wrongly. A socket resolves its room once in `ws_handler` and then talks to that actor's
-`mpsc` directly, exactly as it did when there was one handle here; nothing on the hot path knows
-rooms are plural.
-
-**The room is named in the WebSocket URL, not on the wire.** No `ClientMsg` or `ServerMsg` variant
-was added and `protocol-tags.json` is untouched — that one decision is where the feature's smallness
-comes from. `/api/rooms` is the one route under `/api` without the DM secret in front of it, because
-the picker comes before the socket and a player has no credential; what it discloses is room names,
-which are not the map library's contents.
-
-**The first entry is the primary room** and exactly two things hang off that, both answering "which
-room did the single-room server become": its save file is `SLATE_STATE` verbatim, where every other
-room's is a sibling `<id>.json`, and a missing save boots it from `hardcoded` where every other room
-boots `blank`. Neither generalises to a third room. The sibling rule was chosen over making
-`SLATE_STATE` a directory because it needs no migration.
-
-**A room id names a save file, a `localStorage` key and a `?room=` link**, so changing one after a
-room has been played in orphans all three. It is a slug and ids are unique, both tested. A room's
-roster is its own: `hello` refuses a `player_id` that names no slot in *this* room, so a player in
-two campaigns holds two slugs under two keys.
+`main` and only ever read; **still no lock**, because nothing changes the table. Two rooms share no
+field, no channel and no lock — which is why this is not the scene system, and why there is no
+cross-room leak to filter. **The room is named in the WebSocket URL, not on the wire**: no
+`ClientMsg`/`ServerMsg` variant, `protocol-tags.json` untouched. `/api/rooms` is the one `/api`
+route without the DM secret, because the picker comes before the socket. The first entry is the
+primary room: its save file is `SLATE_STATE` verbatim, every other room's a sibling `<id>.json`.
+**A room id names a save file, a `localStorage` key and a `?room=` link** — changing one after play
+orphans all three.
 
 → **`docs/rooms.md`** before touching `ROOMS`/`RoomDef`, `roster_from`, `RoomState::blank`,
 `room::spawn`, `save_path`, `room_listing` or `ws_handler` on the server, or `rooms.ts`,
@@ -191,13 +130,9 @@ Per WebSocket connection, split the socket and spawn two tasks:
 ### Do not use `tokio::sync::broadcast`
 
 This is deliberate and non-obvious. `broadcast` delivers one identical value to every
-subscriber, which makes per-recipient filtering impossible. Fog of war (see `docs/fog.md`) requires
-that different clients receive different messages for the same underlying event. Per-client
-`mpsc` senders cost nothing at six clients and keep that door open.
-
-**The chat log is what finally walked through it.** `RoomView::chat` is genuinely different *text*
-per recipient rather than the room's one copy with rows dropped — two players hold two different
-conversations. See `docs/chat.md`.
+subscriber, which makes per-recipient filtering impossible. Fog of war requires that different
+clients receive different messages for the same underlying event, and the chat log is genuinely
+different *text* per recipient. Per-client `mpsc` senders cost nothing at six clients.
 
 ### Command pipeline
 
@@ -214,134 +149,91 @@ messages for different recipients.
 
 ## State model
 
+Field comments name the rule and the file; the reasoning is in the file.
+
 ```rust
 struct RoomState {
     dm_secret: String,
     roster: Vec<RosterEntry>,
     map: MapInfo,
-    /// The map the DM is preparing, with its walls and fog overrides. One bundle,
-    /// so one `None` withholds all three. DM-only, and `#[serde(flatten)]`ed on
-    /// disk so an older save still loads — see `docs/maps.md`.
+    /// The map the DM is preparing, with its walls and fog overrides — one bundle,
+    /// so one `None` withholds all three. DM-only. `docs/maps.md`.
     staged: Option<StagedBoard>,
     tokens: HashMap<TokenId, Token>,
-    /// Whether the board writes each token's name under it. Room-wide, the DM's
-    /// to set and everyone's to hold — see `docs/tokens.md`. Defaults on.
+    /// Room-wide, DM's to set, everyone told. Defaults on. `docs/tokens.md`.
     show_names: bool,
-    /// How the movement ruler charges a diagonal. Room-wide, the DM's to set. The
-    /// server stores and relays it and never computes with it — see
-    /// `docs/drawings.md`.
+    /// How the ruler charges a diagonal. Stored and relayed, never computed with
+    /// on the server. `docs/drawings.md`.
     diagonals: Diagonals,
     initiative: Initiative,
-    /// Drawn on the board, in draw order — see `docs/drawings.md`.
+    /// In draw order. `docs/drawings.md`.
     shapes: Vec<Shape>,
-    /// Traced over the live map image. DM-only, whole — see `docs/walls.md`.
+    /// Traced over the live map. DM-only, whole. `docs/walls.md`.
     walls: Vec<Wall>,
-    /// Everywhere the party's rays have reached, that widened a cell and as the
-    /// DM's mask leaves it, and where they can see now. Grid cells, party-shared
-    /// rather than per-player. Only `revealed` is persisted and only
-    /// `recompute_sight` reads it — everything else reads `known` — see
-    /// `docs/fog.md`.
+    /// Party-shared grid cells: everywhere a ray has reached / that widened a cell
+    /// and masked / seen now. Only `revealed` is persisted and only
+    /// `recompute_sight` reads it — everything else reads `known`. `docs/fog.md`.
     revealed: HashSet<Cell>, known: HashSet<Cell>, visible: HashSet<Cell>,
-    /// Which tokens the table could see when they were last told. Derived like
-    /// the two above, and written *at* the recompute rather than read back
-    /// later — a drag frame moves a token without one, so asking afterwards
-    /// answers "they never saw it" and leaves the creature standing on their
-    /// board. `recompute_sight` is its only write — see `docs/fog.md`.
+    /// Which tokens the table could see when last told. Written *at* the
+    /// recompute, `recompute_sight` its only writer. `docs/fog.md`.
     shown: HashSet<TokenId>,
-    /// What the DM said about particular cells of the live board anyway. A mask
-    /// applied after the raycast, never a write into the two above. DM-only,
-    /// whole, like the walls — and staged like them.
+    /// The DM's mask over the live board, applied after the raycast, never a
+    /// write into the sets above. DM-only, whole, staged like the walls.
     overrides: HashMap<Cell, Override>,
-    /// Everything the DM has prepared on each map, keyed by its URL: the grid
-    /// they calibrated, the walls they traced and the fog they painted. Server-
-    /// side only — it never enters a snapshot or a message. **The shelf, not a
-    /// scene list**: the DM's authoring is remembered and the party's play
-    /// state is not — see `docs/maps.md`.
+    /// Everything the DM prepared on each map, keyed by URL — grid, walls, fog
+    /// paint. Server-side only. **The shelf, not a scene list.** `docs/maps.md`.
     calibrations: HashMap<String, Prepared>,
-    /// The last ten states of the room, for the DM's undo. Post-state, so the
-    /// back of it is the present and an undo pops it — see `docs/undo.md`.
-    /// A snapshot is `Saved`, which is what keeps the two client tables below
-    /// out of it by construction. Memory only; never on disk.
+    /// Last ten states, for the DM's undo. Post-state: the back is the present.
+    /// A snapshot is `Saved`. Memory only. `docs/undo.md`.
     undo: VecDeque<Snapshot>,
-    /// What has been said this session, oldest first, capped and trimmed from the
-    /// front. Memory only and pointedly not on `Saved` — see `docs/chat.md`.
+    /// This session's talk, capped. Memory only, pointedly not on `Saved`.
+    /// `docs/chat.md`.
     chat: VecDeque<ChatLine>,
-    /// One box of text per person, private to whoever wrote it — and **not sent
-    /// even to the DM**; there is no `is_dm` in either filter. On disk, unlike
-    /// `chat`, and exempt from the undo ring by hand — see `docs/notes.md`.
+    /// One box per person, private — **not sent even to the DM**. On disk, and
+    /// exempt from the undo ring by hand. `docs/notes.md`.
     notes: HashMap<Owner, String>,
-    /// Which colour each player picked. **Public**, unlike the notes, because
-    /// everyone draws everyone else's rings — and exempt from the undo ring by
-    /// hand. A `BTreeMap` because `PlayerId` is a legal JSON key and `Owner` is
-    /// not — see `docs/presence.md`.
+    /// Which colour each player picked. Public, exempt from undo by hand.
+    /// `BTreeMap` because `PlayerId` is a legal JSON key. `docs/presence.md`.
     colours: BTreeMap<PlayerId, u8>,
-    /// Whether everybody's pointer is drawn on everybody's board. Room-wide, the
-    /// DM's to set — and the one such setting read *in the filter*: off, no cursor
-    /// frame leaves the room. Defaults on; see `docs/presence.md`.
+    /// Room-wide, DM's to set, read *in the filter*: off, no cursor frame leaves
+    /// the room. Defaults on. `docs/presence.md`.
     show_cursors: bool,
-    /// Whether the DM's own pointer is among them. Room-wide, the DM's to set,
-    /// and read in `cursor_seen` — the dark case widened to everywhere. Stops the
-    /// relay only, not the sending. Defaults on; see `docs/presence.md`.
+    /// The DM's own pointer among them; read in `cursor_seen`. Defaults on.
     show_dm_cursor: bool,
-    /// The picture the table is looking at instead of the board, or `None`.
-    /// Room-wide, the DM's to set. **Nothing else in the room reads it** — the
-    /// board goes on existing untouched behind it — see `docs/maps.md`.
+    /// The picture shown instead of the board, or `None`. Nothing else in the
+    /// room reads it. `docs/maps.md`.
     backdrop: Option<String>,
-    /// The one track the room is playing, or `None`. Room-wide, the DM's to set
-    /// and unfiltered like the backdrop — and **memory only**, unlike it, which
-    /// is where the two differ: `audio.src = url` is not idempotent, so an undo
-    /// that swept the music back would restart it mid-scene. Off `Saved`, so off
-    /// the ring by construction — see `docs/sound.md`.
+    /// The one track playing, or `None`. **Memory only**, unlike the backdrop —
+    /// off `Saved`, so off the ring by construction. `docs/sound.md`.
     audio: Option<String>,
-    /// Identified clients, who are the only ones any event reaches, and the
-    /// sockets that are connected but have not said who they are yet.
+    /// Identified clients (the only ones any event reaches) and sockets that
+    /// have not said who they are yet.
     clients: HashMap<ClientId, Client>,
     pending: HashMap<ClientId, mpsc::Sender<ServerMsg>>,
 }
 
-/// One thing somebody said. `to` is carried as well as `by` because a whisper has
-/// to look like one on the screens of *both* people party to it. `rolled` says
-/// the room threw it rather than somebody typing it — styled, never filtered on,
-/// and free because this struct is session memory and `Serialize` only.
+/// `to` is carried as well as `by` because a whisper must look like one on both
+/// screens party to it. `rolled` says the room threw it — styled, never filtered on.
 struct ChatLine { by: Owner, to: ChatTo, text: String, rolled: bool }
-
-/// Two destinations and never a third: a player names the table or the DM, the DM
-/// names the table or one player. `Owner`'s neighbour rather than `Owner` itself,
-/// because `Table` is everybody — see `docs/chat.md`.
+/// Two destinations and never a third. `docs/chat.md`.
 enum ChatTo { Table, Dm, Player(PlayerId) }
-
-/// One entry in the undo ring: a whole room, and what was done to arrive at it.
+/// A whole room and what was done to arrive at it.
 struct Snapshot { did: String, state: Saved }
-
-/// `Auto` is the absence of an entry rather than a fourth variant. `Explored`
-/// and `Lit` are floors, `Dark` is a ceiling — see `docs/fog.md`.
+/// `Auto` is the absence of an entry. `Explored`/`Lit` are floors, `Dark` a ceiling.
 enum Override { Explored, Lit, Dark }
-
-/// What a diagonal step costs the ruler. `Equal` is the default — see *Distance*
-/// in `docs/drawings.md`.
+/// What a diagonal step costs the ruler. `Equal` is the default.
 enum Diagonals { Equal, Alternating }
-
-/// A mark on a creature: six colours and `dead`. The rule is not "colours only"
-/// — it is that **nothing knows what a mark means**, and the test is whether
-/// anything *follows* from it. Nothing follows from `dead`: the creature still
-/// moves, still holds its row, still keeps its total. `Poisoned` fails that test
-/// and is the rules knowledge this project refuses — see `docs/tokens.md`.
-/// `Marker::ALL` is the closed set, and its length is the bound on a token's list.
+/// A mark on a creature. The rule is that **nothing follows from a mark** — the
+/// creature still moves, still holds its row. `Poisoned` would fail that test.
+/// `Marker::ALL` is the closed set and the bound on a token's list. `docs/tokens.md`.
 enum Marker { Red, Orange, Yellow, Green, Blue, Purple, Dead }
-
-/// Which question a fogged map asks: does a straight line reach the cell, or
-/// does a walk. `Dynamic` is the default — see `docs/fog.md`.
+/// Does a straight line reach the cell, or does a walk. `Dynamic` is the default.
 enum Lighting { Dynamic, Room }
-
-/// A cell of the grid. A tuple, not a struct: it indexes a lattice rather than
-/// naming a position, and it never reaches the wire as itself — `FogView` packs
-/// a whole rectangle of them into one string.
+/// A grid cell. A tuple: it indexes a lattice and never reaches the wire as itself.
 type Cell = (i32, i32);
 
-struct Shape {
-    id: ShapeId, kind: ShapeKind, from: Origin, to: Pos, by: Owner, color: String,
-}
-
+/// `to` is an *offset* from the origin. Grid units, like a token.
+struct Shape { id: ShapeId, kind: ShapeKind, from: Origin, to: Pos, by: Owner, color: String }
 enum ShapeKind { Line, Circle, Cone, Rect }
 enum Origin { Point(Pos), Token(TokenId) }
 
@@ -352,43 +244,30 @@ enum WallKind { Solid, Door(bool) }
 struct MapInfo {
     url: String, grid_px: f32, offset_x: f32, offset_y: f32,
     grid_color: String, play_area: Option<Rect>,
-    /// Whether this map is fogged, how far a token sees on it, and how that
-    /// reach is worked out. Per map and remembered per URL with the rest — see
-    /// `docs/fog.md`. `fog` defaults off and `lighting` defaults to `Dynamic`.
+    /// Per map, remembered per URL. `fog` defaults off, `lighting` to `Dynamic`.
     fog: bool, vision_ft: f32, lighting: Lighting,
-    /// What shape a cell is: a square, or an isometric diamond. Per map and
-    /// remembered per URL like the rest. `fog::basis` is the one place it is
-    /// read — see `docs/maps.md`. Defaults to `Square`, which is what keeps
-    /// every saved board exactly where it was.
+    /// Per map. `fog::basis` and `gridBasis` are the only readers. Defaults to
+    /// `Square`, which keeps every saved board where it was. `docs/maps.md`.
     grid_shape: GridShape,
 }
-
 /// A square of side `grid_px`, or a diamond `grid_px` tall and `ratio` times as
-/// wide. Flat — a lattice, not a 2.5D renderer; see `docs/maps.md`.
+/// wide. Flat — a lattice, not a 2.5D renderer.
 enum GridShape { Square, Iso { ratio: f32 } }
 
 struct Token {
     id: TokenId, name: String, x: f32, y: f32, owner: Owner, img: String, size: f32,
-    /// What the DM has marked this creature with. **The only public field here**
-    /// — a mark nobody at the table can see is not a mark — so `view_for` copies
-    /// it rather than redacting, and a token the table cannot see takes its pips
-    /// with it. A set in practice: duplicates are refused, which is what bounds
-    /// the length. See `docs/tokens.md`.
+    /// **The only public field here.** A set in practice. `docs/tokens.md`.
     markers: Vec<Marker>,
-    /// DM-only, all three — see *Hidden tokens, hit points, and the light it
-    /// carries* in `docs/tokens.md`. `light_ft` is how far this token lights the
-    /// board: it replaces the map's `vision_ft` on a token a player owns, and
-    /// makes the token a source at all on anything else — see `docs/fog.md`.
+    /// DM-only, all three. `light_ft` replaces the map's `vision_ft` on a token a
+    /// player owns and makes any other token a source at all. `docs/fog.md`.
     hidden: bool, hp: Option<Hp>, light_ft: Option<f32>,
-    /// DM-only, both of them — see *Preparing the next room* in `docs/tokens.md`.
+    /// DM-only, both. `docs/tokens.md`.
     staged_pos: Option<Pos>, staged_only: bool,
 }
-
 struct Hp { current: i32, max: i32 }
-/// Grid units. `Px` is the same pair in image pixels, and a separate type so the
+/// Grid units. `Px` is the same pair in image pixels, a separate type so the
 /// two spaces cannot be swapped by accident.
 struct Pos { x: f32, y: f32 }
-
 enum Owner { Dm, Player(PlayerId) }
 ```
 
@@ -398,9 +277,9 @@ These are load-bearing. Violating them creates work that is expensive to undo la
 
 1. **Token positions are stored in grid units, never pixels.** Recalibrating a map's grid
    size must not move any token. Pixel conversion happens only at render time on the client.
-   This is about tokens. Geometry that traces the map image — `play_area` and `Wall` — is stored
-   in image pixels instead, because it is anchored to the art rather than to a cell. That is the
-   `Pos` / `Px` split, and the types are separate so the two cannot be swapped silently.
+   Geometry that traces the map image — `play_area` and `Wall` — is stored in image pixels
+   instead, because it is anchored to the art rather than to a cell. That is the `Pos` / `Px`
+   split, and the types are separate so the two cannot be swapped silently.
 
 2. **Every persisted struct field carries `#[serde(default)]`.** Saved rooms from an older
    schema must deserialize against a newer one without a migration step.
@@ -421,161 +300,79 @@ fn can_move(c: &Client, t: &Token) -> bool {
 }
 ```
 
-**Drawing is the first exception.** Anyone may add a shape; erasing one
-is `can_erase` — the DM, or whoever drew it. Everything else below is DM-only.
+Everything is DM-only except the cases below, and each exception is a rule about *what the
+sender owns*, never about a role:
 
-Walls are the opposite extreme: every wall command is DM-only *and* there is no per-item rule
-underneath, because they are all the DM's. A player is not merely stopped from editing them — they
-are never sent one, and never told one changed. **The fog override is the second thing with exactly
-that rule**, and for the same reason: it is what the DM authored, and the fog is the shadow it casts.
+- **Drawing.** Anyone may add a shape; erasing is `can_erase` — the DM, or whoever drew it.
+- **Saying something.** Anyone may; what a player may not do is name another player. `party_to`
+  decides who sees a line and never asks `is_dm`. `Roll` shares `may_address` with `Say`.
+- **Writing a scratchpad, picking a colour.** `SetNotes` and `SetColour` name no key — whose it is
+  comes from the socket, so there is nothing to check but a bound. **A key a client could name is
+  a key it could name somebody else's with.** The DM is refused `SetColour` outright.
+- **Undo is DM-only and the one command that takes back somebody else's work**, because a restore
+  restores the room whole. What may go on the ring is **state the undoing hand wrote** — the
+  scratchpads and a player's colour are exempt, each by two lines (`undid` says `None`, and the
+  `Undo` arm puts it back around `adopt`), and both are needed. See `docs/undo.md`.
 
-**Undo is DM-only and is the one command that can take back somebody else's work** — a player's
-drawing is on the ring like everything else persisted, because a restore restores the room whole and
-skipping their shape would take it *and* the DM's last command together. The rule that decides what
-may go on the ring is **state the undoing hand wrote**; the scratchpads are the case it was written
-for and a player's colour is the second — for each, `undid` says `None` and the `Undo` arm puts it
-back around `adopt`, and both halves are needed. **Two instances is what makes it a rule**: anything
-persisted that a player writes wants the same two lines. See `docs/undo.md`. The chat log tested the same rule
-first and passes without being named anywhere: a snapshot is a `Saved`, and the log is not on one.
+Walls and fog overrides are the opposite extreme: DM-only with no per-item rule, and a player is
+never *sent* one or told one changed. Token creation, deletion, editing, ownership, planning
+(`staged_pos`), map changes, initiative edits, and every room-wide switch (`show_names`,
+`diagonals`, `show_cursors`, `show_dm_cursor`, `backdrop`, `audio`) are DM-only.
 
-**Saying something is also everyone's, and it is a permission about a *destination* rather than
-about a role.** Anyone may say something; what a player may not do is name another player.
-`party_to` decides who sees a line, and it draws that line between two players rather than between
-the DM and the table — it never asks `is_dm`. See `docs/chat.md`.
+The DM owns every library — listing, picking, adding, removing. Every route under `/api` (bar
+`/api/rooms`) authenticates with the DM secret; a player has no credential, and giving them one
+would be the authentication this project does not build.
 
-**Writing in a scratchpad has no permission at all.** `SetNotes` names no box — the only one it
-can reach is the sender's, because whose it is comes from the socket — so there is nothing to check
-but a length. The asymmetry is on the way *out*: `notes_for` gives the **DM** less than the room
-holds, and `is_owner` is the question both it and `party_to` ask. See `docs/notes.md`.
-
-**Picking a colour names no key either.** `SetColour` reaches only the sender's own entry because
-whose it is comes from the socket — `Say`'s rule and `SetNotes`' rule again, and the rule the three
-share is that *a key a client could name is a key it could name somebody else's with*. What it
-validates is a bound, like a token's size, because the palette is closed. **The DM is refused it
-outright** — their hue is the one ring at the table that is not a player's. See `docs/presence.md`.
-
-Token creation, deletion, map changes, initiative edits, whether the board writes token names
-under them — or draws everybody's pointer — and what picture is in front of the table are DM-only.
-Those last two are the ones whose *result* everybody is sent — see the wire protocol below. So is reassigning a token's `owner`, which is how a player is handed a token the DM
-built for them. So is planning
-where a token lands — a player may move their own token and may not plan for it, because the
-plan is a cell on a map they have not been shown.
-
-The DM owns all three libraries — listing, picking, adding and removing. Every route under `/api`
-authenticates with the DM secret, and a player has no credential to offer any of them; giving them
-one would be the authentication this project does not build.
-
-Identity: the DM joins with a secret in the URL. Players join with a plain room link and
-claim a name from a roster the DM defined. `player_id` persists in `localStorage` so a
-refresh does not orphan a token. **A roster slot's id is a slug, not its name** — the id is what
-`localStorage` and a token's `owner` are written as, so renaming a character touches the name
-alone and every token they own still points at them. This is a private game among friends — do not
-build real authentication.
+Identity: the DM joins with a secret in the URL. Players join with a plain room link and claim a
+name from a roster the DM defined. `player_id` persists in `localStorage`, and **a roster slot's id
+is a slug, not its name** — renaming a character touches the name alone. This is a private game
+among friends — do not build real authentication.
 
 ## Wire protocol
 
-JSON over WebSocket, serde tagged enums:
-
-```rust
-#[serde(tag = "type", rename_all = "snake_case")]
-```
-
+JSON over WebSocket, serde tagged enums: `#[serde(tag = "type", rename_all = "snake_case")]`.
 Do not switch to a binary format. Human-readable frames in devtools are worth more than the
 bandwidth during drag-sync debugging.
 
-On join, the server sends `ServerMsg::Welcome { your_id, is_dm, player_id, state, roster }`
-containing a full filtered snapshot. Everything after that is a delta. Reconnection is just
-another join — there is no diffing or resync protocol.
+On join, the server sends `ServerMsg::Welcome { your_id, is_dm, player_id, state, roster }` with a
+full filtered snapshot; everything after is a delta. Reconnection is just another join. `state` is
+a boxed `RoomView` — the room as that one client may see it. `roster` is the cast list, not who is
+connected.
 
-**The send task pings an idle socket every 30 seconds**, because nothing crosses a quiet board and
-a proxy that sees no traffic for long enough closes the connection. It is not a message: a browser
-answers at the protocol level, so the wire format is unchanged and the client knows nothing about it. **A keepalive is not a reconnect** — when the socket does close,
-the page still says so and waits for a refresh.
-
-`state` is a `RoomView`, which is the room as that one client may see it — for a player that
-means `staged` is stripped from it *whole*, taking the next dungeon's walls and paint with the
-image; the live board's walls and fog overrides are empty; tokens they cannot see are absent; and
-what survives is redacted. See `docs/maps.md` and `docs/tokens.md`. `state` is boxed, because growing
-`RoomView` by one field pushed `Welcome` past clippy's large-variant threshold — every message in
-every client's 256-slot mailbox is sized at the largest variant. Serde sees straight through the box
-and the frame on the wire is unchanged.
-
-`fog` is the exception to all of that: it is the same value for every recipient. There is nothing
-per-client in a party-shared answer to build. **`show_names`, `diagonals` and `backdrop` are
-unfiltered for a different reason** — the DM alone may flip them and everyone is told, because who may set a
-room-wide setting is a permission and what it says is not a secret. `NamesChanged` sits beside
-`FogChanged` for that reason and not beside `WallsChanged`, which is the frame it most resembles on
-paper. `diagonals` is the sharpest case: the server never counts a diagonal, so the only thing it is
-authoritative over is that everybody counts them the same way.
+**`ServerMsg::Restored` is the second frame carrying a whole `RoomView`, and it goes through the
+same `snapshot_for`** — invariant 3 on the one message that would otherwise be a second place to
+get it wrong. It is deliberately not a second `Welcome`: `onWelcome` builds panels, tools and board
+once per socket, so a restore hands over state and nothing else.
 
 **`Token` never reaches the wire; `TokenView` does.** `Token::view_for(is_dm)` names every field
-that leaves the room, so `RoomView.tokens` and `ServerMsg::TokenChanged` both carry views. This
-is the third layer of the same idea as `Event` vs `ServerMsg` and `RoomState` vs `RoomView`, and
-it exists to make the failure fail the safe way round: a secret added to `Token` and forgotten
-here is *absent from the wire*, which shows up as the DM's own client missing a field, rather
-than shipped to everyone, which shows up as nothing at all until somebody opens devtools.
+that leaves the room. Third layer of `Event`/`ServerMsg` and `RoomState`/`RoomView`, and it makes
+the failure fail the safe way: a secret added to `Token` and forgotten here is *absent* from the
+wire, visible as the DM's own client missing a field.
 
-**`here`, `colours`, `show_cursors` and `show_dm_cursor` are identical for every recipient
-too**, which puts them with `fog`, `show_names`, `diagonals` and `backdrop` rather than with
-anything filtered. Neither of the first two
-is a secret: a table that cannot tell whether the DM is still connected is what `here` exists to fix,
-and a colour nobody else can see is not a colour. `Presence` is also the one frame no command
-produced — it is dispatched where the socket table changes. `show_cursors` is the only unfiltered
-value a client reads to decide what to *send*.
+**Unfiltered frames** — identical for every recipient: `fog` (party-shared, nothing per-client to
+build), and every room-wide switch plus `here` and `colours` (who may set them is a permission;
+what they say is not a secret). Everything else is filtered, and two fields are *different text*
+per recipient rather than the room's copy with rows dropped: `chat` and `notes`.
 
-**`CursorMoved` mirrors `Pinged` and differs in one line.** Same payload, same
-`Owner`, same no-echo — and this one is filtered: the DM's pointer is withheld from a player
-over ground the party has not explored, because a ping is a gesture somebody chose to make
-and a cursor is where a hand happens to be. A player's pointer is relayed wherever it goes
-and the DM is sent every one. `cursor_seen` is the whole rule.
+**Echo rules.** The sender is not echoed drag frames, sketches, pings, cursors or `NotesChanged`.
+`Said` is the one exception — a log is a sequence and where a line lands is the room's to decide.
 
-**`ServerMsg::Restored` is the second frame that carries a whole `RoomView`, and it goes through the
-same `snapshot_for`** — invariant 3 on the one message that would otherwise be a second place to get
-it wrong. It is deliberately *not* a second `Welcome`: on the client that handler **builds** the
-panels, the tools and the board once per socket, so a restore hands over state and nothing else — no
-identity, no roster. `UndoChanged` beside it reaches the DM or nobody — `WallsChanged`'s rule again,
-and here what is withheld is a label rather than a secret. See `docs/undo.md`.
+**The send task pings an idle socket every 30 seconds**, at the protocol level, so a proxy does
+not close a quiet board. A keepalive is not a reconnect.
 
-**`chat` is the field that finally spent what per-client `mpsc` bought.** Every other list in a
-`RoomView` is the room's one copy with rows dropped; this is different text per recipient, because a
-whisper only exists in the copies of the two people at either end of it. The delta beside it,
-`ServerMsg::Said`, is withheld whole or sent whole — `WallsChanged`'s shape, except that its
-audience is a *pair of people* rather than a role — and it is **the one relayed frame the sender is
-echoed**, because a log is a sequence and where a line lands in it is the room's to decide, not a
-client's. See `docs/chat.md`.
+**An inbound frame is capped at `MAX_WS_MESSAGE_BYTES`, read-side only.** So a command carrying a
+collection has two bounds — the count the room refuses past, and the bytes the socket accepts —
+and a test must serialise the largest legal instance and assert it fits, because `check` never
+runs on a frame the socket dropped (`largest_override_fits_in_a_frame`).
 
-**`notes` is per-recipient content too, and it is narrower for the DM than for the room.**
-A client is sent its own box and there is no frame that can carry
-another — `ServerMsg::NotesChanged` reaches its author minus the socket that typed it, which is
-`Pinged`'s exclusion rather than `Said`'s echo: the text is already in that box, and writing it back
-a round trip later moves the caret. What is left is the author's second tab, and that is the whole
-audience it has.
+**`ClientMsg` and `ServerMsg` are written out by hand twice**; `protocol-tags.json` is the third
+copy both are checked against. **A new variant is four edits**: the exhaustive `match` (stops
+the crate compiling), `KNOWN_CLIENT_TAGS`/`KNOWN_SERVER_TAGS` (what the fixture is compared
+against — update only the first and the suite fails with a message that blames the fixture), the
+TypeScript `Record<Msg['type'], true>`, and the fixture. Variant-level only; a renamed field is
+caught by the server rejecting the frame.
 
-`roster` is the cast list, not who is connected. The DM never sees the identity picker, so this
-is the only way their token panel learns the names a token can be handed to; a player is sent it
-too, having already been offered the same names. Because it describes no connections there is
-nothing in it to go stale between deltas — that is `RosterSlot`, and only the picker wants it.
-
-**An inbound frame is capped at `MAX_WS_MESSAGE_BYTES`, and that cap is read-side only** — nothing
-bounds a `Welcome` on the way out. So **a command carrying a variable-length collection has two
-bounds, not one**: the count the room refuses past, and the bytes the socket will accept. Get them
-out of order and the refusal is unreachable — the socket dies on the read and the client reloads,
-which is what `SetFogOverride` did at 50,000 cells against a 16 KiB frame. **A test must serialise
-the largest legal instance and assert it fits**; driving `check` is not that test, because `check`
-never runs. `largest_override_fits_in_a_frame` is the one that exists.
-
-**`ClientMsg` and `ServerMsg` are written out by hand twice and nothing generates either from the
-other.** `protocol-tags.json` is the third copy both are checked against — an exhaustive `match` in
-Rust, a `Record<Msg['type'], true>` in TypeScript, so each language's own compiler refuses a variant
-that is not in the fixture. **The Rust side holds two lists rather than one**, so a variant is four
-edits and not three: the exhaustive `match`, which stops the crate compiling, *and*
-`KNOWN_CLIENT_TAGS`/`KNOWN_SERVER_TAGS`, which is what the fixture is actually compared against —
-update only the first and it compiles, then fails the suite with a message that reads as though the
-fixture were wrong. Variant-level only: a renamed *field* keeps its tag and is caught only by
-the server rejecting the frame, which is a `console.error` on the client so that a browser driver
-fails on it.
-
-→ **`docs/net.md`** before changing the wire format, the frame cap, or the keepalive in the send task.
+→ **`docs/net.md`** before changing the wire format, the frame cap, or the keepalive.
 
 ## Drag semantics
 
@@ -590,102 +387,41 @@ The client predicts locally — it moves its own token immediately rather than w
 round trip, and corrects only if the server rejects. The server must not echo drag frames back
 to the originating client; doing so causes visible rubber-banding.
 
-`MoveToken` and `ServerMsg::TokenMoved` both carry `staged`, naming which of the token's two
-positions the frame is about. Everything either side of that one branch — the throttle, the snap,
-the debounce, the echo rule — is unaware there are two. A frame carrying a plan reaches the DM
-alone; see *Preparing the next room* in `docs/tokens.md`.
+`MoveToken` and `TokenMoved` both carry `staged`, naming which of the token's two positions the
+frame is about. Everything either side of that one branch is unaware there are two.
 
 ## Tokens
 
-A token is a square `size` cells across, centred on its stored position; `size` is one of
-`0.5, 1, 2, 3, 4`, a closed set checked on the server. Where a token settles depends on how wide it
-is, and that rule lives in `snap_to_cell` on the server and nowhere else — the client never snaps.
+A square `size` cells across, centred on its position; `size` is one of `0.5, 1, 2, 3, 4`. Where a
+token settles lives in `snap_to_cell` on the server and nowhere else — the client never snaps.
+Create/delete/edit are DM-only and the id is the server's. `UpdateToken` carries every editable
+field except position; `TokenChanged` covers creation and editing alike. Duplicating is a
+client-side `CreateToken`. **Deleting a token takes its initiative row and its anchored drawings.**
 
-Creating, deleting and editing are DM-only, and the id is the server's to invent. `UpdateToken`
-carries every editable field *except* position, which `MoveToken` owns, and carries no `staged`
-flag because every field on it is shared by both boards. `TokenChanged` covers creation and editing
-alike — an id the client has not seen is the creation. **Duplicating one is an ordinary
-`CreateToken` with the fields read off a token**, client-side and nothing on the wire: the server
-already invents the id and already snaps. **Deleting a token takes its initiative row
-and its anchored drawings with it.**
+**`RoomState::unseen_by_table(&Token)` is the only question any filter asks** — `hidden`,
+`staged_only`, *and* line of sight, which is why it lives on `RoomState` and not `Token`. Anything
+asking `Token::unseen` directly is filtering on two reasons out of three, which is a leak. **Every
+`was_unseen` on an event asks the same question**, read before the change it describes (for a
+promote, before the sweep); getting it wrong sends the table a `TokenRemoved` naming an id they
+never held.
 
-Five fields are DM-only: `hidden` and `hp` withhold a monster from the table; `light_ft` says how
-far it lights the board; `staged_pos` and `staged_only` plan the next encounter without a second
-token collection.
+`markers` is the one public field and rides `CreateToken`/`UpdateToken` — no command, event,
+`message_for` arm or fixture entry. Drawn as arcs inside the token's rim, with the X for `dead`;
+every state ring is outside it, and **position is the separator, not hue**.
 
-**`markers` is the one that runs the other way, and it is the only public field on a token.** Six
-colours and `dead`, rules-neutral by construction — Slate draws arcs and an X, and the rule that
-keeps the set closed is that **nothing follows from a mark**: a variant that skipped a turn or
-locked a token is the rules knowledge the non-goals refuse, where `Poisoned` fails and `dead`
-does not. It rides `CreateToken`/`UpdateToken`, so there is **no new
-command, no new event, no `message_for` arm and no `protocol-tags.json` entry**, and `persists`,
-`undid` and `moves_sight` are untouched. Toggled from the token tab *and* from the initiative row —
-`hp`'s arrangement, for the damage box's reason — and the row's toggles are **the first control
-there that needs a real `is_dm` check**, because a public field leaves no null to fail safe on.
-**On the board they are a band of arcs inside the token's own rim**, with the X across the portrait
-for `dead`: the marks are drawn *on* the creature and every state ring is outside it, which is what
-keeps a yellow arc from reading as the gold that means ownership. Position is the separator, not
-hue — moving the band outside the rim puts the collision back.
+Art is optional. The DM uploads or picks from `portraits/`; a pick copies into uploads, so `img`
+is the same kind of URL either way. Copy names are **prefixed and content-fingerprinted**; maps opt
+out of both because their calibration table is keyed on the URL.
 
-**`RoomState::unseen_by_table(&Token)` is the only question any filter asks.** Three reasons compose
-in it: `Token::unseen()` is `hidden || staged_only`, both facts about the token, and the third is
-line of sight, which is a fact about the *room* — so the funnel lives on `RoomState` rather than on
-`Token`, which cannot see the walls or where the party is standing. `snapshot_for`, `initiative_for`,
-`shape_seen`, both oracle guards in `check`, and every token arm of `message_for` go through it.
-Anything that asks `Token::unseen` directly is filtering on two reasons out of three, which is a leak.
+**The initiative panel is the DM's combat screen** — portrait and hit points per row, nothing on
+the wire, and the bar has no permission check because a player's copy carries no `hp`. Damage is
+typed on the row as a delta (`-12`, `+7`, bare `35` sets) and sends an ordinary `UpdateToken`;
+the panel is rebuilt on every delta so the typed box must get its focus back. It folds to the
+current row; the fold is `localStorage`, not the room. Shift-click groups tokens and a group
+drag is N ordinary `MoveToken`s — the server does not know groups exist.
 
-**Every `was_unseen` on an event asks the same question**, read before the change it describes — and
-for a promote, before the sweep. It is what separates "it just vanished" from "you were never told",
-and getting it from `Token::unseen` instead sends the table a `TokenRemoved` naming an id they have
-never held, which announces that the id exists.
-
-**Whether the board writes those names under the tokens is one switch on the room**, `SetShowNames`,
-DM-only to set and sent to everyone — six familiar party portraits need no labels and a room full of
-goblins does. Not on `MapInfo` beside `fog` and not on `UpdateToken`: it belongs to neither the image
-nor any one creature, which is also why it, `SetDiagonals` and `SetShowCursors` are the table tab's
-controls and not the token panel's. It defaults on, which is the only thing keeping an older save from losing every
-label. The hit point bar is not a label and the switch leaves it alone.
-
-Art is optional — a token without it draws as a named disc. The DM uploads it, or picks it out of
-`portraits/`, which is `maps/` one folder over: a pick copies into the uploads directory, so `img`
-holds the same kind of URL either way and nothing downstream can tell them apart. One
-implementation serves both libraries — `Library` on the server, `library.ts` on the client — and
-the two rules the second one added are one rule twice: **what a copy's name is derived from decides
-what a re-pick resolves to.** It is a **prefixed** key, or the same filename in both folders lands
-on one file; and it is fingerprinted by **content**, or art replaced in the folder keeps resolving
-to the copy it replaced. **Maps opt out of both** — their calibration table is keyed on the URL
-those names produce — so replacing a map's art does nothing, deliberately.
-
-**The initiative panel is the DM's combat screen.** Each row carries the token's portrait and, for
-the DM, its hit points — and none of that touched the wire, because `panel.update` is handed the
-whole `Scene` and resolves each row's id to the token itself. The bar has *no permission check*: a
-player's copy of the token carries no `hp`, so there is nothing to decline to draw, which is
-invariant 4 the safe way round. Clicking a row centres the camera on that creature; it is not an
-automatic pan on turn change, which would move the board under whoever is mid-drag.
-
-**Damage is typed on the row, as a delta.** `-12` hurts, `+7` heals, a bare `35` sets; anything else
-clears the box and sends nothing. It is built in the same `hp !== null` branch as the bar and gated
-on nothing else, so it inherits that no-permission-check argument whole — and it sends an ordinary
-`UpdateToken` it worked the absolute out for, so **there is still no `SetHp` and nothing on the wire
-changed**. The token tab keeps the absolute `hp`/`max` pair and that is now what makes a negative
-total sayable at all. One thing binds it: this panel is rebuilt wholesale on every token delta, so
-the box that was typed into must have its focus restored afterwards — see *The damage box* in
-`docs/tokens.md`.
-
-**It folds, and folded is the current row rather than a bare tab.** Whose turn it is is what the
-panel is for, so the fold gives back the other eleven rows and keeps that one — rendered by the same
-loop, with the turn buttons still beside it. The preference is `localStorage` and pointedly not the
-room: `diagonals` is on `RoomState` because six clients must agree on a rule, and how much of a panel
-somebody wants on their own screen is nobody else's business.
-
-**Shift-click gathers tokens into a group and dragging any member moves all of them.** The server
-does not know this exists: a group move is N ordinary `MoveToken`s, so permission, snapping and
-`moves_sight` are each answered once per token by the code that already answered them. Membership
-comes from `tokenAt`, which is already blind to tokens you cannot move, so **the permission question
-answers itself** and it is not DM-only. Empty is the ordinary case — only shift-click fills a group,
-grabbing a token outside one clears it, and a click on empty map or Escape gives it up — so no
-ordinary drag gained a second meaning. The group does not feed the token panel, and a group draws **one** ruler on
-the dragger's screen and one per token on everyone else's.
+`show_names` is on the room, not `MapInfo` or the token: it belongs to neither the image nor any
+one creature, which is why it is on the table tab.
 
 → **`docs/tokens.md`** before touching `tokens.ts`, `panel.ts`, `markers.ts`, `library.ts`,
 `snap_to_cell`, `Token`/`TokenView`/`Marker`, the `selection` set in `input.ts`, or any
@@ -693,198 +429,79 @@ the dragger's screen and one per token on everyone else's.
 
 ## Drawings and distance
 
-Line, circle, cone, rectangle — **all four are one struct: a kind and two points**, where `to` is
-an *offset* from the origin rather than a second position. One hit test and one coverage rule,
-both `containsPoint`. Geometry is in grid units like a token, so recalibrating leaves a 20 ft
-circle 20 ft across.
+Line, circle, cone, rectangle — **one struct: a kind and two points**, `to` an offset from the
+origin. One hit test and one coverage rule, both `containsPoint`. Grid units, so recalibrating
+leaves a 20 ft circle 20 ft across. Snapping at both ends is the client's; Alt sweeps free.
 
-**A sweep snaps at both ends and both rules are the client's** — the origin to the nearest point of
-the half-cell lattice (centres, corners, edge midpoints, which are one set), the extent to whole
-cells: per axis for a line and a rectangle, by magnitude for a circle and a cone, so the drawn size
-is the number on the label. Alt sweeps free and is read on the move, not at pointerdown, where it
-already means something else.
+**Anyone may draw** — the only thing a player can add or destroy. Measure draws in the sweeper's
+colour; area tools take the picked swatch. A sketch in progress is on the wire and not in the room
+(`Sketch` carries `drawing`, like `MoveToken` carries `dragging`). No staged shapes. `shapes_for`
+withholds an anchored shape through `unseen_by_table` and an unanchored one unless a covered cell
+is `known`.
 
-**Anyone may draw** — the only thing in the room a player can add, and the only thing they can
-destroy; `can_erase` is the DM or whoever drew it. **The measure tool draws in the sweeper's own
-colour** and the three area tools take the picked swatch: a line that vanishes on release is a
-gesture and the question is whose, while a shape that stays is a thing and `PLAYER_HUES` is not a
-vocabulary for spell areas. Nothing on the wire changed — a sketch already carried its colour. A shape being swept out is on the wire and is
-not in the room (`ClientMsg::Sketch` carries `drawing`, the way `MoveToken` carries `dragging`).
-There are no staged shapes. `shapes_for` withholds a shape whose anchor the recipient cannot see,
-through `unseen_by_table` — so an aura on a monster in the dark goes with it, and no new line was
-needed for that. An *unanchored* shape is withheld unless a cell it covers has been explored.
+A cell is five feet, counted in cells crossed. `Diagonals` is the DM's switch and moves the ruler
+only — radii and vision stay Euclidean. `feetMoved` is client-only, from `TokenMoved` frames. The
+trail is the straight line from origin to token, never the mouse path. A drag through a wall draws
+the DM's amber: a hint, never a refusal, and it cannot leak because a player holds no walls.
 
-A grid cell is five feet, and distance is counted in cells crossed. **What a diagonal step costs is
-the DM's switch** — `Equal` charges one cell, `Alternating` charges double for every second
-diagonal, counted from the start of each reading rather than across a turn. Both keep every reading
-a multiple of five. It moves the ruler and nothing else: a circle's radius and a token's vision are
-geometry and stay Euclidean either way. The reading itself is client-only — `feetMoved` has no
-server counterpart — and is built from the `TokenMoved` frames the room already decided to send.
-
-**The ruler tints the squares the move crossed**, and they are the squares of the straight line from
-origin to token, never the path the mouse took. Under `Equal` that makes the trail a picture of the
-number: `max + 1` cells for a reading of `max × 5`, from the same two integers, so they cannot
-disagree — and every client rasterises the same line from data it already holds, so nothing was
-added to the wire. It lingers a couple of seconds after the drop and the line and reading fade with
-it, on one alpha. **A drag through a wall or a shut door draws the DM's amber**; that is a hint and
-never a refusal, and it cannot leak because a player holds no walls to test against.
-
-## Ping
-
-Hold the left mouse button with nothing armed and a ring appears where everyone can see it, in the
-sender's colour with their name beside it. **It separates from what the button already does by
-duration rather than by target** — a ~400ms timer that a few pixels of movement cancels and an early
-release cancels, so doors still swing and a click still erases. That is what let it coexist with the
-one place a click's meaning depends on what is under it, without joining that argument. A hold on a
-token pings; a drag only begins on movement, so a stationary hold on a creature is free.
-
-**Ping ignores the draw tool specifically** — the one exception to "an armed tool takes the button
-first". Everybody has that tool, it is used mid-fight, and a player who leaves it armed would lose
-the gesture permanently with no hint why. The ring grows from ~150ms, local until it commits.
-
-**No fog gate, and it is the one message with a position that no filter touches.** A ping lands
-wherever it was pointed, unexplored ground included, and it is safe because there is nothing in it to
-read but a position — a ring over black says somebody is gesturing in a direction, not what is
-standing there. It does not light anything up: `Ping` is not in `moves_sight`, so pointing at a room
-never explores it. Ephemeral whole — not in `persists`, absent from `snapshot_for`, never dirty, and
-`apply`'s one arm with no `&mut self` in it.
-
-`ServerMsg::Pinged` carries an **`Owner`** rather than a `ClientId`, unlike `Sketch`: it replaces no
-previous frame and needs no release, so what a recipient wants is whose ring to draw. Colour is
-**derived** — `colourOf` indexes a palette by roster position, so six clients agree with nothing on
-the wire. The sender is not echoed their own. **A ping off the edge of your view draws an arrow at
-the edge of the screen**, never a camera pan.
+**Ping**: hold the button with nothing armed, ~400ms, cancelled by movement or early release, so
+doors still swing and a click still erases. It ignores the draw tool specifically. **No fog gate
+and the one positioned message no filter touches** — a ring over black says only that somebody is
+gesturing. Not in `moves_sight`, not in `persists`, absent from `snapshot_for`. `Pinged` carries an
+`Owner`; colour is derived client-side. Off-screen draws an edge arrow, never a pan.
 
 → **`docs/drawings.md`** before touching `shapes.ts`, `drawtool.ts`, `ruler.ts`, `pings.ts`,
-`snapOrigin`/`snapExtent`/`hasExtent`, `trailCells`, `crossesWall`, `edgeMarker`, `SetDiagonals`, or
-`Shape`/`ShapeKind`/`Sketch`/`Ping` on the server.
+`snapOrigin`/`snapExtent`/`hasExtent`, `trailCells`, `crossesWall`, `edgeMarker`, `SetDiagonals`,
+or `Shape`/`ShapeKind`/`Sketch`/`Ping` on the server.
 
 ## Walls and doors
 
-The DM traces a polyline — click, click, double-click — and the room stores **one `Wall` per gap
-between corners**. The run is authoring and is never stored, which is what makes one bad segment of
-a long trace erasable without redrawing it. Corners snap to grid corners, Alt places freely, and
-that snap is the client's like `snapOrigin` is.
+The DM traces a polyline; the room stores **one `Wall` per gap between corners**, in image pixels.
+A door is `WallKind::Door(bool)` rather than a flag, so "a solid wall that is open" cannot be said.
+**A door swings on a click with no tool in hand** — a play-time action, and the one place a click's
+meaning depends on what is under it: a token wins, a moved click was a pan, an armed tool takes
+the button first.
 
-**In image pixels, not cells** — invariant 1's exception, because a wall traces the art. A door is
-`WallKind::Door(bool)` rather than a flag beside a wall, so "a solid wall that is open" cannot be
-said; doors are traced shut and only the DM swings them.
-
-**A door swings on a click with no tool in hand**, because opening one is a play-time action and not
-an edit. It is the one place where what a click means depends on what is under it: a token on top
-wins, a click that moved was a pan, and any armed tool takes the button first.
-
-**Walls reach the DM or nobody.** There is no `WallView` and no filtered form: a player's
-`snapshot_for` carries an empty list, indistinguishable from an untraced map, and
-`Event::WallsChanged` produces *no message at all* for them — a frame they cannot use still says the
-DM did something. A load into the live slot sweeps the walls and a recalibration must not; that is
-`sweep_board`, shared with the shapes — and the sweep is a **move** rather than a destruction, since
-what was traced on the outgoing image is filed under its URL on the way out. See *Maps* above.
-
-**The staged map has walls of its own, and fog overrides beside them.** The next dungeon is traced
-before the table is shown it — every wall and override command carries a `staged` flag, like
-`SetMap`/`MoveToken`/`CreateToken`, and a promote *moves* the staged pair onto
-the board rather than `sweep_board` clearing it. It cost almost nothing because walls already
-reached the DM or nobody: there was no filter to widen. A staged door promotes however the DM left
-it swung, which is how they say a room is already ajar. Still one slot, still not the scene concept.
+**Walls reach the DM or nobody.** No `WallView`; a player's snapshot carries an empty list and
+`WallsChanged` produces no message for them. A load into the live slot sweeps them and a
+recalibration must not — `sweep_board`, shared with the shapes, and a **move** onto the shelf
+rather than a destruction. The staged map has walls and overrides of its own; a promote moves the
+pair onto the board.
 
 → **`docs/walls.md`** before touching `walls.ts`, `walltool.ts`, `sweep_board`, or
 `Wall`/`WallKind`/`Px` on the server.
 
 ## Fog of war
 
-Three sets of grid cells, **party-shared rather than per-player**: `revealed` is everywhere the party
-has had line of sight, `known` is that widened by a cell, `visible` is where they have sight now.
-**Terrain gates on `known`, creatures gate on `visible`** — the room they walked through stays on
-their screen, dimmed, and whatever has wandered into it since does not. Vision comes from tokens a
-player *owns*, so handing one over grants sight with no extra rule.
+Three sets of cells, **party-shared**: `revealed` (ever had sight), `known` (`revealed` widened one
+cell by `with_fringe`, so traced masonry lands on screen), `visible` (sight now). **Terrain gates on
+`known`, creatures on `visible`.** Vision comes from tokens a player *owns*. `with_fringe` never
+touches `visible` or `revealed`: widening the first hands over the ogre behind the wall, and
+writing into the second bakes an unreached cell into the save.
 
-**`known` is `revealed` widened by one cell in every direction** — `with_fringe`, so the traced
-masonry lands on the table's screen instead of a room reading as a hole. **It never touches `visible`
-and never touches `revealed`**: widening the first hands over the ogre standing behind the wall, and
-writing into the second bakes a cell no ray reached into the save file. It is a mask like the DM's
-paint, and `Dark` still wins because the overrides are applied after it.
+**Two modes, one question.** `Dynamic` raycasts to cell centres (not shadowcasting — a wall is an
+arbitrary segment, and rasterising it blinds both sides). `Room` floods, unioned with the raycast,
+bounded by every traced segment open or shut. `fog::sight_cells` is the only reader of `lighting`.
+Radius is Euclidean. **A token may carry a light** (`light_ft`), gated on the party having line of
+sight to it at any distance — ungated, a promote hands the table every lit room.
 
-**Two modes, one question underneath.** `lighting` on `MapInfo` picks between them and
-`fog::sight_cells` is the only place that reads it, so nothing downstream knows there are two.
-`Dynamic` is the raycast; **`Room` is a flood unioned with it** — *you see the whole room you are
-standing in, plus whatever you have a straight line to* — so it can never show less than `Dynamic`
-would. The flood is bounded by **every traced segment, open or shut**, and **only sight reads
-`blocks()`**, so what an open door passes is the wedge seen through it rather than the room behind it.
+`fog`, `vision_ft` and `lighting` live on `MapInfo`, remembered per URL, sent on `SetMap` — no
+`SetFog`. `FogView` is one string, identical for every recipient including the DM: the geometry is
+the secret, the shadow is what the table plays with. **Recompute on the drop, never on a drag
+frame** — `moves_sight` is `persists`'s twin. `forget_fog` on load, promote, recalibration, play
+area; `ResetFog` is that plus the overrides.
 
-**Raycasting to cell centres, not shadowcasting.** A cell is visible when the straight line from the
-viewer's centre to it crosses no solid wall and no shut door. Shadowcasting wants opacity to be a
-property of a cell and a wall here is an arbitrary segment in image pixels; rasterising one into
-blocking cells would blind both sides of every wall traced along a cell boundary, which is most of
-them. The radius is Euclidean — a circle, agreeing with a drawn circle and not with the ruler.
+**The DM's override is a mask after the raycast, and nothing but a ray writes `revealed`.**
+`Lit`/`Explored`/`Dark` shape `known` and `visible`, so nothing downstream knows the word. DM-only
+and unsent like the walls; `SetFogOverride` carries the cells because the client previews the fill.
+The staged map has a mask and pointedly no fog — no staged `revealed`, and a staged preview would
+be client-only. **Do not put it in the room.**
 
-**A token may carry a light, and that is milestone 39.** `light_ft` on `Token` replaces
-`vision_ft` for a token a player owns — a lantern — and on anything else is what makes the token a
-source at all. A light nobody is carrying is **gated on the party having line of sight to it, at any
-distance rather than within their own reach**: ungated, promoting a prepared dungeon hands the table
-every lit room on it. The gate is applied to the source list in `sight_sources`, reads the party's
-own sight so one light can never switch on the next, and `fog::Source` holds the `?? vision_ft`
-fallback so nothing downstream knows there are two kinds of source. DM-only on the wire like `hp`,
-and it cost no command, no event and no entry in the three enumerated lists.
-
-`fog: bool`, `vision_ft` and `lighting` live on `MapInfo`, remembered per URL like the grid and sent
-on `SetMap` — there is no `SetFog`. **`fog` defaults off and `lighting` defaults to `Dynamic`**, which
-is what keeps an older save from going dark or changing shape. Nothing here knows the word
-"darkvision": one radius per map.
-
-`FogView` packs a rectangle of cells one character each. **It is the one message identical for every
-recipient**, the DM included, and that is the exact opposite of `WallsChanged` beside it: the geometry
-is the secret and the shadow it casts is what the table plays with. `None` means the map is not
-fogged, indistinguishable from having none.
-
-**Recompute on the drop, never on a drag frame** — `moves_sight` is `persists`'s twin and is
-enumerated the same way. `revealed` is persisted; `known`, `visible` and `shown` are derived on boot. A map
-load, a promote, a recalibration and a redrawn play area clear all three through `forget_fog`;
-changing the radius does not. `ResetFog` is that plus the overrides, and is the DM's way to say **the
-whole map back to dark**.
-
-**The DM's override is a mask applied after the raycast, and nothing but a ray ever writes into
-`revealed`** — a hide that merely cleared it would evaporate at the next torch, and a reveal that
-merely wrote into it could never be lifted. `Lit`/`Explored`/`Dark` shape `known` and `visible`, which
-is where every reader downstream looks, so `unseen_by_table` stays one line and nothing downstream
-knows the word. It reaches the DM or nobody, exactly as the walls do, and the table is owed the
-`FogChanged` beside it. `SetFogOverride` carries **the cells**, because the DM's client computes the
-fill to preview it and the preview and the result have to be the same array — a fill bounded by every
-traced segment, doors included and whatever they are swung to. Swept with the three sets, and
-persisted whole.
-
-**The staged map has a mask of its own and pointedly no fog.** A promote carries the paint across with
-the walls. Nothing casts a ray on a board nobody has been shown, so there is no staged `revealed` and
-`ResetFog` stays live-only. Previewing the staged map's fog is a second raycast and would be
-client-only if ever wanted — **do not put it in the room.**
-
-**An unanchored shape gates on `known`**, not on `visible`: a drawing is painted on the floor rather
-than standing on it, so it belongs with the terrain — fringe included, which is the one reader
-downstream of that widening.
-
-**Fog is party-shared and stays that way; what the DM gets instead is `solo.ts`.** Arming *sight
-check* and clicking a creature redraws the DM's own board as that creature's line of sight. It is
-**client-only** — a second raycast over the walls, radius and mode their client already holds — so
-there is no command, no event and no filter, and it is leak-proof by construction rather than by a
-check, exactly as the movement hint is. Live board only, no overrides applied. **Do not put any of it
-in the room.** **The button is not offered right now** — `SOLO_SIGHT` in `fogtool.ts`, off since
-milestone 34, because player view below answers the same question about the whole table. The code is
-untouched and milestone 29 is what turns it back on.
-
-**`mirror.ts` is its sibling and asks the broad half of the same question: what is on the six other
-screens.** *Player view* redraws the DM's board as the table's — their fog at their strength, and
-nothing the server would have withheld — and `asTable` is the **client-side twin of `snapshot_for`**,
-line for line. Client-only like solo sight, and **not a security boundary**: it removes what the DM
-is entitled to and is entitled to put back. **It earns its keep because the fog is party-shared** —
-one answer to mirror rather than six to choose between — which is the line milestone 29 would have to
-re-argue. The fog is not filtered, only drawn darker (`Fog.table`, one line in `drawFog`); the
-initiative panel mirrors through `tableInitiative`, or a hidden creature's row draws as a raw id. It
-**annotates nothing and refuses nothing** — editing through it is unchanged — and a brush, the sight
-check, closing the tab or starting a preview each put it down. **Do not put any of it in the room.**
-
-*Per-player fog is no longer a closed question: `ROADMAP.md` milestone 29 designs a switch that makes
-`visible` per-player and leaves `revealed` alone — it exists because `solo.ts` answered the objection
-that killed it. Nothing above changes until 29 is built; read it before arguing from this line.*
+**`solo.ts` and `mirror.ts` are client-only and stay that way** — a second raycast the DM's client
+runs over data it already holds. Solo: one creature's sight. Mirror (*player view*): the table's
+board via `asTable`, the client-side twin of `snapshot_for`; not a security boundary. `SOLO_SIGHT`
+is off since milestone 34. Per-player fog is `ROADMAP.md` milestone 29 — read it before arguing
+from "party-shared".
 
 → **`docs/fog.md`** before touching `fog.rs`, `fog.ts`, `solo.ts`, `mirror.ts`, `overrides.ts`,
 `fogtool.ts`, `unseen_by_table`, `with_fringe`, `shape_seen`, `refresh_fog`,
@@ -893,139 +510,55 @@ that killed it. Nothing above changes until 29 is built; read it before arguing 
 
 ## Frontend
 
-Camera is `{ x, y, zoom }`. Two functions, `screenToWorld` and `worldToScreen`, are the only
-places coordinate math lives. Render by setting the canvas transform once
-(`ctx.setTransform(zoom, 0, 0, zoom, -cam.x * zoom, -cam.y * zoom)`) and drawing everything in
-world coordinates. Hit-testing happens in world coordinates too.
+Camera is `{ x, y, zoom }`. `screenToWorld` and `worldToScreen` are the only places coordinate
+math lives. Set the canvas transform once and draw everything in world coordinates; hit-test in
+world coordinates too. Everything downstream trusts those two functions.
 
-Getting this layer right is the hardest part of the client, and everything downstream trusts
-those two functions.
+**The left rail shows one DM editing panel at a time behind a tab strip** — a new panel is an entry
+in `RailTab` and the array `main.ts` passes to `createRail`, never another `<aside>`. Which panel a
+control belongs on is where its field lives: `MapInfo` → map tab, `Token` → token tab, room-wide
+`RoomState` → table tab. Three rules: closing a tab calls the panel's `stop`; a panel that goes
+inert makes its **tab** inert too, and a tab wrongly greyed is the same defect as one wrongly
+live; **only a click on a tab changes the tab** — nothing on the board or wire moves the rail. The
+open tab is `localStorage`. The draw tool is pinned below the strip, not on it: everybody has it
+and it is used mid-fight.
 
-**The left rail shows one of the DM's editing panels at a time, behind a tab strip.** A new panel is
-an entry in `RailTab` and an entry in the array `main.ts` passes to `createRail` — never another
-`<aside>` stacked on the others. **Which panel a control belongs on is decided by where its field
-lives**: `MapInfo` is the map tab, `Token` is the token tab, room-wide `RoomState` is the table tab.
-Three rules come with the strip. Closing a tab must put down whatever that panel armed, via the panel's
-`stop` — a tool still holding the left mouse button under a hidden panel is a click doing something
-with nothing on screen saying why. A panel that goes inert in some state must make its **tab**
-inert too: a way in to a panel that can do nothing is the same lie as the panel sitting there looking
-armed, and the rule cuts both ways — a tab wrongly greyed is the same defect as a tab wrongly live.
-And **only a click on a tab changes which tab is open** — nothing on the board and nothing on the
-wire moves the rail, which is why `createRail` returns nothing to move it with. Selecting a token
-used to open the token tab; the rail is where the DM is *working*, and a panel that swaps itself out
-mid-trace costs more than the click it saved. The open tab is remembered in `localStorage` for the
-reason the initiative fold is — a preference, not a `RoomState` field — and because a dropped socket
-reloads the page, so a rail that opens empty on connect empties itself mid-fight.
-
-The draw tool is deliberately *not* on the strip. It is the one panel everybody has and it is used
-in the middle of a fight, so it stays pinned to the bottom of the rail — the same reason a door
-swings with no tool in hand.
-
-**The bottom-right corner is the third place a control can live**, and `#corner` holds the gesture
-hint, the fit-board control and the `/spells/` link. What they share is the argument for being out
-there: each arms nothing, so none owes the rail a `stop`, and none carries a count, so none wants a
-dock tab. **Fit is everybody's** — a player who has zoomed into a corner is as lost as the DM — and
-it goes through `Stage.fit` because the camera belongs to the board and is never on the wire. It
-frames the play area where one is drawn and the whole image otherwise, which is deliberately not
-what a map load does. `Home` is its key and it is the second binding to need `typingIn`.
-
-**The right-hand column holds three things and their order is not a layout choice**: the presence
-strip is pinned at the top because that is the one edge that never moves, since the initiative panel
-folds and the dock grows upward.
-
-**The right edge is a second strip, `dock.ts`, and it is everybody's** — a separate file rather than a
-generalised rail because nothing behind it arms the canvas so there is no `stop`, a tab here can carry
-an unread count, and **its panels stack**: rail panels are editing *modes* and nothing in the dock is
-one. It grows *upward* from the bottom, so opening it never moves the initiative panel, and **its
-strip is its last child** rather than its first.
+**The bottom-right `#corner`** holds the gesture hint, fit (`Stage.fit`, everybody's, `Home`) and
+the `/spells/` link — each arms nothing and carries no count. **The right-hand column** is presence
+strip (pinned top, the edge that never moves), initiative panel, then the dock. **The dock is a
+second strip, everybody's**, in `dock.ts` rather than a generalised rail: nothing behind it arms the
+canvas, tabs carry unread counts, and its panels stack. It grows upward, strip last.
 
 → **`docs/frontend.md`** before touching `coords.ts`, `rail.ts`, `dock.ts`, `Stage.fit`/`fitToRect`,
-`#corner`, or the order of the right-hand column. `docs/presence.md`, `docs/chat.md` and `docs/notes.md` cover what sits in them.
+`#corner`, or the order of the right-hand column.
 
 ## Maps
 
-Two slots: `map`, and `staged: Option<StagedBoard>` — the map the DM is preparing while the table is
-still looking at the current one, **with its own walls and fog overrides**. One slot, not a list.
-`staged` is absent from a player's `snapshot_for` and `Event::StagedChanged` becomes `None` for
-everyone but the DM; `None` is both "nothing is staged" and "you are not the DM", indistinguishable
-from the client side — and because the three travel as one bundle, that single `None` withholds the
-next dungeon's masonry and paint along with its image. There is no second staged field to forget.
+Two slots: `map`, and `staged: Option<StagedBoard>` with its own walls and overrides. One slot,
+not a list. `None` is both "nothing staged" and "not the DM". **A `SetMap`'s URL alone decides
+load versus recalibrate** — the calibration table, staged plans, shapes and walls all branch on it,
+and a recalibration sweeps none of them (overrides are cells, so it does clear those).
 
-**A `SetMap`'s URL alone decides whether it is loading a map or recalibrating one**, against
-whichever slot its `staged` flag names. That distinction is load-bearing four times over — the
-remembered calibration table, the staged token plans, the board's shapes and each slot's traced
-walls all branch on it, and a recalibration must sweep away none of them. The fog overrides are the
-exception that proves it: they are cells, so a recalibration *does* clear them, on both boards.
+**Libraries**: the DM picks from `maps/`; **a pick is a copy into uploads, not a second way to
+serve files**. `portraits/`, `backdrops/` and `tracks/` are the same `Library` over other folders.
+Uploading is how you add; a remove deletes the library file and nothing else; a taken name is
+refused, not overwritten. A client path reaches the filesystem in two guarded places: a pick is
+canonicalised inside the library, an add must be a single component.
 
-The DM picks maps out of the `maps/` folder rather than re-uploading; **a pick is a copy into the
-uploads directory, not a second way to serve files.** Listing, picking, adding and removing are
-DM-only, behind one route family — `/api/{library}` — and one client widget. **`portraits/` and
-`backdrops/` are the same feature over other folders** and share every line of it; the folder, the
-size cap, the noun in the refusals and what a copy's name is fingerprinted over are the whole of
-what a library differs by.
+**A backdrop is shown *instead of* the board and is not a map** — `SetBackdrop` sweeps nothing,
+the board is untouched underneath, and preview wins over it. **A map remembers what the DM
+prepared** (`Prepared`: grid, walls, paint, keyed by URL, never on the wire); what is filed is what
+a board held as it stopped being held. The DM's authoring is remembered and the party's play state
+is not — remembering `revealed` or plans is the scene system.
 
-**The DM adds and removes images from the panel, and uploading is how you add.** There is no
-separate upload route: the button writes into the folder and then picks what it wrote, so an
-uploaded map is a library map. Two rules bind it. A client-supplied path reaches the filesystem in
-exactly two places and they are guarded differently — a **pick** may name a subdirectory, so it is
-canonicalised and confirmed inside the library; an **add** must be a single component, so it cannot
-leave the folder at all, and it is also refused the names Windows reserves or rewrites. And a
-**remove deletes the library file and nothing else** — not the copy in `uploads/`, so the board,
-the calibration and the shelf survive, and re-adding the same name later finds them. A name already
-taken is refused rather than overwritten: there is no undo on a filesystem.
+**Preview is client-only; the server must not learn of it.** Intent rides on each command's
+`staged` flag. Everything that draws or hit-tests reads `shownBoard`/`shownWalls`/`shownOverrides`/
+`shownBackdrop`, never the live board.
 
-**A backdrop is a picture shown *instead of* the board, and it is not a map.** No grid, nothing
-standing on it, nothing traced across it — which is why `SetBackdrop` sweeps nothing where a
-`SetMap` sweeps the walls, the drawings and everywhere the party has explored. One `Option<String>`
-on the room, DM-only to set and unfiltered like `show_names`, so `BackdropChanged` sits beside
-`FogChanged`. The board is untouched underneath, so putting the picture away needs nothing from the
-server. `shownBackdrop` is `shownBoard`'s fourth twin and its one branch is that **preview wins** —
-the party roleplays at the campfire while the DM traces the crypt. The presets are the `backdrops/`
-folder, a third `Library`; **a list of them in the room would be the scene concept**.
-
-**A map remembers what the DM prepared on it.** `Calibration` grew into `Prepared` — the grid, the
-walls and the fog overrides, keyed by URL and never on the wire — so tracing three dungeons on a
-Tuesday leaves all three traced on Saturday. **What is filed is what a board was holding as it
-stopped being held**: `sweep_board` takes the outgoing URL as an argument because its two callers
-assign the map on opposite sides of it, and a staged board never reaches it at all, so the load arm
-and `ClearStaged` are two more write sites. A recalibration writes the calibration and nothing
-else, which is what the wrapper makes unsayable rather than merely avoided. **The boundary is that
-the DM's authoring is remembered and the party's play state is not** — no `revealed`, no token
-plans; remembering either is the scene system this file refuses.
-
-**Preview is client-only: the server does not know the DM is previewing and must not learn.**
-That is why intent rides on the command — `SetMap`, `MoveToken`, `CreateToken`, all four wall
-commands and `SetFogOverride` each carry `staged` — rather than on a mode. Everything that draws or
-hit-tests reads `shownBoard(scene)`, or its twins `shownWalls` and `shownOverrides`, never the live
-board directly.
-
-**A map's cells are squares or isometric diamonds**, and `GridShape` on `MapInfo` is the whole of
-it — remembered per URL with the rest of the calibration, defaulting to `Square` so every saved
-board stays exactly where it was. It was cheap because **an isometric grid is an affine image of a
-square one**: everything expressed in grid space — `snap_to_cell`, `covered_cells`, `shape_covers`,
-`with_fringe`, `snapExtent`, `feetMoved`, `trailCells`, both `Diagonals` rules, all of the wall
-math — is unchanged, and so is the raycast, which already measured its radius in cells. What moved
-is five functions, and **`fog::basis` and `gridBasis` are the only two places the shape is read**:
-one statement in two languages, which must agree or the fog lands a cell off the walls casting it.
-`MapInfo` is the only thing on the wire that changed. The DM calibrates one by dragging **along a
-run of diamond edges** and saying how many it crossed — the square path's own cell count, shared,
-because tracing a room and dividing it beats aiming at one tile and having the answer replicate.
-The overlay draws the whole chain, which is what makes a wrong count visible. Only the whole-image
-shortcut is still the square path's alone; the box-and-count path itself is untouched.
-
-**That edge drag comes in two, and the second one pins the ratio.** Almost all isometric art is
-drawn on 2:1 tiles, where aiming half an edge decides a number that was never in question — so
-`iso-fixed` takes only the *size* from the drag and keeps the proportions. It is a **client-side
-gesture and not a state of the room**: what it produces is an ordinary `Iso { ratio }`, so nothing
-on the wire, in `RoomState` or on the calibration shelf knows it exists. `isoDiamond` is the one
-place either gesture decides anything — `gridFromEdge` builds from it and `drawCalibrationDiamond`
-draws it, so the aimed diamond and the committed one cannot diverge. One preset: a list of
-projections is a menu.
-
-**It is flat and must stay flat**: no depth sorting, no wall height, no sprite anchoring, no
-elevation. Tokens are upright discs sized by the diamond's height, so `tokenAt` is unchanged. 2.5D
-is a different renderer and `docs/maps.md` refuses it — `Wall` has no height and the whole raycast
-is built on that.
+**Cells are squares or isometric diamonds** (`GridShape`). An iso grid is an affine image of a
+square one, so everything in grid space is unchanged; `fog::basis` and `gridBasis` are the only two
+readers and must agree. `iso-fixed` is a client-side gesture, not room state. **It is flat and must
+stay flat**: no depth sorting, wall height, sprite anchoring or elevation.
 
 → **`docs/maps.md`** before touching `maptool.ts`, `calibrate.ts`, `library.rs`, `library.ts`,
 `drawBackdrop`, `shownBackdrop`, `fog::basis`, `gridBasis`/`shapeOf`, `gridFromEdge`, or
@@ -1033,270 +566,105 @@ is built on that.
 
 ## Undo
 
-One ring, ten deep, no redo, the DM's alone. **A snapshot is `Saved`** — the save file kept in memory
-rather than written — so `clients` and `pending` stay out by construction and `adopt` is the one
-inverse of `to_saved` that both booting and undoing go through. **Post-state**: the back of the ring
-is the present, an undo pops it and adopts what is behind, and both constructors seed a floor so the
-first command of a session is undoable.
-
-**A step is a command that `undid` names and `persists` agrees with.** Sharing `persists` is what
-keeps drag frames out for free; `undid` adds the two exclusions it cannot express, and the
-load-bearing one is that **`Undo` itself is never a step**. One step per command, so a long wall
-trace fills the ring — `ClearWalls` is the way out of a bad one, and depth is the cheap thing to tune.
-
-Restoring re-sends the world rather than a diff, because the case undo exists for is `sweep_board`.
-The button names what it would take, since with no redo an unpredictable press is unrecoverable.
+One ring, ten deep, no redo, the DM's alone. **A snapshot is `Saved`**, so `clients`, `pending`,
+`chat`, `here` and `audio` stay out by construction, and `adopt` is the one inverse of `to_saved`.
+Post-state: the back is the present. **A step is a command that `undid` names and `persists` agrees
+with**, and `Undo` itself is never a step. Restoring re-sends the world (`Restored`), and the
+button names what it would take.
 
 → **`docs/undo.md`** before touching `RoomState::undo`, `remember`, `adopt`, `undid`,
 `Event::Restored`, `undo.ts`, or `adoptView` in `scene.ts`.
 
 ## Whisper and shout
 
-**Two destinations and never a third** — that is `ChatTo`, and the missing case, one player to
-another, is the boundary the non-goal at the top of this file draws. Read it before changing
-anything here; it is the specification, and everything below is how it was built.
+**Two destinations and never a third** — `ChatTo`; the non-goal is the specification. One command,
+`Say`, carrying no sender. **`party_to` is the whole visibility rule and never asks `is_dm`**; both
+routes out (`chat_for`, the `Said` arm) go through it. Session memory, never `Saved`: a refresh
+keeps the rolls, whispers are never on disk, undo cannot take back words. The sender is echoed. The
+destination is sticky and shown twice; an arriving line badges a tab and toasts, opening nothing.
 
-**One command, `Say`, because a whisper and a shout differ only in where they are going** — and the
-destination is exactly what the permission check is about. It carries no sender: who said it is
-what the socket already proved.
-
-**`party_to` is the whole visibility rule and it never asks `is_dm`.** A shout is everybody's; a
-whisper is in exactly two copies, the sender's and the recipient's. That "or whoever sent it" half
-is what stops the DM's own whisper being absent from the DM's log. Both routes out go through it —
-`chat_for` in `snapshot_for` and the `Said` arm of `message_for` — which is invariant 3 on the first
-state where getting it wrong hands over somebody's words.
-
-**Session memory, never `Saved`.** One decision buying three things: a refresh mid-combat keeps the
-initiative rolls, old whispers are never durable on the disk, and an undo cannot take back what
-somebody said — a snapshot is a `Saved`, so the log is not in one and `undo.rs` never mentions it.
-Capped and trimmed from the front.
-
-**The sender is echoed their own**, alone among relayed frames, because a log is a sequence and
-where a line lands in it is the room's to decide. So nothing here is predicted locally.
-
-The client half: the dock is a strip like the rail's (see *Frontend*), the destination is **sticky**
-and shown twice — the armed chip and the input's own colour and placeholder, because forgetting
-which way the box points is the one failure a sticky destination has. An arriving line puts a count
-on a collapsed tab **and** surfaces beside the dock for a few seconds, and does not open anything.
-A line renders identically for both people party to it, so there is no "am I the sender" branch.
-
-→ **`docs/chat.md`** before touching `chat.ts`, `dock.ts`, `party_to`, `chat_for`, `RoomState::chat`,
-or `Say`/`Said`/`ChatTo`/`ChatLine` on the server.
+→ **`docs/chat.md`** before touching `chat.ts`, `dock.ts`, `party_to`, `chat_for`,
+`RoomState::chat`, or `Say`/`Said`/`ChatTo`/`ChatLine` on the server.
 
 ## The loaner die
 
-**A bag of plastic for whoever came without one, and that framing is the specification.** Read the
-non-goal above before changing anything here; the test it gives — *could a bag of plastic do
-this?* — is what keeps counts in and arithmetic out.
+**A roll is a line of talk.** `Roll { sides, count, to }` produces a `ChatLine` and emits the
+existing `Said` — no new `ServerMsg`, `Event`, filter or `persists` arm. **The room throws it**, so
+`rolled` marks a witnessed number; entropy is `uuid` v4, rejection-sampled, no `rand`. `Say` and
+`Roll` differ in one arm of `may_address`: the DM may roll to themselves. `DICE_SIDES` is a closed
+set and `MAX_DICE` keeps the sentence inside `MAX_CHAT_LEN` (`the_largest_roll_fits_a_chat_line`).
 
-**A roll is a line of talk, and that is the whole implementation.** `ClientMsg::Roll { sides,
-count, to }` produces an ordinary `ChatLine` and emits the **existing** `Event::Said`, so there is
-no `ServerMsg` beside it, no new `Event`, no new visibility rule, and no arm in `persists` or the
-`spoken` match — both key on `Event`. `party_to`, `chat_for`, the cap, the badge and the toast are
-reused untouched. It carries no sender, exactly as `Say` does not.
-
-**The room throws it, not the client**, because a number a client rolled for itself is one it could
-throw again until it liked the answer — and `ChatLine::rolled` is what makes that visible, since a
-witnessed number nobody can tell from a claimed one buys nothing. The entropy is `uuid`'s v4, which
-was already a dependency: **no `rand`, rejection-sampled**, because `byte % sides` biases low faces.
-
-**Private rolls cost nothing and are what beats plastic.** `to` was going to be on the command
-anyway, so a whisper-roll needed no code and no second picker — the die throws to whichever
-destination chip is already armed. `may_address` is the shared rule and **`Say` and `Roll` differ
-in exactly one arm**: the DM addressing themselves, refused for talk because a note to self is the
-scratchpad's job, allowed for a die because a monster's save has nowhere else to go. **It is reached
-by a toggle on the die row and not by a chip** — the chips are shared with the text box, which
-cannot send there; privacy is a property of the throw rather than of the conversation.
-
-**Two bounds, not one.** `DICE_SIDES` is a closed set checked on the server like `TOKEN_SIZES`, and
-`MAX_DICE` exists so the sentence a throw produces still fits `MAX_CHAT_LEN` —
-`the_largest_roll_fits_a_chat_line` measures the largest legal instance rather than trusting the
-two numbers relate.
-
-→ **`docs/dice.md`** before touching `Roll`/`ChatLine::rolled` on the server, `roll`,
-`rolled_text`, `may_address`, `RoomState::log`, `DICE_SIDES`/`MAX_DICE`, or the die row in
-`chat.ts`.
+→ **`docs/dice.md`** before touching `Roll`/`ChatLine::rolled`, `roll`, `rolled_text`,
+`may_address`, `RoomState::log`, `DICE_SIDES`/`MAX_DICE`, or the die row in `chat.ts`.
 
 ## The room's music
 
-**One looping track, and that framing is the specification.** Read the non-goal above before
-changing anything here; the test it gives — *is this still one track?* — is what keeps a mixer out.
-
-> The room holds **one** track. A list of tracks is a mixer, and a mixer is the scene system for
-> ears.
-
-Three songs in the folder is not a mixer: the collection is `tracks/`, exactly as the backdrop's
-presets are `backdrops/`, and the room holds only which one is up.
-
-**It is `SetBackdrop` copied, with one deviation.** `RoomState::audio` is an `Option<String>`,
-DM-only via `require_dm`, bounded by `MAX_URL_LEN`, **unfiltered** — `AudioChanged` sits beside
-`BackdropChanged` for that reason — and on `RoomView` so a reconnect hears what the table hears.
-The `check` and `apply` arms are the backdrop's word for word.
-
-**The deviation is that it is not persisted, and that is the whole design.** `audio` is off
-`Saved`, sitting with `chat`: in `empty`, `blank` and `snapshot_for`, absent from `adopt` and
-`to_saved`, so `store.rs` did not change. Two reasons, and the first would have been a visible bug:
-**`audio.src = url` is not idempotent the way `drawImage` is**, so on the ring an unrelated undo
-would restart the track mid-scene; and a room reopened on Saturday should come back quiet. What it
-bought is that where the scratchpad and a player's colour each need *two* lines to stay off the
-ring, this needs **none** — a restore cannot reach a field that is not on a `Saved`.
-
-**The client owns everything except which track.** Volume and on/off are `localStorage`, never on
-the wire — the initiative fold's rule, and right because everyone is mixing against Discord voice
-at their own level; a DM who could set it would set it wrong for six people. **Sound starts off**,
-because a browser refuses to play what no gesture asked for — and a dropped socket reloads the
-page, so every reconnect spends that gesture. `sound.ts` therefore *attempts* and **lights the
-button when refused**: silence with nothing on screen to explain it is the one way this fails
-invisibly. `update` returns early when the URL is unchanged, which is what stops a `Restored`
-restarting the track. Off means **paused**, not muted, because a muted element still streams.
-
-**The room holds a URL, not a playhead.** Two browsers are at different points in the same loop,
-which is correct for a bed and is why a one-shot sting is refused rather than merely unbuilt.
-
-`tracks/` is a fourth `Library` and the first holding something that is not a picture, which is
-what turned the format gate from a const into `library::Formats` — one grouped arm keeps the other
-three libraries exactly as they were.
+**`SetBackdrop` copied, with one deviation: not persisted.** `audio` is off `Saved` because
+`audio.src = url` is not idempotent — on the ring an unrelated undo would restart the track — and a
+room reopened on Saturday should come back quiet. The client owns volume and on/off in
+`localStorage`; sound starts off (browsers refuse unasked playback, and every reconnect spends the
+gesture), so `sound.ts` lights the button when refused. `update` returns early on an unchanged URL.
+Off means paused. The room holds a URL, not a playhead.
 
 → **`docs/sound.md`** before touching `RoomState::audio`, `SetAudio`/`AudioChanged`,
 `Library::Tracks`, `library::Formats`/`sniff`, `sound.ts`, or the `sound` tab in `dock.ts`.
 
 ## The scratchpad
 
-One box of text per person, private to whoever wrote it, and **the DM's is no different from
-anyone else's**. What it is worth over the Notepad window everybody already tabs to is one thing:
-it is in the window, and it persists with the room. That is the entire scope, and **a second
-document makes it a journal** — read the non-goal at the top of this file before adding anything.
-
-**It is the first state in this project Slate does not send the DM.** Every asymmetry before it
-runs the other way, so `snapshot_for` and `message_for` had only ever been asked to withhold
-*downward*; there is no `is_dm` in either arm here. A scratchpad the DM's client can open is not a
-scratchpad, it is a surveillance feature, and the reason it stays out is the reason it is worth
-having.
-
-**Be accurate about how far that goes and do not call it privacy.** The notes are in the save file
-and the DM hosts the server. What is guaranteed is that **no client is ever sent somebody else's**,
-which is the same guarantee the walls and the hit points get and the only kind this architecture
-makes about anything.
-
-**`SetNotes` carries no key**, because a key a client could name is a key it could name somebody
-else's with — whose box it is comes from the socket, exactly as `Say`'s sender does. So there is no
-permission to check, only a cap. **It sends on a pause, not on a keystroke**: a 500ms idle
-debounce, flushed on blur, and no "saved" indicator — that would be the first UI here that narrates
-the network, and it would make the box look like a document.
-
-**Persisted, and exempt from the undo by hand.** A snapshot is a `Saved`, so this being on disk put
-it on the ring by construction. Two things say otherwise and both are needed: `undid` is `None` for `SetNotes`, and the `Undo` arm
-of `apply` takes the notes out and puts them back around `adopt`. The second is the load-bearing
-one, because a paragraph typed *between* two commands is on the snapshot the later one pushed.
+One box per person, private, the DM's no different. **The first state Slate does not send the
+DM** — no `is_dm` in either filter; a box the DM can open is a surveillance feature. Do not call it
+privacy: the notes are in the save file the DM hosts. What is guaranteed is that no client is ever
+sent somebody else's. `SetNotes` carries no key; sends on a 500ms pause, flushed on blur, no saved
+indicator. Persisted, and exempt from undo by two lines that are both needed.
 
 → **`docs/notes.md`** before touching `notes.ts`, `RoomState::notes`, `notes_for`, `is_owner`, the
 `Undo` arm of `apply`, or `SetNotes`/`NotesChanged` on the server.
 
 ## Presence, turns, colours and cursors
 
-**Everything else in Slate is about the board; these five are about the people looking at it.**
+**Who is connected**: `Presence` carries `Owner`s, not sockets, so a laptop and a phone are one
+name and the DM's presence is sayable. Off `Saved`, dispatched where the socket table changes.
+Absent people dim. **"It is your turn"** is client-only and **must not fire on a `Welcome` or a
+`Restored`** — `turn.ts` has `update` and `adopt` for that reason. **A dropped socket backs off and
+reloads the page**; the DM comes back as the DM via `takeDmSecret` in `localStorage`, and the
+reload is the design because `onWelcome` builds once per socket.
 
-**Who is connected** is a row of chips at the top of the right-hand column. The room already
-computed it — `roster_slots` already scanned `clients` and told only the identity picker — so
-`Presence` routes an existing answer to everyone. It carries **`Owner` and not
-`RosterSlot`**, because a list of slots cannot say the DM is there and that is the connection a
-table most wants to be sure of; it is **identities and not sockets**, so a laptop and a phone are
-one name; and it is **not part of the room** — off `Saved`, so off the undo ring by construction
-like the chat log, and `persists` refuses it on that principle rather than on it being fleeting.
-Absent people dim rather than disappear, the chat destination chips dim from the same answer, and
-`here` is on `RoomView` as well as on the delta because invariant 3 applies to it like everything
-else.
-
-**"It is your turn"** is client-only and has no server half at all — `initiative.current`,
-the scene and `identity.ts` are already in hand. The rule that would ruin it is that it **must not
-fire on a `Welcome` or a `Restored`**: adopting state is not a turn change, which is why `turn.ts`
-has `update` and `adopt` rather than one method. It opens and moves nothing. It fires for the DM on
-every monster's turn, deliberately unresolved —
-**play decides**, and the off-switch is `localStorage` if it ever needs one.
-
-**A dropped socket now backs off and reloads the page** when a fresh one opens — and **the DM
-comes back as the DM**, because `takeDmSecret` keeps their secret in `localStorage`; the address bar
-is still stripped on sight, which is the risk that guard was written against, and storage is not the
-address bar. **The reload is the design**: `onWelcome` builds the panels, the tools and the board once per socket, so a second
-`Welcome` would build a second of each — the wall `Restored` was invented to avoid, except that
-here a refresh was already the supported way back. The socket the backoff opens is a probe and
-nothing is sent on it. Today's banner is now the floor, reached when the backoff gives up.
-
-**A player picks their own colour**, replacing the body of `colourOf`. It is **public**, unlike the
-scratchpad, because everyone draws everyone else's rings —
-which makes it the first player-writable state here that is not private. It is **an index into a
-closed palette**, because free hex would let a player take the gold a token ring uses for ownership
-and make the board say something false; `PLAYER_HUES` in `pings.ts` is the only place the hues
-exist and the server holds only the bound. **Duplicates are allowed** — the name beside a ring is
-what tells two people apart, and colour never scaled to seven anyway. The DM has none, enforced at
-three layers: the table is keyed by `PlayerId`, `check` refuses them, and `colourOf` answers `dm`
-first.
-
-**Everybody's pointer is drawn on everybody's board**, which is `Ping` with the
-deliberateness taken out: `MoveCursor` at ~30Hz, relayed as `CursorMoved`, no persistence,
-no snapshot, and **stillness rather than any frame is what ends one** — a client that stops
-moving sends nothing, and each recipient's own decay does the rest. One pointer per person,
-a small dot in their colour at reduced opacity with their name always under it, and no edge
-marker for one off screen: `edgeMarker` exists because a ping would otherwise be missed, and seven markers
-pinned round the border for hands that are simply elsewhere is this feature's whole risk.
-Nothing is sent or drawn while the DM previews the staged board.
-
-**The fog question lands the opposite way from ping's, and only for the DM.** `cursor_seen`
-withholds the DM's pointer from a player over cells outside `known` — their hand lingers
-where they are working — and answers yes to everything else: the DM sees every pointer, a
-player's is relayed wherever it goes, and an unfogged map has nothing to withhold. This
-overturned `ROADMAP.md`, which proposed gating everybody; the entry records why.
-
-**`SetShowCursors` stops the relay, not the drawing.** DM-only, room-wide, on the table tab,
-persisted, a step on the ring, defaults on — and with it off the room drops every frame *and*
-every client stops sending. This is the busiest message in the protocol, so a switch that
-saved none of that would be a preference rather than a dial. It is deliberately not refused
-in `check`: a red banner per `pointermove` is worse than a frame nobody is sent.
-
-**`SetShowDmCursor` is that switch narrowed to one hand** — the DM's pointer off the
-players' boards, everybody else's untouched. Its neighbour in every respect bar one: read in
-`cursor_seen` rather than in the filter, after the two yeses and **before** the `map.fog`
-guard, so it holds on an unfogged map. It stops the relay and not the sending, because one
-client in seven is not the traffic `show_cursors` is. Everyone is told and only the DM's panel
-reads it back.
+**A player picks their colour** — an index into the closed `PLAYER_HUES`, public, duplicates
+allowed, the DM refused at three layers. **Everybody's pointer is drawn** — `MoveCursor` at ~30Hz,
+relayed as `CursorMoved`, no persistence, stillness ends one, no edge marker. `cursor_seen`
+withholds only the DM's pointer over cells outside `known`. `SetShowCursors` stops the relay *and*
+the sending (the busiest message in the protocol); it is read in the filter, not `check`, so a
+`MoveCursor` that arrives while it is off is dropped rather than refused — a red banner per
+`pointermove` is worse than a frame nobody is sent. `SetShowDmCursor` narrows it to one hand, read
+in `cursor_seen` before the `map.fog` guard.
 
 → **`docs/presence.md`** before touching `presence.ts`, `turn.ts`, `cursors.ts`, the reconnect
-half of `net.ts`, `RoomState::colours`, `RoomState::here`, `RoomState::show_cursors`,
-`RoomState::show_dm_cursor`, `cursor_seen`, `PLAYER_HUES`, or
-`SetColour`/`Presence`/`ColoursChanged`/`MoveCursor`/`CursorMoved`/`SetShowCursors`/
-`SetShowDmCursor` on the server.
+half of `net.ts`, `RoomState::colours`/`here`/`show_cursors`/`show_dm_cursor`, `cursor_seen`,
+`PLAYER_HUES`, or `SetColour`/`Presence`/`ColoursChanged`/`MoveCursor`/`CursorMoved`/
+`SetShowCursors`/`SetShowDmCursor` on the server.
 
 ## Testing
 
 Three suites; which one a change belongs in is decided by what can observe it. **`node
 tools/check.mjs` runs the first two plus `cargo fmt --check` and `clippy`**, reporting every failure
-rather than stopping at the first — the drivers are left out because they need a browser, a server
-and a scratch state file. There is no CI: nothing runs unless somebody runs it.
+rather than stopping at the first. There is no CI: nothing runs unless somebody runs it.
 
 **`cd server && cargo test`** — the room's own, and the bulk of them. They are **child modules of
-`room`**, in `server/src/room/tests/`, split along the same seams as `docs/`: tests for a feature go
-in the file named for its subsystem and never back into `room.rs`, which the split emptied of 5,000
-lines and which stays that way. They are children rather than a sibling integration test because
-they drive `RoomState` through its *private* surface, which is the only way to assert **what a client was not
-sent** — and for a permission, a visibility filter, or an event's `was_unseen`, the message that
-never left is the whole assertion. `server/src/room/tests.rs` holds what more than one file needs; a
-helper one file uses stays in that file, which opens with `use super::*` to pick both up.
+`room`**, in `server/src/room/tests/`, split along the same seams as `docs/`; tests for a feature go
+in the file named for its subsystem and never back into `room.rs`. Children rather than an
+integration test because they drive `RoomState` through its *private* surface, which is the only
+way to assert **what a client was not sent**. `server/src/room/tests.rs` holds shared helpers.
 
-**`cd client && npm test`** — the client's pure half, `src/*.test.ts` behind `test.mjs`: the
-coordinate spaces, the two distance rules and the trail, `crossesWall`, shape coverage, the DM's
-flood fill. It bundles with esbuild first, which is not ceremony — the client imports its own
-modules as `./coords.js` and node's resolver will not rewrite that to a `.ts` file. Nothing that
-needs a canvas or a socket can be tested here. `npm run check` is this plus the typecheck and build.
+**`cd client && npm test`** — the client's pure half, `src/*.test.ts` behind `test.mjs`: coordinate
+spaces, distance rules, the trail, `crossesWall`, coverage, the flood fill. It bundles with esbuild
+first because the client imports `./coords.js`. Nothing needing a canvas or socket goes here.
+`npm run check` is this plus typecheck and build.
 
 **`tools/drive-*.mjs`** — headless Chrome against a running server, and the only thing that can see
-a canvas, a layout failure, or a **difference between two connections**. Much of what this project
-guarantees is what a *second* client is not holding, and one browser cannot see it; the drivers that
-matter most open two. They mutate the room they connect to, so point `SLATE_STATE` at a scratch file
-every time, and each one puts back what it changed. Two files sit under them: `cdp.mjs` is the
-protocol and knows nothing about this project, and `board.mjs` knows where the grid falls on screen
-and which token is standing on a square — anything that clicks the board goes through it rather than
-reaching for pixels, because **a driver may not assume the map it was written against.** The README
-lists them and what each drives.
+a canvas, a layout failure, or a **difference between two connections**. They mutate the room, so
+point `SLATE_STATE` at a scratch file every time. `cdp.mjs` is the protocol; `board.mjs` knows where
+the grid falls on screen — anything that clicks the board goes through it, because **a driver may
+not assume the map it was written against.** The README lists them.
 
 ## Working agreement
 
@@ -1309,18 +677,17 @@ lists them and what each drives.
   it when the behaviour changes. The summaries above are enough to use a feature and not enough to
   redesign one; the reasoning that would stop you deleting something load-bearing is in those
   files. Nothing loads them for you either.
-- **A new feature gets a short summary and a pointer here; the rest goes in `docs/`.** This file is
-  loaded into every session and the per-feature sections are already most of its length, because
-  each milestone since 20 has written its reasoning into both places. The summary says what the
-  feature *is*, which rules bind it, and what a change to it must not break — the mechanism, the
-  failure modes and the arguments live in its `docs/` file. If the summary would let you redesign
-  the feature, it is too long. The same holds for a new field's comment in the state model.
+- **A new feature gets a short summary and a pointer here; the rest goes in `docs/`.** The summary
+  says what the feature *is*, which rules bind it, and what a change must not break. If the
+  summary would let you redesign the feature, it is too long. The same holds for a new field's
+  comment in the state model.
 - Stay within the milestone currently being worked on. Do not scaffold future milestones,
   do not add abstraction for features that are not being built yet. The invariants here, and the
   design in `ROADMAP.md`, are the only forward-looking work permitted.
 - **A change to a permission, a visibility filter, or a `was_unseen` is not finished until a test
   asserts what a client was _not_ sent.** The server suite is where that assertion belongs;
-  `drive-player.mjs` is the same question asked of a real browser, and neither is the client's.
+  `drive-player.mjs` is the same question asked of a real browser.
 - Prefer the smaller change. Prefer deleting code to adding a flag.
 - No `unwrap()` outside tests and startup. Errors that can happen at runtime get handled.
 - Do not add dependencies without flagging it and giving the reason.
+- Upon completion of your work, spwan a subagent to do a thorough quality passthrough for any remaining bugs, issues, or QoL improvements. 

@@ -114,26 +114,19 @@ test('the gate tells the truth about every tier-B field', () => {
   // it says is that the gate agrees with it — a field every entry records
   // filters, and a field with one gap in it is refused rather than quietly
   // answering with a short list. Both branches run against the shipped data.
+  // `extra.json` finished all four in September 2026, so today every branch
+  // here is the live one; the refused way through the gate is the next test's,
+  // over a gap it builds for itself.
   const probe = { save: 'wis', attack: 'attack', damage: 'fire', area: 'cone' };
-  let live = 0;
-  let refused = 0;
   for (const field of vocab.TIER_B) {
     const recorded = index.spells.filter((s) => s[field] !== undefined).length;
     assert.equal(index.complete.get(field), recorded, `${field} miscounted`);
     assert.equal(index.isComplete(field), recorded === index.spells.length);
 
     const got = index.search(probe[field]).refused;
-    if (index.isComplete(field)) {
-      live++;
-      assert.deepEqual(got, [], `"${probe[field]}" should filter`);
-    } else {
-      refused++;
-      assert.deepEqual(got, [{ token: probe[field], field }]);
-    }
+    if (index.isComplete(field)) assert.deepEqual(got, [], `"${probe[field]}" should filter`);
+    else assert.deepEqual(got, [{ token: probe[field], field }]);
   }
-  // A gate that had drifted to always-open or always-shut would pass every
-  // assertion above, so say that today's data exercises both ways through it.
-  assert.ok(live > 0 && refused > 0, `${live} live, ${refused} refused`);
 });
 
 test('a filter over a half-recorded field is refused, not silently narrowed', () => {

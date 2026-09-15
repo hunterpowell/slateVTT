@@ -164,7 +164,8 @@ that looks exactly like a right one, which nobody catches mid-fight.
 
 So the filters for damage, saves, attacks and areas stay dark until `extra.json` is finished, and
 then turn on by themselves. Nothing to remember, no flag to flip. Type the header block first if
-you want; the tier-A filters work from the first entry.
+you want; the tier-A filters work from the first entry. (All four are lit today — see the next
+section — and the gate is what turns one back off if a new entry ever omits a key.)
 
 ### Naming an existing spell overrides it
 
@@ -204,7 +205,18 @@ usually right rather than broken.
   `area` and omits `save`, `attack` and `damage`, because the header block states the first and says
   nothing about the other three. That is the completeness gate doing its job, not a regression: it
   lifts by itself as the fields get filled in. Nothing about it is automatic, and nothing about it
-  is a promise.
+  is a promise. **The 125 imported entries had theirs filled in September 2026**, read off the prose
+  in `text.json` rather than the page, so they carry the three fields and still say `verified:
+  false`. Four conventions were applied, each the SRD's own where it had one:
+  - a **summoned creature's** damage, attacks and saves are the creature's, not the spell's — the
+    nine Summon spells and Tiny Servant are `[]`/`null`/`null`, as Conjure Animals is upstream;
+  - a spell that rides a **weapon attack** (Booming Blade, the smites, Holy Weapon) records the
+    damage and `attack: null`, as Branding Smite does — `attack` means a *spell* attack;
+  - **resistance and immunity** are not damage dealt, so Intellect Fortress and Primordial Ward
+    are `[]`; a save the *caster* or the summoned thing makes is not one the spell forces, so
+    Tenser's Transformation and Summon Greater Demon are `save: null`;
+  - `save` holds **one** ability, so a spell that forces two records the one tied to its damage
+    (Whirlwind is `dex`, not `str`).
 - **A few em dashes survive as hyphens mid-line.** The dumps flatten them, so Cordon of Arrows reads
   "crossbow bolts-in the ground". Only the ones that landed at a line break are fixed, because those
   weld two words into one and break search; the rest are cosmetic and were left rather than guessed
