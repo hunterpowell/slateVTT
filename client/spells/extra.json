@@ -56,7 +56,7 @@
     "save": null,
     "attack": null,
     "damage": [],
-    "area": null,
+    "area": { "type": "cube", "size": 5 },
     "verified": false
   },
   {
@@ -76,7 +76,7 @@
     "save": "dex",
     "attack": null,
     "damage": ["fire"],
-    "area": null,
+    "area": { "type": "cube", "size": 5 },
     "verified": false
   },
   {
@@ -716,7 +716,7 @@
     "save": "dex",
     "attack": "ranged",
     "damage": ["piercing", "cold"],
-    "area": null,
+    "area": { "type": "sphere", "size": 5 },
     "verified": false
   },
   {
@@ -776,7 +776,7 @@
     "save": "dex",
     "attack": null,
     "damage": [],
-    "area": null,
+    "area": { "type": "sphere", "size": 5 },
     "verified": false
   },
   {
@@ -896,7 +896,7 @@
     "save": "dex",
     "attack": null,
     "damage": ["fire"],
-    "area": null,
+    "area": { "type": "line", "size": 30 },
     "verified": false
   },
   {
@@ -996,7 +996,7 @@
     "save": "dex",
     "attack": null,
     "damage": ["acid", "cold", "fire", "lightning", "poison"],
-    "area": null,
+    "area": { "type": "cone", "size": 15 },
     "verified": false
   },
   {
@@ -1016,7 +1016,7 @@
     "save": "str",
     "attack": null,
     "damage": ["bludgeoning"],
-    "area": null,
+    "area": { "type": "cube", "size": 5 },
     "verified": false
   },
   {
@@ -1056,7 +1056,7 @@
     "save": null,
     "attack": null,
     "damage": [],
-    "area": null,
+    "area": { "type": "cube", "size": 5 },
     "verified": false
   },
   {
@@ -1116,7 +1116,7 @@
     "save": "int",
     "attack": null,
     "damage": ["psychic"],
-    "area": null,
+    "area": { "type": "cube", "size": 10 },
     "verified": false
   },
   {
@@ -1196,7 +1196,7 @@
     "save": "dex",
     "attack": null,
     "damage": ["cold"],
-    "area": null,
+    "area": { "type": "sphere", "size": 5 },
     "verified": false
   },
   {
@@ -1256,7 +1256,7 @@
     "save": null,
     "attack": null,
     "damage": [],
-    "area": null,
+    "area": { "type": "sphere", "size": 10 },
     "verified": false
   },
   {
@@ -1363,7 +1363,7 @@
     "name": "Elemental Weapon",
     "level": 3,
     "school": "transmutation",
-    "classes": ["paladin"],
+    "classes": ["artificer", "paladin"],
     "time": "action",
     "trigger": null,
     "range": { "kind": "touch", "feet": null },
@@ -1416,7 +1416,7 @@
     "save": "dex",
     "attack": null,
     "damage": ["bludgeoning"],
-    "area": null,
+    "area": { "type": "cube", "size": 20 },
     "verified": false
   },
   {
@@ -1443,7 +1443,7 @@
     "name": "Flame Arrows",
     "level": 3,
     "school": "transmutation",
-    "classes": ["artificer", "ranger", "sorcerer", "wizard"],
+    "classes": ["artificer", "druid", "ranger", "sorcerer", "wizard"],
     "time": "action",
     "trigger": null,
     "range": { "kind": "touch", "feet": null },
@@ -1476,7 +1476,7 @@
     "save": "dex",
     "attack": null,
     "damage": ["cold", "acid"],
-    "area": null,
+    "area": {"type": "sphere", "size": 20},
     "verified": false
   },
   {
@@ -1676,7 +1676,7 @@
     "save": "con",
     "attack": null,
     "damage": ["thunder"],
-    "area": null,
+    "area": { "type": "sphere", "size": 10 },
     "verified": false
   },
   {
@@ -1936,7 +1936,7 @@
     "save": "con",
     "attack": null,
     "damage": ["radiant"],
-    "area": null,
+    "area": { "type": "sphere", "size": 30 },
     "verified": false
   },
   {
@@ -1976,7 +1976,7 @@
     "save": "str",
     "attack": "ranged",
     "damage": ["bludgeoning", "lightning"],
-    "area": null,
+    "area": { "type": "sphere", "size": 20 },
     "verified": false
   },
   {
@@ -2076,7 +2076,7 @@
     "save": "dex",
     "attack": null,
     "damage": ["acid"],
-    "area": null,
+    "area": { "type": "sphere", "size": 20 },
     "verified": false
   },
   {
@@ -2096,7 +2096,7 @@
     "save": "str",
     "attack": null,
     "damage": [],
-    "area": null,
+    "area": { "type": "sphere", "size": 5 },
     "verified": false
   },
   {
@@ -2176,7 +2176,7 @@
     "save": "str",
     "attack": null,
     "damage": [],
-    "area": null,
+    "area": { "type": "cube", "size": 100 },
     "verified": false
   },
   {
@@ -2216,7 +2216,7 @@
     "save": "con",
     "attack": null,
     "damage": ["radiant"],
-    "area": null,
+    "area": { "type": "cylinder", "size": 30 },
     "verified": false
   },
   {
@@ -2356,7 +2356,7 @@
     "save": "str",
     "attack": null,
     "damage": ["bludgeoning"],
-    "area": null,
+    "area": { "type": "cylinder", "size": 30 },
     "verified": false
   },
   {
@@ -2476,12 +2476,12 @@
     "save": "int",
     "attack": null,
     "damage": ["psychic"],
-    "area": null,
+    "area": { "type": "sphere", "size": 20 },
     "verified": false
   },
   {
     "name": "Telepathy",
-    "level": 5,
+    "level": 8,
     "school": "evocation",
     "classes": ["wizard"],
     "time": "action",
@@ -2516,7 +2516,7 @@
     "save": "dex",
     "attack": null,
     "damage": ["bludgeoning"],
-    "area": null,
+    "area": { "type": "cube", "size": 40 },
     "verified": false
   },
   {
@@ -2556,7 +2556,7 @@
     "save": "dex",
     "attack": "ranged",
     "damage": ["slashing", "bludgeoning"],
-    "area": null,
+    "area": { "type": "cube", "size": 60 },
     "verified": false
   },
   {
@@ -2656,7 +2656,7 @@
     "save": "dex",
     "attack": null,
     "damage": ["fire"],
-    "area": null,
+    "area": { "type": "line", "size": 15 },
     "verified": false
   },
   {
@@ -2676,7 +2676,7 @@
     "save": "con",
     "attack": null,
     "damage": ["cold"],
-    "area": null,
+    "area": { "type": "cone", "size": 15 },
     "verified": false
   },
   {
@@ -2696,7 +2696,7 @@
     "save": "dex",
     "attack": null,
     "damage": [],
-    "area": null,
+    "area": { "type": "sphere", "size": 15 },
     "verified": false
   },
   {
@@ -2956,7 +2956,7 @@
     "save": "dex",
     "attack": null,
     "damage": ["bludgeoning"],
-    "area": null,
+    "area": { "type": "cylinder", "size": 10 },
     "verified": false
   },
   {
@@ -2976,7 +2976,7 @@
     "save": "con",
     "attack": null,
     "damage": ["necrotic"],
-    "area": null,
+    "area": { "type": "cube", "size": 30 },
     "verified": false
   },
   {
@@ -3016,7 +3016,7 @@
     "save": "wis",
     "attack": null,
     "damage": ["psychic"],
-    "area": null,
+    "area": { "type": "sphere", "size": 60 },
     "verified": false
   },
   {

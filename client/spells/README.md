@@ -34,6 +34,7 @@ to the page number.
 node tools/build-spells.mjs          # regenerate srd.json from upstream
 node tools/import-spells.mjs         # add extra.json entries from spells_tmp/
 node tools/check-spells.mjs          # validate both files
+node tools/prescreen-spells.mjs      # checklist for verifying extra.json against the books
 node --test client/spells/query.test.mjs
 ```
 
@@ -139,6 +140,11 @@ them by book. The chip is inside the row rather than on it: most of the hand-typ
 unchecked, and a badge in every summary drowned out the names it sat beside.
 Checking one is a one-word edit: `false` → `true`.
 
+`tools/prescreen-spells.mjs` prints the checklist for that pass: every entry in book order with
+its header block in the order the page prints it, and under any entry whose `save`/`attack`/
+`damage`/`area` disagree with its own prose in `text.json`, what the prose says. It earns nothing —
+it only says where to slow down. `--flagged` shows just those; a book name shows just that book.
+
 ### `alias` is why "bigby" finds anything
 
 SRD 5.1 had to strip the wizards' names off their own spells — Bigby's Hand is filed as *Arcane
@@ -209,7 +215,7 @@ usually right rather than broken.
   in `text.json` rather than the page, so they carry the three fields and still say `verified:
   false`. Four conventions were applied, each the SRD's own where it had one:
   - a **summoned creature's** damage, attacks and saves are the creature's, not the spell's — the
-    nine Summon spells and Tiny Servant are `[]`/`null`/`null`, as Conjure Animals is upstream;
+    elevent Summon spells and Tiny Servant are `[]`/`null`/`null`, as Conjure Animals is upstream;
   - a spell that rides a **weapon attack** (Booming Blade, the smites, Holy Weapon) records the
     damage and `attack: null`, as Branding Smite does — `attack` means a *spell* attack;
   - **resistance and immunity** are not damage dealt, so Intellect Fortress and Primordial Ward
