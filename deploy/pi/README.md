@@ -151,6 +151,8 @@ SECRET=$(openssl rand -hex 16)
 # A second, separate credential: it reads the status page and nothing else, so a
 # display left on a shelf does not hold the key to the map library.
 STATUS_KEY=$(openssl rand -hex 16)
+# A third, for the Kindle on the shelf: it opens the renderer's LAN port and nothing else.
+KINDLE_TOKEN=$(openssl rand -hex 16)
 sudo tee /etc/slate/slate.env >/dev/null <<EOF
 SLATE_ADDR=127.0.0.1:3000
 SLATE_CLIENT_DIR=/opt/slate/client
@@ -162,6 +164,7 @@ SLATE_STATE=/var/lib/slate/slate-state.json
 SLATE_UPLOADS=/var/lib/slate/uploads
 SLATE_DM_SECRET=$SECRET
 SLATE_STATUS_KEY=$STATUS_KEY
+SLATE_KINDLE_TOKEN=$KINDLE_TOKEN
 SLATE_HOST_STATUS=/var/lib/slate/host.json
 SLATE_BUILD_INFO=/opt/slate/build.json
 RUST_LOG=slate_server=info
@@ -169,7 +172,7 @@ EOF
 sudo chmod 600 /etc/slate/slate.env
 ```
 
-Eight of those deserve a note:
+Nine of those deserve a note:
 
 - **`SLATE_STATE` names the *primary* room's save file**, which is why it did not have to change
   when Slate gained a second room. Every other room's save is a sibling in the same directory,
@@ -193,6 +196,10 @@ Eight of those deserve a note:
   key to the map library. **Leave it out and `/api/status` is not mounted at all** — the page then
   answers 404 rather than 403, because an endpoint that says "wrong credential" has announced that
   it exists. Hex for the same reason `SLATE_DM_SECRET` is: it goes into a URL unencoded.
+- **`SLATE_KINDLE_TOKEN` is read by `slate-kindle.service` and never by Slate.** It is what the
+  Kindle sends as `access-token` to the one process on this box that listens on the LAN. Slate
+  ignores it; it is in this file so that the service and Slate read one file and the status key
+  is written down once. Leave it out and the service refuses to start. See *The Kindle* below.
 - **`SLATE_HOST_STATUS` is written by something else on this box**, never by Slate — the server
   has no idea what `/sys/class/thermal` is and is not going to learn. See *The host collector*
   below; without it the status page's host section simply reads "no collector on this machine".
@@ -251,6 +258,53 @@ is not a sandbox for reading `/sys`.
 **Every reading is stamped with the time it was taken, and that field is the point.** A timer that
 has died leaves a file that still parses and still looks like data. The page treats a reading older
 than five minutes as an alarm, which is four missed runs of headroom.
+
+## 3b. The Kindle
+
+A jailbroken Kindle running the TRMNL client shows the status page as a PNG. The PNG is drawn on
+this box by `client/status/kindle/kindle.py` — Python and Pillow, no browser — and
+`client/status/kindle/README.md` is the why. The script arrives with every deploy in the client
+tree; the unit is installed once, by hand, like the collector's.
+
+```bash
+sudo apt install -y python3-pil fonts-dejavu-core
+```
+
+Then, having added `SLATE_KINDLE_TOKEN` to `slate.env` as in step 3, from the Windows machine:
+
+```powershell
+scp deploy\pi\slate-kindle.service hunter@slate.local:~
+```
+
+and on the Pi:
+
+```bash
+sudo install -m 644 ~/slate-kindle.service /etc/systemd/system/
+sudo systemctl daemon-reload
+sudo systemctl enable --now slate-kindle
+journalctl -u slate-kindle -n 5
+```
+
+It listens on `0.0.0.0:3001` — **the one thing on this box that listens on the LAN.** Slate is
+loopback and reached through the tunnel; the Kindle is on the wifi, and the TRMNL client on it
+speaks plain HTTP to whatever `BASE_URL` it is given. That is why the token is required rather
+than optional, and why the unit runs as `slate` under the same `ProtectSystem=strict` as the
+server: it reads `slate.env` and writes nothing.
+
+Prove it from another machine on the LAN, with the token from `slate.env`:
+
+```bash
+curl -s -H "access-token: $KINDLE_TOKEN" -H "png-width: 1648" -H "png-height: 1236" http://slate.local:3001/api/display
+```
+
+which answers one line of JSON naming an image; fetch that URL and you have the frame. On the
+Kindle, `TRMNL_config.sh` gets `BASE_URL` (the Pi's LAN address and `:3001` — reserve the address
+in the router) and `API_KEY` (the token). The Kindle README has the settings for both TRMNL
+clients — use the KOReader plugin if KOReader is on the device, in either orientation; the KUAL
+shell client instead needs `SLATE_KINDLE_ROTATE=90` in the unit, for its portrait framebuffer.
+
+A deploy that changes `kindle.py` takes effect when `install.sh` `try-restart`s the unit, which
+it does after the health check; a box without the unit installed is untouched.
 
 ## 4. The systemd unit
 

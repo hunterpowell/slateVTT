@@ -70,6 +70,16 @@ const STATUS_KEY_HEADER: &str = "x-slate-status-key";
 /// moment it is the only thing that could tell you why. Generous next to a
 /// healthy room, which answers in microseconds.
 const STATUS_TIMEOUT: Duration = Duration::from_secs(2);
+/// What `/api/status` calls wrong. **Decided here, once**, because the page has
+/// two renderers — `status.js` in a browser and `kindle.py` drawing a PNG — and
+/// two copies of a threshold drift. Both paint what `verdict` says and judge
+/// nothing themselves.
+///
+/// The collector runs every minute, so five minutes is four misses of headroom:
+/// a status page that cries wolf gets ignored, which is the only way one fails.
+const HOST_STALE_S: u64 = 300;
+const CPU_HOT_C: f64 = 75.0;
+const DISK_FULL_PCT: f64 = 90.0;
 
 /// Every room's handle, keyed by the id in `room::ROOMS`.
 ///
@@ -669,17 +679,119 @@ async fn status(
     }))
     .await;
 
+    let uptime_s = state.started_at.elapsed().as_secs();
+    let host = host_json(state.host_status.as_deref()).await;
+    // The server's own clock, reconstructed the way the page does, so that
+    // everything aged below is aged against the machine being described.
+    let verdict = verdict(&rooms, state.started_unix + uptime_s, &host);
+
     Json(json!({
         "server": {
             "version": env!("CARGO_PKG_VERSION"),
             "started_unix": state.started_unix,
-            "uptime_s": state.started_at.elapsed().as_secs(),
+            "uptime_s": uptime_s,
         },
         "build": state.build,
         "rooms": rooms,
-        "host": host_json(state.host_status.as_deref()).await,
+        "host": host,
+        "verdict": verdict,
     }))
     .into_response()
+}
+
+/// Coarse on purpose, and the same coarseness as the page's `duration`: "5d 22h"
+/// is the whole of what anyone wants from an age in an alarm.
+fn duration(s: u64) -> String {
+    let (d, h, m) = (s / 86400, (s % 86400) / 3600, (s % 3600) / 60);
+    if d > 0 {
+        format!("{d}d {h}h")
+    } else if h > 0 {
+        format!("{h}h {m}m")
+    } else if m > 0 {
+        format!("{m}m")
+    } else {
+        format!("{s}s")
+    }
+}
+
+/// What is wrong, as a list of sentences and the flags a renderer inverts a
+/// cell on. Empty `alarms` is the verdict `OK`; anything in it is `ATTENTION`.
+/// `UNREACHABLE` is not here — it is the one verdict about failing to fetch
+/// this, so it can only ever be the reader's.
+///
+/// **Every card is judged before any is drawn**, which is why this is one
+/// function over the whole payload rather than a flag per section: an alarm a
+/// renderer learns about after it has laid out the strip is a number inverted
+/// on screen with nothing anywhere saying why, which is how the restart count
+/// first shipped.
+///
+/// `pending` is deliberately *not* an alarm: a change inside the two-second
+/// debounce is what a healthy room in use looks like most of the time, and an
+/// alarm that fires on the ordinary case is one you learn to ignore. Only the
+/// write that is actually failing shouts.
+fn verdict(rooms: &[Value], server_now: u64, host: &Value) -> Value {
+    let mut alarms: Vec<String> = Vec::new();
+
+    for room in rooms {
+        let name = room["name"].as_str().unwrap_or("?");
+        if room["responding"] != true {
+            alarms.push(format!("{name} is not responding"));
+        } else if room["saves_failing"] == true {
+            let since = match room["last_saved_unix"].as_u64() {
+                Some(at) if server_now > 0 => {
+                    format!(
+                        "last good write {} ago",
+                        duration(server_now.saturating_sub(at))
+                    )
+                }
+                _ => "nothing written since the server started".to_string(),
+            };
+            alarms.push(format!("{name}: SAVES FAILING, {since}"));
+        }
+    }
+
+    // A dead timer leaves a file that still parses. Age is the only thing that
+    // catches it, which is why the collector stamps every write.
+    let host_age_s = match (host["at"].as_u64(), server_now) {
+        (Some(at), now) if now > 0 => Some(now.saturating_sub(at)),
+        _ => None,
+    };
+    let host_stale = host_age_s.is_some_and(|age| age > HOST_STALE_S);
+    let cpu_hot = host["cpu_c"].as_f64().is_some_and(|c| c >= CPU_HOT_C);
+    let disk_full = host["disk_pct"]
+        .as_f64()
+        .is_some_and(|p| p >= DISK_FULL_PCT);
+    let restarts = host["restarts"].as_u64().unwrap_or(0);
+    let restarted = restarts > 0;
+
+    if host["error"].is_string() {
+        alarms.push("host collector is broken".to_string());
+    }
+    if let Some(age) = host_age_s.filter(|_| host_stale) {
+        alarms.push(format!("host readings are {} old", duration(age)));
+    }
+    if host["undervoltage"] == true {
+        alarms.push("undervoltage".to_string());
+    }
+    if let Some(c) = host["cpu_c"].as_f64().filter(|_| cpu_hot) {
+        alarms.push(format!("CPU at {c}°C"));
+    }
+    if let Some(p) = host["disk_pct"].as_f64().filter(|_| disk_full) {
+        alarms.push(format!("disk {p}% full"));
+    }
+    if restarted {
+        let times = if restarts == 1 { "time" } else { "times" };
+        alarms.push(format!("slate has restarted itself {restarts} {times}"));
+    }
+
+    json!({
+        "alarms": alarms,
+        "host_age_s": host_age_s,
+        "host_stale": host_stale,
+        "cpu_hot": cpu_hot,
+        "disk_full": disk_full,
+        "restarted": restarted,
+    })
 }
 
 /// One room's row. A room that did not answer still gets a row: **the absence
@@ -1290,6 +1402,119 @@ mod tests {
             row.get("here").is_none(),
             "nothing to report is not an empty list"
         );
+    }
+
+    fn room_row(name: &str, saves_failing: bool, last_saved_unix: Option<u64>) -> Value {
+        room_status_json(
+            &name.to_lowercase(),
+            name,
+            Some(RoomStatus {
+                here: vec![],
+                sockets: 0,
+                tokens: 0,
+                unsaved: true,
+                saves_failing,
+                last_saved_unix,
+            }),
+        )
+    }
+
+    #[test]
+    fn a_healthy_server_has_nothing_to_say() {
+        // `unsaved` is set on the row above and must not appear here: a change
+        // inside the debounce is the ordinary case, not a fault.
+        let v = verdict(&[room_row("Campaign", false, Some(90))], 100, &Value::Null);
+        assert_eq!(v["alarms"], json!([]));
+        assert_eq!(v["host_age_s"], Value::Null, "no collector, no age");
+        assert_eq!(v["host_stale"], false);
+        assert_eq!(v["restarted"], false);
+    }
+
+    #[test]
+    fn a_failing_save_says_how_much_is_at_risk() {
+        let v = verdict(
+            &[room_row("Campaign", true, Some(1_000))],
+            1_000 + 3 * 3600,
+            &Value::Null,
+        );
+        assert_eq!(
+            v["alarms"],
+            json!(["Campaign: SAVES FAILING, last good write 3h 0m ago"])
+        );
+        let v = verdict(&[room_row("Campaign", true, None)], 5_000, &Value::Null);
+        assert_eq!(
+            v["alarms"],
+            json!(["Campaign: SAVES FAILING, nothing written since the server started"])
+        );
+    }
+
+    #[test]
+    fn a_room_that_did_not_answer_is_an_alarm() {
+        let v = verdict(
+            &[room_status_json("halloween", "Halloween", None)],
+            100,
+            &Value::Null,
+        );
+        assert_eq!(v["alarms"], json!(["Halloween is not responding"]));
+    }
+
+    #[test]
+    fn the_host_is_judged_on_the_servers_clock() {
+        // Fresh: a reading 200s old is inside the collector's headroom.
+        let fresh = verdict(&[], 10_000, &json!({ "at": 9_800 }));
+        assert_eq!(fresh["host_age_s"], 200);
+        assert_eq!(fresh["host_stale"], false);
+        assert_eq!(fresh["alarms"], json!([]));
+        // Stale: the file still parses and still looks like data. Age is the
+        // only thing that can catch a dead timer.
+        let stale = verdict(&[], 10_000, &json!({ "at": 9_000 }));
+        assert_eq!(stale["host_stale"], true);
+        assert_eq!(stale["alarms"], json!(["host readings are 16m old"]));
+    }
+
+    #[test]
+    fn each_host_threshold_names_its_number() {
+        let host = json!({
+            "at": 100, "cpu_c": 76.5, "disk_pct": 91, "undervoltage": true, "restarts": 1
+        });
+        let v = verdict(&[], 100, &host);
+        assert_eq!(
+            v["alarms"],
+            json!([
+                "undervoltage",
+                "CPU at 76.5°C",
+                "disk 91% full",
+                "slate has restarted itself 1 time"
+            ])
+        );
+        assert_eq!(v["cpu_hot"], true);
+        assert_eq!(v["disk_full"], true);
+        assert_eq!(v["restarted"], true);
+
+        // Just under each line is calm, and a board that dipped and recovered
+        // reads as calm too — `undervoltage_ever` is a row, not an alarm.
+        let calm = json!({
+            "at": 100, "cpu_c": 74.9, "disk_pct": 89.9, "undervoltage": false,
+            "undervoltage_ever": true, "restarts": 0
+        });
+        assert_eq!(verdict(&[], 100, &calm)["alarms"], json!([]));
+    }
+
+    #[test]
+    fn a_broken_collector_is_an_alarm_and_a_missing_one_is_not() {
+        let broken = verdict(&[], 100, &json!({ "error": "could not read host.json" }));
+        assert_eq!(broken["alarms"], json!(["host collector is broken"]));
+        assert_eq!(verdict(&[], 100, &Value::Null)["alarms"], json!([]));
+    }
+
+    #[test]
+    fn durations_are_coarse_past_a_minute() {
+        assert_eq!(duration(0), "0s");
+        assert_eq!(duration(59), "59s");
+        assert_eq!(duration(60), "1m");
+        assert_eq!(duration(3_599), "59m");
+        assert_eq!(duration(3_600), "1h 0m");
+        assert_eq!(duration(90_000), "1d 1h");
     }
 
     #[tokio::test]

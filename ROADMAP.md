@@ -27,7 +27,7 @@ Do not work ahead. Each milestone should run and be usable before starting the n
 6. Map upload and grid calibration UI.
 7. Package for Windows session hosting and deploy behind a Cloudflare Tunnel.
 
-**Everything through 28 is built, and so are 30 through 43; 29 is not.** 25, 26, 34 and 38 were
+**Everything through 28 is built, and so are 30 through 44; 29 is not.** 25, 26, 34 and 38 were
 never planned and are out of order for the reasons their own entries give. 33 is *Multi-room*, which was
 unscheduled until a Halloween one-shot became the second room it was waiting for. Everything from 8 on was planned after the original
 seven; 17 and 18 were workshopped after 16 landed, 19–24 after 18, and 27–29 on 2026-08-18 after 26.
@@ -1597,6 +1597,27 @@ and 28 also overturned something *its own* design section said, which its entry 
     the diagnosis: the file was the right size *to the byte* for its contents plus a BOM plus a
     CRLF, which is what identified it.
 
+    **The Kindle landed on 2026-09-18, and not the way the milestone planned it.** The page was
+    written for the Kindle's browser; run on one for a day, the browser chrome, the screensaver and
+    a wifi that never sleeps retired that idea. The device now runs the TRMNL client, which is a
+    *frame viewer* — it asks a URL for JSON naming a PNG, shows the PNG and sleeps the whole
+    device — so something had to draw one. Three renderers were costed: trmnl.app (a third party,
+    the status key and a tunnel hop, for a display in the same room as the Pi), headless Chromium
+    on the Pi (the real HTML, and the heaviest thing that would ever be on a 1 GB board, for three
+    tables of text), and drawing the JSON directly. The last is `client/status/kindle/kindle.py`,
+    Python and Pillow, and the reframe that made it acceptable was giving up "show *any* page":
+    that word was what Chromium was the price of.
+
+    The change it forced on Slate is the one worth keeping: **the verdict moved to the server.**
+    Two renderers of one payload with the thresholds in each is two thresholds, so `verdict` in
+    `main.rs` now decides what is wrong — once, with tests — and both `status.js` and the PNG paint
+    what it says. Two failure modes shaped the frame: the TRMNL client is *silent* on failure and
+    keeps its last image, so a server that has gone is drawn as gone rather than left to the Kindle;
+    and a static image has no "updated 4s ago", so every frame is stamped with when it was drawn,
+    which is the only way a renderer that has died can be told from one that is current — the
+    collector's `at` field again, one layer up. It is the one process on the box that listens on
+    the LAN, so its token is required, not optional.
+
 38. **Done**, on 2026-08-31. Isometric grids — a map's cells can be diamonds, so isometric art can
     be played on with the grid actually landing on the drawn floor tiles. Never planned; it began
     as a feasibility question and the answer was small enough to build. See *The shape of a cell*
@@ -2036,6 +2057,40 @@ and 28 also overturned something *its own* design section said, which its entry 
     stylesheet difference over identical markup, which is the same category as the
     `#initiative button` collision above and just as invisible to `aria-pressed`. Applying that
     lesson on purpose rather than after the fact is most of what it cost.
+
+44. **Done**, on 2026-09-17. The keyboard pass — Delete for whatever is wearing a ring, `N` for
+    the next turn. Milestone 42's shape a fifth time: nothing on the wire, nothing in Rust, two
+    drivers extended rather than a new one. See *Tokens* and *Initiative* in `docs/tokens.md`.
+
+    **Delete answers the two rings as one question**, because the renderer already draws them as
+    one. The panel's token and the shift-click group were kept apart on purpose in milestone 25 —
+    a group must not feed the form, or it is a multi-edit form — and that separation is about
+    *editing*. Deleting is not editing: the confirm names every creature and sends one ordinary
+    `delete_token` each, so a union costs nothing the group drag did not already settle.
+    `TokenTool.remove(ids)` is the whole of what was added; the panel's own button became a call to
+    it with one id. Backspace is bound beside Delete for the Mac keyboard, which is why the handler
+    stands down while the wall editor is armed — Backspace is a corner there.
+
+    **Two decisions that look like omissions.** The confirm stays on the keyboard path even though
+    undo can bring a token back: undo is a step per token, and the case the key exists for is six of
+    them. And nothing prunes a deleted id out of the group — ids are the server's UUIDs and never
+    reused, `selection` is only ever read through `scene.tokens`, so a stale member is invisible
+    and a prune would be a method on `InputState` for a set that already cannot hit anything.
+
+    **`N` is the first unmodified letter key**, which is why it is worth being careful about: a
+    bare letter is a letter in every field, so `typingIn` is not optional, and Ctrl+N is the
+    browser's new window, so the modifier check runs before it. It sits inside the panel's `isDm`
+    branch beside the button it duplicates, so a player has no binding rather than a refused one.
+    No `P` for previous — asked for was `n`, and a DM who overshoots has the button.
+
+    **Both drivers found the same thing about themselves.** `tokenIn` in `drive-select.mjs` reads
+    the panel by *plain-clicking the cell*, and a plain click is exactly what puts a group down —
+    so a check that asked "is the panel still on A" dissolved the group it was about to Delete, and
+    the failure read as the key deleting one of two. Read the form field directly when the question
+    is about the form; click when the question is about the click. And the field the negative is
+    typed into has to be one that does *not* stop propagation — the chat box does, so a letter
+    typed there passes with `typingIn` deleted, and the check would have been asserting the wrong
+    guard. The token panel's name box listens for Enter alone.
 
 ### The right dock
 

@@ -102,28 +102,26 @@
   }
 
   // --- drawing ------------------------------------------------------------
+  //
+  // Nothing below decides what is wrong. The server's `verdict` carries the
+  // alarms and the flag for every cell that inverts, because this page has a
+  // second renderer — `kindle/kindle.py`, drawing a PNG for the shelf — and two
+  // copies of a threshold drift. Both paint; neither judges.
 
   // Three states, not two. `pending` is deliberately *not* inverted: a change
   // inside the two-second debounce is what a healthy room in use looks like,
   // and an alarm that fires on the ordinary case is one you learn to ignore.
   // Inversion is reserved for the write that is actually failing.
-  function savedCell(r, serverNow, alarms) {
-    if (r.saves_failing) {
-      var since = serverNow && r.last_saved_unix
-        ? 'last good write ' + duration(Math.max(0, serverNow - r.last_saved_unix)) + ' ago'
-        : 'nothing written since the server started';
-      alarms.push(r.name + ': SAVES FAILING, ' + since);
-      return '<span class="alarm">FAILING</span>';
-    }
+  function savedCell(r) {
+    if (r.saves_failing) return '<span class="alarm">FAILING</span>';
     return r.unsaved ? 'pending' : 'yes';
   }
 
-  function roomsTable(rooms, serverNow, alarms) {
+  function roomsTable(rooms) {
     var body = '';
     for (var i = 0; i < rooms.length; i++) {
       var r = rooms[i];
       if (!r.responding) {
-        alarms.push(r.name + ' is not responding');
         body += '<tr><td class="name">' + esc(r.name) + '</td>' +
           '<td colspan="4"><span class="alarm">DID NOT ANSWER</span></td></tr>';
         continue;
@@ -133,7 +131,7 @@
         '<td>' + (here ? esc(here) : '<span class="quiet">empty</span>') + '</td>' +
         '<td class="num">' + r.sockets + '</td>' +
         '<td class="num">' + r.tokens + '</td>' +
-        '<td class="num">' + savedCell(r, serverNow, alarms) + '</td></tr>';
+        '<td class="num">' + savedCell(r) + '</td></tr>';
     }
     if (!body) body = '<tr><td colspan="5" class="quiet">No rooms.</td></tr>';
     return '<table><thead><tr><th>Room</th><th>Here</th>' +
@@ -141,7 +139,7 @@
       '<th class="num">Saved</th></tr></thead><tbody>' + body + TBODY_CLOSE;
   }
 
-  function serverCard(server, host, alarms) {
+  function serverCard(server, host, verdict) {
     var out = TBODY_OPEN +
       row('Version', (server && server.version) || '?', false) +
       row('Uptime', duration((server && server.uptime_s) || 0), false) +
@@ -151,36 +149,24 @@
     // next to Uptime, a number here is what separates "it crashed" from "you
     // deployed".
     if (host && typeof host.restarts === 'number') {
-      if (host.restarts > 0) {
-        alarms.push('slate has restarted itself ' +
-          host.restarts + (host.restarts === 1 ? ' time' : ' times'));
-      }
-      out += row('Restarts', String(host.restarts), host.restarts > 0);
+      out += row('Restarts', String(host.restarts), verdict.restarted);
     }
     return out + TBODY_CLOSE;
   }
 
-  function hostCard(host, serverNow, alarms) {
+  function hostCard(host, verdict) {
     if (!host) return '<p class="quiet">No collector on this machine.</p>';
     if (host.error) {
-      alarms.push('host collector is broken');
       return '<p><span class="alarm">BROKEN</span> ' + esc(host.error) + '</p>';
     }
 
-    // A dead timer leaves a file that still parses. Age is the only thing that
-    // catches it, which is why the collector stamps every write.
-    var age = serverNow && host.at ? Math.max(0, serverNow - host.at) : null;
-    var stale = age !== null && age > 300;
-    if (stale) alarms.push('host readings are ' + duration(age) + ' old');
-    if (host.undervoltage) alarms.push('undervoltage');
-    var hot = typeof host.cpu_c === 'number' && host.cpu_c >= 75;
-    if (hot) alarms.push('CPU at ' + host.cpu_c + '°C');
-    var full = typeof host.disk_pct === 'number' && host.disk_pct >= 90;
-    if (full) alarms.push('disk ' + host.disk_pct + '% full');
+    // Aged by the server against its own clock, so a laptop with a wrong
+    // clock cannot make the Pi look stale.
+    var age = typeof verdict.host_age_s === 'number' ? verdict.host_age_s : null;
 
     var out = TBODY_OPEN;
     if (typeof host.cpu_c === 'number') {
-      out += row('CPU', host.cpu_c.toFixed(1) + '°C', hot);
+      out += row('CPU', host.cpu_c.toFixed(1) + '°C', verdict.cpu_hot);
     }
     if (typeof host.load1 === 'number') {
       out += row('Load', host.load1.toFixed(2), false);
@@ -190,7 +176,7 @@
     }
     if (host.disk_total_gb) {
       out += row('Disk', host.disk_used_gb + ' / ' + host.disk_total_gb +
-        ' GB (' + host.disk_pct + '%)', full);
+        ' GB (' + host.disk_pct + '%)', verdict.disk_full);
     }
     if (typeof host.uploads_mb === 'number') {
       var files = typeof host.uploads_files === 'number'
@@ -208,7 +194,7 @@
     // Only once it is worth knowing. A fresh reading is the ordinary case, and
     // on a panel with no spare lines a row that always says "20s old" is the
     // one to give up for the two above.
-    if (age !== null && age > 90) out += row('Read', duration(age) + ' old', stale);
+    if (age !== null && age > 90) out += row('Read', duration(age) + ' old', verdict.host_stale);
     return out + TBODY_CLOSE;
   }
 
@@ -227,6 +213,26 @@
     return out + TBODY_CLOSE;
   }
 
+  // How long ago the last good payload arrived. The one thing on the page that
+  // changes between polls.
+  function updatedAgo() {
+    return goodAt ? duration((Date.now() - goodAt) / 1000) + ' ago' : 'never';
+  }
+
+  // Between polls only the age text moves, and only when its text has actually
+  // changed. `draw` rewrites the whole page, and on e-ink a full rewrite is a
+  // repaint: a one-second `draw` ticker ghosted the entire panel sixty times a
+  // minute for the sake of a counter in one corner. A text node written only
+  // when it differs repaints a few characters, and `duration` is coarse past
+  // a minute, so on a wall display at ?every=60 that is once a minute.
+  function tick() {
+    var text = updatedAgo();
+    var els = root.getElementsByClassName('since');
+    for (var i = 0; i < els.length; i++) {
+      if (els[i].textContent !== text) els[i].textContent = text;
+    }
+  }
+
   function draw() {
     if (!KEY) {
       root.innerHTML = '<div class="down"><div class="big">NO KEY</div>' +
@@ -235,29 +241,21 @@
       return;
     }
 
-    var alarms = [];
-    // The server's own clock, not the browser's. Everything below that ages
-    // something is measured against this, so a laptop with a wrong clock cannot
-    // make the Pi look stale.
-    var serverNow = good && good.server
-      ? (good.server.started_unix || 0) + (good.server.uptime_s || 0)
-      : 0;
+    // Judged whole, server-side, before anything here is drawn — so a cell
+    // cannot invert with nothing in the strip saying why.
+    var verdictOf = (good && good.verdict) || {};
+    var alarms = verdictOf.alarms || [];
 
-    // **All four before the verdict is decided.** Each card contributes to
-    // `alarms`, and the strip that renders them is written out below — a card
-    // built after it would invert a number on the screen with nothing anywhere
-    // saying why, which is how the restart count first shipped.
-    var roomsHtml = roomsTable((good && good.rooms) || [], serverNow, alarms);
-    var hostHtml = hostCard(good ? good.host : null, serverNow, alarms);
-    var serverHtml = serverCard(good ? good.server : null, good ? good.host : null, alarms);
+    var roomsHtml = roomsTable((good && good.rooms) || []);
+    var hostHtml = hostCard(good ? good.host : null, verdictOf);
+    var serverHtml = serverCard(good ? good.server : null, good ? good.host : null, verdictOf);
     var buildHtml = buildCard(good ? good.build : null);
 
     var verdict = problem ? 'UNREACHABLE' : (alarms.length ? 'ATTENTION' : 'OK');
-    var ageText = goodAt ? duration((Date.now() - goodAt) / 1000) + ' ago' : 'never';
 
     var html = '<div class="bar"><h1>Slate</h1><span class="verdict' +
       (verdict === 'OK' ? '' : ' alarm') + '">' + verdict + '</span>' +
-      '<span class="age">updated ' + esc(ageText) + '</span></div>';
+      '<span class="age">updated <span class="since">' + esc(updatedAgo()) + '</span></span></div>';
 
     // The most important state this page has. It shows the last good data
     // underneath rather than instead, because "it was fine 20 seconds ago" and
@@ -266,7 +264,7 @@
       html += '<div class="down"><div class="big">UNREACHABLE</div>' +
         '<div class="why">' + esc(problem) +
         (goodAt
-          ? '<br>Last good reading ' + esc(duration((Date.now() - goodAt) / 1000)) + ' ago.'
+          ? '<br>Last good reading <span class="since">' + esc(updatedAgo()) + '</span>.'
           : '<br>Nothing has ever been read from this server.') +
         '</div></div>';
     } else if (alarms.length) {
@@ -292,6 +290,6 @@
     setInterval(poll, EVERY);
     // Between polls, so "updated 4s ago" keeps counting rather than sitting
     // still and looking like the page itself has frozen.
-    setInterval(function () { if (good || problem) draw(); }, 1000);
+    setInterval(tick, 1000);
   }
 })();

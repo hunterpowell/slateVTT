@@ -139,6 +139,10 @@ the client imports its own modules as `./coords.js` and node will not resolve
 that to a `.ts` file. Anything needing a canvas or a socket is the browser
 drivers' job, below.
 
+One more sits outside `check.mjs`: `python3 client/status/kindle/kindle_test.py` is the Kindle
+renderer's own — the status page drawn as a PNG for a jailbroken Kindle, which needs Pillow and so
+stays a separate act. See [client/status/kindle/README.md](client/status/kindle/README.md).
+
 ### Driving the real client
 
 The `tools/drive-*.mjs` scripts open the actual client in headless Chrome and click through it,
@@ -157,10 +161,10 @@ screen and which token is standing on a given square.
 | `drive-names.mjs`  | The names-under-tokens switch, on both boards at once              | both     |
 | `drive-ruler.mjs`  | The movement trail, the diagonal switch, the initiative panel      | both     |
 | `drive-ping.mjs`   | The hold that pings, and the ring reaching an unexplored corner    | both     |
-| `drive-select.mjs` | Shift-click selection, and the group drag that moves them together | both     |
+| `drive-select.mjs` | Shift-click selection, the group drag that moves them together, and Delete taking them off | both     |
 | `drive-staged.mjs` | Tracing and painting the next dungeon, and the table not being told | both     |
 | `drive-undo.mjs`   | The DM's undo reaching the table, and not rebuilding their page    | both     |
-| `drive-panels.mjs` | The initiative panel folding, and the sight check no longer being offered | both     |
+| `drive-panels.mjs` | The initiative panel folding, `n` advancing the turn, and the sight check no longer being offered | both     |
 | `drive-chat.mjs`   | Whisper and shout, and the loaner die — each being absent from a *third* person's page | three    |
 | `drive-notes.mjs`  | The scratchpad — one person in two tabs, and the DM holding none of it | three    |
 | `drive-presence.mjs` | Who is connected, the colour a player picks, and being told it is your turn | three    |

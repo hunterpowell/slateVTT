@@ -12,6 +12,7 @@ import type { ClientMsg, Hp, Initiative } from './protocol.js';
 // nearly down. See `hpColour` for the argument.
 import { hpColour, hpFilled } from './render.js';
 import type { Scene, Token } from './scene.js';
+import { typingIn } from './undo.js';
 
 export interface Panel {
   update(initiative: Initiative, scene: Scene): void;
@@ -134,7 +135,7 @@ function damageField(token: Token, hp: Hp, send: (msg: ClientMsg) => void): HTML
   field.placeholder = '±';
   field.autocomplete = 'off';
   // Which row this is, so a rebuild can put the caret back where it was — see
-  // `typingIn` in `update`.
+  // `typingHpFor` in `update`.
   field.dataset.hpFor = token.id;
   const label = `Damage or heal ${token.name}: -12, +7, or a new total`;
   field.setAttribute('aria-label', label);
@@ -238,6 +239,22 @@ export function createPanel(
     ui.next.addEventListener('click', () => send({ type: 'next_turn' }));
     ui.previous.addEventListener('click', () => send({ type: 'previous_turn' }));
 
+    // N is the button the DM presses more than any other in a fight, so it
+    // gets the first unmodified letter key in this client. Bare `n` only —
+    // with Ctrl or Cmd held it is the browser's new window, and inside a field
+    // it is a letter. Not guarded on an empty order: the button is not either,
+    // and the room's `next_turn` is a no-op there rather than a refusal.
+    // And never on auto-repeat: a held key would spin the order several
+    // rounds and, since every turn is a step, empty the undo ring doing it.
+    // The button cannot do that, because a click does not repeat.
+    window.addEventListener('keydown', (e) => {
+      if (e.key !== 'n' && e.key !== 'N') return;
+      if (e.ctrlKey || e.metaKey || e.altKey || e.repeat) return;
+      if (typingIn(e.target)) return;
+      e.preventDefault();
+      send({ type: 'next_turn' });
+    });
+
     ui.form.addEventListener('submit', (e) => {
       e.preventDefault();
       const token = ui.tokenSelect.value;
@@ -333,7 +350,7 @@ export function createPanel(
       // creature means clicking its box again between them, and the second
       // number goes into a box that no longer exists. Drag frames are not a
       // problem here: `onTokenMoved` does not rebuild this panel.
-      const typingIn =
+      const typingHpFor =
         document.activeElement instanceof HTMLElement && ui.list.contains(document.activeElement)
           ? (document.activeElement.dataset.hpFor ?? null)
           : null;
@@ -491,9 +508,9 @@ export function createPanel(
         }),
       );
 
-      if (typingIn !== null) {
+      if (typingHpFor !== null) {
         ui.list
-          .querySelector<HTMLInputElement>(`.init-damage[data-hp-for="${CSS.escape(typingIn)}"]`)
+          .querySelector<HTMLInputElement>(`.init-damage[data-hp-for="${CSS.escape(typingHpFor)}"]`)
           ?.focus();
       }
 

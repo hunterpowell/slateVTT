@@ -284,19 +284,51 @@ await dragCell(movedA, aloneA);
 check('a plain click drops the group, so only what was grabbed moves', await tokenIn(aloneA.x, aloneA.y), 'Group A');
 check('and the other one stayed exactly where it was', await tokenIn(movedB.x, movedB.y), 'Group B');
 
-// --- put the room back -------------------------------------------------------
+// --- Delete takes the group off the board --------------------------------------
+//
+// Which is also how the room is put back. `window.confirm` is stubbed by
+// cdp.mjs, so the one dialog this opens answers itself.
 
-for (const [name, cell] of [['Group A', aloneA], ['Group B', movedB]]) {
-  check(`the panel is describing ${name}`, await tokenIn(cell.x, cell.y), name);
-  await dm.evaluate('document.getElementById("token-delete").click(); "ok"');
-  await dm.wait(700);
-}
+const stillThere = () =>
+  dm.evaluate(`[...document.querySelector('#init-token').options]
+    .filter(o => /^Group [AB]$/.test(o.textContent)).map(o => o.textContent)`);
+
+// A stray Delete with nothing ringed must not so much as open the confirm, and
+// a player has no delete at all: the key is bound only where a token tool is.
+await player.key('Delete', 'Delete', 46);
+await player.wait(500);
+check('the player pressing Delete removes nothing', (await stillThere()).length, 2);
+
+// A plain click on A puts the panel on it, then a shift-click gathers B without
+// moving the panel — so the key has one of each kind of ring to answer for.
+check('the panel is put on A', await tokenIn(aloneA.x, aloneA.y), 'Group A');
+await dm.click(...screenOfCell(movedB.x, movedB.y), { modifiers: SHIFT });
+await dm.wait(250);
+// Read off the form rather than through `tokenIn`, which plain-clicks the cell
+// to ask — and a plain click is exactly what puts the group down.
 check(
-  'both tokens are gone',
-  await dm.evaluate(`[...document.querySelector('#init-token').options]
-    .some(o => /^Group [AB]$/.test(o.textContent))`),
-  false,
+  'the panel is still describing A',
+  await dm.evaluate('document.getElementById("token-name").value'),
+  'Group A',
 );
+
+// Typed into a field, the key is a letter's neighbour and not a command. The
+// token panel's own name box, deliberately: the chat box stops every keydown
+// from propagating, so a Delete typed there would pass with `typingIn` gone,
+// and this check is about `typingIn`. The name box only listens for Enter.
+check(
+  'the name box has focus',
+  await dm.evaluate(`document.getElementById('token-name').focus(); document.activeElement.id`),
+  'token-name',
+);
+await dm.key('Delete', 'Delete', 46);
+await dm.wait(500);
+check('Delete inside a text box removes nothing', (await stillThere()).length, 2);
+await dm.evaluate(`document.getElementById('token-name').blur(); "ok"`);
+
+await dm.key('Delete', 'Delete', 46);
+await dm.wait(900);
+check("Delete took both the panel's token and the group member", (await stillThere()).length, 0);
 
 await tab('fog');
 if (fogWas) {

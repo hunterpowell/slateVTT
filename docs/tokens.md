@@ -47,6 +47,19 @@ a copy arrives unplanned — a plan is a cell, and two creatures do not want the
 otherwise holds a row naming something that no longer exists, which the panel draws as a bare id
 and `next_turn` hands the turn to; an anchored shape otherwise follows a token with no position.
 
+**The Delete key deletes whatever is wearing a ring** — the panel's token, the group shift-click
+gathered, or both. The renderer already draws the two as one question (*which tokens is this
+gesture about*, see *Moving several at once*), and the key answers it as one: the handler builds
+the union and hands it to `TokenTool.remove`, which confirms once naming every creature and sends
+N ordinary `delete_token`s, the
+group drag's arrangement — there is no batch command and nothing a batch would answer differently.
+Backspace is the same key, because that is what a Mac labels "delete". It is bound in `start()` in
+`main.ts`, the one place both rings are in scope, and only when a token tool exists, so a player's
+Delete does nothing rather than earning a refusal for a command they may not send. It stands down
+inside a field (`typingIn`) and while the wall editor is armed, where Backspace already means "take
+a corner back" and a stray one mid-trace must not cost a creature. The confirm stays for the
+keyboard path: undo can bring a token back, but one step each, and six dead goblins are six steps.
+
 Token art is optional: a token without it draws as a named disc, so the sixth goblin of the evening
 costs the DM nothing. `img` is held to a site-relative path — art on somebody else's server is art
 that vanishes the evening that server is down, and the one thing in a save the uploads directory
@@ -280,6 +293,12 @@ is what is happening.
 **Hiding a token that is in the order therefore emits `InitiativeChanged` as well**, the way
 deleting one does. Nothing else about a token edit rebuilds the panel, so without it the table
 keeps a row naming a token their client has just been told to forget.
+
+**`N` advances the turn**, bare — no modifier, since Ctrl+N is the browser's, and not inside a
+field, where it is a letter. It is the first unmodified letter key in the client, given to the
+button the DM presses more than any other in a fight. Bound in `createPanel` inside the `isDm`
+branch, so a player's `n` is not a refused command but no command at all; not guarded on an empty
+order, because the button is not and the room's `next_turn` is a no-op there rather than an error.
 
 **A row carries a portrait, and the DM's rows carry hit points.** Neither needed anything on the
 wire: `update` is handed the whole `Scene`, so it resolves each row's id to the token and reads

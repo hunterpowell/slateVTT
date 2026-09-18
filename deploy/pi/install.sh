@@ -169,7 +169,7 @@ chmod -R u+w "$OPT/client.new"
 
 # Prove the copy arrived rather than trusting cp's exit code. Same list as the
 # preflight, one directory later.
-for f in index.html dist/main.js spells/index.html status/index.html status/status.js; do
+for f in index.html dist/main.js spells/index.html status/index.html status/status.js status/kindle/kindle.py; do
     [ -s "$OPT/client.new/$f" ] || die "the copy into $OPT/client.new is missing $f"
 done
 [ -d "$OPT/client.new/assets" ] || die "the copy into $OPT/client.new is missing assets/"
@@ -240,6 +240,13 @@ for attempt in $(seq 1 20); do
 done
 
 [ "$ok" -eq 1 ] || die "slate did not serve within 20s -- see journalctl -u slate -n 50"
+
+# The Kindle renderer runs out of the client tree that was just swapped, so it
+# is on the old code until it restarts. Only if it is installed and running:
+# try-restart is a no-op otherwise, and a box without a Kindle owes nothing here.
+if systemctl try-restart slate-kindle 2>/dev/null; then
+    say "slate-kindle restarted onto the new tree"
+fi
 
 # ---------------------------------------------------------------------------
 # Done -- retire the rollback copies

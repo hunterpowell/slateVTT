@@ -20,23 +20,34 @@ Slate is always on, on a Pi 3B in the room, behind a Cloudflare Tunnel. Before t
 and `journalctl`. The only liveness probe in the project was `deploy/pi/install.sh` curling `/`
 during a deploy, and it stopped caring the moment the deploy finished.
 
-## Two readers, one artifact
+## Two readers, one endpoint
 
-It is opened as a window on the Windows machine today and is meant for a jailbroken Kindle or a
-TRMNL panel later. Those are the same page rather than two, and three facts about the second reader
-shaped the first:
+It is a window on the Windows machine, and a PNG on a jailbroken Kindle in the room. **Two
+renderers of one JSON, not two pages** — `status.js` in a browser and `kindle/kindle.py` drawing
+the same layout with Pillow — and the second is what shaped the first:
 
-- **TRMNL polls a URL** on a schedule with configurable headers and renders the JSON through its own
-  Liquid template. So JSON at a guarded URL is the endgame format, and the page is a client of the
-  same endpoint rather than the thing TRMNL scrapes.
+- **The Kindle is a frame viewer.** It runs the TRMNL client, which asks a URL for JSON naming an
+  image, shows the image, and sleeps the whole device until the next fetch. So JSON at a guarded
+  URL is the format, and this page is a *client* of the same endpoint rather than the thing the
+  Kindle scrapes. See `kindle/README.md` for the contract and for the three ways of getting the
+  page onto that screen that were tried before drawing it.
 - **A Kindle browser cannot set a request header.** So the key is accepted as `?key=` as well. That
   is not a weakening invented here — the DM link has carried its secret in a query string since the
-  first commit — and what this one unlocks is a single read-only document.
+  first commit — and what this one unlocks is a single read-only document. The Kindle's browser
+  was run for a day and retired, but the query form stays: it costs nothing and it is how a window
+  is opened.
 - **Both are 1-bit or greyscale.** Hence black on white, no colour, no shadows, and inversion as the
-  only alarm. The layout is built to fit **800×480** without scrolling, because a TRMNL panel cannot
+  only alarm. The layout is built to fit **800×480** without scrolling, because a panel cannot
   scroll and content past the fold on one is content that does not exist.
 
 `tools/drive-status.mjs` asserts the 800×480 fit, which is the sort of thing only a browser can see.
+
+**The verdict is the server's.** Every threshold — a save failing, a room not answering, a host
+reading older than five minutes, a hot CPU, a full disk, a restart — is decided in `verdict` in
+`server/src/main.rs` and shipped as `alarms` plus a flag per cell that inverts. Neither renderer
+judges; both paint. Two readers of one page with a threshold in each is two thresholds, and the
+day one is tuned the other is wrong. `UNREACHABLE` is the one verdict that stays with the reader,
+because it is about failing to fetch the verdict.
 
 ## The three sections, and who knows what
 
@@ -83,10 +94,11 @@ pass of the retry loop, or the page would only catch the failure by being polled
 two-second window. A good write puts it down again, so one transient error does not brand a room
 broken forever — there is a test for each half.
 
-**Every card is built before the verdict is decided.** Each one contributes to `alarms`, and the
-strip that renders them is written out after all four — a card built later inverts a number on the
-screen with nothing anywhere saying why. That is exactly how the restart count first shipped: the
-row went black and the bar still read `OK`.
+**The whole payload is judged before any card is drawn.** `verdict` is one function over the
+rooms and the host together, and the strip is rendered from its `alarms` — a card judged after the
+strip was written inverts a number on the screen with nothing anywhere saying why. That is exactly
+how the restart count first shipped, when the judging was still in `status.js`: the row went black
+and the bar still read `OK`.
 
 **Two of the fields on the host card are about things Slate cannot see.** `restarts` is systemd's
 `NRestarts` for the unit, and it matters because `Restart=always` makes a crash invisible — the
@@ -106,6 +118,13 @@ judgement as `last_saved_unix`: show the age at the moment it becomes evidence, 
 change inside the debounce is what a healthy room in use looks like most of the time; only
 `FAILING` inverts. An alarm that fires on the ordinary case is one you learn to ignore, which is
 the only way a status page can fail.
+
+**Between polls, only the age text moves — and only when it has changed.** On e-ink every
+rewrite is a repaint. The page once rebuilt itself every second to keep "updated 4s ago" counting,
+which ghosted the whole panel sixty times a minute for a counter in one corner. `tick` now writes a
+text node and nothing else, and `duration` is coarse past a minute, so at `?every=60` the screen
+changes once a minute plus the poll. `drive-status.mjs` tags the grid and checks it survives the
+ticker while the counter moves.
 
 **No key, no endpoint.** `/api/status` is mounted only when `SLATE_STATUS_KEY` is set, so an
 unconfigured server answers 404 rather than 403 — an endpoint that says "wrong credential" has
@@ -165,9 +184,12 @@ wall display wants `?every=60`.
 | `index.html` | Markup and styling. Black on white, three cards across at 800px |
 | `status.js` | Polling and rendering. **ES5 and `XMLHttpRequest` on purpose** — the eventual reader is an old browser, and none of this is worth a build step |
 
-Server side: `status`, `status_allowed`, `room_status_json` and `host_json` in
+| `kindle/` | The other renderer: the same page as a PNG for the Kindle, and its own README |
+
+Server side: `status`, `status_allowed`, `room_status_json`, `host_json` and `verdict` in
 `server/src/main.rs`; `RoomCmd::Status`, `RoomHandle::status`, `RoomStatus` and `RoomState::status`
-in `server/src/room.rs`. Tests in `server/src/room/tests/status.rs` and `main.rs`'s own `mod tests`.
+in `server/src/room.rs`. Tests in `server/src/room/tests/status.rs` and `main.rs`'s own `mod tests`
+— the thresholds are tested there, once, because that is where they live.
 
 **This folder is not part of the bundle and ships on its own line** — esbuild never touches it, so a
 deploy that copies `dist/` alone leaves a 404 behind a page that worked on the build machine. It is

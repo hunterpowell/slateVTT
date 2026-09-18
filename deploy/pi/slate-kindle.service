@@ -1,0 +1,51 @@
+# Draws the Slate status page as a PNG for the Kindle on the shelf. Installed
+# once, by hand, alongside slate.service -- see deploy/pi/README.md and
+# client/status/kindle/README.md.
+#
+# Its own unit, and its own listener: Slate binds loopback and is reached
+# through the tunnel, but the Kindle is on the LAN and the TRMNL client on it
+# speaks plain HTTP to whatever BASE_URL it was given. So this is the one
+# process on the box that listens on the LAN, it serves one PNG and one line of
+# JSON, and it refuses to start without SLATE_KINDLE_TOKEN in slate.env.
+#
+# The script itself ships with the client tree, so a deploy updates it;
+# install.sh restarts this unit if it is running.
+
+[Unit]
+Description=Slate status page, drawn for a Kindle
+After=network-online.target slate.service
+Wants=network-online.target
+
+[Service]
+Type=exec
+User=slate
+Group=slate
+# The same file slate.service reads: SLATE_ADDR says where Slate is and
+# SLATE_STATUS_KEY opens it, so the key is written down in exactly one place.
+# SLATE_KINDLE_TOKEN lives there too.
+EnvironmentFile=/etc/slate/slate.env
+Environment=SLATE_KINDLE_ADDR=0.0.0.0:3001
+# 0 serves the frame at the size the Kindle asked for, which is right for the
+# KOReader plugin (set KOReader to landscape). The KUAL shell client instead
+# needs it turned 90 for its portrait framebuffer -- see the Kindle README.
+Environment=SLATE_KINDLE_ROTATE=0
+Environment=PYTHONUNBUFFERED=1
+ExecStart=/usr/bin/python3 /opt/slate/client/status/kindle/kindle.py
+Restart=always
+RestartSec=5
+
+# Everything it needs it reads; nothing it does writes.
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictNamespaces=true
+RestrictRealtime=true
+LockPersonality=true
+MemoryDenyWriteExecute=true
+
+[Install]
+WantedBy=multi-user.target

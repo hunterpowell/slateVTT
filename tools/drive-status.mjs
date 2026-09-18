@@ -127,6 +127,27 @@ check(
 
 check('a taller portrait display also fits', await fits(page), true);
 
+// --- between polls, the page holds still ---------------------------------
+
+// On e-ink every rewrite is a repaint, and the page used to rebuild itself once
+// a second to keep "updated 4s ago" counting. Only a browser can see the
+// difference between the counter moving and the page being replaced under it:
+// tag the grid element, wait longer than the ticker, and check the same
+// element is still there while the counter has moved on. At ?every=60 no poll
+// can land inside the window, so a replaced grid could only be the ticker.
+const still = await open(`${base}/status/?key=${key}&every=60`, { port: 9338 });
+await still.wait(1500);
+await still.evaluate('document.querySelector(".grid").dataset.tag = "held"');
+const before = await text(still, '.since');
+await still.wait(2500);
+check('the age keeps counting', (await text(still, '.since')) !== before, true);
+check(
+  'without the page being rebuilt around it',
+  await still.evaluate('document.querySelector(".grid").dataset.tag'),
+  'held',
+);
+await still.close();
+
 await dm.close();
 await page.close();
 

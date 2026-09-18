@@ -170,7 +170,27 @@ check(
   true,
 );
 
-await dm.evaluate(`document.getElementById('init-next').click(); "ok"`);
+// Advanced from the keyboard rather than the button, which is how the DM
+// mostly will: bare `n`, the first unmodified letter key in the client. Two
+// negatives first — a player's `n` is not bound at all, and inside a field it
+// is a letter. The token panel's name box is the field: the panel is folded
+// with its own roll form hidden, and the chat box stops every keydown from
+// propagating, so a letter typed there proves nothing about `typingIn`.
+await player.key('n', 'KeyN', 78);
+await player.wait(500);
+check("a player's n does not advance the turn", await currentName(dm), up);
+
+check(
+  'the name box has focus',
+  await dm.evaluate(`document.getElementById('token-name').focus(); document.activeElement.id`),
+  'token-name',
+);
+await dm.key('n', 'KeyN', 78);
+await dm.wait(500);
+check('n typed into a field does not advance the turn', await currentName(dm), up);
+await dm.evaluate(`document.getElementById('token-name').blur(); "ok"`);
+
+await dm.key('n', 'KeyN', 78);
 await dm.wait(500);
 const next = await onScreen(dm);
 const nowUp = await currentName(dm);

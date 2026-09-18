@@ -57,6 +57,12 @@ export interface TokenTool {
   readonly selectedId: string | null;
   /** From a click on the map, or from this panel's own "new token" button. */
   select(id: string | null): void;
+  /**
+   * Deletes these tokens, after asking. The panel's own button is this with
+   * one id; the Delete key in main.ts is it with everything wearing a ring.
+   * Ids that name nothing on the board are dropped rather than sent.
+   */
+  remove(ids: Iterable<string>): void;
   /** Called on Welcome and after every token delta. */
   update(scene: Scene): void;
   /**
@@ -364,19 +370,37 @@ export function createTokenTool(
     // duplicating twice is the ordinary case.
   });
 
+  /**
+   * One confirm for however many, naming them. A deleted token takes its
+   * initiative row and its anchored drawings with it; undo can bring it back,
+   * but a step per token, and the confirm is what stands between a stray
+   * keypress and six of those. Deleting from preview is still deleting:
+   * existence forks, but a token on the board exists there too, and saying so
+   * beats a DM discovering it afterwards.
+   */
+  function remove(ids: Iterable<string>): void {
+    if (scene === null) return;
+    const wanted = new Set(ids);
+    const tokens = scene.tokens.filter((t) => wanted.has(t.id));
+    if (tokens.length === 0) return;
+
+    const names = tokens.map((t) => t.name).join(', ');
+    const onBoard = previewing() && tokens.some((t) => !t.stagedOnly);
+    const what = tokens.length === 1 ? `Delete ${names}?` : `Delete ${tokens.length} tokens (${names})?`;
+    const warning = onBoard
+      ? `${what} ${tokens.length === 1 ? 'It is' : 'Some are'} on the board now, not only on the next map.`
+      : what;
+    if (!window.confirm(warning)) return;
+
+    // N ordinary deletes, the group drag's arrangement: the room already takes
+    // them one at a time and there is nothing a batch would answer differently.
+    for (const token of tokens) send({ type: 'delete_token', id: token.id });
+    if (selectedId !== null && wanted.has(selectedId)) select(null);
+  }
+
   ui.remove.addEventListener('click', () => {
     const token = selected();
-    if (token === null) return;
-    // A deleted token takes its initiative row with it and there is no undo.
-    // Deleting from preview is still deleting: existence forks, but this token
-    // exists on the board, and saying so beats a DM discovering it afterwards.
-    const warning =
-      previewing() && !token.stagedOnly
-        ? `Delete ${token.name}? It is on the board now, not only on the next map.`
-        : `Delete ${token.name}?`;
-    if (!window.confirm(warning)) return;
-    send({ type: 'delete_token', id: token.id });
-    select(null);
+    if (token !== null) remove([token.id]);
   });
 
   // --- the board's own switch -----------------------------------------------
@@ -429,6 +453,7 @@ export function createTokenTool(
     },
 
     select,
+    remove,
 
     stop() {
       library.close();

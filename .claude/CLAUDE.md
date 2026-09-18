@@ -97,7 +97,9 @@ and wall editor are for. Scale is still seven clients on a 1GB board. Procedure 
 **`/status/` is how the box is doing, and it is not part of Slate**: a static page and one
 read-only `/api/status` behind `SLATE_STATUS_KEY` (a second credential, not the DM secret; unset
 means the route is not mounted). Slate reports only what Slate knows; host vitals come from files
-somebody else wrote. See `client/status/README.md`.
+somebody else wrote. **What is wrong is decided once, in `verdict` on the server** — the page has
+two renderers, `status.js` and `client/status/kindle/kindle.py` (a PNG for the Kindle on the
+shelf), and neither judges. See `client/status/README.md`.
 
 ## Architecture
 
@@ -397,6 +399,9 @@ token settles lives in `snap_to_cell` on the server and nowhere else — the cli
 Create/delete/edit are DM-only and the id is the server's. `UpdateToken` carries every editable
 field except position; `TokenChanged` covers creation and editing alike. Duplicating is a
 client-side `CreateToken`. **Deleting a token takes its initiative row and its anchored drawings.**
+The Delete key deletes everything wearing a ring — panel's token and shift-click group alike, one
+confirm, N ordinary deletes; `N` advances the turn. Both DM-only by construction and both stand down
+inside a field via `typingIn`, the rule every global key that is not Escape asks.
 
 **`RoomState::unseen_by_table(&Token)` is the only question any filter asks** — `hidden`,
 `staged_only`, *and* line of sight, which is why it lives on `RoomState` and not `Token`. Anything
@@ -690,4 +695,3 @@ not assume the map it was written against.** The README lists them.
 - Prefer the smaller change. Prefer deleting code to adding a flag.
 - No `unwrap()` outside tests and startup. Errors that can happen at runtime get handled.
 - Do not add dependencies without flagging it and giving the reason.
-- Upon completion of your work, spwan a subagent to do a thorough quality passthrough for any remaining bugs, issues, or QoL improvements. 

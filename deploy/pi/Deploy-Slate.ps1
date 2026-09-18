@@ -293,6 +293,7 @@ try {
         'client\spells\index.html'
         'client\status\index.html'
         'client\status\status.js'
+        'client\status\kindle\kindle.py'
         'build.json'
     )
     foreach ($rel in $needed) {

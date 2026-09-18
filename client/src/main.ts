@@ -1495,6 +1495,30 @@ async function start(
     pings,
   );
 
+  // Delete takes off the board whatever is wearing a ring: the group shift-click
+  // gathered, the token the panel is editing, or both — the renderer draws them
+  // as one question and this answers it as one. Backspace too, because that is
+  // the key a Mac labels "delete". Bound only for the DM, since only the DM
+  // holds a token tool and only the DM may delete; a player's Delete does
+  // nothing rather than earning a refusal. Stands down inside a field, and
+  // while the wall editor is armed — Backspace is a corner there, and a stray
+  // one mid-trace must not cost a creature.
+  if (tokenTool !== null) {
+    const tool = tokenTool;
+    window.addEventListener('keydown', (e) => {
+      if (e.key !== 'Delete' && e.key !== 'Backspace') return;
+      if (e.repeat || typingIn(e.target)) return;
+      if (wallTool !== null && wallTool.mode !== null) return;
+      const ids = new Set(input.selection);
+      if (tool.selectedId !== null) ids.add(tool.selectedId);
+      if (ids.size === 0) return;
+      // Before the confirm rather than after it: an unhandled Backspace is
+      // "go back" in some browsers, which would lose the session either way.
+      e.preventDefault();
+      tool.remove(ids);
+    });
+  }
+
   const stage: Stage = {
     reloadMap(onLoaded) {
       const url = shownBoard(scene).mapUrl;
