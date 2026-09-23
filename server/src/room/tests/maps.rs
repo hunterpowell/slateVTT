@@ -102,7 +102,7 @@ fn only_the_dm_may_change_the_map() {
 fn recalibrating_the_grid_does_not_move_a_single_token() {
     // Invariant 1, stated as a test. Positions are grid units, so a token
     // stays in the cell it was in however the grid is redefined underneath
-    // it — this is the entire reason pixels are not stored.
+    // it. This is why pixels aren't stored.
     let mut state = room();
     let _dm = join_as_dm(&mut state, ClientId(1));
     let before: Vec<(TokenId, f32, f32)> = state
@@ -138,8 +138,8 @@ fn a_new_map_replaces_every_field() {
 
 #[test]
 fn re_picking_a_map_comes_back_calibrated() {
-    // The whole point of the table: the DM calibrated this map weeks ago and
-    // should not have to do it again.
+    // What the table is for: the DM calibrated this map weeks ago and
+    // shouldn't have to do it again.
     let mut state = room();
     let _dm = join_as_dm(&mut state, ClientId(1));
 
@@ -352,7 +352,7 @@ fn the_calibration_table_is_saved() {
         Some(82.0)
     );
 
-    // And survives the trip back, which is when it actually matters — the
+    // And survives the trip back, which is when it actually matters: the
     // group is not playing between sessions.
     let restored = reboot(saved);
     assert_eq!(
@@ -401,7 +401,7 @@ fn shelved(state: &RoomState, url: &str) -> Vec<WallId> {
 
 #[test]
 fn a_map_traced_on_a_tuesday_is_still_traced_on_saturday() {
-    // The whole milestone: the DM walls a dungeon, runs something else, and
+    // What the shelf is for: the DM walls a dungeon, loads something else, and
     // finds the dungeon still walled when they come back to it.
     let mut state = room();
     let _dm = join_as_dm(&mut state, ClientId(1));
@@ -428,8 +428,8 @@ fn the_paint_comes_back_with_the_tracing() {
     let mut state = room();
     let _dm = join_as_dm(&mut state, ClientId(1));
 
-    // Fogged, because paint on a map with no fog on it is refused rather than
-    // stored — the shelf can only remember what the room would hold.
+    // Fogged, because paint on a map with no fog on it is refused, not stored:
+    // the shelf can only remember what the room would hold.
     state.handle(
         ClientId(1),
         fogged(set_map("/uploads/cave.png", 64.0, 0.0, 0.0), 60.0),
@@ -446,9 +446,9 @@ fn the_paint_comes_back_with_the_tracing() {
 #[test]
 fn walls_are_filed_under_the_map_they_were_traced_on() {
     // The trap that reads as a bug in the wall editor. `sweep_board` is called
-    // *after* the assignment on this path, so a version that asked `self.map`
-    // which board it was sweeping would file the cave's masonry under the
-    // keep — and the DM would find it laid across the keep next week.
+    // after the assignment on this path, so a version that asked `self.map`
+    // which board it was sweeping would file the cave's walls under the keep,
+    // and the DM would find them laid across the keep next week.
     let mut state = room();
     let _dm = join_as_dm(&mut state, ClientId(1));
 
@@ -466,9 +466,9 @@ fn walls_are_filed_under_the_map_they_were_traced_on() {
 #[test]
 fn nudging_the_grid_does_not_erase_what_the_room_remembers() {
     // The silent one. A recalibration writes the calibration and must not be
-    // able to reach the tracing beside it — and because the board keeps its
-    // walls through a recalibration, a version that filed empty ones here would
-    // look perfectly correct until the DM loaded away and back.
+    // able to reach the tracing beside it. Because the board keeps its walls
+    // through a recalibration, a version that filed empty ones here would look
+    // correct until the DM loaded away and back.
     let mut state = room();
     let _dm = join_as_dm(&mut state, ClientId(1));
 
@@ -478,7 +478,7 @@ fn nudging_the_grid_does_not_erase_what_the_room_remembers() {
     );
     state.handle(ClientId(1), trace(&[(0.0, 0.0), (128.0, 0.0)], false));
     // The board is filed onto the shelf only as it leaves, so the entry is
-    // empty until then — which is exactly what makes the clobber invisible.
+    // empty until then. That is what makes the overwrite invisible.
     state.handle(
         ClientId(1),
         calibrate("/uploads/cave.png", 96.0, 3.0, "#99887766"),
@@ -504,7 +504,7 @@ fn nudging_the_grid_does_not_erase_what_the_room_remembers() {
 fn clearing_the_walls_and_loading_away_means_they_are_cleared() {
     // The shelf holds what the board was actually holding, empty included.
     // Filing only non-empty lists would make "I traced that badly and started
-    // again" unsayable — the bad trace would come back next week.
+    // again" impossible: the bad trace would come back next week.
     let mut state = room();
     let _dm = join_as_dm(&mut state, ClientId(1));
 
@@ -542,13 +542,13 @@ fn a_promote_files_the_board_it_covered() {
 #[test]
 fn a_staged_map_is_filed_and_comes_back_staged() {
     // The write site that gets missed: a staged board never passes through
-    // `sweep_board`, it dies where the load arm takes the slot. Three dungeons
-    // prepped on a Tuesday is what the milestone was asked for, and all three
-    // are prepped in this slot rather than on the board.
+    // `sweep_board`; it's discarded where the load arm takes the slot. Three
+    // dungeons prepared on a Tuesday are all prepared in this slot, not on the
+    // board.
     let mut state = room();
     let _dm = join_as_dm(&mut state, ClientId(1));
 
-    // Fogged, so that the paint below is a command the room accepts — a staged
+    // Fogged, so that the paint below is a command the room accepts: a staged
     // map may be painted while the unfogged live board under it may not.
     state.handle(
         ClientId(1),
@@ -574,8 +574,8 @@ fn a_staged_map_is_filed_and_comes_back_staged() {
 #[test]
 fn discarding_the_staged_slot_keeps_what_was_traced_on_the_map() {
     // The slot's other exit. The shelf is keyed by image and not by slot, so
-    // which of the two buttons the DM pressed cannot change what next week's
-    // load finds — throwing the *prep* away is `ClearWalls`.
+    // which of the two buttons the DM pressed can't change what next week's
+    // load finds. Throwing the prep away is `ClearWalls`.
     let mut state = room();
     let _dm = join_as_dm(&mut state, ClientId(1));
 
@@ -592,10 +592,10 @@ fn discarding_the_staged_slot_keeps_what_was_traced_on_the_map() {
 
 #[test]
 fn the_party_re_explores_a_dungeon_they_return_to() {
-    // The boundary, and what keeps this from being a scene restore: the DM's
+    // The boundary that keeps this from being a scene restore: the DM's
     // authoring is remembered and the party's play state is not. A `revealed`
-    // that came back with the walls would immediately raise "why not the token
-    // positions too", and that road ends at the feature `docs/maps.md` refuses.
+    // that came back with the walls would invite "why not the token positions
+    // too", and that leads to the scene system `docs/maps.md` rules out.
     let mut state = fog_room(30.0);
     let _dm = join_as_dm(&mut state, ClientId(1));
     state.handle(
@@ -633,10 +633,9 @@ fn the_party_re_explores_a_dungeon_they_return_to() {
 
 #[test]
 fn the_walls_coming_back_is_the_dms_news_and_nobody_elses() {
-    // A load now emits `WallsChanged` and `OverridesChanged` where it used to
-    // emit only the sweep's. Both reach the DM or nobody, which is the rule
-    // they have always had — a player is not told the DM traced something, and
-    // is not told the room remembered it either.
+    // A load emits `WallsChanged` and `OverridesChanged` for the restore as
+    // well as for the sweep. Both reach the DM or nobody: a player isn't told
+    // the DM traced something, and isn't told the room remembered it either.
     let mut state = room();
     let mut dm = join_as_dm(&mut state, ClientId(1));
     let mut player = join_as_player(&mut state, ClientId(2), "saelyn");
@@ -689,7 +688,7 @@ fn the_walls_coming_back_is_the_dms_news_and_nobody_elses() {
 
 #[test]
 fn swapping_between_two_traced_maps_names_the_walls_once() {
-    // Both gates would fire on this load — the sweep's, because the board it
+    // Both gates would fire on this load: the sweep's, because the board it
     // left was traced, and the restore's, because the board arriving is. A
     // `WallsChanged` carries whatever the room holds when it is *dispatched*,
     // so the second would name the same list as the first and say nothing.
@@ -722,9 +721,9 @@ fn swapping_between_two_traced_maps_names_the_walls_once() {
 
 #[test]
 fn the_shelf_never_reaches_a_client() {
-    // `a_remembered_calibration_never_reaches_a_client`'s twin, and worth
-    // asserting again now that an entry carries a dungeon's masonry rather than
-    // four numbers. There is no `RoomView` field and no message.
+    // Like `a_remembered_calibration_never_reaches_a_client`, asserted again
+    // because an entry now carries a dungeon's walls, not just four numbers.
+    // There is no `RoomView` field and no message.
     let mut state = room();
     let _dm = join_as_dm(&mut state, ClientId(1));
     let _player = join_as_player(&mut state, ClientId(2), "saelyn");
@@ -745,8 +744,8 @@ fn the_shelf_never_reaches_a_client() {
 
 #[test]
 fn a_staged_map_is_not_in_a_players_snapshot() {
-    // Invariant 4. Not sent-and-not-drawn — absent, so there is nothing in
-    // devtools to find.
+    // Invariant 4: not sent and left undrawn, but absent, so there is nothing
+    // in devtools to find.
     let mut state = room();
     let _dm = join_as_dm(&mut state, ClientId(1));
     stage(&mut state, ClientId(1), "/uploads/next.png");
@@ -947,7 +946,7 @@ fn a_calibration_made_while_staged_is_remembered() {
 
 #[test]
 fn staging_a_map_calibrated_earlier_comes_back_calibrated() {
-    // The staged slot is empty, so this is a load — and a load loses to
+    // The staged slot is empty, so this is a load, and a load loses to
     // whatever the room already remembers for that URL.
     let mut state = room();
     let _dm = join_as_dm(&mut state, ClientId(1));
@@ -1046,8 +1045,8 @@ fn only_the_dm_is_told_the_staged_slot_changed() {
 
 #[test]
 fn planning_a_move_leaves_the_token_where_it_stands() {
-    // The whole state model in one assertion: one token, two positions, and
-    // only the plan is what a preview drag writes.
+    // The state model in one assertion: one token, two positions, and only
+    // the plan is what a preview drag writes.
     let (mut state, _dm_rx) = staged_room(ClientId(1));
     let before = token(&state, "t1");
 
@@ -1061,8 +1060,8 @@ fn planning_a_move_leaves_the_token_where_it_stands() {
 
 #[test]
 fn a_plan_settles_on_the_lattice_its_size_belongs_to() {
-    // `snap_to_cell` is the server's alone and does not care which of a
-    // token's two positions it is settling — a 2×2 lands on a cell corner
+    // `snap_to_cell` is the server's alone and doesn't care which of a
+    // token's two positions it is settling: a 2×2 lands on a cell corner
     // either way.
     let (mut state, _dm_rx) = staged_room(ClientId(1));
     state.handle(ClientId(1), create("Ogre Chief", 2.0, Owner::Dm));
@@ -1078,7 +1077,7 @@ fn a_plan_settles_on_the_lattice_its_size_belongs_to() {
 #[test]
 fn a_dragged_plan_is_relayed_unsnapped_and_the_drop_settles_it() {
     // The two message rates, on the plan. A second DM tab watches the drag
-    // exactly as it watches one on the board.
+    // as it watches one on the board.
     let (mut state, _dm_rx) = staged_room(ClientId(1));
     let mut other_tab = join_as_dm(&mut state, ClientId(2));
     let id = token(&state, "t1").id;
@@ -1114,8 +1113,8 @@ fn a_dragged_plan_is_relayed_unsnapped_and_the_drop_settles_it() {
 #[test]
 fn a_plan_is_a_frame_the_table_never_receives() {
     // The `StagedChanged` arm, at token scale. A plan is a cell on a map the
-    // players have not been shown, so the frame carrying it does not exist
-    // for them — it is not sent and left undrawn.
+    // players haven't been shown, so the frame carrying it is never sent to
+    // them at all.
     let (mut state, _dm_rx) = staged_room(ClientId(1));
     let mut saelyn = join_as_player(&mut state, ClientId(2), "saelyn");
     let id = token(&state, "t2").id; // Saelyn's own token
@@ -1197,9 +1196,9 @@ fn a_staged_only_token_is_nowhere_the_table_can_reach() {
 
 #[test]
 fn the_dms_own_live_board_does_not_hold_a_staged_only_token_either() {
-    // Not a detail: switching back to `Map` mode has to show the board as
+    // This matters: switching back to `Map` mode has to show the board as
     // the table sees it, and the DM's snapshot is where that starts. The
-    // token is present — it is theirs to drag — and flagged as not real yet.
+    // token is present (it's theirs to drag) and flagged as not real yet.
     let (mut state, _dm_rx) = staged_room(ClientId(1));
     state.handle(ClientId(1), create_staged("Ambusher"));
 
@@ -1267,8 +1266,8 @@ fn a_staged_only_token_cannot_be_rolled_into_combat() {
 #[test]
 fn an_edit_reaches_both_boards_at_once() {
     // Only position and existence fork. A resize applies to the token, and
-    // therefore to its plan as well — missed, a token resized after being
-    // planned straddles half a cell the moment it is promoted.
+    // therefore to its plan as well. If that's missed, a token resized after
+    // being planned straddles half a cell the moment it is promoted.
     let (mut state, _dm_rx) = staged_room(ClientId(1));
     state.handle(ClientId(1), create("Dire Wolf", 1.0, Owner::Dm));
     let wolf = made(&state, "Dire Wolf");
@@ -1414,7 +1413,7 @@ fn a_promote_leaves_a_still_hidden_creature_unannounced() {
 #[test]
 fn discarding_the_staged_map_takes_the_plans_made_on_it_with_it() {
     // Otherwise the next map inherits monsters placed on a map nobody will
-    // ever see again — and staged-only tokens no board draws at all.
+    // ever see again, and staged-only tokens no board draws at all.
     let (mut state, _dm_rx) = staged_room(ClientId(1));
     let planned = token(&state, "t1").id;
     state.handle(ClientId(1), drop_at(&planned, 20.5, 1.5, true));
@@ -1437,7 +1436,7 @@ fn discarding_the_staged_map_takes_the_plans_made_on_it_with_it() {
 fn discarding_a_plan_is_not_something_the_table_is_told_about() {
     // A player's copy of a planned token is identical either side of this,
     // so the only thing a frame could carry them is the news that the DM
-    // just threw a plan away — which is news, and invariant 4's concern.
+    // just threw a plan away. That is news, and invariant 4's concern.
     let (mut state, _dm_rx) = staged_room(ClientId(1));
     let mut saelyn = join_as_player(&mut state, ClientId(2), "saelyn");
     let planned = token(&state, "t1").id;
@@ -1541,8 +1540,8 @@ fn deleting_a_token_takes_its_plan_with_it() {
 
 #[test]
 fn a_plan_is_worth_saving_and_survives_the_trip() {
-    // Slate is off between sessions, and the whole point of preparing the
-    // next room is that it is prepared on a different evening.
+    // Slate is off between sessions, and preparing the next room is only
+    // useful because it happens on a different evening.
     let (mut state, _dm_rx) = staged_room(ClientId(1));
     let planned = token(&state, "t1").id;
     assert!(
@@ -1674,7 +1673,7 @@ fn the_grid_colour_survives_a_change() {
 #[test]
 fn a_play_area_defaults_to_the_whole_image() {
     // The server never sees the image, so `None` is the only thing it could
-    // mean by "all of it" — and it is what every older save says.
+    // mean by "all of it", and it's what every older save says.
     assert_eq!(room().map.play_area, None);
 }
 
@@ -1764,9 +1763,9 @@ fn a_map_change_is_worth_saving() {
 
 // --- the backdrop -------------------------------------------------------
 //
-// A picture shown *instead of* the board. It is in this file because it is
-// about what is on the screens, and it is not a map — which is the whole of
-// what these tests are here to hold down. See *Backdrop* in `docs/maps.md`.
+// A picture shown instead of the board. It's in this file because it is
+// about what is on the screens, and it is not a map, which is what these
+// tests hold down. See *Backdrop* in `docs/maps.md`.
 
 const CAMPFIRE: &str = "/uploads/backdrop-campfire-9f8e7d6c.jpg";
 
@@ -1797,9 +1796,9 @@ fn only_the_dm_can_put_a_picture_in_front_of_the_table() {
 
 #[test]
 fn the_backdrop_reaches_the_table_and_the_dm_alike() {
-    // `NamesChanged`'s rule rather than `WallsChanged`'s: who may put a
-    // picture up is a permission, and which picture it is is not a secret —
-    // six people are looking at it.
+    // `NamesChanged`'s rule, not `WallsChanged`'s: who may put a picture up is
+    // a permission, and which picture it is isn't a secret, since six people
+    // are looking at it.
     let mut state = room();
     let mut dm = join_as_dm(&mut state, ClientId(1));
     let mut saelyn = join_as_player(&mut state, ClientId(2), "saelyn");
@@ -1845,8 +1844,8 @@ fn the_backdrop_is_in_every_snapshot() {
 
 #[test]
 fn covering_the_board_leaves_the_encounter_exactly_where_it_was() {
-    // **The test the whole feature exists for**, and it is the exact contrast
-    // with `undoing_a_map_load_gives_back_the_walls_the_shapes_and_the_fog_together`
+    // **The test the backdrop exists for**, and the contrast with
+    // `undoing_a_map_load_gives_back_the_walls_the_shapes_and_the_fog_together`
     // in `undo.rs`: that one asserts a map load destroys four things at once,
     // and this one asserts that showing a picture destroys none of them. A
     // future refactor routing this through `SetMap` fails here.
@@ -1916,6 +1915,6 @@ fn a_backdrop_url_is_bounded_like_a_map_url() {
 
     assert!(state.check(dm, &show(Some(&"x".repeat(513)))).is_err());
     assert!(state.check(dm, &show(Some(""))).is_err());
-    // And `None` is not an empty URL — it is the board.
+    // And `None` isn't an empty URL. It means the board.
     assert!(state.check(dm, &show(None)).is_ok());
 }

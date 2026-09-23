@@ -2,11 +2,10 @@
 //! See `docs/notes.md`.
 //!
 //! **Every assertion that matters here is about a frame that never left, and
-//! for the first time in this suite one of them is a frame the DM never got.**
-//! Every other filter in the project withholds downward; this one has no
-//! `is_dm` in it at all, so "and the DM was sent nothing" is not a tidy extra
-//! line — it is the feature, and a scratchpad the DM's client can open is a
-//! surveillance feature wearing the same name.
+//! some of them are about a frame the DM never got.** Every other filter in
+//! the project withholds from players; this one has no `is_dm` in it at all,
+//! so "and the DM was sent nothing" is the feature, not an extra line. A
+//! scratchpad the DM's client could open would be surveillance.
 
 use super::*;
 
@@ -27,10 +26,10 @@ fn told(rx: &mut mpsc::Receiver<ServerMsg>) -> Vec<String> {
         .collect()
 }
 
-/// The box one identity is handed on join. `told`'s twin, and the pair is the
-/// point: invariant 3 says the snapshot and the deltas have to agree, and the
-/// snapshot is where handing over the whole table's private notes would be one
-/// forgotten line away.
+/// The box one identity is handed on join. Pairs with `told`: invariant 3
+/// says the snapshot and the deltas have to agree, and the snapshot is where
+/// handing over the whole table's private notes would be one forgotten line
+/// away.
 fn box_for(state: &RoomState, who: &Identity) -> String {
     state.snapshot_for(who).notes
 }
@@ -55,15 +54,14 @@ fn a_scratchpad_reaches_its_author_and_nobody_else() {
     // not `Said`'s: the text is already in that box, and writing it back a round
     // trip later moves the caret out from under somebody mid-sentence.
     assert_eq!(told(&mut saelyn), nothing());
-    // Their other tab is the whole audience this event has, and the whole reason
-    // it is an event rather than nothing at all.
+    // Their other tab is the only recipient this event has, and the reason
+    // it's an event at all.
     assert_eq!(
         told(&mut saelyn_second_tab),
         ["the door on the left was warm"]
     );
-    // The two that matter. Neither is a filter being generous in the wrong
-    // direction — the DM is not a supervisor here, they are somebody with a box
-    // of their own.
+    // The two that matter. The DM isn't a supervisor here; they're somebody
+    // with a box of their own.
     assert_eq!(told(&mut torrin), nothing());
     assert_eq!(told(&mut dm), nothing());
 }
@@ -101,9 +99,9 @@ fn a_join_is_handed_its_own_box_and_no_other() {
         "ambush in the second chamber"
     );
     assert_eq!(box_for(&state, &as_player("saelyn")), "ask about the sigil");
-    // Invariant 3 with the same teeth `chat_for` has: filtering the deltas
-    // correctly and forgetting this would hand a joining client somebody else's
-    // paragraph in the one frame nobody looks at twice.
+    // Invariant 3, as for `chat_for`: filtering the deltas correctly and
+    // forgetting this would hand a joining client somebody else's paragraph
+    // in the one frame nobody looks at twice.
     assert_eq!(box_for(&state, &as_player("torrin")), "");
 }
 
@@ -136,7 +134,7 @@ fn anybody_may_write_in_their_own_box() {
     let _saelyn = join_as_player(&mut state, ClientId(1), "saelyn");
 
     // No `require_dm`, and no per-item rule underneath it either. The command
-    // names no box, so the only one it can reach is the sender's — which is the
+    // names no box, so the only one it can reach is the sender's. That is the
     // permission this feature has instead of a check.
     assert!(state.check(ClientId(1), &write("mine")).is_ok());
 }
@@ -187,8 +185,8 @@ fn an_undo_does_not_take_back_what_somebody_typed() {
     let mut saelyn = join_as_player(&mut state, ClientId(2), "saelyn");
 
     // A command, then a paragraph written after it, then a second command. The
-    // paragraph is on the snapshot the second command pushed — which is exactly
-    // how a scratchpad gets eaten by a button somebody else is holding.
+    // paragraph is on the snapshot the second command pushed, which is how a
+    // scratchpad would be lost to an undo somebody else ran.
     state.handle(dm, ClientMsg::SetShowNames { show: false });
     let _ = drain_all(&mut dm_rx);
     state.handle(ClientId(2), write("the door on the left was warm"));
@@ -204,16 +202,15 @@ fn an_undo_does_not_take_back_what_somebody_typed() {
     state.handle(dm, ClientMsg::Undo);
     let _ = drain_all(&mut dm_rx);
 
-    // The room went back and the box did not. Milestone 22's rule is that the
-    // ring may hold state the undoing hand wrote, and this is the case it was
-    // written for.
+    // The room went back and the box did not. The ring may only hold state
+    // the DM could have written, and this is the case that rule is for.
     assert_eq!(state.diagonals, Diagonals::Equal);
     assert_eq!(
         box_for(&state, &as_player("saelyn")),
         "the door on the left was warm"
     );
-    // And nothing told them it had been near a thing that could eat it. A
-    // restore re-sends the world; their box is not part of that world.
+    // And nothing told them anything happened. A restore re-sends the world,
+    // and their box isn't part of it.
     assert_eq!(told(&mut saelyn), nothing());
 }
 
@@ -225,8 +222,8 @@ fn undoing_past_a_scratchpad_that_did_not_exist_yet_still_leaves_it_alone() {
     let _saelyn = join_as_player(&mut state, ClientId(2), "saelyn");
 
     // Every snapshot on the ring predates this paragraph, so a restore that
-    // adopted notes at all would blank it rather than stale it — the same bug
-    // with nothing on screen to say so.
+    // adopted notes at all would blank it, not just make it stale. It's the
+    // same bug with nothing on screen to say so.
     state.handle(dm, ClientMsg::SetShowNames { show: false });
     let _ = drain_all(&mut dm_rx);
     state.handle(ClientId(2), write("written after every snapshot"));
@@ -262,7 +259,7 @@ fn a_scratchpad_is_worth_writing_down() {
         "ask about the sigil"
     );
     // And it comes back to its author alone, which is the half of this a boot
-    // could quietly get wrong: `adopt` reads a list of pairs, and a form that
+    // could get wrong unnoticed: `adopt` reads a list of pairs, and a form that
     // lost the key would hand one box to whoever asked first.
     assert_eq!(box_for(&reloaded, &Identity::Dm), "");
 }

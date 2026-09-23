@@ -1,12 +1,11 @@
 //! The loaner die: a bag of plastic, thrown by the room, landing in the log.
 //! See `docs/dice.md`.
 //!
-//! Two things are asserted here and they pull in opposite directions. One is
-//! that the throw is *random* — a test that only checks the bounds passes
-//! against a function returning 1 every time, so every face has to be seen to
-//! land. The other is that a roll is *a line of talk*, which means the rest of
-//! the interesting assertions are `chat.rs`'s: who was not sent it, and what
-//! was not written down.
+//! Two things are asserted here. One is that the throw is random: a test that
+//! only checks the bounds passes against a function returning 1 every time,
+//! so every face has to be seen to land. The other is that a roll is a chat
+//! line, so the rest of the assertions are `chat.rs`'s: who was not sent it,
+//! and what was not written down.
 
 use super::*;
 
@@ -27,9 +26,9 @@ fn typed(text: &str) -> ClientMsg {
 
 /// Every line one connection was actually sent, in order.
 ///
-/// `chat.rs` has this too, and the duplication is deliberate: the two files
-/// assert over the same frame, and hoisting four lines into `tests.rs` would
-/// couple two suites that otherwise share nothing.
+/// `chat.rs` has this too. The two files assert over the same frame, and
+/// hoisting four lines into `tests.rs` would couple two suites that otherwise
+/// share nothing.
 fn heard(rx: &mut mpsc::Receiver<ServerMsg>) -> Vec<String> {
     drain(rx)
         .into_iter()
@@ -42,9 +41,8 @@ fn heard(rx: &mut mpsc::Receiver<ServerMsg>) -> Vec<String> {
 
 /// The face values of every roll in the log, flattened.
 ///
-/// Parsed back out of the text, which is the only place they exist — the room
-/// keeps a sentence rather than a `Vec<u8>`, and that is the design rather than
-/// a gap in it.
+/// Parsed back out of the text, which is the only place they exist: the room
+/// keeps the sentence, not a `Vec<u8>`.
 fn faces(state: &RoomState) -> Vec<u32> {
     state
         .chat
@@ -86,7 +84,7 @@ fn a_roll_reaches_everyone_including_whoever_threw_it() {
 
 #[test]
 fn a_roll_whispered_to_the_dm_is_absent_from_every_other_player() {
-    // The feature's whole claim over a physical die, and the assertion that
+    // What the loaner offers over a physical die, and the assertion that
     // matters is the third one: Torrin was sent nothing.
     let mut state = room();
     let mut dm = join_as_dm(&mut state, ClientId(1));
@@ -120,8 +118,8 @@ fn a_roll_whispered_to_the_dm_is_absent_from_every_other_player() {
 fn the_dm_may_roll_where_only_they_can_see_it() {
     // **The one place `Roll` diverges from `Say`.** A note to self is what the
     // scratchpad is for, so `Say` refuses this; a monster's save has nowhere
-    // else to go, so `Roll` allows it. `party_to` needed no change — the DM
-    // matches both halves of its `Dm` arm and gets exactly one copy.
+    // else to go, so `Roll` allows it. `party_to` needed no change: the DM
+    // matches both halves of its `Dm` arm and gets one copy.
     let mut state = room();
     let mut dm = join_as_dm(&mut state, ClientId(1));
     let mut saelyn = join_as_player(&mut state, ClientId(2), "saelyn");
@@ -181,7 +179,7 @@ fn a_player_may_not_roll_at_another_player() {
 fn every_face_is_in_range_and_every_face_is_reachable() {
     // The second half is what stops the first passing against a function that
     // returns 1 forever. Each pass throws 200 handfuls of `MAX_DICE`, so 4,000
-    // faces per die — a d20 misses a given face with probability (19/20)^4000,
+    // faces per die. A d20 misses a given face with probability (19/20)^4000,
     // which is not a number anybody will see. The RNG is the OS's and there is
     // no seed this test could fix, so that margin is its only defence.
     const THROWS: usize = 200;
@@ -192,21 +190,21 @@ fn every_face_is_in_range_and_every_face_is_reachable() {
 
         for _ in 0..THROWS {
             state.handle(ClientId(2), shout_roll(sides, MAX_DICE));
-            // **Drained every time, and this test is a lie without it.** A
-            // client's outbound mailbox is 16 deep and the room drops a client
-            // whose mailbox fills — after which `apply` finds no sender, logs
-            // nothing, and every later throw evaporates. This shipped without
-            // the drain and measured *seventeen* throws while claiming four
-            // thousand, which is a margin of one in twelve rather than one in
-            // 10^17: it failed roughly one run in six and read as a biased RNG.
+            // **Drained every time, or this test is a lie.** A client's
+            // outbound mailbox is 16 deep and the room drops a client whose
+            // mailbox fills. After that `apply` finds no sender, logs nothing,
+            // and every later throw is lost. Without the drain the test
+            // measures seventeen throws while claiming four thousand, and
+            // fails about one run in six in a way that reads as a biased RNG.
             let _ = drain(&mut saelyn);
         }
 
         let rolled = faces(&state);
-        // The guard on the paragraph above. A sample that quietly shrinks turns
-        // every assertion below into a coin toss, so its size is asserted
-        // rather than assumed — the same reason `MAX_DICE` is not trusted to
-        // relate to `MAX_CHAT_LEN` without a test measuring the sentence.
+        // The guard on the paragraph above. A sample that shrinks unnoticed
+        // turns every assertion below into a coin toss, so its size is
+        // asserted, not assumed. `MAX_DICE` isn't trusted to relate to
+        // `MAX_CHAT_LEN` without a test measuring the sentence, for the same
+        // reason.
         assert_eq!(
             rolled.len(),
             THROWS * usize::from(MAX_DICE),
@@ -219,8 +217,8 @@ fn every_face_is_in_range_and_every_face_is_reachable() {
             "a d{sides} landed outside 1..={sides}"
         );
         // Every face for the small dice. A d100 would want far more throws than
-        // the log holds, so it is asked of the two ends instead — which is
-        // where a modulo bias or an off-by-one shows first anyway.
+        // the log holds, so it's asked of the two ends instead, which is where
+        // a modulo bias or an off-by-one shows first anyway.
         if sides <= 20 {
             for face in 1..=u32::from(sides) {
                 assert!(
@@ -282,9 +280,9 @@ fn a_handful_says_what_each_die_did_and_what_they_come_to() {
 
 #[test]
 fn a_typed_line_is_not_marked_as_thrown() {
-    // The flag's whole job: a witnessed number and a claimed one have to be
-    // told apart, or the room doing the throwing bought nothing anybody can
-    // see. Somebody typing the shape of a roll does not get the mark.
+    // What the flag is for: a witnessed number and a claimed one have to be
+    // told apart, or the room doing the throwing gains nothing anybody can
+    // see. Somebody typing the shape of a roll doesn't get the mark.
     let mut state = room();
     let _saelyn = join_as_player(&mut state, ClientId(2), "saelyn");
 
@@ -342,10 +340,10 @@ fn no_dice_and_too_many_dice_are_both_refused() {
 
 #[test]
 fn the_largest_roll_fits_a_chat_line() {
-    // The two-bounds rule from `.claude/CLAUDE.md`, asked the way that file
-    // says to ask it: build the largest legal instance and measure it, rather
-    // than driving `check` and trusting the two numbers relate. `check` bounds
-    // the dice; nothing bounds the sentence they produce except this.
+    // The two-limits rule from `.claude/CLAUDE.md`: build the largest legal
+    // instance and measure it, instead of driving `check` and trusting the two
+    // numbers relate. `check` bounds the dice; nothing bounds the sentence
+    // they produce except this.
     let widest = DICE_SIDES
         .iter()
         .copied()
@@ -365,8 +363,8 @@ fn the_largest_roll_fits_a_chat_line() {
 #[test]
 fn nothing_thrown_is_worth_a_disk_write_or_a_step_on_the_ring() {
     // `chat.rs`'s test with dice in it, and it passes for the same reason: a
-    // snapshot is a `Saved`, and the log is not on one. The ring is the sharper
-    // half — an undo that could un-throw a die somebody is reading the number
+    // snapshot is a `Saved`, and the log isn't on one. The ring matters more
+    // here: an undo that could un-throw a die somebody is reading the number
     // off would be worse than useless.
     let mut state = room();
     let mut dm = join_as_dm(&mut state, ClientId(1));
@@ -378,8 +376,8 @@ fn nothing_thrown_is_worth_a_disk_write_or_a_step_on_the_ring() {
         "a roll is session memory; it never marks the room dirty"
     );
     assert_eq!(state.undo.len(), depth, "a roll was a step to go back to");
-    // `drain_all` rather than `drain`: the point is that no `UndoChanged` rode
-    // along, which the filtered version would hide.
+    // `drain_all`, not `drain`: the filtered version would hide an
+    // `UndoChanged` riding along, and there must not be one.
     assert!(
         !drain_all(&mut dm)
             .iter()

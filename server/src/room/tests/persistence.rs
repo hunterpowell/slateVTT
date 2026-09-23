@@ -56,7 +56,7 @@ fn a_non_finite_coordinate_is_refused_before_it_can_reach_the_save_file() {
 fn a_number_that_only_overflows_once_narrowed_to_f32_is_still_caught() {
     // The path that makes the check above worth having. `NaN` is not valid
     // JSON and `1e400` is rejected as out of range, so both stop at the
-    // parser — but `1e39` is an ordinary `f64` that becomes infinity on the
+    // parser. But `1e39` is an ordinary `f64` that becomes infinity on the
     // way into an `f32` field, and arrives looking like a normal number.
     let raw = r#"{"type":"move_token","id":"t1","x":1e39,"y":0.0,"dragging":false,"staged":false}"#;
     let msg: ClientMsg = serde_json::from_str(raw).expect("this parses; that is the point");
@@ -99,8 +99,8 @@ async fn shutdown_flushes_a_change_still_inside_the_debounce_window() {
         std::process::id(),
         uuid::Uuid::new_v4().simple()
     ));
-    // `demo: true`, so this is the built-in board rather than an empty one —
-    // the test moves a token that has to already be there.
+    // `demo: true`, so this is the built-in board, not an empty one: the test
+    // moves a token that has to already be there.
     let room = spawn(
         SECRET.to_owned(),
         roster_from(&ROSTER),
@@ -308,16 +308,16 @@ fn a_restored_room_is_the_room_that_was_saved() {
 
 #[test]
 fn a_save_written_before_the_staged_slot_held_walls_still_loads_its_map() {
-    // Invariant 2, asked of the one field on this file whose *shape* changed
-    // rather than gaining a sibling. A save from before milestone 20 wrote the
-    // staged map's own fields directly under `staged`; `StagedView` flattens the
-    // map so they land exactly where they always did, and the two lists beside
-    // it default to what an untraced staged map has anyway.
+    // Invariant 2, for the one field on this file whose shape changed instead
+    // of gaining a sibling. An older save wrote the staged map's own fields
+    // directly under `staged`; `StagedView` flattens the map so they land
+    // where they always did, and the two lists beside it default to what an
+    // untraced staged map has anyway.
     //
-    // The failure this pins is silent rather than loud: nested under a `map`
-    // key, every one of these fields would read as missing, `MapInfo::default()`
-    // would fill in, and the DM's next-map tab would open on a blank image with
-    // a URL of "" — a staged map lost with nothing on screen saying so.
+    // The failure this pins is silent: nested under a `map` key, every one of
+    // these fields would read as missing, `MapInfo::default()` would fill in,
+    // and the DM's next-map tab would open on a blank image with a URL of "".
+    // The staged map is lost with nothing on screen saying so.
     let old = r#"{
         "map": {"url": "/uploads/cave.png", "grid_px": 70.0},
         "staged": {"url": "/uploads/crypt.png", "grid_px": 48.0, "offset_x": 12.0, "fog": true}
@@ -347,14 +347,14 @@ fn a_save_written_before_the_staged_slot_held_walls_still_loads_its_map() {
 
 #[test]
 fn a_staged_dungeon_survives_a_restart_with_its_walls_and_its_paint() {
-    // The other direction, and the reason the milestone exists: a dungeon traced
+    // The other direction, and the reason walls are saved: a dungeon traced
     // on a Tuesday is still traced on the Saturday.
     let mut state = room();
     let _dm = join_as_dm(&mut state, ClientId(1));
 
     // Fogged, because the paint below is refused on a map with no fog to
-    // override — asked of the staged board's own switch now, which is the whole
-    // of what "prepare the next dungeon" means.
+    // override. It's asked of the staged board's own switch, which is what
+    // "prepare the next dungeon" means.
     state.handle(
         ClientId(1),
         staged(fogged(set_map("/uploads/crypt.png", 64.0, 0.0, 0.0), 60.0)),

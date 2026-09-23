@@ -1,14 +1,13 @@
 //! More than one room on one server: the table that defines them, and the
 //! isolation between two rooms' casts.
 //!
-//! What is *not* here, deliberately, is a test that room A's tokens never reach
-//! a room B client. There is nothing to assert: a room is a `tokio` task that
-//! exclusively owns its `RoomState`, and two rooms share no field, no channel
-//! and no lock, so a leak between them is not a filter that could be written
-//! wrong — it is a reference that does not exist. What *can* go wrong is one
-//! room's identity being accepted by another, which is what the second half of
-//! this file is about. `tools/drive-rooms.mjs` asks the board question of two
-//! real browsers.
+//! There is no test here that room A's tokens never reach a room B client,
+//! because there is nothing to assert: a room is a `tokio` task that
+//! exclusively owns its `RoomState`, and two rooms share no field, channel or
+//! lock. A leak between them would need a reference that doesn't exist, not a
+//! filter written wrong. What can go wrong is one room's identity being
+//! accepted by another, which is what the second half of this file is about.
+//! `tools/drive-rooms.mjs` asks the board question of two real browsers.
 
 use super::*;
 
@@ -32,7 +31,7 @@ fn every_room_id_is_a_slug() {
 #[test]
 fn room_ids_are_unique() {
     // `main.rs` builds a `HashMap` off these, so a duplicate would not be an
-    // error — it would silently be one room fewer, with the second definition's
+    // error: it would silently be one room fewer, with the second definition's
     // roster on the first one's save file.
     let mut seen = Vec::new();
     for (id, _) in rooms() {
@@ -62,13 +61,13 @@ fn every_room_has_a_cast() {
 
 #[test]
 fn every_roster_id_is_a_slug() {
-    // The same rule as `every_room_id_is_a_slug` above, one level down, and it
-    // is the rule `.claude/CLAUDE.md` states about a roster slot: the id is what
+    // The same rule as `every_room_id_is_a_slug` above, one level down, and
+    // the rule `.claude/CLAUDE.md` states about a roster slot: the id is what
     // `localStorage` remembers, what a token's `owner` is written as, and what
     // keys this player's colour and their scratchpad. So renaming one after a
-    // room has been played in orphans four things at once, and a slot id with a
-    // space in it is a name wearing an id's job. The display name beside it is
-    // free text and is deliberately not checked.
+    // room has been played in orphans four things at once, and a slot id with
+    // a space in it is a name used as an id. The display name beside it is
+    // free text and isn't checked.
     for (id, _) in rooms() {
         let roster = roster_of(id).unwrap_or_else(|| panic!("{id} has no roster"));
         for entry in roster {
@@ -85,9 +84,9 @@ fn every_roster_id_is_a_slug() {
 
 // --- one room's cast is not another's ------------------------------------
 
-/// A room with the Halloween cast rather than the campaign's, so that the two
-/// rosters can be told apart. Empty rather than `hardcoded` for the same reason
-/// the real one is: the built-in board's tokens are the campaign's party.
+/// A room with the Halloween cast instead of the campaign's, so that the two
+/// rosters can be told apart. Empty, not `hardcoded`, for the same reason the
+/// real one is: the built-in board's tokens are the campaign's party.
 fn other_room() -> RoomState {
     RoomState::blank(SECRET.to_owned(), roster_from(&HALLOWEEN_ROSTER))
 }
@@ -96,8 +95,8 @@ fn other_room() -> RoomState {
 fn a_slug_from_another_rooms_roster_is_not_an_identity() {
     // The isolation guarantee at identity level, and the reason a player in two
     // campaigns holds two slugs. `hello` accepts a `player_id` only if it names
-    // a slot in *this* room's roster, so a stale `localStorage` value — or a
-    // hand-typed one — falls back to the picker rather than becoming a person
+    // a slot in this room's roster, so a stale `localStorage` value (or a
+    // hand-typed one) falls back to the picker instead of becoming a person
     // nobody at this table is.
     let mut state = other_room();
     let mut rx = connect(&mut state, ClientId(1));
@@ -184,9 +183,9 @@ fn a_new_room_starts_with_an_empty_board() {
     assert!(state.walls.is_empty());
     assert!(state.shapes.is_empty());
     assert!(state.initiative.entries.is_empty());
-    // The board it stands on is the built-in placeholder rather than nothing.
+    // The board it stands on is the built-in placeholder, not nothing.
     // `MapInfo::default` has no URL, and a client handed one loads no image,
-    // builds no stage and draws nothing — a new room would open black. See
+    // builds no stage and draws nothing: a new room would open black. See
     // `blank`.
     assert_eq!(state.map.url, BUILT_IN_MAP);
     assert!(!state.map.fog, "and nothing on it is hidden yet");
@@ -196,7 +195,7 @@ fn a_new_room_starts_with_an_empty_board() {
 fn a_new_rooms_first_command_is_undoable() {
     // `blank` ends in `floor` like both its neighbours. Without it the first
     // thing the DM does in a fresh room becomes the bottom of the ring and
-    // cannot be taken back — see `docs/undo.md`.
+    // can't be taken back. See `docs/undo.md`.
     let mut state = other_room();
     let dm = ClientId(1);
     let _rx = join_as_dm(&mut state, dm);

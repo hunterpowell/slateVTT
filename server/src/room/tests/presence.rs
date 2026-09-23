@@ -1,9 +1,9 @@
 //! Who is here, and what colour they draw in. See `docs/presence.md`.
 //!
-//! **Two features that share a strip and share almost nothing else**, which is
-//! why one file holds both: presence is the room reporting on its own sockets
-//! and belongs to nobody, and a colour is a player's own state written into a
-//! table everybody reads. The assertions split the same way — the first half is
+//! Two features that share a strip and little else, which is why one file
+//! holds both: presence is the room reporting on its own sockets and belongs
+//! to nobody, and a colour is a player's own state written into a table
+//! everybody reads. The assertions split the same way. The first half is
 //! about frames that arrive with no command behind them, and the second is
 //! mostly about frames that never left.
 
@@ -21,7 +21,7 @@ fn told(rx: &mut mpsc::Receiver<ServerMsg>) -> Vec<Vec<Owner>> {
         .collect()
 }
 
-/// Every colour table one connection was sent. `told`'s twin.
+/// Every colour table one connection was sent. Like `told`, for colours.
 fn palettes(rx: &mut mpsc::Receiver<ServerMsg>) -> Vec<Colours> {
     drain_all(rx)
         .into_iter()
@@ -42,9 +42,8 @@ fn pick(colour: u8) -> ClientMsg {
 
 /// A socket going away, as the actor loop's `Disconnected` arm does it.
 ///
-/// That arm is now one call, so this is it rather than a copy of it — which is
-/// the point of the extraction: a departure that these tests drive and a
-/// departure the loop drives cannot drift apart any more.
+/// That arm is one call, so this calls it instead of copying it, and a
+/// departure these tests drive can't drift from one the loop drives.
 fn leaves(state: &mut RoomState, client: ClientId) {
     state.remove_client(client);
 }
@@ -65,15 +64,15 @@ fn joining_tells_everyone_already_here() {
         "the DM is told the table filled up"
     );
     // Drained by the helper, so this says only that the join left nothing extra
-    // behind — the arrival learned who was here from its `Welcome`.
+    // behind: the arrival learned who was here from its `Welcome`.
     assert_eq!(told(&mut saelyn), Vec::<Vec<Owner>>::new());
 }
 
 #[test]
 fn the_join_snapshot_and_the_delta_agree() {
     // Invariant 3 on a field it would be easy to send as a delta and forget on
-    // the snapshot — in which case the strip stays blank until the next person
-    // moves, which reads as nobody being here.
+    // the snapshot. Then the strip stays blank until the next person moves,
+    // which reads as nobody being here.
     let mut state = room();
     let _dm = join_as_dm(&mut state, ClientId(1));
     let _saelyn = join_as_player(&mut state, ClientId(2), "saelyn");
@@ -143,7 +142,7 @@ fn the_dm_leaving_is_what_the_table_is_told() {
 
 #[test]
 fn a_socket_that_never_claimed_a_slot_is_nobody() {
-    // Somebody sitting on the identity picker is connected and is not *here* —
+    // Somebody sitting on the identity picker is connected and is not here:
     // there is no `Owner` to put on the strip, and `refresh_pickers` is what
     // that connection is told instead.
     let mut state = room();
@@ -169,9 +168,8 @@ fn a_socket_that_never_claimed_a_slot_is_nobody() {
 
 #[test]
 fn who_is_connected_is_not_part_of_the_room() {
-    // The sentence the `Disconnected` arm already held, asserted: presence marks
-    // nothing dirty, so it can neither reach the disk nor be undone back into
-    // existence.
+    // Presence marks nothing dirty, so it can neither reach the disk nor be
+    // undone back into existence.
     assert!(!persists(&Event::PresenceChanged));
 
     let mut state = room();
@@ -187,24 +185,23 @@ fn who_is_connected_is_not_part_of_the_room() {
 
 /// A client dropped for a full mailbox leaves the same way one that hung up does.
 ///
-/// `dispatch` drops a wedged peer rather than stalling the room on it, and it
-/// used to do that with a bare `clients.remove`. The socket closing does raise
-/// `Disconnected`, but that arm is guarded on the entry still being there — so
-/// the guard was false by the time the news arrived and every departure step was
-/// skipped. What the table saw was a name in the presence strip belonging to
-/// nobody, a roster slot that could not be claimed, and a half-drawn line that
-/// stayed until somebody reloaded.
+/// `dispatch` drops a wedged peer instead of stalling the room on it. The
+/// socket closing then raises `Disconnected`, but that arm is guarded on the
+/// entry still being there, so a bare `clients.remove` in `dispatch` would
+/// skip every departure step. The table would see a name in the presence
+/// strip belonging to nobody, a roster slot that couldn't be claimed, and a
+/// half-drawn line that stayed until somebody reloaded.
 ///
-/// The assertion is what the *survivors* were sent, which is the only place the
-/// bug was ever visible: the room's own `here` was right all along.
+/// The assertion is what the survivors were sent, because that's the only
+/// place the bug shows: the room's own `here` is right either way.
 #[test]
 fn a_wedged_client_leaves_as_loudly_as_one_that_hung_up() {
     let mut state = room();
     let mut dm = join_as_dm(&mut state, ClientId(1));
 
-    // A mailbox of two, filled deliberately below. The real one is 256 and takes
-    // a stalled TCP peer to fill; the mechanism is the same and this does not
-    // need a network to reach it.
+    // A mailbox of two, filled below. The real one is 256 and takes a stalled
+    // TCP peer to fill; the mechanism is the same and this doesn't need a
+    // network to reach it.
     const MAILBOX: usize = 2;
     let (tx, mut wedged_rx) = mpsc::channel(MAILBOX);
     state.pending.insert(ClientId(2), tx);
@@ -226,13 +223,13 @@ fn a_wedged_client_leaves_as_loudly_as_one_that_hung_up() {
         },
     );
 
-    // Everybody's join traffic off the queues, saelyn's included — so what
+    // Everybody's join traffic off the queues, saelyn's included, so what
     // follows is the only thing their mailbox is asked to hold.
     settle(&mut [&mut dm, &mut watcher, &mut wedged_rx]);
     assert!(state.clients.contains_key(&ClientId(2)), "saelyn is here");
 
     // One frame more than the mailbox holds, and nothing on the other end is
-    // reading. The last one cannot be delivered, which is the whole trigger.
+    // reading. The last one can't be delivered, and that is the trigger.
     let overflow = vec![Event::PresenceChanged; MAILBOX + 1];
     state.dispatch(ClientId(1), &overflow);
 
@@ -409,9 +406,8 @@ fn a_colour_survives_a_restart() {
 
 #[test]
 fn picking_a_colour_is_not_a_step_the_dm_can_take_back() {
-    // Milestone 22's rule: the ring holds state the undoing hand wrote. This is
-    // the second thing to need the exemption by hand, which is what turns that
-    // rule from a special case into a rule.
+    // The ring holds only state the DM could have written. Colours are the
+    // second thing exempted from it by hand, after the scratchpads.
     assert!(undid(&pick(2)).is_none());
 
     let mut state = room();

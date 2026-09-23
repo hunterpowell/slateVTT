@@ -14,8 +14,8 @@ const OGRE_CELL: Cell = (5, 1);
 #[test]
 fn an_unfogged_map_sends_no_fog_at_all_and_hides_nobody() {
     // `None` is both "this map is not fogged" and "there is nothing to
-    // show", indistinguishable from the client side — the trick `staged`
-    // plays, and the reason turning fog off needs no second field.
+    // show", indistinguishable from the client side. `staged` works the same
+    // way, and it's why turning fog off needs no second field.
     let state = room();
     assert_eq!(state.snapshot_for(&as_player("saelyn")).fog, None);
     assert_eq!(state.snapshot_for(&Identity::Dm).fog, None);
@@ -58,7 +58,7 @@ fn a_wall_between_them_blocks_sight_and_a_door_in_it_opens_again() {
 
 #[test]
 fn walking_through_the_doorway_introduces_the_monster_to_the_table() {
-    // The milestone in one test. The player moves; the *monster* is what the
+    // Line of sight in one test. The player moves; the monster is what the
     // frame that follows is about, and it is a whole token because they have
     // never held it.
     let mut state = fog_room(60.0);
@@ -69,8 +69,8 @@ fn walking_through_the_doorway_introduces_the_monster_to_the_table() {
     assert!(!sees_the_ogre(&state));
     drain(&mut rx);
 
-    // Past the wall. Walls block sight and never movement — decided, not
-    // deferred — so this is an ordinary drop that happens to cross one.
+    // Past the wall. Walls block sight and never movement (decided, not
+    // deferred), so this is an ordinary drop that happens to cross one.
     state.handle(
         ClientId(2),
         ClientMsg::MoveToken {
@@ -136,8 +136,8 @@ fn walking_back_out_takes_the_monster_off_their_board() {
 
 #[test]
 fn a_drag_frame_does_not_move_the_fog() {
-    // The roadmap's rule: recompute on the drop. The raycast is cheap enough
-    // at 30 Hz and shipping a packed bitset to six people that often is not.
+    // Recompute on the drop, not on a drag frame. The raycast is cheap enough
+    // at 30 Hz, but shipping a packed bitset to six people that often isn't.
     let mut state = fog_room(60.0);
     let mut rx = join_as_dm(&mut state, ClientId(1));
     drain(&mut rx);
@@ -164,9 +164,9 @@ fn a_drag_frame_does_not_move_the_fog() {
 
 #[test]
 fn the_fog_frame_reaches_the_table_and_the_dm_alike() {
-    // The opposite of the walls, deliberately. The geometry is the secret;
-    // the shadow it casts is the thing everybody is playing with, and the DM
-    // needs it to see what the table can see.
+    // The opposite of the walls. The geometry is the secret; the shadow it
+    // casts is the thing everybody is playing with, and the DM needs it to
+    // see what the table can see.
     let mut state = fog_room(60.0);
     let mut dm = join_as_dm(&mut state, ClientId(1));
     let mut player = join_as_player(&mut state, ClientId(2), "saelyn");
@@ -190,7 +190,7 @@ fn the_fog_frame_reaches_the_table_and_the_dm_alike() {
 
 #[test]
 fn explored_terrain_is_remembered_and_the_creatures_on_it_are_not() {
-    // Terrain gates on `revealed`, tokens gate on `visible`. The party walks
+    // Terrain gates on `known`, tokens gate on `visible`. The party walks
     // away and keeps the map; the ogre standing on it goes.
     let mut state = fog_room(60.0);
     let _dm = join_as_dm(&mut state, ClientId(1));
@@ -214,7 +214,7 @@ fn a_new_map_forgets_where_the_party_has_been() {
     let mut state = fog_room(30.0);
     let _dm = join_as_dm(&mut state, ClientId(1));
     // Out and back, so there is terrain the party remembers and is not
-    // standing on — which is the only kind a sweep can be seen to remove.
+    // standing on. That is the only kind a sweep can be seen to remove.
     walk(&mut state, 20.5);
     walk(&mut state, 1.5);
     assert!(state.revealed.contains(&(20, 1)), "explored on the way");
@@ -280,9 +280,9 @@ fn the_two_reasons_a_token_is_unseen_compose_with_the_third() {
 
 #[test]
 fn a_creature_that_walks_out_of_sight_loses_its_row_on_the_tables_panel() {
-    // A feature that hides something and leaves it named in a panel has not
-    // hidden it. Milestone 11 learned that of `hidden`; it is just as true
-    // of a monster the party can no longer see.
+    // A feature that hides something and leaves it named in a panel hasn't
+    // hidden it. That holds for `hidden`, and just as much for a monster the
+    // party can no longer see.
     let mut state = fog_room(60.0);
     let _dm = join_as_dm(&mut state, ClientId(1));
     state.handle(
@@ -309,8 +309,8 @@ fn a_creature_that_walks_out_of_sight_loses_its_row_on_the_tables_panel() {
 
 #[test]
 fn an_aura_on_a_creature_in_the_dark_is_not_sent() {
-    // The arm `shapes_for` grew in milestone 14 because `hidden` already
-    // existed. It reaches its third reason here without another line.
+    // The anchored-shape arm of `shapes_for` asks `unseen_by_table`, so line
+    // of sight is covered without another line.
     let mut state = fog_room(60.0);
     let _dm = join_as_dm(&mut state, ClientId(1));
     state.handle(
@@ -335,10 +335,9 @@ fn an_aura_on_a_creature_in_the_dark_is_not_sent() {
 
 #[test]
 fn renaming_a_creature_in_the_dark_tells_the_table_nothing() {
-    // The trap this milestone had to fix everywhere `was_unseen` is read: it
-    // used to mean `Token::unseen`, so an edit to a monster the party cannot
-    // see would have sent them a `TokenRemoved` naming an id they had never
-    // held — which announces that the id exists.
+    // `was_unseen` must mean `unseen_by_table`, not `Token::unseen`. Otherwise
+    // an edit to a monster the party can't see sends them a `TokenRemoved`
+    // naming an id they never held, which announces that the id exists.
     let mut state = fog_room(10.0);
     let _dm = join_as_dm(&mut state, ClientId(1));
     let mut rx = join_as_player(&mut state, ClientId(2), "saelyn");
@@ -358,9 +357,9 @@ fn renaming_a_creature_in_the_dark_tells_the_table_nothing() {
 
 #[test]
 fn a_player_token_is_always_visible_to_the_table_and_always_a_torch() {
-    // By construction rather than by rule: a player's token is a vision
-    // source, so the cell it stands in is lit by it. That is also how handing
-    // a token to a player grants sight with no extra rule.
+    // No rule needed: a player's token is a vision source, so the cell it
+    // stands in is lit by it. That is also how handing a token to a player
+    // grants sight with no extra rule.
     let mut state = fog_room(10.0);
     let _dm = join_as_dm(&mut state, ClientId(1));
 
@@ -393,9 +392,9 @@ fn a_hidden_player_token_lights_nothing() {
 
 #[test]
 fn the_play_area_bounds_what_the_party_can_explore() {
-    // The roadmap's implicit wall: vision does not spill into the void off
-    // the edge of the map, and nothing in the wall editor produces that
-    // boundary because it is already on `MapInfo`.
+    // An implicit wall: vision doesn't spill into the void off the edge of the
+    // map, and nothing in the wall editor produces that boundary because it
+    // is already on `MapInfo`.
     let mut state = fog_room(200.0);
     let _dm = join_as_dm(&mut state, ClientId(1));
     assert!(state.revealed.contains(&(20, 1)), "unbounded to begin with");
@@ -459,8 +458,8 @@ fn the_fog_survives_the_save_file() {
     let _dm = join_as_dm(&mut state, ClientId(1));
     let explored = state.revealed.clone();
 
-    // Straight out of the constructor, before `spawn`'s recompute — which is
-    // the only place the two halves can be told apart.
+    // Straight out of the constructor, before `spawn`'s recompute. That is the
+    // only place the two halves can be told apart.
     let cold = RoomState::restored(state.to_saved(), SECRET.to_owned(), roster_from(&ROSTER));
     assert_eq!(cold.revealed, explored, "explored terrain is on disk");
     assert!(cold.visible.is_empty(), "and sight is not");
@@ -483,8 +482,8 @@ fn the_fog_survives_the_save_file() {
 
 /// The live map recalibrated to itself with the lights worked out a room at a
 /// time. The URL and the grid are the ones `fog_room` is already on, so this is
-/// a recalibration rather than a load and it sweeps nothing — which is the point
-/// of one of the tests below.
+/// a recalibration, not a load, and it sweeps nothing. One of the tests below
+/// depends on that.
 fn light_rooms(state: &mut RoomState, dm: ClientId, vision_ft: f32) {
     state.handle(
         dm,
@@ -502,16 +501,15 @@ fn spur() -> ClientMsg {
 }
 
 /// The same dividing line carried past anywhere a fill could reach, with a door
-/// hung in it on **row 1** — the row both tokens stand on.
+/// hung in it on **row 1**, the row both tokens stand on.
 ///
 /// It has to run that far because this map has no play area: a fill walks, so a
-/// wall it can go round the end of is a wall it goes round. That is the mode
-/// failing *loudly*, which is the property milestone 21 is named for.
+/// wall it can go round the end of is a wall it goes round. That makes the mode
+/// fail visibly instead of silently.
 ///
-/// The door is on the sight line on purpose, and it moved there when the flood
-/// stopped passing open doors. What an open door hands over now is the ray
-/// through it, so a door hung anywhere else is a door that changes nothing —
-/// which is the whole difference this test exists to photograph.
+/// The door is on the sight line because the flood doesn't pass open doors.
+/// What an open door hands over is the ray through it, so a door hung anywhere
+/// else changes nothing and this test would show no difference.
 fn barrier() -> [ClientMsg; 3] {
     [
         wall(256.0, -1280.0, 256.0, 64.0, false),
@@ -522,9 +520,9 @@ fn barrier() -> [ClientMsg; 3] {
 
 #[test]
 fn the_mode_is_the_maps_and_switching_it_forgets_nothing() {
-    // A lighting change is not a reason for the party to forget the dungeon,
-    // exactly as turning the radius up is not: `sweep_board` asks about the
-    // board's *shape*, and this changes none of it.
+    // A lighting change is no reason for the party to forget the dungeon, any
+    // more than turning the radius up is: `sweep_board` asks about the board's
+    // shape, and this changes none of it.
     let mut state = fog_room(60.0);
     let dm = join_as_dm(&mut state, ClientId(1));
     let explored = state.revealed.clone();
@@ -541,7 +539,7 @@ fn the_mode_is_the_maps_and_switching_it_forgets_nothing() {
 
 #[test]
 fn the_room_reaches_a_creature_the_rays_cannot() {
-    // The milestone in one test, asked of the room rather than of the geometry:
+    // Room lighting in one test, asked of the room instead of the geometry:
     // the same wall, the same two tokens, and the mode is the only difference
     // between the table holding the ogre and not.
     let mut state = fog_room(60.0);
@@ -558,9 +556,9 @@ fn the_room_reaches_a_creature_the_rays_cannot() {
 
 #[test]
 fn a_shut_door_seals_the_room_and_the_table_is_told_when_it_swings() {
-    // What the mode buys past the reveal itself: a door is load-bearing rather
-    // than decorative. Both halves are asserted from the table's side — the
-    // creature that never arrived, and the frames that carry it when it does.
+    // What the mode adds past the reveal itself: a door changes what the table
+    // sees. Both halves are asserted from the table's side (the creature that
+    // never arrived, and the frames that carry it when it does).
     let mut state = fog_room(60.0);
     let _dm = join_as_dm(&mut state, ClientId(1));
     light_rooms(&mut state, ClientId(1), 60.0);
@@ -588,7 +586,7 @@ fn a_shut_door_seals_the_room_and_the_table_is_told_when_it_swings() {
     );
     // The half that says which of the two it let through. The flood bounds on
     // the door whatever it is swung to, so what arrives is the ray along row 1
-    // and not the room around it — a creature standing three squares off that
+    // and not the room around it. A creature standing three squares off that
     // line is still in the dark.
     assert!(
         !state.visible.contains(&(4, 4)),
@@ -610,9 +608,9 @@ fn a_shut_door_seals_the_room_and_the_table_is_told_when_it_swings() {
 
 #[test]
 fn a_room_bigger_than_the_radius_stops_at_the_radius() {
-    // The bound that keeps `vision_ft` meaningful in both modes rather than
-    // dead in one — and the answer to a hall that lights short, which is a map
-    // whose radius should be raised rather than a second number.
+    // The bound that keeps `vision_ft` meaningful in both modes instead of
+    // dead in one. A hall that lights short needs its map's radius raised, not
+    // a second number.
     let mut state = fog_room(15.0);
     let _dm = join_as_dm(&mut state, ClientId(1));
     state.handle(ClientId(1), ClientMsg::ResetFog);
@@ -644,10 +642,10 @@ fn walled_room() -> (RoomState, mpsc::Receiver<ServerMsg>) {
 
 #[test]
 fn the_table_is_shown_one_cell_of_ground_past_the_wall() {
-    // `snapToCorner` puts masonry *between* cell centres, so the last cell a
-    // ray reaches is the floor inside the room and the drawn wall is past it.
-    // Fog stopping there shows the table floor, then nothing, and the room
-    // reads as a hole rather than as a room.
+    // `snapToCorner` puts walls between cell centres, so the last cell a ray
+    // reaches is the floor inside the room and the drawn wall is past it. Fog
+    // stopping there shows the table floor, then nothing, and the room looks
+    // like a hole.
     let (state, _dm) = walled_room();
 
     assert!(state.visible.contains(&(3, 1)), "the floor inside the room");
@@ -667,8 +665,8 @@ fn the_table_is_shown_one_cell_of_ground_past_the_wall() {
 
 #[test]
 fn a_creature_standing_in_the_fringe_is_still_not_on_the_tables_board() {
-    // The whole of what the fringe is allowed to do. Terrain gates on `known`
-    // and creatures gate on `visible`; widening the first and not the second is
+    // The limit on what the fringe may do. Terrain gates on `known` and
+    // creatures gate on `visible`; widening the first and not the second is
     // what keeps an ogre pressed against the far side of a wall a surprise.
     let (mut state, _dm) = walled_room();
     let mut rx = join_as_player(&mut state, ClientId(2), "saelyn");
@@ -766,10 +764,10 @@ fn the_fringe_is_derived_and_never_reaches_the_save_file() {
 
 #[test]
 fn blacking_out_a_cell_takes_the_creature_standing_in_it_off_the_table() {
-    // The question the roadmap left open, answered: `Dark` subtracts from
-    // `visible`, so `in_sight` says no and the token leaves through the
-    // machinery `hidden` already uses. A DM who blacks out a room and finds
-    // the monster still on the table's board has not blacked out the room.
+    // `Dark` subtracts from `visible`, so `in_sight` says no and the token
+    // leaves through the same path `hidden` uses. A DM who blacks out a room
+    // and finds the monster still on the table's board hasn't blacked out the
+    // room.
     let mut state = fog_room(60.0);
     let _dm = join_as_dm(&mut state, ClientId(1));
     assert!(sees_the_ogre(&state), "lit to begin with");
@@ -785,10 +783,10 @@ fn blacking_out_a_cell_takes_the_creature_standing_in_it_off_the_table() {
 
 #[test]
 fn a_blacked_out_cell_stays_dark_with_a_torch_standing_in_it() {
-    // **The whole reason this is a mask rather than a write into `revealed`.**
-    // A hide that merely cleared the set would evaporate the next time
-    // somebody carried a light past, which is the one thing a manual override
-    // must not do — and the failure would look like a bug in the raycast.
+    // **Why this is a mask and not a write into `revealed`.** A hide that
+    // only cleared the set would be undone the next time somebody carried a
+    // light past, which a manual override must never do, and the failure
+    // would look like a bug in the raycast.
     let mut state = fog_room(60.0);
     let _dm = join_as_dm(&mut state, ClientId(1));
     state.handle(ClientId(1), paint(&[OGRE_CELL], Some(Override::Dark)));
@@ -803,9 +801,9 @@ fn a_blacked_out_cell_stays_dark_with_a_torch_standing_in_it() {
         !state.known.contains(&OGRE_CELL),
         "and it did not enter what the table is shown by the back door either"
     );
-    // The other direction, and the half 16b had backwards: the torch really
-    // did reach the cell, and the mask hides that rather than destroying it.
-    // Subtracting from memory here is what made a `Dark` fill unliftable.
+    // The other direction: the light really did reach the cell, and the mask
+    // hides that instead of destroying it. Subtracting from memory here would
+    // make a `Dark` fill impossible to lift.
     assert!(
         state.revealed.contains(&OGRE_CELL),
         "the rays are not what the DM is editing"
@@ -821,11 +819,11 @@ fn a_blacked_out_cell_stays_dark_with_a_torch_standing_in_it() {
 
 #[test]
 fn clearing_a_ground_fill_takes_the_ground_back() {
-    // The mirror of the test above, and the bug that sent me looking: an
-    // `Explored` paint was unioned into `revealed` on every pass, so the cells
-    // outlived the paint that put them there and a fill was permanent. One
-    // stray click through a gap in a traced wall could hand over the whole
-    // dungeon with no way back short of reloading the map.
+    // The mirror of the test above. If an `Explored` paint were unioned into
+    // `revealed` on every pass, the cells would outlive the paint that put
+    // them there and a fill would be permanent. One stray click through a gap
+    // in a traced wall could hand over the whole dungeon with no way back
+    // short of reloading the map.
     let mut state = fog_room(10.0);
     let _dm = join_as_dm(&mut state, ClientId(1));
     state.handle(ClientId(1), paint(&[(9, 1)], Some(Override::Explored)));
@@ -846,7 +844,7 @@ fn clearing_a_ground_fill_takes_the_ground_back() {
 
 #[test]
 fn the_two_reveal_brushes_differ_over_who_is_standing_there() {
-    // Terrain and creatures, which is the split the whole feature is built
+    // Terrain and creatures, which is the split the feature is built
     // on. `Explored` hands over the ground; `Lit` hands over what is on it.
     let mut state = fog_room(10.0);
     let _dm = join_as_dm(&mut state, ClientId(1));
@@ -868,9 +866,9 @@ fn the_two_reveal_brushes_differ_over_who_is_standing_there() {
 
 #[test]
 fn revealing_the_ground_does_not_dim_a_square_the_rays_already_lit() {
-    // `Explored` is a floor and not an assignment. Making it demote a lit cell
-    // would be a fifth state — "the room but not the ambush in it" — and that
-    // is what `hidden` is.
+    // `Explored` is a floor, not an assignment. Making it demote a lit cell
+    // would be a fifth state ("the room but not the ambush in it"), and that
+    // is what `hidden` is for.
     let mut state = fog_room(60.0);
     let _dm = join_as_dm(&mut state, ClientId(1));
     state.handle(ClientId(1), paint(&[OGRE_CELL], Some(Override::Explored)));
@@ -882,8 +880,8 @@ fn revealing_the_ground_does_not_dim_a_square_the_rays_already_lit() {
 #[test]
 fn a_player_keeps_their_own_token_in_a_blacked_out_room() {
     // `in_sight` returns true early for anything a player owns, so `Dark`
-    // stops short of deleting the party from their own screens. Deliberate:
-    // a magical darkness they cannot see out of is still one they are in.
+    // stops short of deleting the party from their own screens: a magical
+    // darkness they can't see out of is still one they are in.
     let mut state = fog_room(60.0);
     let _dm = join_as_dm(&mut state, ClientId(1));
     state.handle(ClientId(1), paint(&[(1, 1)], Some(Override::Dark)));
@@ -941,9 +939,9 @@ fn resetting_forgets_the_evening_and_the_paint_together() {
 
 #[test]
 fn resetting_the_fog_tells_the_table_and_not_only_the_dm() {
-    // `OverridesChanged` reaches the DM alone, so the whole of the table's
-    // news is the `FogChanged` beside it — and the board going dark under
-    // them is the one frame they most need.
+    // `OverridesChanged` reaches the DM alone, so the table's only news is the
+    // `FogChanged` beside it, and the board going dark under them is the one
+    // frame they most need.
     let mut state = fog_room(10.0);
     let _dm = join_as_dm(&mut state, ClientId(1));
     walk(&mut state, 5.5);
@@ -963,9 +961,8 @@ fn resetting_the_fog_tells_the_table_and_not_only_the_dm() {
 
 #[test]
 fn the_override_reaches_the_dm_or_nobody() {
-    // The walls' rule, arriving for the third time. What the DM decided is
-    // theirs; the difference it made is what the table is sent, in the
-    // `FogChanged` beside it.
+    // The walls' rule again. What the DM decided is theirs; the difference it
+    // made is what the table is sent, in the `FogChanged` beside it.
     let mut state = fog_room(60.0);
     let _dm = join_as_dm(&mut state, ClientId(1));
     let mut rx = join_as_player(&mut state, ClientId(2), "saelyn");
@@ -998,9 +995,9 @@ fn the_override_reaches_the_dm_or_nobody() {
 
 #[test]
 fn painting_over_ground_nobody_could_see_is_no_news_at_all() {
-    // The gate that keeps `FogChanged` honest. A DM blacking out a corner of
-    // the map the party has never been near changes nothing the table holds,
-    // and a frame saying so would say *when* the DM was working.
+    // The gate on `FogChanged`. A DM blacking out a corner of the map the
+    // party has never been near changes nothing the table holds, and a frame
+    // saying so would tell them when the DM was working.
     let mut state = fog_room(10.0);
     let _dm = join_as_dm(&mut state, ClientId(1));
     let mut rx = join_as_player(&mut state, ClientId(2), "saelyn");
@@ -1064,23 +1061,23 @@ fn an_override_is_refused_where_it_could_do_nothing() {
     );
 }
 
-/// The assertion whose absence was the bug.
+/// The frame-size check for the largest override.
 ///
 /// Every other test here drives `check` directly, which is the only way to see
-/// what a client was not sent — and it is also a way to pass green over a path
-/// production cannot reach. `MAX_OVERRIDE_CELLS` shipped at 50,000 against a
-/// 16 KiB frame, so the refusal the test above asserts was undeliverable: the
-/// socket died on the read and the DM's page reloaded instead.
+/// what a client was not sent. It is also a way to pass green over a path
+/// production can't reach: if `MAX_OVERRIDE_CELLS` doesn't fit in a 16 KiB
+/// frame, the refusal the test above asserts is undeliverable, because the
+/// socket dies on the read and the DM's page reloads instead.
 ///
-/// So this one asserts on the bytes rather than on the room. Worst case is what
-/// matters — four-digit coordinates, `[1234,5678],` at 12 bytes — because a cap
-/// that only fits at two digits fails on a big map, which is the map a fill that
-/// size comes from.
+/// So this one asserts on the bytes, not on the room. Worst case is what
+/// matters (four-digit coordinates, `[1234,5678],` at 12 bytes), because a cap
+/// that only fits at two digits fails on a big map, which is the map a fill
+/// that size comes from.
 ///
-/// It builds the frame rather than serialising a `ClientMsg`, which is inbound
-/// and so carries no `Serialize`. That is the better half of the bargain: the
-/// text below is what a client actually puts on the wire, and deserialising it
-/// back is what proves the shape being measured is the real one.
+/// It builds the frame instead of serialising a `ClientMsg`, which is inbound
+/// and so has no `Serialize`. That is also the better test: the text below is
+/// what a client actually puts on the wire, and deserialising it back proves
+/// the shape being measured is the real one.
 #[test]
 fn largest_override_fits_in_a_frame() {
     // Four digits in both coordinates, and every cell distinct, so nothing here
@@ -1123,9 +1120,9 @@ fn largest_override_fits_in_a_frame() {
 
 #[test]
 fn moving_the_lattice_forgets_the_overrides_and_a_new_map_does_too() {
-    // Cells, like the two sets they mask — so the squares moving underneath
-    // them is enough, and this is where they part company with the walls they
-    // are stored beside, which trace the art and survive a recalibration.
+    // Cells, like the two sets they mask, so the squares moving underneath
+    // them is enough to clear them. The walls stored beside them trace the art
+    // and survive a recalibration.
     for (what, msg) in [
         (
             "a recalibration",
@@ -1181,7 +1178,7 @@ fn stage_fogged(state: &mut RoomState, dm: ClientId) {
 #[test]
 fn paint_on_the_staged_board_does_not_touch_the_live_one() {
     // Two boards, two masks, and the flag on the command is the only thing
-    // telling them apart — exactly as it is for a token's position and its plan.
+    // telling them apart, as it is for a token's position and its plan.
     let mut state = fog_room(60.0);
     let _dm = join_as_dm(&mut state, ClientId(1));
     stage_fogged(&mut state, ClientId(1));
@@ -1208,9 +1205,9 @@ fn paint_on_the_staged_board_does_not_touch_the_live_one() {
 
 #[test]
 fn painting_the_staged_board_moves_no_fog_at_all() {
-    // The live board's paint is never the whole news — `refresh_fog` reports the
-    // shadow it cast beside it. The staged board's *is* the whole news, and
-    // correctly: no ray has ever been cast on a map the table has not been shown.
+    // The live board's paint is never the only news: `refresh_fog` reports the
+    // shadow it cast beside it. The staged board's is the only news, and
+    // correctly: no ray has been cast on a map the table hasn't been shown.
     let mut state = fog_room(60.0);
     let mut dm_rx = join_as_dm(&mut state, ClientId(1));
     stage_fogged(&mut state, ClientId(1));
@@ -1235,9 +1232,9 @@ fn painting_the_staged_board_moves_no_fog_at_all() {
 
 #[test]
 fn the_staged_fog_switch_is_what_a_staged_paint_is_checked_against() {
-    // The whole of what staging changed in this refusal: a fogged staged map
-    // may be painted while the unfogged live board under it may not, which is
-    // the DM preparing a dungeon from inside a meadow.
+    // What staging changes in this refusal: a fogged staged map may be painted
+    // while the unfogged live board under it may not, which is the DM
+    // preparing a dungeon while the table is in a meadow.
     let mut state = room();
     let _dm = join_as_dm(&mut state, ClientId(1));
     assert!(!state.map.fog, "the live board is a meadow");
@@ -1290,9 +1287,9 @@ fn promoting_hands_the_party_the_paint_prepared_for_them() {
 
 #[test]
 fn a_staged_recalibration_drops_the_paint_and_keeps_the_walls() {
-    // The live board's rule, mirrored — which is the argument for the two slots
-    // holding the same three things. A wall is image pixels and still traces the
-    // same painted line; an override is a cell whose square has just moved.
+    // The live board's rule, mirrored, which is the argument for the two slots
+    // holding the same three things. A wall is image pixels and still traces
+    // the same painted line; an override is a cell whose square has just moved.
     let mut state = room();
     let _dm = join_as_dm(&mut state, ClientId(1));
     stage_fogged(&mut state, ClientId(1));
@@ -1362,9 +1359,9 @@ fn discarding_the_staged_map_takes_its_walls_and_its_paint_with_it() {
 
 #[test]
 fn a_player_is_never_sent_the_staged_boards_paint() {
-    // The override travels like the walls rather than like the fog, and staging
-    // did not change that — it is what the DM authored, on a map the table has
-    // not been shown, which is the same rule twice over.
+    // The override travels like the walls, not like the fog, and staging
+    // doesn't change that: it is what the DM authored, on a map the table
+    // hasn't been shown, which is the same rule twice over.
     let mut state = fog_room(60.0);
     let dm = ClientId(1);
     let mut _dm_rx = join_as_dm(&mut state, dm);
@@ -1389,9 +1386,8 @@ fn a_player_is_never_sent_the_staged_boards_paint() {
 
 #[test]
 fn a_creature_dragged_out_of_sight_is_taken_off_the_tables_board() {
-    // The bug the screenshots showed: the DM drags a monster from the light
-    // into the dark and the table is left with it standing at the last cell a
-    // drag frame reached them, forever.
+    // The DM drags a monster from the light into the dark. The table must not
+    // be left with it standing at the last cell a drag frame reached them.
     let mut state = fog_room(60.0);
     let _dm = join_as_dm(&mut state, ClientId(1));
     state.handle(ClientId(1), between(false));
@@ -1448,8 +1444,8 @@ fn a_creature_dragged_out_of_sight_is_taken_off_the_tables_board() {
 fn a_creature_dragged_around_in_the_dark_is_still_never_mentioned() {
     // The other half of the one above, and the half that is easy to break
     // fixing it: a `TokenRemoved` naming an id they have never held would
-    // announce that the id exists. `was_unseen` is the whole guard, and the
-    // record `shown` now keeps has to agree with it frame by frame.
+    // announce that the id exists. `was_unseen` is the only guard, and the
+    // record `shown` keeps has to agree with it frame by frame.
     let mut state = fog_room(60.0);
     let _dm = join_as_dm(&mut state, ClientId(1));
     state.handle(ClientId(1), between(false));
@@ -1588,9 +1584,9 @@ fn a_lantern_on_a_player_token_replaces_the_maps_radius() {
 
 #[test]
 fn a_light_nobody_can_see_lights_nothing_whoever_is_holding_it() {
-    // `!unseen()`, the rule vision has always used, arriving for lights: a
-    // creature off the table's board lighting the room for everybody would
-    // want explaining. A staged one is the same sentence about the next map.
+    // `!unseen()`, the rule vision uses, applied to lights: a creature off the
+    // table's board lighting the room for everybody would want explaining. A
+    // staged one is the same sentence about the next map.
     for take_away in [true, false] {
         let mut state = fog_room(30.0);
         let _dm = join_as_dm(&mut state, ClientId(1));
@@ -1661,10 +1657,10 @@ fn one_light_never_switches_on_the_next() {
 
 #[test]
 fn a_players_copy_of_a_token_never_carries_its_light() {
-    // What a light does reaches the table as fog; what it *is* is the DM's
+    // What a light does reaches the table as fog; what it is is the DM's
     // authoring, and goes the way the walls go. Both routes out, because
     // filtering every delta correctly and then handing over the whole world on
-    // connect is the way this has gone wrong before.
+    // connect is the most common way to leak.
     let mut state = fog_room(30.0);
     let _dm = join_as_dm(&mut state, ClientId(1));
     let mut rx = join_as_player(&mut state, ClientId(2), "saelyn");

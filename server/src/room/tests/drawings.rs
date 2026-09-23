@@ -110,9 +110,8 @@ fn only_the_dm_may_sweep_the_board() {
 
 #[test]
 fn an_aura_on_a_hidden_monster_is_not_on_the_tables_board() {
-    // The leak this milestone had to close early. The roadmap files anchor
-    // visibility under fog of war, but `hidden` exists now, and a shape that
-    // follows a token is that token's position drawn in colour.
+    // A shape that follows a token is that token's position drawn in colour,
+    // so a shape anchored to a hidden token is withheld with it.
     let mut state = room();
     let _dm = join_as_dm(&mut state, ClientId(1));
     state.handle(ClientId(1), create_hidden("Ambusher"));
@@ -130,8 +129,8 @@ fn an_aura_on_a_hidden_monster_is_not_on_the_tables_board() {
     assert_eq!(shapes_seen(&state, &as_player("saelyn")), Vec::new());
     assert_eq!(shapes_seen(&state, &Identity::Dm).len(), 1);
 
-    // And not merely absent from the list — the id must not be in the bytes
-    // at all, which is how invariant 4 has to be checked.
+    // And not only absent from the list: the id must not be in the bytes at
+    // all, which is how invariant 4 has to be checked.
     let json = serde_json::to_string(&state.snapshot_for(&as_player("saelyn"))).expect("encodes");
     assert!(!json.contains(&ambusher.0));
 }
@@ -280,8 +279,8 @@ fn deleting_a_token_takes_what_is_drawn_on_it() {
 
 #[test]
 fn a_new_map_clears_the_drawings_and_a_recalibration_does_not() {
-    // The same split the plans for the next room turn on, and the same arm
-    // that gets missed: a shape describes cells on this board, so a new
+    // The same load-versus-recalibrate split as the planned positions, and the
+    // arm that gets missed: a shape describes cells on this board, so a new
     // image throws it away and correcting the grid must not.
     let mut state = room();
     let _dm = join_as_dm(&mut state, ClientId(1));
@@ -338,8 +337,8 @@ fn a_sketch_reaches_everyone_but_the_client_sweeping_it() {
 
 #[test]
 fn a_sketch_is_never_stored_and_never_saved() {
-    // The whole of what makes a measuring line free: it is not in the room,
-    // so there is nothing to filter, nothing to snapshot, nothing to write.
+    // Why a measuring line costs nothing: it isn't in the room, so there is
+    // nothing to filter, nothing to snapshot, nothing to write.
     let mut state = room();
     let _saelyn = join_as_player(&mut state, ClientId(2), "saelyn");
 
@@ -452,8 +451,8 @@ fn a_drawing_survives_the_save_file() {
 
 #[test]
 fn a_room_saved_before_drawings_existed_still_loads() {
-    // Invariant 2, checked on the field this milestone added rather than
-    // trusted: an older save carries no `shapes` at all.
+    // Invariant 2, checked instead of trusted: an older save carries no
+    // `shapes` at all.
     let saved: Saved = serde_json::from_str("{}").expect("an empty room decodes");
     let restored = reboot(saved);
     assert!(restored.shapes.is_empty());
@@ -463,8 +462,8 @@ fn a_room_saved_before_drawings_existed_still_loads() {
 
 #[test]
 fn a_drawing_on_ground_the_party_has_never_seen_is_withheld() {
-    // 16a left this: an unanchored shape was sent to everyone, so a marker the
-    // DM dropped on an unexplored room drew straight over the table's fog.
+    // An unanchored shape is gated too, so a marker the DM drops on an
+    // unexplored room doesn't draw over the table's fog.
     let mut state = fog_room(10.0);
     let _dm = join_as_dm(&mut state, ClientId(1));
 
@@ -480,8 +479,7 @@ fn a_drawing_on_ground_the_party_has_never_seen_is_withheld() {
 
 #[test]
 fn a_drawing_on_explored_ground_stays_after_the_party_walks_away() {
-    // Gated on `revealed` and not on `visible`, which is the call this half of
-    // the milestone turned on: a shape is painted on the floor rather than
+    // Gated on `known`, not on `visible`: a shape is painted on the floor, not
     // standing on it, so it belongs with the terrain. Gating on current sight
     // would take a player's own marker away as they left the room, and make
     // every drawing on the board flicker as the party moved.
@@ -507,10 +505,9 @@ fn a_drawing_on_explored_ground_stays_after_the_party_walks_away() {
 
 #[test]
 fn turning_the_fog_off_does_not_take_every_drawing_with_it() {
-    // The guard in `shape_seen`, and it is load-bearing rather than defensive:
-    // `revealed` is empty on an unfogged map, so without it every loose shape
-    // in the room would vanish from every player's board the moment the switch
-    // was flipped.
+    // The guard in `shape_seen`. `known` is empty on an unfogged map, so
+    // without it every loose shape in the room would vanish from every
+    // player's board the moment fog was switched off.
     let mut state = room();
     let _dm = join_as_dm(&mut state, ClientId(1));
     state.handle(ClientId(1), circle_at(50.5, 50.5));
@@ -525,10 +522,10 @@ fn turning_the_fog_off_does_not_take_every_drawing_with_it() {
 
 #[test]
 fn the_fog_opening_onto_a_drawing_rebuilds_the_shape_list() {
-    // The second reading `Sight` had to grow. Every *anchored* shape moves
-    // with a token, so the token loop was enough to gate `ShapesChanged` on;
-    // an unanchored one gates on `revealed`, which the party can change by
-    // walking somewhere with no token of the DM's involved.
+    // The second reading `Sight` needs. Every anchored shape moves with a
+    // token, so the token loop is enough to gate `ShapesChanged` on; an
+    // unanchored one gates on `known`, which the party can change by walking
+    // somewhere with no token of the DM's involved.
     let mut state = fog_room(20.0);
     let _dm = join_as_dm(&mut state, ClientId(1));
     state.handle(ClientId(1), circle_at(20.5, 1.5));
@@ -571,8 +568,8 @@ fn nobody_is_told_about_a_drawing_that_was_visible_all_along() {
 
 #[test]
 fn a_blacked_out_room_takes_the_drawings_in_it_too() {
-    // Falls out of the two halves rather than being a rule of its own: `Dark`
-    // subtracts from `known`, and a loose shape gates on `known`.
+    // Follows from the two halves, with no rule of its own: `Dark` subtracts
+    // from `known`, and a loose shape gates on `known`.
     let mut state = fog_room(60.0);
     let _dm = join_as_dm(&mut state, ClientId(1));
     state.handle(ClientId(1), circle_at(1.5, 1.5));
@@ -656,7 +653,7 @@ fn a_ping_is_never_stored_and_never_saved() {
     assert!(!state.handle(ClientId(2), ping(2.0, 2.0)));
 
     // Nothing in the snapshot to compare, so the assertion is that the save is
-    // byte-for-byte what it was — a ping cannot have added a field to it.
+    // byte-for-byte what it was: a ping can't have added a field to it.
     assert_eq!(
         serde_json::to_string(&before).expect("save"),
         serde_json::to_string(&state.to_saved()).expect("save"),
@@ -665,17 +662,17 @@ fn a_ping_is_never_stored_and_never_saved() {
 
 #[test]
 fn a_ping_reaches_the_table_over_ground_they_have_never_explored() {
-    // **The decision this milestone turns on.** Every other frame in this file
-    // carrying a position is filtered by what the recipient may see; this one is
-    // not, deliberately. A ring over black says somebody is gesturing in a
-    // direction and not what is standing there — and the alternative is a
-    // 400ms gesture that silently does nothing, which is worse than no gesture.
+    // **The decision pings turn on.** Every other frame in this file carrying
+    // a position is filtered by what the recipient may see; this one isn't. A
+    // ring over black says somebody is gesturing in a direction, not what is
+    // standing there. The alternative is a 400ms gesture that silently does
+    // nothing, which is worse than no gesture.
     let mut state = fog_room(30.0);
     let _dm = join_as_dm(&mut state, ClientId(1));
     let mut saelyn = join_as_player(&mut state, ClientId(2), "saelyn");
     drain(&mut saelyn);
 
-    // Far outside the party's torch, and never walked past: the fog says dark.
+    // Far outside the party's sight, and never walked past: the fog says dark.
     let dark: Cell = (40, 40);
     assert!(
         !state.known.contains(&dark),

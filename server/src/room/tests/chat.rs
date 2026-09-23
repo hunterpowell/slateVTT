@@ -1,10 +1,9 @@
 //! Whisper and shout: two destinations, one log, and who is party to a line.
 //! See `docs/chat.md`.
 //!
-//! Most of what is asserted here is a frame that never left. A whisper is the
-//! first thing in this project withheld from one *player* and delivered to
-//! another, so "and Torrin was sent nothing" is not a tidy extra assertion —
-//! it is the feature.
+//! Most of what is asserted here is a frame that never left. A whisper is
+//! withheld from one player and delivered to another, so "and Torrin was sent
+//! nothing" is the main assertion, not an extra one.
 
 use super::*;
 
@@ -38,9 +37,9 @@ fn heard(rx: &mut mpsc::Receiver<ServerMsg>) -> Vec<String> {
         .collect()
 }
 
-/// The log as one identity is handed it on join. `heard`'s twin, and the pair
-/// is the point: invariant 3 says the snapshot and the deltas have to agree,
-/// and here they are two code paths over one rule.
+/// The log as one identity is handed it on join. Pairs with `heard`:
+/// invariant 3 says the snapshot and the deltas have to agree, and here they
+/// are two code paths over one rule.
 fn log_for(state: &RoomState, who: &Identity) -> Vec<String> {
     state
         .snapshot_for(who)
@@ -99,10 +98,10 @@ fn a_whisper_to_the_dm_reaches_the_dm_and_the_sender_and_nobody_else() {
     state.handle(ClientId(2), whisper_dm("i pick the lock"));
 
     assert_eq!(heard(&mut dm), ["i pick the lock"]);
-    // The sender is one end of it, so they hold it too — otherwise the person
-    // who said it is the one person who cannot see they said it.
+    // The sender is one end of it, so they get it too. Otherwise the person
+    // who said it is the one person who can't see they said it.
     assert_eq!(heard(&mut saelyn), ["i pick the lock"]);
-    // The whole assertion. Not an empty frame, not a redacted one: nothing.
+    // The main assertion: no frame at all, not an empty or redacted one.
     assert!(
         heard(&mut torrin).is_empty(),
         "a whisper reached a player who was not party to it"
@@ -135,9 +134,9 @@ fn a_player_may_not_whisper_another_player() {
 
     state.handle(ClientId(2), whisper("torrin", "psst"));
 
-    // The boundary of the whole feature, and it is refused rather than
-    // downgraded to a shout — a message that quietly goes somewhere else is
-    // worse than one that bounces.
+    // The boundary of the feature. It's refused, not downgraded to a shout:
+    // a message that goes somewhere the sender didn't choose is worse than
+    // one that bounces.
     match drain(&mut saelyn).as_slice() {
         [ServerMsg::Error { message }] => assert!(message.contains("whisper the DM")),
         other => panic!("expected a refusal, got {other:?}"),
@@ -170,7 +169,7 @@ fn a_whisper_to_a_player_who_is_away_is_waiting_when_they_join() {
     state.handle(ClientId(1), whisper("saelyn", "the door was ajar"));
 
     let mut saelyn = join_as_player(&mut state, ClientId(2), "saelyn");
-    // Delivered by the `Welcome`, not by a delta — so nothing arrives here.
+    // Delivered by the `Welcome`, not by a delta, so nothing arrives here.
     assert!(heard(&mut saelyn).is_empty());
     assert_eq!(log_for(&state, &as_player("saelyn")), ["the door was ajar"]);
 }
@@ -179,9 +178,9 @@ fn a_whisper_to_a_player_who_is_away_is_waiting_when_they_join() {
 
 #[test]
 fn the_log_a_join_is_handed_is_the_one_that_client_is_party_to() {
-    // Invariant 3, on the first piece of state where getting it wrong hands
-    // over somebody's words rather than a position. The deltas above and this
-    // are two code paths over one rule, which is why both are asserted.
+    // Invariant 3, where getting it wrong hands over somebody's words instead
+    // of a position. The deltas above and this are two code paths over one
+    // rule, which is why both are asserted.
     let mut state = room();
     let _dm = join_as_dm(&mut state, ClientId(1));
     let _saelyn = join_as_player(&mut state, ClientId(2), "saelyn");
@@ -222,8 +221,8 @@ fn the_log_is_capped_and_trims_from_the_front() {
     for n in 0..MAX_CHAT_LINES + 10 {
         state.handle(ClientId(2), shout(&n.to_string()));
         // Emptied every time round, because a test connection's mailbox holds
-        // sixteen frames and a wedged client is dropped from the room — which
-        // would make this a test of the mailbox rather than of the cap.
+        // sixteen frames and a wedged client is dropped from the room. That
+        // would make this a test of the mailbox instead of the cap.
         let _ = drain_all(&mut saelyn);
     }
 
@@ -251,8 +250,8 @@ fn nothing_said_is_worth_a_disk_write_or_a_step_on_the_ring() {
         depth,
         "and it is never a step to go back to"
     );
-    // `drain_all` rather than `drain`: the point is that no `UndoChanged` rode
-    // along, which the filtered version would hide.
+    // `drain_all`, not `drain`: the filtered version would hide an
+    // `UndoChanged` riding along, and there must not be one.
     assert!(
         !drain_all(&mut dm)
             .iter()
@@ -263,9 +262,8 @@ fn nothing_said_is_worth_a_disk_write_or_a_step_on_the_ring() {
 
 #[test]
 fn an_undo_does_not_take_back_what_the_table_said() {
-    // Milestone 22 wrote the rule down — the ring may only hold state the
-    // undoing hand wrote — and this is the first thing to test it. It passes by
-    // construction: a snapshot is a `Saved`, and the log is not on one.
+    // The ring may only hold state the DM could have written. This passes
+    // because a snapshot is a `Saved`, and the log isn't on one.
     let mut state = room();
     let mut dm = join_as_dm(&mut state, ClientId(1));
     let _saelyn = join_as_player(&mut state, ClientId(2), "saelyn");
@@ -292,8 +290,8 @@ fn the_log_is_not_on_the_disk() {
     let _saelyn = join_as_player(&mut state, ClientId(2), "saelyn");
     state.handle(ClientId(2), whisper_dm("my passive perception is 16"));
 
-    // Not a field to check for: session memory means the save format has no
-    // opinion about it at all, so this asserts the whole shape of the file.
+    // No field to check for: the log is session memory, so the save format
+    // has nothing to say about it. This asserts the shape of the whole file.
     let json = serde_json::to_string(&state.to_saved()).expect("a room serializes");
     assert!(
         !json.contains("passive perception"),

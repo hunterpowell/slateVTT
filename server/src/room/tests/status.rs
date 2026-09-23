@@ -1,10 +1,10 @@
 //! What `/api/status` is told about a room. See `client/status/README.md`.
 //!
-//! **The status page is an ops window and not a second board**, which is what
-//! most of these assert: it counts what the box is holding rather than what any
-//! one client may see, and it is behind its own credential precisely so that it
-//! can. The one thing it must never do is invent a second answer to a question
-//! the room already answers — `here` is `RoomState::here`, not a copy of it.
+//! **The status page is an ops window, not a second board**, which is what
+//! most of these assert: it counts what the box is holding instead of what
+//! any one client may see, and it has its own credential so that it can. It
+//! must never invent a second answer to a question the room already answers:
+//! `here` is `RoomState::here`, not a copy of it.
 
 use super::*;
 
@@ -38,8 +38,8 @@ fn here_is_the_presence_strips_answer_and_not_a_second_one() {
     // file has to outlive the assertion it is part of.
     let _saelyn = join_as_player(&mut state, ClientId(2), "saelyn");
 
-    // What the strip was actually sent, taken off the wire rather than
-    // recomputed — if these two ever disagree, one of them is lying to somebody.
+    // What the strip was actually sent, taken off the wire instead of
+    // recomputed. If these two ever disagree, one of them is wrong.
     let strip = drain_all(&mut dm)
         .into_iter()
         .filter_map(|msg| match msg {
@@ -60,8 +60,8 @@ fn here_is_the_presence_strips_answer_and_not_a_second_one() {
 fn sockets_counts_tabs_where_here_counts_people() {
     let mut state = room();
     let _laptop = join_as_player(&mut state, ClientId(1), "saelyn");
-    // The same person on a laptop and a phone. `here` deduplicates them by
-    // design; the point of `sockets` is that this is the one fact it cannot say.
+    // The same person on a laptop and a phone. `here` deduplicates them;
+    // `sockets` exists to report the one fact `here` can't.
     let _phone = join_as_player(&mut state, ClientId(2), "saelyn");
 
     let status = state.status(false, &healthy());
@@ -74,8 +74,8 @@ fn a_socket_still_on_the_picker_is_a_socket() {
     let mut state = room();
     let _dm = join_as_dm(&mut state, ClientId(1));
     // Connected, has not said who it is. It is holding a connection open and
-    // costing the box the same as any other, so `sockets` counts it — and it
-    // belongs to nobody, so `here` cannot.
+    // costing the box the same as any other, so `sockets` counts it, and it
+    // belongs to nobody, so `here` can't.
     let _undecided = connect(&mut state, ClientId(2));
 
     let status = state.status(false, &healthy());
@@ -92,9 +92,9 @@ fn tokens_are_counted_whole_rather_than_as_the_table_sees_them() {
 
     state.handle(dm, create_hidden("ogre"));
 
-    // Deliberate: this is the DM's own ops view, behind its own key, so it
-    // counts what the room is holding. Filtering it through `unseen_by_table`
-    // would make the number answer a question nobody asked it.
+    // This is the DM's own ops view, behind its own key, so it counts what
+    // the room is holding. Filtering it through `unseen_by_table` would make
+    // the number answer a question nobody asked it.
     assert_eq!(
         state.status(false, &healthy()).tokens,
         before + 1,
@@ -104,8 +104,8 @@ fn tokens_are_counted_whole_rather_than_as_the_table_sees_them() {
 
 #[test]
 fn unsaved_is_the_callers_to_supply() {
-    // The debounce deadline lives in `run` and not on the state, which is the
-    // whole reason this argument exists. Cheap to assert and it records the seam.
+    // The debounce deadline lives in `run`, not on the state, which is why
+    // this argument exists. Cheap to assert, and it records where it lives.
     let state = room();
     assert!(!state.status(false, &healthy()).unsaved);
     assert!(state.status(true, &healthy()).unsaved);
@@ -116,9 +116,9 @@ fn unsaved_is_the_callers_to_supply() {
 #[tokio::test]
 async fn a_failing_save_is_not_the_same_as_a_pending_one() {
     // The defect this pair exists for. A save that keeps failing leaves
-    // `save_at` set exactly as a change waiting out the debounce does, so on
-    // the deadline alone a dying card reads as a healthy write two seconds old
-    // — and the retry loop is silent apart from a line in the journal.
+    // `save_at` set just as a change waiting out the debounce does, so on the
+    // deadline alone a dying card reads as a healthy write two seconds old,
+    // and the retry loop leaves nothing but a line in the journal.
     let state = room();
     let mut health = SaveHealth::default();
 
@@ -145,9 +145,9 @@ async fn a_failing_save_is_not_the_same_as_a_pending_one() {
 
 #[tokio::test]
 async fn a_good_save_clears_the_flag_and_stamps_the_time() {
-    // The flag outlives one attempt on purpose, so something has to put it
-    // down again. Without this a room would report failing writes forever
-    // after one transient error.
+    // The flag outlives one attempt, so something has to clear it again.
+    // Without this a room would report failing writes forever after one
+    // transient error.
     let state = room();
     let mut health = SaveHealth {
         failing: true,
@@ -207,7 +207,7 @@ async fn a_room_that_is_gone_does_not_answer() {
     );
     assert!(room.shutdown().await, "clean room, nothing to flush");
 
-    // The reachable half of "did not answer" — the other half is a wedged task,
+    // The reachable half of "did not answer". The other half is a wedged task,
     // which only the caller's timeout can catch. Both have to arrive as `None`
     // or the status page has no way to say a room is in trouble.
     assert!(

@@ -21,8 +21,8 @@ fn staged_walls(state: &RoomState) -> &[Wall] {
 
 #[test]
 fn a_traced_run_becomes_one_segment_per_gap_between_its_corners() {
-    // The whole point of the milestone: a two-hundred-segment dungeon is one
-    // command per run rather than one per segment.
+    // A two-hundred-segment dungeon is one command per run, not one per
+    // segment.
     let mut state = room();
     let _dm = join_as_dm(&mut state, ClientId(1));
 
@@ -37,7 +37,7 @@ fn a_traced_run_becomes_one_segment_per_gap_between_its_corners() {
     // gap between two of them would be a gap fog leaks through.
     assert_eq!(second.from, first.to);
     assert_eq!(second.to, Px { x: 128.0, y: 128.0 });
-    // The ids are the server's to invent, and distinct — erasing one bad
+    // The ids are the server's to invent, and distinct: erasing one bad
     // segment of a long trace is the reason they exist at all.
     assert_ne!(first.id, second.id);
     assert!(!first.id.0.is_empty());
@@ -58,7 +58,7 @@ fn a_run_of_doors_is_traced_shut() {
 #[test]
 fn only_the_dm_may_trace_erase_or_open_anything() {
     // Every wall command at once: unlike the drawings, there is no
-    // per-item permission underneath — the walls are all the DM's.
+    // per-item permission underneath. The walls are all the DM's.
     let mut state = room();
     let _dm = join_as_dm(&mut state, ClientId(1));
     let _saelyn = join_as_player(&mut state, ClientId(2), "saelyn");
@@ -124,8 +124,8 @@ fn a_door_swings_both_ways_and_masonry_does_not() {
     state.handle(ClientId(1), swing(door));
     assert_eq!(state.walls.first().expect("the door").door(), Some(false));
 
-    // Refused rather than ignored: it means the client and the room disagree
-    // about what that segment is, and doing nothing quietly hides that.
+    // Refused, not ignored: it means the client and the room disagree about
+    // what that segment is, and doing nothing would hide that.
     let err = state
         .check(ClientId(1), &swing(solid))
         .expect_err("masonry does not open");
@@ -157,10 +157,9 @@ fn erasing_a_wall_that_is_already_gone_is_refused_not_ignored() {
 
 #[test]
 fn a_new_map_clears_the_walls_and_a_recalibration_does_not() {
-    // The arm that gets missed, for the third feature in a row. A wall
-    // traces the art of *this* image, so a new one throws it away — and
-    // correcting the grid does not touch the art at all, which is exactly
-    // the order the DM does these two things in.
+    // The arm that gets missed. A wall traces the art of this image, so a new
+    // one throws it away, and correcting the grid doesn't touch the art at
+    // all. The DM does these two things in that order.
     let mut state = room();
     let _dm = join_as_dm(&mut state, ClientId(1));
     state.handle(ClientId(1), a_corner());
@@ -174,10 +173,10 @@ fn a_new_map_clears_the_walls_and_a_recalibration_does_not() {
 
 #[test]
 fn staging_leaves_the_walls_alone_and_promoting_replaces_them() {
-    // Staging a map is not touching the board, so the masonry the table is
-    // playing on stays where it is. A promote *is* a load, so the board's own
-    // walls go — and what lands in their place is what was traced on the map
-    // that arrived, which is milestone 20 rather than a sweep.
+    // Staging a map doesn't touch the board, so the walls the table is
+    // playing on stay where they are. A promote is a load, so the board's own
+    // walls go, and what replaces them is what was traced on the map that
+    // arrived. That comes from the staged bundle, not a sweep.
     let mut state = room();
     let _dm = join_as_dm(&mut state, ClientId(1));
     state.handle(ClientId(1), a_corner());
@@ -213,8 +212,8 @@ fn staging_leaves_the_walls_alone_and_promoting_replaces_them() {
 fn a_staged_door_promotes_however_the_dm_left_it() {
     // A door is traced shut on both boards, because a door the DM has to close
     // after drawing it is one they will forget to close. Swinging a staged one
-    // is not play — nobody is playing on that map yet — it is the DM saying
-    // this room is already ajar when the party walks in.
+    // isn't play (nobody is playing on that map yet); it's the DM saying this
+    // room is already ajar when the party walks in.
     let mut state = room();
     let _dm = join_as_dm(&mut state, ClientId(1));
     stage(&mut state, ClientId(1), "/uploads/next.webp");
@@ -239,10 +238,10 @@ fn a_staged_door_promotes_however_the_dm_left_it() {
 
 #[test]
 fn a_wall_command_names_a_slot_and_reaches_only_that_one() {
-    // The `SetMap` / `MoveToken` / `CreateToken` pattern for the fourth time.
-    // The ids are UUIDs, so a lookup that searched both lists would find this
-    // segment either way — and would erase the wrong dungeon's masonry on a
-    // frame the DM sent while looking at the other board.
+    // The `SetMap` / `MoveToken` / `CreateToken` pattern again. The ids are
+    // UUIDs, so a lookup that searched both lists would find this segment
+    // either way, and would erase the wrong map's walls on a frame the DM sent
+    // while looking at the other board.
     let mut state = room();
     let _dm = join_as_dm(&mut state, ClientId(1));
     state.handle(ClientId(1), a_corner());
@@ -276,8 +275,8 @@ fn a_wall_command_names_a_slot_and_reaches_only_that_one() {
 
 #[test]
 fn tracing_a_slot_with_no_map_in_it_is_refused() {
-    // The rule `CreateToken` and a staged `MoveToken` already follow, and it is
-    // the slot being empty rather than the server learning about preview.
+    // The rule `CreateToken` and a staged `MoveToken` already follow: the
+    // slot being empty, not the server learning about preview.
     let mut state = room();
     let _dm = join_as_dm(&mut state, ClientId(1));
 
@@ -367,13 +366,13 @@ fn a_run_needs_two_corners_and_cannot_run_forever() {
 
 #[test]
 fn a_map_cannot_be_filled_with_walls_without_limit() {
-    // `apply` rather than `handle`, like the drawings cap and for the same
-    // reason: the rule is in `check`, and pushing this many through the
-    // whole pipeline only fills the test's mailbox.
+    // `apply`, not `handle`, like the drawings cap and for the same reason:
+    // the rule is in `check`, and pushing this many through the whole
+    // pipeline only fills the test's mailbox.
     let mut state = room();
     let _dm = join_as_dm(&mut state, ClientId(1));
 
-    // Each run is one segment, so this reaches the cap exactly.
+    // Each run is one segment, so this reaches the cap.
     for i in 0..MAX_WALLS {
         state.apply(
             ClientId(1),
@@ -436,9 +435,9 @@ fn a_traced_dungeon_survives_the_save_file() {
 
 #[test]
 fn a_room_saved_before_walls_existed_still_loads() {
-    // Invariant 2 again, on this milestone's field. And the default matters
-    // beyond loading: a segment that defaulted to an open door would quietly
-    // stop blocking anything the moment fog arrives.
+    // Invariant 2 again. And the default matters beyond loading: a segment
+    // that defaulted to an open door would stop blocking anything the moment
+    // fog was on, with nothing to say so.
     let saved: Saved = serde_json::from_str("{}").expect("an empty room decodes");
     let restored = reboot(saved);
     assert!(restored.walls.is_empty());

@@ -72,8 +72,8 @@ fn re_valuing_an_entry_resorts_without_moving_the_turn() {
     init.next_turn();
     assert_eq!(current(&init), Some("t2"));
 
-    // The whole reason the current turn is tracked by token and not by list
-    // index: this re-sort shifts t2 from position 1 to position 2.
+    // Why the current turn is tracked by token and not by list index: this
+    // re-sort shifts t2 from position 1 to position 2.
     init.set(TokenId::new("t3"), 25);
     assert_eq!(order(&init), ["t3", "t1", "t2"]);
     assert_eq!(

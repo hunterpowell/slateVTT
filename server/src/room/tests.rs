@@ -1,11 +1,10 @@
-//! Tests for the room actor, split along the same seams as `docs/`.
+//! Tests for the room actor, split by subsystem like `docs/`.
 //!
-//! These are child modules of `room` rather than a sibling integration test
-//! for one reason: they drive `RoomState` through its *private* surface —
-//! `pending`, `hardcoded`, `handle` — which is the only way to assert what a
-//! given client was and was not sent. An integration test could only watch
-//! the wire, and half of what is interesting here is a message that never
-//! left.
+//! These are child modules of `room`, not a sibling integration test, because
+//! they drive `RoomState` through its private API (`pending`, `hardcoded`,
+//! `handle`). That is the only way to assert what a given client was and was
+//! not sent. An integration test could only watch the wire, and half of what
+//! matters here is a message that never left.
 //!
 //! Everything below is shared by more than one section; a helper only one
 //! section uses lives in that section's own file. Each of those opens with
@@ -20,11 +19,11 @@ const SECRET: &str = "test-secret";
 
 /// A room as `spawn` would hand one over, boot recompute included.
 ///
-/// The recompute is not a detail of the fixture. `spawn` runs it on every room
-/// it starts, because the derived half of the fog is not on disk — and `shown`
-/// is derived with it, so a state that skipped this would claim the table has
-/// been shown nothing and report every token as newly appeared on the first
-/// command of every test.
+/// The recompute matters. `spawn` runs it on every room it starts, because the
+/// derived half of the fog isn't on disk, and `shown` is derived with it.
+/// Without it the table would appear to have been shown nothing, and every
+/// token would be reported as newly appeared on the first command of every
+/// test.
 fn room() -> RoomState {
     booted(RoomState::hardcoded(SECRET.to_owned()))
 }
@@ -37,10 +36,10 @@ fn booted(mut state: RoomState) -> RoomState {
 
 /// A room booted from a save, with the primary room's cast.
 ///
-/// `room()`'s neighbour, for the tests that prove something survives a restart.
-/// The roster is named here rather than at each call site because none of those
-/// tests is about the cast — what they are about is `adopt`, and a room with two
-/// rosters to choose from would otherwise make every one of them say so.
+/// For the tests that prove something survives a restart. The roster is named
+/// here instead of at each call site because none of those tests is about the
+/// cast. They're about `adopt`, and a room with two rosters to choose from
+/// would otherwise make every one of them say so.
 fn reboot(saved: Saved) -> RoomState {
     booted(RoomState::restored(
         saved,
@@ -70,9 +69,9 @@ fn join_as_player(
         },
     );
     rx.try_recv().expect("welcome");
-    // And the `Presence` that rides behind it, so this helper's contract stays
-    // "a connection with the join already consumed". Everyone *else's* queue
-    // still has one — that is what `settle` is for.
+    // And the `Presence` that follows it, so this helper's contract stays
+    // "a connection with the join already consumed". Everyone else's queue
+    // still has one; `settle` clears those.
     drain_all(&mut rx);
     rx
 }
@@ -148,9 +147,9 @@ fn with(msg: ClientMsg, set: impl FnOnce(&mut bool, &mut bool)) -> ClientMsg {
     }
 }
 
-/// An edit that leaves a token exactly as it is. Tests change one field off
-/// this rather than restating all seven, so a field added later does not
-/// silently reset itself everywhere.
+/// An edit that leaves a token as it is. Tests change one field off this
+/// instead of restating all seven, so a field added later doesn't silently
+/// reset itself everywhere.
 fn edit(token: &Token) -> ClientMsg {
     ClientMsg::UpdateToken {
         id: token.id.clone(),
@@ -204,7 +203,7 @@ fn token(state: &RoomState, id: &str) -> Token {
 /// The token the DM just made, found by name because the id is the server's.
 ///
 /// Names must therefore be unique within a test, and must not collide with
-/// the built-in room's — `HashMap` order is unspecified, so a duplicate
+/// the built-in room's. `HashMap` order is unspecified, so a duplicate
 /// name is a test that passes or fails depending on the run.
 fn made(state: &RoomState, name: &str) -> Token {
     let mut found = state.tokens.values().filter(|t| t.name == name);
@@ -223,24 +222,22 @@ fn as_player(slot: &str) -> Identity {
     Identity::Player(PlayerId::new(slot))
 }
 
-/// Every frame waiting on a connection, **except the two that ride along with
-/// something else**. `try_recv` one at a time makes a test that says "and
-/// nothing else" hard to write and easy to get wrong.
+/// Every frame waiting on a connection, **except `UndoChanged` and
+/// `Presence`**, which go out beside other things. `try_recv` one at a time
+/// makes a test that says "and nothing else" hard to write and easy to get
+/// wrong.
 ///
-/// `UndoChanged` is filtered out because it rides beside *every* command that
-/// changes the room, and only ever to the DM. Leaving it in would put a trailing
-/// frame in the expectation of every DM-side test in this suite — which would
-/// make each of them partly a test of undo, and would mean a future feature
-/// touching the ring broke fifty assertions that have nothing to say about it.
+/// `UndoChanged` goes to the DM beside every command that changes the room.
+/// Leaving it in would add a trailing frame to every DM-side expectation in
+/// this suite, making each one partly a test of undo, and a change to the ring
+/// would break fifty assertions that have nothing to do with it.
 ///
-/// `Presence` is filtered for the same reason from the other end: it rides
-/// beside every *join and leave* rather than every command, and every test in
-/// this suite starts by connecting two or three people. Leaving it in would put
-/// a leading frame in front of every expectation, and every one of them would
-/// then be partly a test of who is connected.
+/// `Presence` is filtered for the same reason. It goes out beside every join
+/// and leave, and every test here starts by connecting two or three people, so
+/// it would put a leading frame in front of every expectation.
 ///
 /// So "and nothing else" here means "nothing else about the thing under test".
-/// The tests that *are* about either use `drain_all` — `undo.rs` asserts the
+/// The tests that are about either use `drain_all`: `undo.rs` asserts the
 /// pairing this hides, and `presence.rs` asserts the frames.
 fn drain(rx: &mut mpsc::Receiver<ServerMsg>) -> Vec<ServerMsg> {
     drain_all(rx)
@@ -255,13 +252,12 @@ fn drain(rx: &mut mpsc::Receiver<ServerMsg>) -> Vec<ServerMsg> {
 }
 
 /// Drops whatever is already waiting on these connections, so a test can assert
-/// on what arrives *next*.
+/// on what arrives next.
 ///
 /// Every join tells everyone already connected that somebody arrived, so a test
-/// that opens two or three connections starts with a `Presence` sitting in each
-/// of the earlier queues. That is the same nuisance `drain` filters out, turning
-/// up in the tests that reach for `try_recv` directly — so this is where they
-/// say "and now everybody is here", once, after the last join.
+/// that opens two or three connections starts with a `Presence` in each of the
+/// earlier queues. `drain` filters those out; a test that calls `try_recv`
+/// directly calls this once, after the last join.
 fn settle(rxs: &mut [&mut mpsc::Receiver<ServerMsg>]) {
     for rx in rxs {
         drain_all(rx);
@@ -292,7 +288,7 @@ fn current(init: &Initiative) -> Option<&str> {
 
 /// Fog off and a default radius, on every map helper below. A test that wants
 /// the lights out says so with `fogged`, so nothing here has to think about
-/// sight — which is also what the DM's experience of an unfogged map is.
+/// sight. That matches what the DM sees on an unfogged map.
 const UNFOGGED: (bool, f32) = (false, 60.0);
 
 fn set_map(url: &str, grid_px: f32, offset_x: f32, offset_y: f32) -> ClientMsg {
@@ -312,12 +308,13 @@ fn set_map(url: &str, grid_px: f32, offset_x: f32, offset_y: f32) -> ClientMsg {
 }
 
 /// The same command with the lights out. Every map helper here builds an
-/// unfogged `set_map`; this is how a fog test asks for the other kind,
-/// exactly as `staged` is how one asks for the other slot.
+/// unfogged `set_map`; this is how a fog test asks for a fogged one, as
+/// `staged` is how one asks for the other slot.
 fn fogged(msg: ClientMsg, vision_ft: f32) -> ClientMsg {
     match msg {
-        // The shape is carried through rather than reset, so `fogged(iso(..))`
-        // means what it reads as — the same reason `staged` carries everything.
+        // The shape is carried through, not reset, so `fogged(iso(..))`
+        // means what it reads as. `staged` carries everything for the same
+        // reason.
         ClientMsg::SetMap {
             url,
             grid_px,
@@ -340,9 +337,9 @@ fn fogged(msg: ClientMsg, vision_ft: f32) -> ClientMsg {
     }
 }
 
-/// The same command with the map lit a room at a time. `fogged`'s neighbour, and
-/// wrapped around it the way `staged` is wrapped around either — so a lighting
-/// test and a line-of-sight test differ by exactly this call and nothing else.
+/// The same command with the map lit a room at a time. Wraps `fogged` the way
+/// `staged` wraps either, so a lighting test and a line-of-sight test differ
+/// by this call alone.
 fn room_lit(msg: ClientMsg) -> ClientMsg {
     match msg {
         ClientMsg::SetMap {
@@ -374,9 +371,9 @@ fn room_lit(msg: ClientMsg) -> ClientMsg {
     }
 }
 
-/// The same command with the cells drawn as diamonds. `fogged` and `room_lit`'s
-/// third neighbour, and wrapped the same way, so an isometric test and the square
-/// test it mirrors differ by exactly this call.
+/// The same command with the cells drawn as diamonds. Wrapped like `fogged`
+/// and `room_lit`, so an isometric test and the square test it mirrors differ
+/// by this call alone.
 fn iso(msg: ClientMsg, ratio: f32) -> ClientMsg {
     match msg {
         ClientMsg::SetMap {
@@ -410,13 +407,12 @@ fn iso(msg: ClientMsg, ratio: f32) -> ClientMsg {
 
 /// The same command aimed at the staged slot. Every helper here builds a live
 /// command; this is how a test asks for the staged one, so the two slots are
-/// always exercised with *identical* commands rather than with two builders
-/// that could drift apart.
+/// always exercised with identical commands, not two builders that could
+/// drift apart.
 ///
-/// Every arm is a command that names a slot, which is the point: milestone 20
-/// added four to the list and this is the one place a test has to learn about
-/// them. A command that grows a `staged` flag later and is not added here goes
-/// on silently testing the live board.
+/// Every arm is a command that names a slot, and this is the one place a test
+/// has to learn about them. **A command that grows a `staged` flag and isn't
+/// added here goes on silently testing the live board.**
 fn staged(msg: ClientMsg) -> ClientMsg {
     match msg {
         ClientMsg::SetMap {
@@ -504,10 +500,9 @@ fn clear_walls() -> ClientMsg {
 /// A room with the lights out: one player token at cell (1,1), one monster
 /// at cell (5,1), and nothing else on the board.
 ///
-/// The hardcoded room is five party members and two monsters spread across
-/// it, which is a fine board and a poor experiment — every one of those five
-/// is a torch, so almost everything is lit from almost everywhere. These
-/// tests want one viewer and one thing to look at.
+/// The hardcoded room has five party members and two monsters spread across
+/// it. Each of the five is a vision source, so almost everything is lit from
+/// almost everywhere. These tests want one viewer and one thing to look at.
 ///
 /// The grid is the default 64 pixels at no offset, so cell `(c, r)` has its
 /// centre at `(64c + 32, 64r + 32)` and a wall drawn at x = 256 stands
@@ -569,7 +564,7 @@ fn walk(state: &mut RoomState, x: f32) {
     );
 }
 
-/// What the DM's brush and their fill both send. The cells are the payload —
+/// What the DM's brush and their fill both send. The cells are the payload:
 /// the fill is computed on their client, where the preview needs it anyway.
 fn paint(cells: &[Cell], state: Option<Override>) -> ClientMsg {
     ClientMsg::SetFogOverride {

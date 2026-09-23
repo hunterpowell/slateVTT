@@ -1,9 +1,9 @@
 //! The room's music.
 //!
 //! One looping track the DM picks, playing on every screen that asked for it.
-//! These tests hold down two things: that it is the backdrop's twin on the wire,
-//! and that it is *not* the backdrop underneath — it is memory only, so it never
-//! reaches the disk and an undo can never reach it. See `docs/sound.md`.
+//! These tests check two things: on the wire it behaves like the backdrop,
+//! and underneath it doesn't. It's memory only, so it never reaches the disk
+//! and an undo can never reach it. See `docs/sound.md`.
 
 use super::*;
 
@@ -38,7 +38,7 @@ fn only_the_dm_can_choose_the_music() {
 #[test]
 fn the_music_reaches_the_table_and_the_dm_alike() {
     // `BackdropChanged`'s rule: who may put music on is a permission, and which
-    // track it is is not a secret — everyone can hear it.
+    // track it is is not a secret, since everyone can hear it.
     let mut state = room();
     let mut dm = join_as_dm(&mut state, ClientId(1));
     let mut saelyn = join_as_player(&mut state, ClientId(2), "saelyn");
@@ -65,7 +65,7 @@ fn the_music_reaches_the_table_and_the_dm_alike() {
 
 #[test]
 fn the_music_is_in_every_snapshot() {
-    // Invariant 3 on a field with no filter — and here it is also the reconnect
+    // Invariant 3 on a field with no filter. Here it is also the reconnect
     // assertion, because a reconnect is another join. A dropped socket reloads
     // the page, so without this a player who blinked comes back silent while
     // everyone else is still listening.
@@ -97,8 +97,8 @@ fn choosing_the_music_is_not_a_step() {
         "the music is session memory; it must never mark the room dirty"
     );
     assert_eq!(state.undo.len(), depth, "a track was a step to go back to");
-    // `drain_all` rather than `drain`: the point is that no `UndoChanged` rode
-    // along, which the filtered version would hide.
+    // `drain_all`, not `drain`: the filtered version would hide an
+    // `UndoChanged` riding along, and there must not be one.
     assert!(
         !drain_all(&mut dm)
             .iter()
@@ -111,12 +111,12 @@ fn choosing_the_music_is_not_a_step() {
 fn an_undo_does_not_change_the_music() {
     // **The test the persistence decision exists for.** Re-assigning an
     // `<audio>` source restarts the track, so a restore that swept the music
-    // back to a previous pick would restart it mid-scene — the DM undoes a wall
+    // back to a previous pick would restart it mid-scene: the DM undoes a wall
     // and the boss theme starts again.
     //
-    // Note what makes this pass: `audio` is not on `Saved`, so `adopt` never
-    // touches it. The scratchpad and the colours each needed two lines to reach
-    // the same place; this needed none.
+    // This passes because `audio` isn't on `Saved`, so `adopt` never touches
+    // it. The scratchpad and the colours each need two lines to get the same
+    // result; this needs none.
     let mut state = room();
     let mut dm = join_as_dm(&mut state, ClientId(1));
 
@@ -131,7 +131,7 @@ fn an_undo_does_not_change_the_music() {
         Some(BOSS),
         "an undo changed what the room was playing"
     );
-    // And it is not merely unchanged — nobody was told it changed. A frame
+    // And it isn't only unchanged: nobody was told it changed. A frame
     // carrying the same URL is what would restart the track on every client.
     assert!(
         !drain_all(&mut dm)
@@ -143,9 +143,9 @@ fn an_undo_does_not_change_the_music() {
 
 #[test]
 fn the_music_is_not_in_the_save_file() {
-    // **The test that holds `store.rs` still.** The day somebody adds `audio`
-    // to `Saved` for the look of the thing, this fails and says why — and the
-    // undo test above starts failing beside it.
+    // **This test keeps `audio` off `Saved` in `store.rs`.** If somebody adds
+    // it there, this fails and says why, and the undo test above fails beside
+    // it.
     let mut state = room();
     let _dm = join_as_dm(&mut state, ClientId(1));
     state.handle(ClientId(1), play(Some(AMBIENT)));
@@ -164,7 +164,7 @@ fn a_track_url_is_bounded_like_a_map_url() {
 
     assert!(state.check(dm, &play(Some(&"x".repeat(513)))).is_err());
     assert!(state.check(dm, &play(Some(""))).is_err());
-    // And `None` is not an empty URL — it is silence.
+    // And `None` isn't an empty URL. It means silence.
     assert!(state.check(dm, &play(None)).is_ok());
 }
 
@@ -172,7 +172,7 @@ fn a_track_url_is_bounded_like_a_map_url() {
 fn the_music_travels_alone() {
     // The boundary sentence as an assertion. Music is not on the board, so
     // nothing on the board is swept: a future refactor routing this through
-    // `SetMap` — or teaching it to pause on a map load — fails here.
+    // `SetMap` (or teaching it to pause on a map load) fails here.
     let mut state = fog_room(60.0);
     let dm = ClientId(1);
     let mut dm_rx = join_as_dm(&mut state, dm);

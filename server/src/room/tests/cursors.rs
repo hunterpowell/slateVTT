@@ -1,11 +1,10 @@
 //! Everybody's pointer on everybody's board. See `docs/presence.md`.
 //!
-//! **Half of this file is about a frame that did not leave**, which is the shape
-//! every visibility test in this suite has — except that the line it is drawn
-//! along is new. `walls.rs` asserts what a player is never told; `chat.rs`
-//! asserts what one player is told and another is not. This one asserts what the
-//! *DM* is not allowed to say by accident, which is the first filter here whose
-//! subject is the DM's own hand.
+//! Half of this file asserts a frame that didn't leave, like every visibility
+//! test in this suite. `walls.rs` asserts what a player is never told;
+//! `chat.rs` asserts what one player is told and another is not. This one
+//! asserts what the DM's own pointer must not reveal by accident: the first
+//! filter here whose subject is the DM.
 
 use super::*;
 
@@ -27,7 +26,7 @@ fn moved_to(x: f32, y: f32) -> ClientMsg {
 /// Where the party's own token is standing in `fog_room`, and so the one cell
 /// everybody has certainly explored.
 const LIT: (f32, f32) = (1.5, 1.5);
-/// Where the ogre is, four cells away with two cells of vision — dark to the
+/// Where the ogre is, four cells away with two cells of vision: dark to the
 /// table on every map `fog_room(10.0)` builds.
 const DARK: (f32, f32) = (5.5, 1.5);
 
@@ -65,17 +64,16 @@ fn nothing_in_the_room_remembers_one_arrived() {
         !state.handle(ClientId(1), moved_to(2.0, 2.0)),
         "a position true for a sixteenth of a second is not worth a disk write"
     );
-    // The whole of what a cursor leaves behind, asked of the one thing that
-    // could hold it: the file. There is no field to inspect because there is no
-    // field at all.
+    // Nothing a cursor does reaches the save file. There is no field to
+    // inspect because there is no cursor field at all.
     assert_eq!(state.to_saved().tokens.len(), state.tokens.len());
 }
 
 #[test]
 fn pointing_at_a_dark_room_does_not_light_it() {
-    // `Ping`'s rule, and for the same reason: a hand is not a torch. The
-    // temptation is to write this arm of `moves_sight` the other way round,
-    // which would explore the dungeon for the party as the DM prepared it.
+    // `Ping`'s rule, and for the same reason: a pointer doesn't give sight.
+    // Don't write this arm of `moves_sight` the other way round: it would
+    // explore the dungeon for the party as the DM prepared it.
     let mut state = fog_room(10.0);
     let _dm = join_as_dm(&mut state, ClientId(1));
     let before = state.revealed.clone();
@@ -89,11 +87,11 @@ fn pointing_at_a_dark_room_does_not_light_it() {
 
 #[test]
 fn the_dms_pointer_over_unexplored_ground_never_reaches_the_table() {
-    // The milestone's one filter, and the assertion is a frame that never left.
-    // A ping over the same cell *is* relayed — that is `drawings.rs` — and the
-    // difference between the two is the whole design: a ping is a gesture
-    // somebody chose to make, and this is where the DM's hand happens to be
-    // while they work on the ambush.
+    // The one filter this feature adds, and the assertion is a frame that
+    // never left. A ping over the same cell is relayed (see `drawings.rs`).
+    // The difference is the design: a ping is a gesture somebody chose to
+    // make, and this is where the DM's pointer happens to be while they work
+    // on the ambush.
     let mut state = fog_room(10.0);
     let _dm = join_as_dm(&mut state, ClientId(1));
     let mut saelyn = join_as_player(&mut state, ClientId(2), "saelyn");
@@ -115,9 +113,9 @@ fn the_dms_pointer_over_unexplored_ground_never_reaches_the_table() {
 
 #[test]
 fn a_players_pointer_goes_wherever_they_point_it() {
-    // The other three quarters of `cursor_seen`, and none of them is a leak: a
+    // The other three cases of `cursor_seen`, and none of them is a leak: a
     // player can only point at what their own client drew, so a player's
-    // pointer over the dark is somebody waving at a black rectangle.
+    // pointer over the dark reveals nothing.
     let mut state = fog_room(10.0);
     let mut dm = join_as_dm(&mut state, ClientId(1));
     let mut saelyn = join_as_player(&mut state, ClientId(2), "saelyn");
@@ -178,10 +176,10 @@ fn the_dms_own_paint_swallows_their_pointer_too() {
 
 #[test]
 fn an_unfogged_map_withholds_nothing() {
-    // The `map.fog` guard, which is `shape_seen`'s and load-bearing for the
-    // identical reason: `known` is empty with the lights on, so without it the
-    // DM's pointer would vanish from every board the moment fog was switched off
-    // — which is most rooms, most of the time.
+    // The `map.fog` guard, which `shape_seen` needs for the same reason.
+    // `known` is empty on an unfogged map, so without it the DM's pointer
+    // would vanish from every board whenever fog is off, which is most rooms,
+    // most of the time.
     let mut state = room();
     let _dm = join_as_dm(&mut state, ClientId(1));
     let mut saelyn = join_as_player(&mut state, ClientId(2), "saelyn");
@@ -196,9 +194,9 @@ fn an_unfogged_map_withholds_nothing() {
 
 #[test]
 fn switching_them_off_stops_the_relay_rather_than_the_drawing() {
-    // The reason the switch is read in `message_for` and not on the client: this
-    // is the busiest message in the room, and a switch that left the frames
-    // crossing the wire would be a preference rather than a dial.
+    // The switch is read in `message_for`, not on the client, because this is
+    // the busiest message in the room. A switch that left the frames crossing
+    // the wire would only hide them, not stop them.
     let mut state = room();
     let mut dm = join_as_dm(&mut state, ClientId(1));
     let mut saelyn = join_as_player(&mut state, ClientId(2), "saelyn");
@@ -231,9 +229,9 @@ fn switching_them_off_stops_the_relay_rather_than_the_drawing() {
 
 #[test]
 fn a_pointer_sent_into_a_room_that_switched_them_off_is_not_an_error() {
-    // Deliberately *not* refused in `check`. A client that has not yet been told
-    // is a client mid-`pointermove`, and a red banner per frame is a worse
-    // answer than a frame nobody is sent.
+    // Not refused in `check`. A client that hasn't been told yet is a client
+    // mid-`pointermove`, and a red banner per frame is worse than a frame
+    // nobody is sent.
     let mut state = room();
     let _dm = join_as_dm(&mut state, ClientId(1));
     let mut saelyn = join_as_player(&mut state, ClientId(2), "saelyn");
@@ -316,10 +314,10 @@ fn the_switch_is_a_step_and_a_pointer_is_not() {
 
 #[test]
 fn switching_the_dms_off_leaves_everybody_elses_alone() {
-    // The whole of what the narrow switch does, and the assertion that matters
-    // is the frame that never left. The two beside it are the reason it is not
-    // just `SetShowCursors` again: the other six hands go on being drawn for
-    // each other, and the DM's own second tab still sees the first.
+    // What the narrow switch does, and the assertion that matters is the
+    // frame that never left. The two beside it are why it isn't just
+    // `SetShowCursors` again: the other six pointers are still drawn for each
+    // other, and the DM's own second tab still sees the first.
     let mut state = room();
     let mut dm = join_as_dm(&mut state, ClientId(1));
     let mut second_tab = join_as_dm(&mut state, ClientId(4));
@@ -356,10 +354,9 @@ fn switching_the_dms_off_leaves_everybody_elses_alone() {
 #[test]
 fn the_dm_switch_reaches_past_the_dark_onto_a_lit_map() {
     // Where it sits in `cursor_seen` is the test: after the two yeses and
-    // *before* the `map.fog` guard, so it holds on an unfogged map — which is
-    // most rooms, most of the time, and most of when a DM would reach for it.
-    // Read the other way round it would be a switch that did nothing until the
-    // fog was on, which is the one arrangement nobody would ask for.
+    // before the `map.fog` guard, so it holds on an unfogged map. That is most
+    // rooms, most of the time, and most of when a DM would reach for it. In
+    // the other order it would do nothing until fog was on.
     let mut state = room();
     let _dm = join_as_dm(&mut state, ClientId(1));
     let mut saelyn = join_as_player(&mut state, ClientId(2), "saelyn");
@@ -396,10 +393,10 @@ fn the_dm_switch_is_the_dms_and_a_refusal_tells_nobody() {
 
 #[test]
 fn the_dm_switch_is_told_to_everybody_and_survives_a_restart() {
-    // Unfiltered like the four room-wide switches beside it: who may flip it is
-    // a permission and what it says is not a secret. A player does nothing with
-    // the frame — unlike `CursorsChanged`, nothing about what they send or draw
-    // depends on it — and it goes to them anyway rather than earning a second
+    // Unfiltered like the four room-wide switches beside it: who may flip it
+    // is a permission and what it says isn't a secret. A player does nothing
+    // with the frame (unlike `CursorsChanged`, nothing they send or draw
+    // depends on it), and it goes to them anyway instead of needing a second
     // rule for one bool.
     let mut state = room();
     let mut dm = join_as_dm(&mut state, ClientId(1));

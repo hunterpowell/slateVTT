@@ -29,7 +29,7 @@ fn the_dm_can_build_a_token_and_the_server_names_it() {
 #[test]
 fn two_tokens_built_the_same_way_are_still_two_tokens() {
     // The id is invented per command, so a DM clicking twice gets a pair
-    // rather than overwriting the first.
+    // instead of overwriting the first.
     let mut state = room();
     let _dm = join_as_dm(&mut state, ClientId(1));
     state.handle(ClientId(1), create("Goblin", 1.0, Owner::Dm));
@@ -434,8 +434,8 @@ fn a_room_cannot_be_filled_with_tokens_without_limit() {
 
 #[test]
 fn a_created_token_reaches_the_dm_who_made_it() {
-    // There is no local prediction to rubber-band — the client cannot know
-    // the id — so this echo is how the DM's panel learns what it just built.
+    // There is no local prediction to rubber-band (the client can't know the
+    // id), so this echo is how the DM's panel learns what it just built.
     let mut state = room();
     let mut dm = join_as_dm(&mut state, ClientId(1));
     let mut saelyn = join_as_player(&mut state, ClientId(2), "saelyn");
@@ -646,7 +646,7 @@ fn hiding_a_token_takes_it_off_the_table_and_leaves_it_on_the_dms_board() {
 #[test]
 fn editing_an_already_hidden_token_tells_the_table_nothing() {
     // A `TokenRemoved` naming an id the players never held would tell them a
-    // token exists — which is the entire thing being withheld.
+    // token exists, which is the thing being withheld.
     let mut state = room();
     let _dm = join_as_dm(&mut state, ClientId(1));
     state.handle(ClientId(1), set_hidden(&token(&state, "t6"), true));
@@ -766,8 +766,8 @@ fn deleting_a_hidden_token_tells_the_table_nothing() {
 
 #[test]
 fn hit_points_reach_the_dm_and_nobody_else() {
-    // The per-field redaction this milestone exists to invent: the token is
-    // one the table can see, and one field of it is not theirs.
+    // The per-field redaction: the token is one the table can see, and one
+    // field of it is not theirs.
     let mut state = room();
     let mut dm = join_as_dm(&mut state, ClientId(1));
     let mut saelyn = join_as_player(&mut state, ClientId(2), "saelyn");
@@ -819,7 +819,7 @@ fn hit_points_reach_the_dm_and_nobody_else() {
         "hit points are the DM's note"
     );
 
-    // And on the snapshot too, by the same route rather than a second one.
+    // And on the snapshot too, by the same route, not a second one.
     let ogre_in = |view: &RoomView| {
         view.tokens
             .iter()
@@ -903,7 +903,7 @@ fn hit_points_are_bounded() {
 #[test]
 fn a_hidden_creatures_row_is_not_on_the_tables_initiative_panel() {
     // Otherwise the panel that is always on screen names the one thing the
-    // DM just took off the board — and names it with a bare id, because the
+    // DM just took off the board, and names it with a bare id, because the
     // client has no token to look the name up on.
     let mut state = room();
     let _dm = join_as_dm(&mut state, ClientId(1));
@@ -1045,10 +1045,10 @@ fn set_markers(token: &Token, want: &[Marker]) -> ClientMsg {
 
 #[test]
 fn the_dm_marks_a_creature_and_the_table_is_shown_it() {
-    // **The opposite of `hp` beside it, and on purpose.** Every other field the
-    // DM alone may write is also one the table may not read; a mark nobody at
-    // the table can see is not a mark, so this is the one field on a token that
-    // `view_for` copies rather than redacts.
+    // **The opposite of `hp` beside it.** Every other field the DM alone may
+    // write is also one the table may not read; a mark nobody at the table can
+    // see is not a mark, so this is the one field on a token that `view_for`
+    // copies instead of redacting.
     let mut state = room();
     let _dm = join_as_dm(&mut state, ClientId(1));
     let mut saelyn = join_as_player(&mut state, ClientId(2), "saelyn");
@@ -1071,10 +1071,10 @@ fn the_dm_marks_a_creature_and_the_table_is_shown_it() {
 
 #[test]
 fn a_mark_on_a_creature_the_table_cannot_see_reaches_nobody() {
-    // Markers are public and this still holds, because it is not a fact about
-    // the field: a token the table cannot see takes everything about it away,
+    // Markers are public and this still holds, because it isn't a fact about
+    // the field: a token the table can't see takes everything about it away,
     // through `unseen_by_table` like every other field on it. Asserted because
-    // the claim is being made, not because anything here branches on it.
+    // the claim is made, not because anything here branches on it.
     let mut state = room();
     let _dm = join_as_dm(&mut state, ClientId(1));
     state.handle(ClientId(1), set_hidden(&token(&state, "t6"), true));
@@ -1148,8 +1148,8 @@ fn a_creature_cannot_carry_more_marks_than_there_are_markers() {
 
 #[test]
 fn taking_back_a_mark_is_an_ordinary_undo() {
-    // The whole of what riding `UpdateToken` buys: no arm in `persists`, none
-    // in `undid`, and the ring already knows what to call it.
+    // What riding on `UpdateToken` buys: no arm in `persists`, none in
+    // `undid`, and the ring already knows what to call it.
     let mut state = booted(room());
     let _dm = join_as_dm(&mut state, ClientId(1));
 
@@ -1168,10 +1168,10 @@ fn taking_back_a_mark_is_an_ordinary_undo() {
 
 #[test]
 fn the_largest_token_edit_fits_in_a_frame() {
-    // `docs/net.md`'s rule, for the second command in this project to carry a
-    // variable-length collection. A refusal the socket dies before delivering
-    // is not a refusal, so the largest legal instance is measured rather than
-    // the bounds being trusted to relate to the frame cap.
+    // `docs/net.md`'s rule, for a command carrying a variable-length
+    // collection. A refusal the socket dies before delivering is not a
+    // refusal, so the largest legal instance is measured instead of trusting
+    // the bounds to relate to the frame cap.
     let frame = serde_json::json!({
         "type": "update_token",
         "id": "t6",
@@ -1208,7 +1208,7 @@ fn the_largest_token_edit_fits_in_a_frame() {
     // **No assertion the other way, unlike `largest_override_fits_in_a_frame`.**
     // That one guards a tuned number drifting far under what a frame holds,
     // because a fill refused for nothing is a real cost. Here the bound is the
-    // closed marker set rather than a number chosen against the frame, so there
-    // is no headroom to have lost: this edit is orders of magnitude under the
-    // cap and is meant to stay there.
+    // closed marker set, not a number chosen against the frame, so there is no
+    // headroom to lose: this edit is orders of magnitude under the cap and is
+    // meant to stay there.
 }

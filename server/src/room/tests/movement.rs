@@ -3,7 +3,7 @@
 
 use super::*;
 
-// --- movement (unchanged from milestone 2) ------------------------------
+// --- movement -----------------------------------------------------------
 
 #[test]
 fn drop_frames_snap_and_drag_frames_do_not() {
@@ -56,7 +56,7 @@ fn snapping_is_stable_under_repeated_drops() {
 #[test]
 fn snapping_handles_negative_coordinates() {
     // A token dragged off the top-left belongs in cell -1, not folded back
-    // onto the board. Off-map drags are legal — that is where the DM stages
+    // onto the board. Off-map drags are legal: that is where the DM stages
     // the next wave.
     assert_eq!(snap_to_cell(-0.2, -1.7, 1.0), (-0.5, -1.5));
     assert_eq!(snap_to_cell(-0.2, -1.7, 2.0), (0.0, -2.0));
@@ -65,8 +65,8 @@ fn snapping_handles_negative_coordinates() {
 #[test]
 fn an_odd_token_settles_on_a_cell_centre_and_an_even_one_on_a_corner() {
     // The whole size-dependent snapping rule, stated once. A 2×2 covering
-    // cells (0,0) through (1,1) is centred at (1,1) — the corner those four
-    // cells meet at — because it has no middle cell to sit in.
+    // cells (0,0) through (1,1) is centred at (1,1), the corner those four
+    // cells meet at, because it has no middle cell to sit in.
     assert_eq!(snap_to_cell(6.83, 5.21, 1.0), (6.5, 5.5));
     assert_eq!(snap_to_cell(6.83, 5.21, 3.0), (6.5, 5.5));
     assert_eq!(snap_to_cell(6.83, 5.21, 2.0), (7.0, 5.0));
@@ -76,10 +76,10 @@ fn an_odd_token_settles_on_a_cell_centre_and_an_even_one_on_a_corner() {
 #[test]
 fn shrinking_off_a_corner_picks_one_cell_and_always_the_same_one() {
     // A 2×2 stands on the corner four cells meet at, so shrinking it is a
-    // four-way tie. `round` breaks it away from zero — down and right on
-    // the board, the other way in the negative space off the top-left of
-    // it. Which cell it picks matters far less than picking the same one
-    // every time, which is what stops a resize from looking like a jitter.
+    // four-way tie. `round` breaks it away from zero (down and right on the
+    // board, the other way in the negative space off the top-left of it).
+    // Which cell it picks matters far less than picking the same one every
+    // time, which is what stops a resize from looking like a jitter.
     assert_eq!(snap_to_cell(9.0, 4.0, 1.0), (9.5, 4.5));
     assert_eq!(snap_to_cell(-9.0, -4.0, 1.0), (-9.5, -4.5));
 }
@@ -155,10 +155,10 @@ fn only_the_dm_can_change_how_diagonals_count() {
 
 #[test]
 fn the_convention_reaches_the_table_and_the_dm_alike() {
-    // `NamesChanged`'s test written again, and deliberately: this is the
-    // second thing the DM alone may set that everybody is told, and the
-    // failure it guards against is a player's ruler reading a different
-    // number off the same move than the DM's.
+    // `NamesChanged`'s test again: this is the second thing the DM alone may
+    // set that everybody is told, and the failure it guards against is a
+    // player's ruler reading a different number off the same move than the
+    // DM's.
     let mut state = room();
     let mut dm = join_as_dm(&mut state, ClientId(1));
     let mut saelyn = join_as_player(&mut state, ClientId(2), "saelyn");
@@ -224,8 +224,8 @@ fn the_convention_is_in_every_snapshot_and_survives_the_save_file() {
 #[test]
 fn a_save_written_before_the_field_existed_counts_the_old_way() {
     // Invariant 2, and the one case where getting the default wrong would be
-    // silent: an old room would still load, still play, and quietly report a
-    // different distance than it did last week. `show_names` needed a custom
+    // silent: an old room would still load, still play, and report a
+    // different distance than it did last week. `show_names` needs a custom
     // default to avoid this; `Equal` being the first variant is what saves
     // this one from needing one.
     let mut state = room();
