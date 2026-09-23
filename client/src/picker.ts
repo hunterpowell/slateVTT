@@ -1,6 +1,6 @@
 // The "who are you?" overlay. Shown when the server has no identity for this
-// browser — which is also the only state in which the server has sent us no
-// room state at all, so there is nothing behind it to look at.
+// browser. That is also the only state in which the server has sent us no room
+// state at all, so there is nothing behind it to look at.
 
 import type { RosterSlot } from './protocol.js';
 

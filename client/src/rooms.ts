@@ -1,10 +1,10 @@
 // The "which room?" overlay, and the list it is built from.
 //
-// `picker.ts`'s neighbour rather than a generalisation of it, which is the call
-// `dock.ts` makes against `rail.ts` in `docs/frontend.md` for the same kind of
-// reason: the two overlays share their CSS and nothing else. A room is not a
-// slot — nothing can claim one, so there is no `claimed` to dim and no reason
-// for a picker that serves both to carry a flag saying which it is today.
+// A separate module from `picker.ts`, not a generalisation of it, as `dock.ts`
+// is separate from `rail.ts` (see `docs/frontend.md`). The two overlays share
+// their CSS and nothing else. A room isn't a slot: nothing can claim one, so
+// there is no `claimed` to dim, and a shared picker would need a flag saying
+// which list it is showing.
 //
 // It comes before the socket, because a socket belongs to a room from the
 // moment it opens. That is why the list is fetched over HTTP: see
@@ -25,11 +25,10 @@ export interface RoomPicker {
  * Every room on this server.
  *
  * No DM secret: this is the one route under `/api` a player may call, because
- * the picker cannot be drawn without it and a player has no credential to
- * offer. A failure here is fatal to the page in the plainest way — there is
- * nothing to connect to without a room — so it throws rather than answering
- * with an empty list, which would render as a picker with no choices on it and
- * no explanation.
+ * the picker can't be drawn without it and a player has no credential. A
+ * failure here is fatal to the page, since there is nothing to connect to
+ * without a room. So it throws instead of returning an empty list, which would
+ * render as a picker with no choices and no explanation.
  */
 export async function fetchRooms(): Promise<RoomChoice[]> {
   const response = await fetch('/api/rooms');

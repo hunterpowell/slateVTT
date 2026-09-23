@@ -1,46 +1,43 @@
 /**
- * "It is your turn" — the one thing a player at a table on Discord misses while
- * they are looking at something else.
+ * "It's your turn": the one thing a player on Discord misses while they are
+ * looking at something else.
  *
- * **Client-only, and it is the cheapest feature in this project.** Nothing here
- * touches the wire: `initiative.current` already arrives on every change, the
- * scene already says who owns each token, and `identity.ts` already says who we
- * are. The room does not know this exists and there is nothing for it to know —
- * whose turn it is is not a secret, it is the panel two inches away.
+ * Client-only. Nothing here touches the wire: `initiative.current` already
+ * arrives on every change, the scene already says who owns each token, and
+ * `identity.ts` already says who we are. The room doesn't know this exists and
+ * has no reason to: whose turn it is isn't a secret, it is in the initiative
+ * panel.
  *
- * Three rules, and the first is the one that would ruin it.
+ * Three rules. Breaking the first ruins the feature.
  *
- * **It must not fire on a `Welcome` or a `Restored`.** Adopting state is not a
+ * **It must not fire on a `Welcome` or a `Restored`.** Adopting state isn't a
  * turn change: a refresh mid-combat would flash the tab of whoever is already
- * looking at it, and a DM undoing something would nudge six people at once for a
- * turn that did not move. So the previous value is *seeded* from those frames
- * rather than compared against — `adopt` and `update` are two methods for that
- * reason and not for tidiness.
+ * looking at it, and a DM's undo would nudge six people at once for a turn
+ * that didn't move. So those frames seed the previous value instead of being
+ * compared against it. That is why `adopt` and `update` are separate methods.
  *
- * **It does not open or move anything.** The title flashes, and a line surfaces
- * beside the dock. No panel opens, no camera pans — the ping arrow, the folded
- * initiative panel and the chat badge each already refuse to move the board
- * under somebody who might be mid-drag, and this is the fourth thing to.
+ * It doesn't open or move anything. The title flashes and a line appears
+ * beside the dock. No panel opens and the camera doesn't pan, like the ping
+ * arrow, the folded initiative panel and the chat badge: none of them moves
+ * the board under somebody who might be mid-drag.
  *
- * **The title only flashes while the tab is hidden.** That is the whole of what
- * the title is for here: a tab in the background is the case where the panel
- * cannot be seen. It stops the moment the tab is looked at.
+ * The title only flashes while the tab is hidden, since a background tab is
+ * when the panel can't be seen. It stops as soon as the tab is looked at.
  *
- * One thing is deliberately left open rather than pre-solved: **it fires for the
- * DM on every monster's turn**, because monsters are owned by the DM and it
- * genuinely is their turn to act. That may be right or may be noise, and only
- * playing a session with it decides — the same shape as the draw tool's question
- * in milestone 19. The cheap answer if it is noise is a `localStorage`
- * off-switch, not a rule invented here first.
+ * One question is left open: it fires for the DM on every monster's turn,
+ * because the DM owns the monsters and it is their turn to act. That may be
+ * right or may be noise, and only playing a session with it will tell. If it
+ * is noise, the cheap fix is a `localStorage` off-switch, not a rule invented
+ * here first.
  */
 
 import type { Identity } from './identity.js';
 import type { Initiative } from './protocol.js';
 import type { Scene } from './scene.js';
 
-/** How long the line beside the dock stays. The chat toast's span, because it
- *  is the same box in the same place answering the same question — did I miss
- *  something while I was looking away. */
+/** How long the line beside the dock stays. Same as the chat toast, because it
+ *  is in the same place and for the same purpose: telling you what you missed
+ *  while looking away. */
 const TOAST_MS = 6000;
 
 /** How fast the title alternates while the tab is hidden. Slow enough to read
@@ -49,16 +46,16 @@ const TOAST_MS = 6000;
 const FLASH_MS = 1000;
 
 export interface TurnUi {
-  /** The box beside the dock. Its own element rather than the chat toast's, so
-   *  a whisper arriving does not wipe out the news that you are up. */
+  /** The box beside the dock. Its own element, not the chat toast's, so a
+   *  whisper arriving doesn't replace the news that you are up. */
   toast: HTMLElement;
 }
 
 export interface Turn {
   /** A fresh initiative frame. Fires if the turn moved to something we own. */
   update(initiative: Initiative, scene: Scene): void;
-  /** Take this as the current turn without firing. What a join and a restore
-   *  do — see the note at the top of this file. */
+  /** Take this as the current turn without firing. Used on a join and a
+   *  restore; see the note at the top of this file. */
   adopt(initiative: Initiative): void;
 }
 
@@ -77,9 +74,7 @@ export function createTurn(ui: TurnUi, identity: Identity, initiative: Initiativ
     document.title = title;
   };
 
-  // Looking at the tab is the answer to the question the flashing asked, so it
-  // stops — including when the flashing started while the tab was already
-  // visible and did nothing at all.
+  // Looking at the tab stops the flashing.
   document.addEventListener('visibilitychange', () => {
     if (!document.hidden) stopFlashing();
   });
@@ -109,9 +104,8 @@ export function createTurn(ui: TurnUi, identity: Identity, initiative: Initiativ
       was = now;
       if (now === null) return;
 
-      // A creature we cannot see is absent from our token list entirely — the
-      // server filters it out — so this finding nothing is the same answer as
-      // it not being ours, and needs no separate case.
+      // The server filters a creature we can't see out of our token list, so
+      // finding nothing means it isn't ours and needs no separate case.
       const token = scene.tokens.find((t) => t.id === now);
       if (token === undefined) return;
       const mine =

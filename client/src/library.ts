@@ -1,25 +1,22 @@
 // A folder on the server's disk, listed in a panel and picked from.
 //
-// Three panels want this and they want exactly the same thing: the map panel
-// over `maps/`, the token panel over `portraits/`, the table panel over
-// `backdrops/`. What differs is the folder and the word for what is in it — so
-// both ride in, and everything below is shared. The server side is the same
-// shape for the same reason; see `Library` in `main.rs`.
+// Four folders use this in the same way: the map panel over `maps/`, the token
+// panel over `portraits/`, and the table panel over `backdrops/` and
+// `tracks/`. Only the folder and the word for what is in it differ, so both are
+// passed in and everything below is shared. The server side is shaped the same
+// way for the same reason; see `Library` in `main.rs`.
 //
-// A pick is not the end of anything. The endpoint copies the file into the
-// uploads directory and answers with the URL it is now served at — so
-// `onPicked` gets a URL and has no way to tell where it came from, and no panel
-// has a second code path for library art.
+// The endpoint copies a pick into the uploads directory and answers with the
+// URL it is served at. So `onPicked` gets a URL and can't tell where it came
+// from, and no panel has a second code path for library art.
 //
-// **Adding and removing live here too, which is what makes them one
-// implementation rather than three.** The upload button each panel already had
-// is now this widget's: it writes the file into the folder and then picks it, so
-// what comes back is a pick's URL and an uploaded map is exactly as durable as
-// one that was in the folder all along. The backdrop panel had no upload at all
-// and gets one for free, which is the argument for putting it here.
+// Adding and removing live here too, so there is one implementation, not one
+// per panel. Each panel's upload button belongs to this widget: it writes the
+// file into the folder and then picks it, so what comes back is a pick's URL,
+// and an uploaded map is as durable as one that was in the folder all along.
 //
-// DM-only, like every route under `/api`: the secret is required here, and a
-// player has none to offer.
+// DM-only, like every route under `/api`: the secret is required, and a player
+// has none.
 
 export interface LibraryUi {
   /** The panel. Dimmed while a pick, an add or a remove is in flight. */
@@ -31,9 +28,7 @@ export interface LibraryUi {
   /**
    * The hidden file input behind the panel's upload button.
    *
-   * Outside the list rather than in it, and deliberately: adding is something
-   * the DM does without browsing first, and every panel already had this
-   * control sitting there. What changed is where the bytes land.
+   * Outside the list, not in it: the DM adds a file without browsing first.
    */
   file: HTMLInputElement;
   /** The label on that button, which says `adding…` while one is in flight. */
@@ -44,9 +39,9 @@ export interface LibraryList {
   /**
    * Closes the list without picking anything.
    *
-   * Called as the rail closes the panel, so the tab reopens on the panel rather
-   * than mid-browse. Nothing is armed on the canvas, so unlike the calibration
-   * box this is tidiness rather than a rule.
+   * Called as the rail closes the panel, so the tab reopens on the panel and
+   * not mid-browse. Nothing is armed on the canvas, so unlike the calibration
+   * box this is tidiness, not a rule.
    */
   close(): void;
 }
@@ -67,7 +62,7 @@ export function createLibraryList(
   onPicked: (url: string) => void,
   report: (message: string) => void,
 ): LibraryList {
-  /** "map" / "portrait" / "backdrop" / "track" — every plural loses one letter. */
+  /** "map" / "portrait" / "backdrop" / "track": each plural loses a letter. */
   const noun = kind.slice(0, -1);
 
   let open = false;
@@ -88,11 +83,10 @@ export function createLibraryList(
   const entry = (path: string): HTMLElement => {
     const button = document.createElement('button');
     button.type = 'button';
-    // Named rather than left to be "the first button in the row". Two buttons
-    // now share a row and one of them deletes a file, so anything reaching for
-    // a row by position is one off from destroying something — which is not
-    // hypothetical: it is what `drive-backdrop.mjs` did the first time this
-    // list grew a second button.
+    // Given a class so nothing has to find it as "the first button in the
+    // row". Two buttons share a row and one of them deletes a file, so code
+    // that finds a button by position is one off from deleting something.
+    // `drive-backdrop.mjs` once did.
     button.className = 'map-library-pick';
     // The list is one line per file and the panel is narrow, so the full path
     // has to be reachable somewhere.
@@ -109,9 +103,9 @@ export function createLibraryList(
 
     button.addEventListener('click', () => void pick(path));
 
-    // A row rather than a bare button, because a button cannot hold another
-    // one. The remove is small and to one side: picking is what this list is
-    // for and it stays the whole width of the row bar the last few pixels.
+    // A row, not a bare button, because a button can't hold another one. The
+    // remove button is small and to one side: picking is what this list is for,
+    // so the pick button takes the whole row except the last few pixels.
     const remove = document.createElement('button');
     remove.type = 'button';
     remove.className = 'map-library-remove';
@@ -140,8 +134,8 @@ export function createLibraryList(
     open = true;
     ui.button.classList.add('is-active');
     ui.list.hidden = false;
-    // Re-read every time rather than caching: someone who drops a file into the
-    // folder mid-session should find it by reopening the list.
+    // Re-read every time, not cached: someone who drops a file into the folder
+    // mid-session should find it by reopening the list.
     void show();
   });
 
@@ -170,15 +164,14 @@ export function createLibraryList(
   /**
    * Writes a file into the library folder, and uses it.
    *
-   * The name goes in the query string and the bytes are the body — the server
-   * refuses anything with a separator in it rather than taking the last
-   * segment, so `file.name` reaching a path is a name and never a path. What
-   * comes back is a pick's URL, because the endpoint finishes by picking what it
-   * just wrote.
+   * The name goes in the query string and the bytes are the body. The server
+   * refuses a name with a separator in it instead of taking the last segment,
+   * so `file.name` can only ever be a name, never a path. What comes back is a
+   * pick's URL, because the endpoint finishes by picking what it just wrote.
    *
-   * The list is only re-read if it happens to be open. Adding is not browsing,
-   * and opening it here would put a list in front of the DM that they did not
-   * ask for at the moment the map lands on the board.
+   * The list is only re-read if it is already open. Adding isn't browsing, and
+   * opening it here would put an unrequested list in front of the DM just as
+   * the map lands on the board.
    */
   async function add(file: File): Promise<void> {
     const label = ui.fileText.textContent;
@@ -206,11 +199,11 @@ export function createLibraryList(
   /**
    * Deletes a file from the library folder.
    *
-   * **Named in the prompt, and honest about what survives.** There is no undo
-   * here — this is a file on the server's disk, not room state — and what it
-   * does *not* touch is the copy already served out of `uploads/`, so a map on
-   * the board goes on working and everything the DM prepared on it is still
-   * there. The prompt says so, because "remove" reads like more than it is.
+   * The confirm prompt names the file and says what survives. There is no undo
+   * (this is a file on the server's disk, not room state). It doesn't touch the
+   * copy already served out of `uploads/`, so a map on the board keeps working
+   * and everything the DM prepared on it is still there. The prompt says so,
+   * because "remove" sounds like it does more than it does.
    */
   async function drop(path: string): Promise<void> {
     const ok = window.confirm(

@@ -1,32 +1,28 @@
 /**
  * The presence strip: who is here, and what colour they draw in.
  *
- * Two features on one row of chips, and they are together because they are the
- * same seven names looked at twice — who is connected is written on a chip, and
- * what colour that person picked is what the chip is written in. A second
- * control somewhere else would have meant looking up the same list twice.
+ * Two features on one row of chips, because they are about the same seven
+ * names: a chip shows whether that person is connected, and it is drawn in the
+ * colour they picked. A separate control would list the same people twice.
  *
- * Three decisions are worth keeping.
+ * Three decisions:
  *
- * **It is the top of the right-hand column**, which is the one edge of that
- * column that never moves: the initiative panel folds and the dock grows upward
- * from the bottom, so anything between them shifts when either does. A strip
- * that answers "is the DM still there" is worth nothing if it is somewhere
- * different every time you look.
+ * It is at the top of the right-hand column, the one edge of that column that
+ * never moves. The initiative panel folds and the dock grows upward from the
+ * bottom, so anything between them shifts when either does. A strip that says
+ * whether the DM is still there is no use if it moves every time you look.
  *
- * **Absent people dim rather than disappear.** Every roster slot is drawn from
- * the moment the page loads and never leaves, so the row has one layout for the
- * whole session — a chip that vanished would move its neighbours under the
- * pointer, and would also make "nobody is here" and "there is no such person"
- * the same picture.
+ * Absent people dim, not disappear. Every roster slot is drawn from page load
+ * and never removed, so the row has one layout for the whole session. A chip
+ * that vanished would move its neighbours under the pointer, and would make
+ * "not here" and "no such person" look the same.
  *
- * **The colour control is your own chip**, because that is where your colour
- * already is. It is not a third dock tab: `dock.ts` argues against that itself,
- * since what belongs there is a thing you read while something else is going on,
- * and this is one click twice a campaign. The DM has no control at all — their
- * hue sits outside the six on purpose, and the server refuses a `set_colour`
- * from them, so a picker on their chip would be a button that only ever
- * produced a red banner.
+ * The colour control is your own chip, because that is where your colour
+ * already shows. It isn't a dock tab: the dock is for things you read while
+ * something else is going on, and this is one click twice a campaign. The DM
+ * has no control. Their hue is outside the six, and the server refuses a
+ * `set_colour` from them, so a picker on their chip could only produce a red
+ * banner.
  */
 
 import type { Identity } from './identity.js';
@@ -35,25 +31,25 @@ import type { ClientMsg, Colours, Owner, RosterEntry } from './protocol.js';
 
 export interface PresenceUi {
   root: HTMLElement;
-  /** The chips. Empty in the document — one per roster slot plus the DM's, so
-   *  which ones exist depends on the roster and they are built here. */
+  /** The chips. Empty in the document: there is one per roster slot plus the
+   *  DM's, so they are built here from the roster. */
   chips: HTMLElement;
   /** The swatch row that opens under your own chip. Empty in the document, and
-   *  hidden until it is asked for. */
+   *  hidden until opened. */
   swatches: HTMLElement;
 }
 
 export interface Presence {
   /** Is this person connected right now?
    *
-   *  Chat asks it about a destination — whispering somebody who is not there is
-   *  the specific failure this feature exists to prevent. */
+   *  Chat asks it about each destination, to dim the chip of somebody who
+   *  isn't there. */
   connected(owner: Owner): boolean;
   /** What everybody picked, as the room last said.
    *
-   *  **A live reference**, read at draw time by everything that colours
-   *  anything. Replacing it wholesale would leave the renderer and the chat log
-   *  holding the table from before somebody changed their mind. */
+   *  **Read this at draw time; don't keep a copy.** `picked` replaces the
+   *  object, so the renderer or the chat log holding its own reference would
+   *  keep drawing old colours. */
   readonly colours: Colours;
   /** Somebody joined or left. */
   here(list: readonly Owner[]): void;
@@ -64,9 +60,8 @@ export interface Presence {
 /** A key for one person that a `Set` or a `Map` can hold. `Owner` is an object,
  *  so two copies of the same identity are never the same value.
  *
- *  Exported for `cursors.ts`, which keeps one pointer per person and needs the
- *  same answer to "is this the same person" that this file and `chat.ts`
- *  already share. */
+ *  Exported for `cursors.ts`, which keeps one pointer per person and must
+ *  decide "is this the same person" the same way as this file and `chat.ts`. */
 export function keyOf(owner: Owner): string {
   return owner.kind === 'dm' ? 'dm' : `player:${owner.id}`;
 }
@@ -78,9 +73,9 @@ export function sameOwner(a: Owner, b: Owner): boolean {
   return keyOf(a) === keyOf(b);
 }
 
-/** Who this client is, as an `Owner` — the pair of facts `pings.ts` resolves a
- *  name and a colour from. Here rather than in `identity.ts`, which knows about
- *  a slot in `localStorage` and nothing about the table. */
+/** Who this client is, as an `Owner`, which is what `pings.ts` resolves a name
+ *  and a colour from. Here, not in `identity.ts`, which knows about a slot in
+ *  `localStorage` and nothing about the table. */
 export function ownerOf(identity: Identity): Owner {
   return identity.playerId === null ? { kind: 'dm' } : { kind: 'player', id: identity.playerId };
 }
@@ -95,8 +90,8 @@ export function createPresence(
 ): Presence {
   const me = ownerOf(identity);
   // Everyone who could be here, in one order that never changes: the DM, then
-  // the roster's own. The strip is built from this once and never rebuilt, which
-  // is what keeps the row from reflowing as people come and go.
+  // the roster's order. The strip is built from this once and never rebuilt, so
+  // the row doesn't reflow as people come and go.
   const everyone: Owner[] = [
     { kind: 'dm' },
     ...roster.map((slot): Owner => ({ kind: 'player', id: slot.id })),
@@ -144,9 +139,9 @@ export function createPresence(
 
     const label = document.createElement('span');
     label.className = 'presence-name';
-    // The slug rather than the display name, which is what the chat chips do
-    // and for the same reason: it fits, and it is what the DM already calls each
-    // character. The full name is on the chip's tooltip.
+    // The slug, not the display name, as on the chat chips: it fits, and it is
+    // what the DM already calls each character. The full name is on the
+    // chip's tooltip.
     label.textContent = owner.kind === 'dm' ? 'DM' : owner.id;
 
     chip.append(dot, label);
@@ -155,8 +150,8 @@ export function createPresence(
     ui.chips.append(chip);
   }
 
-  // The control, and only for a player. It hangs off the one chip that is ours,
-  // which is where our colour is already shown.
+  // The colour control, only for a player. It hangs off our own chip, where our
+  // colour is already shown.
   if (me.kind === 'player') {
     const own = chips.get(keyOf(me));
     if (own !== undefined) {
@@ -184,10 +179,10 @@ export function createPresence(
       swatch.title = 'Draw in this colour.';
       swatch.setAttribute('aria-label', `colour ${at + 1}`);
       swatch.addEventListener('click', () => {
-        // Nothing is predicted locally: the swatch settles when the room says
-        // so, which is the same frame that tells everybody else. Two people may
-        // land on the same one — the name beside a ring is what tells them
-        // apart, and the server does not refuse it.
+        // Nothing is predicted locally: the swatch updates when the room says
+        // so, in the same frame that tells everybody else. Two people may pick
+        // the same one. The server doesn't refuse it, and the name beside a
+        // ring tells them apart.
         send({ type: 'set_colour', colour: at });
         closeSwatches();
       });

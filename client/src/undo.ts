@@ -1,22 +1,21 @@
 /**
  * The DM's undo button.
  *
- * **Not a rail tab, and not behind one.** The rail shows one editing panel at a
- * time, and undo is not an editing panel — it is reached in the middle of using
- * whichever one is open, which is exactly the draw tool's argument for being
- * pinned. So it sits above the tab strip, always on screen for the DM and absent
- * for everyone else.
+ * Not a rail tab, and not behind one. The rail shows one editing panel at a
+ * time, and undo isn't an editing panel: the DM reaches for it while using
+ * whichever panel is open, which is also why the draw tool is pinned. So it
+ * sits above the tab strip, always on screen for the DM and absent for
+ * everyone else.
  *
- * **It names what it would take.** There is no redo, so a press the DM cannot
- * predict is unrecoverable — the same problem the fog fill solved by previewing
- * before it commits, answered the same way: show the result before it lands
- * rather than confirm after. The label comes off the room rather than from
- * whatever this client last sent, which is what keeps it right when the DM's
- * other tab, or a player's drawing, is what added the step.
+ * It names what it would undo. There is no redo, so a press the DM can't
+ * predict is unrecoverable. The fog fill handles the same problem the same
+ * way: show the result before it lands instead of confirming after. The label
+ * comes from the room, not from what this client last sent, so it stays right
+ * when the DM's other tab, or a player's drawing, added the step.
  *
- * The button is disabled when there is nothing to take. That is the rail's
- * inertness rule in its plainest form — a control that can do nothing must not
- * look armed — and here it also spares the DM a refusal from the room.
+ * The button is disabled when there is nothing to undo. That is the rail's
+ * inert-tab rule (a control that can do nothing must not look usable), and it
+ * also spares the DM a refusal from the room.
  */
 
 import type { ClientMsg } from './protocol.js';
@@ -35,16 +34,14 @@ export interface Undo {
  * Whether a keystroke belongs to whatever somebody is typing in.
  *
  * Ctrl+Z inside the token name, the hit point boxes or the initiative value is
- * the browser's own undo, and stealing it there would make a text field the one
- * place in the application where the standard shortcut does something violent
- * and unrelated. `isContentEditable` is in for completeness rather than because
- * this project has one.
+ * the browser's own undo. Taking it there would make the standard shortcut
+ * revert the whole room instead of the text. `isContentEditable` is included
+ * for completeness; this project has no such element.
  *
- * **Exported because it is the rule rather than this file's rule.** Every
- * global key that is not Escape has to ask it - Home is start-of-line inside
- * the chat box before it is anything to do with the camera - and the four
- * Escape bindings get away without it only because the element-scoped handlers
- * beside them call stopPropagation.
+ * **Every global key except Escape must check this**, which is why it is
+ * exported. Home, for example, is start-of-line inside the chat box before it
+ * has anything to do with the camera. The four Escape bindings don't need it
+ * only because the element-scoped handlers beside them call stopPropagation.
  */
 export function typingIn(target: EventTarget | null): boolean {
   if (!(target instanceof HTMLElement)) return false;
@@ -61,8 +58,8 @@ export function createUndo(ui: UndoUi, send: (msg: ClientMsg) => void): Undo {
 
   const paint = (): void => {
     ui.button.disabled = label === null;
-    // The label is the *whole* of what the button says, so an empty ring reads
-    // as a plain "undo" rather than as a sentence with a hole in it.
+    // The label is all the button says, so an empty ring gets its own text
+    // instead of a sentence with a hole in it.
     ui.button.textContent = label === null ? 'nothing to undo' : `undo: ${label}`;
     ui.button.title =
       label === null
@@ -71,23 +68,22 @@ export function createUndo(ui: UndoUi, send: (msg: ClientMsg) => void): Undo {
   };
 
   const fire = (): void => {
-    // Guarded here as well as by `disabled`, because the keyboard path does not
-    // go through the button and a stale label is one round trip wide.
+    // Guarded here as well as by `disabled`, because the keyboard path doesn't
+    // go through the button. The label can still be stale by one round trip.
     if (label === null) return;
     send({ type: 'undo' });
   };
 
   ui.button.addEventListener('click', fire);
 
-  // The first modifier binding in this client, and the first global key that is
-  // not Escape. Ctrl+Z and Cmd+Z both, since the DM may be on a Mac; Shift+Z is
-  // deliberately not redo, because there is no redo to bind.
+  // Ctrl+Z and Cmd+Z both, since the DM may be on a Mac. There is no redo, so
+  // nothing is bound to Shift; the `'Z'` check means Ctrl+Shift+Z undoes too.
   window.addEventListener('keydown', (e) => {
     if (e.key !== 'z' && e.key !== 'Z') return;
     if (!e.ctrlKey && !e.metaKey) return;
     if (typingIn(e.target)) return;
     // Only once the room has said there is something to undo, so the shortcut
-    // does not swallow the browser's own on a board with an empty ring.
+    // doesn't swallow the browser's own when the ring is empty.
     if (label === null) return;
     e.preventDefault();
     fire();

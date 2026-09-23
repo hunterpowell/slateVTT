@@ -2,34 +2,32 @@
  * Whisper and shout: one log, two destinations, and a box that says which one
  * it is pointed at.
  *
- * **It is not chat and the difference is the whole design.** A player says
- * something to the table or to the DM; the DM says it to the table or to one
- * player. There is no player-to-player message, no channel, no history between
- * sessions, no formatting, no emotes, no commands and no dice — see the non-goal
- * in `.claude/CLAUDE.md`, which is the specification and whose boundary is most
- * of it. Everything here is refused a second time on the server, which is where
- * the rule actually lives.
+ * **This is not general chat.** A player says something to the table or to the
+ * DM; the DM says it to the table or to one player. There is no
+ * player-to-player message, no channel, no history between sessions, no
+ * formatting, no emotes, no commands and no dice beyond the loaner. The
+ * non-goal in `.claude/CLAUDE.md` is the specification. The server refuses
+ * everything outside it a second time, and that is where the rule is enforced.
  *
- * Three things about this module are decisions rather than detail.
+ * Three design decisions:
  *
- * **Nothing is predicted locally.** Every other panel that sends a command
- * either waits for the room or draws its own preview; this one only ever waits.
- * A log is a *sequence*, and where a line lands in it is the room's to decide —
- * a client appending its own would have two orderings to reconcile the first
- * time two people typed at once. That is why the server echoes a line to
- * whoever sent it, which no other relayed frame in this project does.
+ * Nothing is predicted locally. Every other panel that sends a command either
+ * waits for the room or draws its own preview; this one only waits. A log is
+ * ordered, and the room decides where a line lands. A client appending its own
+ * would have two orderings to reconcile the first time two people typed at
+ * once. That is why the server echoes a line to its sender, which no other
+ * relayed frame in this project does.
  *
- * **The destination is sticky and it is shown twice.** One chip is armed, and
- * Enter sends there — which is the shape that makes a back-and-forth whisper
- * one keystroke each way, and which has exactly one failure: forgetting the box
- * is pointed at the DM and shouting something private, or the reverse. So the
- * armed chip is not the only marker. The input itself changes colour and says
- * where it is going in its placeholder, because the thing somebody is looking at
- * while they type is the thing they are typing into.
+ * The destination is sticky and shown twice. One chip is armed, and Enter
+ * sends there, so a back-and-forth whisper is one keystroke each way. The
+ * failure is forgetting the box points at the DM and shouting something
+ * private, or the reverse. So the input itself also changes colour and names
+ * the destination in its placeholder, because the box is what someone looks at
+ * while they type.
  *
- * **A line renders the same on both screens.** "Saelyn → DM: i pick the lock"
- * is what the sender sees and what the recipient sees, so there is no "am I the
- * sender" branch anywhere in here — one shape, read correctly from either end.
+ * A line renders the same on both screens. "Saelyn → DM: i pick the lock" is
+ * what the sender and the recipient both see, so there is no "am I the sender"
+ * branch in here.
  */
 
 import type { Identity } from './identity.js';
@@ -38,50 +36,49 @@ import type { Presence } from './presence.js';
 import { ownerOf, sameOwner } from './presence.js';
 import type { ChatTo, ClientMsg, Owner, RosterEntry, WireChatLine } from './protocol.js';
 
-/** How long an arriving line sits beside a collapsed dock. Long enough to read
- *  a sentence and notice it, short enough that six initiative rolls do not
- *  become a wall over the board. */
+/** How long an arriving line shows beside a collapsed dock. Long enough to
+ *  notice and read a sentence, short enough that six initiative rolls don't
+ *  pile up over the board. */
 const TOAST_MS = 6000;
 
 /** The dice in the bag, and how many of one may be thrown at once.
  *
- *  Mirrors `DICE_SIDES` and `MAX_DICE` in `room.rs`, which is where they are
- *  enforced — this is what the buttons are built from, the way `MAX_FILL_CELLS`
- *  mirrors the room's override cap. A die missing from here is one nobody can
- *  ask for; a die added that the room does not know is a red banner. */
+ *  Mirrors `DICE_SIDES` and `MAX_DICE` in `room.rs`, which enforces them. The
+ *  buttons are built from this, as `MAX_FILL_CELLS` mirrors the room's override
+ *  cap. A die missing from here is one nobody can ask for; a die here that the
+ *  room doesn't know is a red banner. */
 const DICE_SIDES = [4, 6, 8, 10, 12, 20, 100] as const;
 const MAX_DICE = 20;
 
 export interface ChatUi {
   root: HTMLElement;
   log: HTMLElement;
-  /** The destination chips. Empty in the document — which ones exist depends on
-   *  who is connected, so they are built here. */
+  /** The destination chips. Empty in the document: which ones exist depends on
+   *  the roster, so they are built here. */
   destinations: HTMLElement;
-  /** The die row. Empty in the document — the buttons are built here so the
-   *  bag and the room's `DICE_SIDES` are one list. */
+  /** The die row. Empty in the document: the buttons are built here from
+   *  `DICE_SIDES`, which mirrors the room's list. */
   dice: HTMLElement;
   form: HTMLFormElement;
   text: HTMLInputElement;
-  /** The box beside the dock that an arriving line surfaces in. Outside the
-   *  panel in the document, because it is what shows when the panel does not. */
+  /** The box beside the dock where an arriving line appears. Outside the panel
+   *  in the document, because it shows when the panel doesn't. */
   toast: HTMLElement;
 }
 
 export interface Chat {
-  /** A line arrived — ours or somebody else's; the server has already decided
+  /** A line arrived, ours or somebody else's. The server has already decided
    *  we are party to it. */
   said(line: WireChatLine): void;
   /** The panel came on screen: catch up to the bottom of the log. */
   opened(): void;
   /**
-   * Somebody joined, left, or changed colour — redraw what says so.
+   * Somebody joined, left, or changed colour. Redraw what shows it.
    *
-   * Two things move: a destination chip dims for somebody who is not connected,
-   * and every line already in the log is written in its sender's colour. The
-   * second is why this rebuilds the log rather than only repainting the chips —
-   * a log in yesterday's colours would attribute half a conversation to the
-   * wrong person, which is worse than the colour never having changed.
+   * Two things change: a destination chip dims for somebody who isn't
+   * connected, and every line in the log is written in its sender's colour. The
+   * second is why this rebuilds the log, not just the chips. A log in old
+   * colours would attribute half a conversation to the wrong person.
    */
   repaint(): void;
 }
@@ -96,10 +93,9 @@ function toName(to: ChatTo, roster: readonly RosterEntry[]): string {
 /**
  * Where this client may send.
  *
- * The table plus one, in both cases, and the asymmetry is the feature: a player
- * has one person to whisper and the DM has six. Nobody has another *player* on
- * their list, which is the boundary drawn in one place rather than checked in
- * several.
+ * The table, plus whoever may be whispered: a player has one person to whisper
+ * and the DM has six. Nobody has another *player* on their list, so the
+ * boundary is drawn here once instead of checked in several places.
  */
 function destinations(identity: Identity, roster: readonly RosterEntry[]): ChatTo[] {
   const table: ChatTo = { kind: 'table' };
@@ -112,8 +108,8 @@ function sameTo(a: ChatTo, b: ChatTo): boolean {
   return a.kind === 'player' && b.kind === 'player' ? a.id === b.id : true;
 }
 
-/** The person a destination names, or null for the table — which is everybody
- *  and is therefore never away. */
+/** The person a destination names, or null for the table, which is everybody
+ *  and so is never away. */
 function personAt(to: ChatTo): Owner | null {
   if (to.kind === 'table') return null;
   return to.kind === 'dm' ? { kind: 'dm' } : { kind: 'player', id: to.id };
@@ -124,9 +120,9 @@ export function createChat(
   identity: Identity,
   roster: readonly RosterEntry[],
   history: readonly WireChatLine[],
-  /** Who is here and what colour they picked. Read at draw time rather than
-   *  copied, so a line drawn after somebody changes their mind is drawn in the
-   *  new colour without this holding a second copy of the table. */
+  /** Who is here and what colour they picked. Read at draw time, not copied,
+   *  so a line drawn after somebody changes colour uses the new one without
+   *  this module holding a second copy. */
   presence: Presence,
   send: (msg: ClientMsg) => void,
   /** Tells the dock how many lines have arrived since this panel was last on
@@ -137,9 +133,8 @@ export function createChat(
   let missed = 0;
   let toastAt: number | undefined;
 
-  // The dock sets `hidden` on this panel, so the panel's own element is the
-  // single answer to "is anybody looking at this" — no second flag to keep in
-  // step with the tab strip.
+  // The dock sets `hidden` on this panel, so the element itself says whether
+  // anyone is looking at it. No second flag to keep in step with the tab strip.
   const visible = (): boolean => !ui.root.hidden;
 
   // --- the log --------------------------------------------------------------
@@ -151,12 +146,11 @@ export function createChat(
   const draw = (line: WireChatLine): HTMLElement => {
     const row = document.createElement('div');
     row.className = 'chat-line';
-    // A whisper reads differently from a shout at a glance, which is the only
-    // thing `to` is used for here — the filtering happened in the room.
+    // A whisper is styled differently from a shout. That is the only use of
+    // `to` here; the filtering happened in the room.
     if (line.to.kind !== 'table') row.classList.add('is-whisper');
-    // And the same rule again for the other thing a line can be: the room threw
-    // this one, so it reads differently from a number somebody typed. Nothing
-    // here is filtered on it either.
+    // Likewise a roll: the room threw it, so it is styled differently from a
+    // number somebody typed. Nothing here filters on it either.
     if (line.rolled) row.classList.add('is-rolled');
 
     const who = document.createElement('span');
@@ -168,9 +162,8 @@ export function createChat(
     if (line.to.kind !== 'table') {
       const arrow = document.createElement('span');
       arrow.className = 'chat-arrow';
-      // **"DM → DM" is true and reads badly.** The only way both ends are the
-      // DM is a hidden roll — the room refuses `Say` there — so the label says
-      // what it is instead of naming the same person twice.
+      // Both ends are the DM only for a hidden roll (the room refuses `Say`
+      // there), so the label says "hidden" instead of "DM → DM".
       const self = line.by.kind === 'dm' && line.to.kind === 'dm';
       arrow.textContent = self ? ' → hidden' : ` → ${toName(line.to, roster)}`;
       row.append(arrow);
@@ -178,8 +171,8 @@ export function createChat(
 
     const text = document.createElement('span');
     text.className = 'chat-text';
-    // `textContent`, and it is the only rule this feature has about content:
-    // there is no formatting, so there is nothing here that ever becomes markup.
+    // `textContent`, the only rule this feature has about content. There is no
+    // formatting, so nothing here ever becomes markup.
     text.textContent = line.text;
     row.append(document.createTextNode(': '), text);
     return row;
@@ -191,9 +184,9 @@ export function createChat(
 
   const append = (line: WireChatLine): void => {
     lines.push(line);
-    // Read before the append: somebody scrolled up reading what was said a
-    // minute ago should not be yanked to the bottom by an arrival. While the
-    // panel is hidden this is false and `opened` catches up instead.
+    // Read before the append: someone scrolled up reading earlier lines
+    // shouldn't be pulled to the bottom by an arrival. While the panel is
+    // hidden this is false and `opened` catches up instead.
     const following = ui.log.scrollTop + ui.log.clientHeight >= ui.log.scrollHeight - 8;
     ui.log.append(draw(line));
     if (following) toBottom();
@@ -220,17 +213,17 @@ export function createChat(
   const showDestination = (): void => {
     for (const [dest, chip] of chips) {
       chip.classList.toggle('is-armed', sameTo(dest, to));
-      // Dimmed, never disabled. A whisper to somebody who stepped away is a
-      // reasonable thing to type — they will read it when they come back, since
-      // the log is the session's — and a chip that could not be pressed would
-      // move the armed destination out from under somebody mid-sentence.
+      // Dimmed, never disabled. A whisper to somebody who stepped away is
+      // reasonable: they read it when they come back, since the log lasts the
+      // session. Disabling the chip would move the armed destination out from
+      // under somebody mid-sentence.
       const person = personAt(dest);
       chip.classList.toggle('is-away', person !== null && !presence.connected(person));
     }
-    // Said twice on purpose. The chip is where the choice was made; the box is
-    // where the eyes are while the sentence is being typed, and a whisper that
-    // goes to the table because the box looked like any other box is the one
-    // way this feature does harm.
+    // Shown on the box as well as the chip. The chip is where the choice was
+    // made; the box is where the eyes are while typing. A whisper sent to the
+    // table because the box looked ordinary is the one way this feature does
+    // harm.
     const whisper = to.kind !== 'table';
     ui.form.classList.toggle('is-whisper', whisper);
     ui.text.placeholder = whisper ? `whisper ${toName(to, roster)}…` : 'shout to the table…';
@@ -240,16 +233,16 @@ export function createChat(
     const chip = document.createElement('button');
     chip.type = 'button';
     chip.className = 'chat-chip';
-    // The slug rather than the display name: it is what the DM already calls
-    // each character, it fits, and it matches the lowercase labels the rail's
-    // tabs use. The full name is on the tooltip for anybody who wants it.
+    // The slug, not the display name: it is what the DM already calls each
+    // character, it fits, and it matches the rail's lowercase tab labels. The
+    // full name is on the tooltip.
     chip.textContent = dest.kind === 'player' ? dest.id : dest.kind === 'dm' ? 'DM' : 'table';
     chip.title = `Send to ${toName(dest, roster)}.`;
     chip.addEventListener('click', () => {
       to = dest;
       showDestination();
-      // Arming a destination is the first half of saying something, so the
-      // cursor goes where the second half is typed.
+      // Picking a destination is the first step of saying something, so focus
+      // moves to the text box.
       ui.text.focus();
     });
     chips.set(dest, chip);
@@ -259,18 +252,17 @@ export function createChat(
 
   // --- the loaner die -------------------------------------------------------
 
-  // How many of the next die. A whole number of dice is all a bag has, so this
-  // is a count and never an expression — there is no modifier here and there
-  // must not be one. See `docs/dice.md`.
-  // **DM-only: a throw nobody else is told about.**
+  // DM-only: a throw nobody else is told about.
   //
-  // It lives on the die row rather than among the destination chips, and that is
-  // not a layout choice. Privacy here is a property of the *throw* and not of the
-  // conversation — and the room refuses `Say` to the DM's own ear, so a chip
-  // armed here would leave the text box pointing somewhere it cannot send, which
-  // is the same lie as a rail tab that opens a panel that can do nothing.
+  // On the die row, not among the destination chips. Privacy here belongs to
+  // the throw, not the conversation, and the room refuses `Say` to the DM's
+  // own ear. A chip for it would leave the text box pointing somewhere it
+  // can't send, like a rail tab that opens a panel that can do nothing.
   let hiddenRoll = false;
 
+  // How many of the next die. A bag only has whole dice, so this is a count
+  // and never an expression. **There is no modifier here and there must not be
+  // one.** See `docs/dice.md`.
   const count = document.createElement('input');
   count.type = 'number';
   count.id = 'chat-dice-count';
@@ -279,8 +271,8 @@ export function createChat(
   count.value = '1';
   count.title = `How many dice, up to ${MAX_DICE}.`;
   count.setAttribute('aria-label', 'How many dice');
-  // `ui.text`'s argument, for `ui.text`'s reason: every tool in the project
-  // listens on `window`, and none of them should fire because somebody typed a
+  // Stops keydown for the same reason as `ui.text` below: every tool in the
+  // project listens on `window`, and none should fire because somebody typed a
   // 2 in here.
   count.addEventListener('keydown', (e) => {
     e.stopPropagation();
@@ -293,21 +285,20 @@ export function createChat(
     die.type = 'button';
     die.className = 'chat-die';
     // `d%` for the hundred, which is what the two ten-sided dice it replaces
-    // are called at a table, and what keeps seven buttons on one row.
+    // are called at a table, and which keeps seven buttons on one row.
     die.textContent = sides === 100 ? 'd%' : `d${sides}`;
     die.title = `Throw d${sides}.`;
-    // The die is the button: one click throws, because the common case is one
-    // die to the table and a second control in front of that would be a form
-    // for pressing a d20.
+    // One click throws. The common case is one die to the table, and a second
+    // control in front of that would make throwing a d20 a form.
     die.addEventListener('click', () => {
       const many = Math.min(Math.max(Math.round(Number(count.value) || 1), 1), MAX_DICE);
-      // Written back so the box agrees with what was thrown — the room would
+      // Written back so the box agrees with what was thrown. The room would
       // refuse a 0 or a 40, and a refusal is worse than the box correcting
-      // itself in front of somebody.
+      // itself.
       count.value = String(many);
-      // Wherever the chips are already pointing. This is the whole of how a
-      // private roll works, and it is why there is no second picker here.
-      // The armed chip, unless the DM has said this one is theirs alone.
+      // Sent wherever the armed chip points, unless the DM armed a hidden
+      // roll. That is how a whispered roll works, so there is no second
+      // picker here.
       send({ type: 'roll', sides, count: many, to: hiddenRoll ? { kind: 'dm' } : to });
     });
     ui.dice.append(die);
@@ -324,9 +315,10 @@ export function createChat(
       hiddenRoll = !hiddenRoll;
       secret.classList.toggle('is-armed', hiddenRoll);
       secret.setAttribute('aria-pressed', String(hiddenRoll));
-      // Said twice, exactly as a whisper is. The button is where the choice was
-      // made; the dice are what is being looked at when one is picked, and a
-      // sticky destination has one failure — forgetting which way it points.
+      // Shown on the dice as well as the button, as a whisper is shown on the
+      // box. The button is where the choice was made; the dice are what the DM
+      // looks at when picking one. A sticky setting fails when someone forgets
+      // it is on.
       ui.dice.classList.toggle('is-hidden-roll', hiddenRoll);
     });
     ui.dice.append(secret);
@@ -337,25 +329,24 @@ export function createChat(
   ui.form.addEventListener('submit', (e) => {
     e.preventDefault();
     const text = ui.text.value.trim();
-    // The server refuses this too. Stopping here is about not sending a frame
-    // that comes back as a red banner for pressing Enter on an empty box.
+    // The server refuses this too. Stopping here avoids a red banner for
+    // pressing Enter on an empty box.
     if (text === '') return;
     send({ type: 'say', to, text });
-    // Cleared on send rather than on the echo: what is in the box is what has
-    // not been said yet, and holding the sentence until a round trip completes
-    // is how somebody types it twice. A refusal arrives as the banner every
-    // other refused command uses.
+    // Cleared on send, not on the echo. The box holds what hasn't been said
+    // yet, and holding the sentence until the round trip completes is how
+    // somebody sends it twice. A refusal arrives as the usual error banner.
     ui.text.value = '';
   });
 
-  // A keystroke in this box belongs to this box. Every tool in the project
-  // listens on `window` — the calibration box applies on Enter, four tools
-  // disarm on Escape — and none of them should be reachable from a sentence
-  // somebody is typing. `undo.ts` makes the same argument from the other side
-  // with `typingIn`.
+  // A keystroke in this box stays in this box. Every tool in the project
+  // listens on `window` (the calibration box applies on Enter, four tools
+  // disarm on Escape), and none should be reachable from a sentence being
+  // typed. `typingIn` in `undo.ts` handles the same problem from the
+  // listener's side.
   ui.text.addEventListener('keydown', (e) => {
     e.stopPropagation();
-    // The way out, since nothing else here takes the key: Escape puts the
+    // Since nothing else gets the key, Escape blurs the box and puts the
     // keyboard back on the board.
     if (e.key === 'Escape') ui.text.blur();
   });
@@ -365,10 +356,9 @@ export function createChat(
   return {
     said(line) {
       append(line);
-      // Our own is never news: we just typed it, and it is on screen either
-      // way. Everything else is, including a shout — the case this feature
-      // exists for is six people posting initiative rolls, and a badge nobody
-      // is looking at is how that gets missed.
+      // Our own line is never unread: we just typed it. Everything else
+      // counts, including a shout. The main case is six people posting
+      // initiative rolls, and without the badge and toast those get missed.
       if (sameOwner(line.by, me)) return;
       if (visible()) return;
       missed += 1;
@@ -385,9 +375,9 @@ export function createChat(
     },
     repaint() {
       showDestination();
-      // Read and put back, because rebuilding the log resets it — and somebody
-      // scrolled up reading what was said a minute ago should stay there when
-      // a name three rows down changes colour.
+      // Read and put back, because rebuilding the log resets the scroll.
+      // Someone scrolled up reading earlier lines should stay there when a
+      // name changes colour.
       const wasAt = ui.log.scrollTop;
       ui.log.replaceChildren(...lines.map(draw));
       ui.log.scrollTop = wasAt;

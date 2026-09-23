@@ -1,5 +1,5 @@
-// Who this browser is. Not authentication — a private game among friends — just
-// enough to survive a refresh without orphaning a token.
+// Who this browser is. Not authentication (this is a private game among
+// friends), just enough to survive a refresh without orphaning a token.
 
 import type { Owner } from './protocol.js';
 import type { Token } from './scene.js';
@@ -15,32 +15,30 @@ const ROOM_KEY = 'slate.room';
 /**
  * The slot claimed in one particular room.
  *
- * **Scoped by room, which is the fiddly half of multi-room on this side.** A
- * player in two campaigns is two slugs — the same person is `cleodara` in one
- * room and somebody else in the other — so one key could only hold the wrong
- * answer for whichever room they opened second. The server refuses a slug that
- * names no slot in the room being joined, so a single key would not have leaked
- * anything; it would just have sent them back to the picker every time they
- * switched.
+ * **Scoped by room.** A player in two campaigns has two slugs (the same person
+ * is `cleodara` in one room and somebody else in the other), so a single key
+ * would hold the wrong answer for whichever room they opened second. It
+ * wouldn't leak anything, since the server refuses a slug that names no slot in
+ * the room being joined, but it would send them back to the picker every time
+ * they switched.
  */
 function playerKey(roomId: string): string {
   return `slate.player_id.${roomId}`;
 }
 
 /**
- * What this key was called when there was one room.
+ * The key from before there were several rooms.
  *
- * Read as a fallback so that six people do not each have to find themselves
- * again on the first evening after multi-room lands — invariant 2's argument
- * applied to the browser's own state rather than the save file's. It is only
- * ever *read*: the first `Welcome` writes the scoped key, and from then on this
- * one is dead weight in `localStorage` that nothing consults.
+ * Read as a fallback so that players who picked a character before rooms were
+ * scoped don't have to pick again. This is invariant 2 applied to the
+ * browser's own state instead of the save file. It is only ever read: the
+ * first `Welcome` writes the scoped key, and after that nothing consults this
+ * one.
  *
- * It is safe against the wrong room because the server is the thing that
- * decides. A campaign slug offered to the one-shot names no slot in that room's
- * roster, so `hello` answers with the picker — which is what a player with no
- * stored id gets anyway. There is no case where this admits somebody as
- * somebody else.
+ * It is safe against the wrong room because the server decides. A campaign
+ * slug offered to the one-shot names no slot in that room's roster, so `hello`
+ * answers with the picker, which is what a player with no stored id gets
+ * anyway. It can never admit somebody as somebody else.
  */
 const LEGACY_PLAYER_KEY = 'slate.player_id';
 
@@ -63,9 +61,9 @@ export function canMove(identity: Identity, token: Token): boolean {
 }
 
 /**
- * Whether this token *belongs* to you, which is not the same as being able to
- * move it. The DM can move everything, so ringing everything told the DM
- * nothing; the ring marks the DM's own monsters instead.
+ * Whether this token *belongs* to you, which isn't the same as being able to
+ * move it. The DM can move everything, so a ring on everything would tell the
+ * DM nothing; the ring marks the DM's own monsters instead.
  */
 export function ownsToken(identity: Identity, token: Token): boolean {
   if (identity.isDm) return token.owner.kind === 'dm';
@@ -81,7 +79,7 @@ export function readStoredPlayerId(roomId: string): string | null {
     return localStorage.getItem(playerKey(roomId)) ?? localStorage.getItem(LEGACY_PLAYER_KEY);
   } catch {
     // Private browsing modes can throw on localStorage access. Falling back to
-    // the picker every load is worse than a crash only in theory.
+    // the picker every load is better than a crash.
     return null;
   }
 }
@@ -97,7 +95,8 @@ export function storePlayerId(roomId: string, id: string): void {
 export function forgetPlayerId(roomId: string): void {
   try {
     localStorage.removeItem(playerKey(roomId));
-    // Or "switch" would hand the picker's choice straight back on the next load.
+    // Otherwise "switch" would hand the old choice straight back on the next
+    // load.
     localStorage.removeItem(LEGACY_PLAYER_KEY);
   } catch {
     /* nothing to do */
@@ -129,14 +128,14 @@ export function forgetRoom(): void {
 }
 
 /**
- * Reads `?room=<id>` and **leaves it in the address bar**, which is the whole
- * difference between this and the function below.
+ * Reads `?room=<id>` and leaves it in the address bar, unlike `takeDmSecret`
+ * below.
  *
- * A DM secret is a credential and is stripped on sight. A room id is not one —
- * the server checks it against `ROOMS` and hands back a 404 for anything else,
- * and knowing a room exists gets you no further than the picker already does.
- * What a URL that keeps it buys is a link the DM can send the table that opens
- * straight into the one-shot, and a driver that can skip the picker.
+ * A DM secret is a credential and is stripped immediately. A room id isn't one:
+ * the server checks it against `ROOMS` and returns a 404 for anything else, and
+ * knowing a room exists gets you no further than the picker already does.
+ * Keeping it in the URL gives the DM a link that opens straight into the
+ * one-shot, and lets a driver skip the picker.
  *
  * A URL that names a room beats the remembered one and replaces it.
  */
@@ -147,20 +146,17 @@ export function takeRoomFromUrl(): string | null {
 /**
  * Where the DM secret lives once it has been taken out of the address bar.
  *
- * **`localStorage`, and it was `sessionStorage` first.** Per-tab was the tidier
- * answer and it was the wrong one: it survives `location.reload()`, which is the
- * reconnect, and nothing else — so a DM who reaches for their bookmark or a new
- * tab when the board goes stale lands on the character picker exactly as they
- * did before this existed. On the Pi that is what happened, because "how do I
- * get back" is not a habit anybody has to have consistently.
+ * **`localStorage`, not `sessionStorage`.** Don't switch it to per-tab
+ * storage: `sessionStorage` survives `location.reload()` (the reconnect) and
+ * nothing else, so a DM who opens their bookmark or a new tab when the board
+ * goes stale lands on the character picker. That happened on the Pi.
  *
- * The cost is stated rather than argued away: the secret now sits in the DM's
- * browser until site data is cleared, so anyone with that browser profile opens
- * the room as the DM. That is proportionate here and nowhere else —
- * `.claude/CLAUDE.md` says this is a private game among friends and not to build
- * real authentication, and the unguessable subdomain is the access control the
- * whole deployment already rests on. A DM sharing a browser profile with a
- * player wants a separate profile, not a login.
+ * The cost: the secret sits in the DM's browser until site data is cleared, so
+ * anyone with that browser profile opens the room as the DM. That is
+ * acceptable here because `.claude/CLAUDE.md` says this is a private game among
+ * friends and not to build real authentication, and the unguessable subdomain
+ * is the deployment's access control. A DM sharing a browser profile with a
+ * player needs a separate profile, not a login.
  */
 const DM_SECRET_KEY = 'slate.dm_secret';
 
@@ -168,18 +164,17 @@ const DM_SECRET_KEY = 'slate.dm_secret';
  * The DM secret for this browser: from `?dm=<secret>` if the link carried one,
  * otherwise from the one it was already holding.
  *
- * **The strip is unchanged and is still the point.** The DM screen-shares
- * constantly, so a secret sitting in the URL is one alt-tab away from being
- * handed to the table — and storage is not on screen, so remembering it there
- * costs that argument nothing. The two risks were never the same risk, which is
- * why fixing the second one leaves the first one's guard exactly where it was.
+ * **The secret is always stripped from the address bar.** The DM screen-shares
+ * constantly, so a secret in the URL is one alt-tab away from being shown to
+ * the table. Storage isn't on screen, so remembering it there doesn't weaken
+ * that.
  *
- * **What it buys is the reconnect.** `net.ts` comes back from a dropped socket
- * by calling `location.reload()`, and a secret that lived only in a closure did
- * not survive one: the DM's own page demoted itself to the character picker in
- * the middle of a session.
+ * Storing it is what makes the reconnect work. `net.ts` recovers from a
+ * dropped socket by calling `location.reload()`, and a secret kept only in a
+ * closure wouldn't survive it: the DM's page would drop to the character
+ * picker mid-session.
  *
- * **A URL beats what is stored**, so a DM opening a fresh link is never handed a
+ * A URL beats what is stored, so a DM opening a fresh link is never handed a
  * stale secret by a browser that held an old one.
  */
 export function takeDmSecret(): string | null {
@@ -191,8 +186,8 @@ export function takeDmSecret(): string | null {
     try {
       localStorage.setItem(DM_SECRET_KEY, fromUrl);
     } catch {
-      // Private browsing modes can throw, exactly as they can above. All that is
-      // lost is coming back as the DM after a reload; this load is fine.
+      // Private browsing modes can throw, as above. All that is lost is coming
+      // back as the DM after a reload; this load is fine.
     }
     return fromUrl;
   }
