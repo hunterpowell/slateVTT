@@ -12,7 +12,8 @@ anything that connects the two more closely.
 
 It also means this folder **isn't part of the bundle and has to be deployed separately**. esbuild
 never touches it, so a deploy that copies only `dist/` and `assets/` leaves a 404 behind a link that
-worked on the build machine. See `deploy/pi/README.md`.
+worked on the build machine. **`text.json` is never deployed**: the Pi serves this folder to anyone
+with the hostname, so it gets the same treatment as the public repo. See `deploy/pi/README.md`.
 
 Everyone at the table owns the PHB, Xanathar's and Tasha's. A book is excellent at *"read me
 Fireball"* and useless at *"what 2nd-level bard spells are a bonus action and don't need
@@ -42,7 +43,7 @@ node --test client/spells/query.test.mjs
 ## Importing from the book dumps
 
 `spells_tmp/` holds a plain-text dump of each book, with eighty dashes between spells. **It's
-gitignored, and so is the `text.json` the import produces**: Xanathar's, Tasha's and the ~41 PHB
+gitignored, and so is the `text.json` the import produces**: Xanathar's, Tasha's and the 42 PHB
 spells outside SRD 5.1 are under no open licence, and this repository is public. The header facts go
 in `extra.json` and are committed; the prose stays local. A checkout without `text.json` shows what
 `extra.json` always showed, a row naming a page. See `LICENSE-SRD.md`.
@@ -193,22 +194,22 @@ Terms for the **same** field widen the result (`fire cold`); terms for **differe
 (`wiz 3`).
 
 ```
-wiz 3 conc          13 spells
+wiz 3 conc          24 spells
 cleric 1 bonus       3 — Healing Word, Sanctuary, Shield of Faith
-sor 2 -conc          8
+sor 2 -conc         12
 wiz cantrip attack   4 — Chill Touch, Fire Bolt, Ray of Frost, Shocking Grasp
 "difficult terrain"  a phrase, searched in the prose
 ```
 
-The SRD holds only 14 bonus-action spells in total, so a query returning nothing is usually right
-rather than broken.
+Only 38 of the 477 spells are a bonus action, so a query returning nothing is usually right rather
+than broken.
 
 ## Known limits of the data
 
-- **The SRD is not the PHB.** It has 319 spells against the PHB's 360, and what it leaves out is
-  weighted heavily toward warlock, paladin and ranger. The dumps in `spells_tmp/` hold all 360 plus
-  95 from Xanathar's and 21 from Tasha's, 477 in all, and `import-spells.mjs` turns them into
-  `extra.json` entries as their class lists arrive.
+- **The SRD is not the PHB.** It has 319 spells against the PHB's 361, and what it leaves out is
+  weighted heavily toward warlock, paladin and ranger. The dumps in `spells_tmp/` hold all 361 plus
+  95 from Xanathar's and 21 from Tasha's, 477 in all, and every one of the 158 outside the SRD is
+  now an `extra.json` entry.
 - **Importing switches three filters off until their fields are typed.** An imported entry records
   `area` and leaves out `save`, `attack` and `damage`, because the header block states the first and
   says nothing about the other three. That's the completeness check working as intended, not a
@@ -238,5 +239,6 @@ rather than broken.
   spell that lets you *choose* a type instead lists every type it could be, so `fire` finds Chromatic
   Orb.
 
-Text search only reaches spells that have text, which means the SRD ones. The page says so when a
-phrase is in the query, for the same reason the filters switch themselves off.
+Text search only reaches spells that have text: the SRD ones, plus the rest wherever `text.json` is
+present. The page says so when a phrase is in the query, for the same reason the filters switch
+themselves off.

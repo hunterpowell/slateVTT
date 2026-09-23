@@ -4,8 +4,8 @@
 //   node tools/drive-isometric.mjs                 # or: ... http://host:port secret
 //
 // It runs against a live room and *changes it* — a calibration is persisted, and
-// remembered per URL besides. Point it at a scratch `SLATE_STATE`. It puts the
-// board back on squares on the way out.
+// remembered per URL besides. Point it at a scratch `SLATE_STATE`. It undoes its
+// one calibration on the way out, which puts the board back exactly as found.
 //
 // Why a browser: the arithmetic of a diamond lattice is held by unit tests on
 // both sides of the wire — `fog::basis` in Rust, `gridBasis` and the coordinate
@@ -308,22 +308,18 @@ check(
   true,
 );
 
-// Restored through the whole-image shortcut rather than by dragging, because
-// this has to be *exact*: the built-in map is 1664 px across at 26 cells, so
-// that count gives 64 px/cell with both offsets wrapping to zero, which is
-// `MapInfo::default()` to the pixel. A hand-drawn box lands a fraction off, and
-// a fraction is enough to move every cell out from under `drive-fog`'s traced
-// walls — drivers may be run in any order, so putting the room back means
-// putting it back and not nearly.
-await dm.evaluate('document.querySelector("#map-whole").click(); "ok"');
-await dm.wait(300);
-await dm.evaluate(`(() => {
-  const c = document.querySelector('#map-cells');
-  c.value = '26';
-  c.dispatchEvent(new Event('input'));
-})(); "ok"`);
-await dm.wait(300);
-await dm.evaluate('document.querySelector("#map-apply").click(); "ok"');
+// Restored with the DM's undo rather than by calibrating back, because this has
+// to be *exact* and on whatever map the room is on. The isometric apply above is
+// the one change this script sends; every gesture since was a preview that never
+// left the page. So one undo puts back the grid it found to the pixel. Typing a
+// cell count only did that on the built-in map (1664 px at 26 cells is 64), and
+// after `drive-staged` promotes a different image the same count lands a
+// fraction off, which is enough to move every cell out from under another
+// driver's traced walls. Drivers may be run in any order, so putting the room
+// back means putting it back and not nearly.
+const undoLabel = await dm.evaluate(`document.getElementById('undo-button').textContent`);
+check('the last change is the one this script made', undoLabel, 'undo: the map');
+await dm.evaluate(`document.getElementById('undo-button').click(); "ok"`);
 await dm.wait(900);
 
 const left = await readout();

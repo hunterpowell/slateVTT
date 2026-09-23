@@ -40,19 +40,33 @@ const press = (label, panel = '#wall-tools') =>
  * wall lights up under the pointer from eight pixels away — the hover is found
  * before the line itself is reached.
  */
-const doorPixels = (x) =>
+const doorColumn = (x) =>
   evaluate(`(() => {
     const c = document.querySelector('#stage');
     const s = c.width / c.getBoundingClientRect().width;   // backing store per CSS px
     const box = c.getContext('2d').getImageData(
       Math.round((${x} - 4) * s), Math.round(285 * s), Math.round(24 * s), Math.round(115 * s));
-    const perColumn = new Array(box.width).fill(0);
-    for (let i = 0; i < box.data.length; i += 4) {
+    const amber = (i) => {
       const [r, g, b] = [box.data[i], box.data[i + 1], box.data[i + 2]];
-      if (r > 200 && g > 150 && g < 235 && b < 150) perColumn[(i / 4) % box.width]++;
+      return r > 200 && g > 150 && g < 235 && b < 150;
+    };
+    const perColumn = new Array(box.width).fill(0);
+    for (let i = 0; i < box.data.length; i += 4) if (amber(i)) perColumn[(i / 4) % box.width]++;
+    const pixels = Math.max(...perColumn);
+    // Separate stretches of amber down that busiest column: one for a solid
+    // line, one per dash for a dashed one.
+    const col = perColumn.indexOf(pixels);
+    let runs = 0;
+    let inRun = false;
+    for (let row = 0; row < box.height; row++) {
+      const on = amber((row * box.width + col) * 4);
+      if (on && !inRun) runs++;
+      inRun = on;
     }
-    return Math.max(...perColumn);
+    return { pixels, runs };
   })()`);
+
+const doorPixels = async (x) => (await doorColumn(x)).pixels;
 
 /** Sweeps the pointer until the cursor says something under it is clickable. */
 async function hunt(axis, from, to, fixed) {
@@ -123,14 +137,19 @@ const doorAt = await hunt('x', 578, 598, 340);
 check('the pointer finds the door to swing', doorAt !== null, true);
 
 await move(950, 600); // off the wall: the segment under the pointer draws white
-const shut = await doorPixels(doorAt ?? 588);
+const { pixels: shut, runs: shutRuns } = await doorColumn(doorAt ?? 588);
 await click(doorAt ?? 588, 340);
 await wait(400);
 await move(950, 600);
-const opened = await doorPixels(doorAt ?? 588);
-note(`door column: ${shut} amber pixels shut, ${opened} open`);
+const { pixels: opened, runs: openRuns } = await doorColumn(doorAt ?? 588);
+note(`door column: ${shut} amber pixels in ${shutRuns} run(s) shut, ${opened} in ${openRuns} open`);
 check('swinging a door does not add or remove one', await readout(), '2 walls · 1 door');
-check('an open door draws dashed where a shut one draws solid', opened < shut * 0.8, true);
+// Counted in gaps rather than pixels. An open door's dashes are as long as its
+// gaps, but the round caps grow each dash into the gap, so a dashed column still
+// holds about 80% of a solid one's amber, and where it lands either side of
+// that depends on the map under it. A dashed line has a gap every ten pixels
+// whatever is underneath, so it is many runs where a solid one is one.
+check('an open door draws dashed where a shut one draws solid', shutRuns <= 2 && openRuns >= 5, true);
 check('and it was solid to begin with', shut > 80, true);
 
 // --- erasing one segment of a run -------------------------------------------

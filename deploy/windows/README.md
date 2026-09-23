@@ -109,6 +109,11 @@ uploads\
 With Slate stopped, back up that whole directory. The JSON files and uploads belong together: a
 saved map stores a URL pointing at a file under `uploads\`.
 
+The libraries are not in there. `Start-Slate.ps1` points all four at the repository's own `maps\`,
+`portraits\`, `backdrops\` and `tracks\` folders, so a file the DM uploads from a panel is written
+into the checkout (and shows up in `git status`) as well as copied into `uploads\`. Every file the
+room actually uses is in `uploads\`, so the data directory is still a complete backup of the game.
+
 To set your own DM secret instead of the random one the launcher generates, stop Slate and edit
 `dm-secret.txt`. Use letters, digits, `-` and `_` only, since the secret goes unencoded into both the
 DM URL and an HTTP header.

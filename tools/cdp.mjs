@@ -11,10 +11,70 @@
 // Node's own `WebSocket` and `fetch` are the only things used, so there is
 // nothing to install: the browser is the one already on the machine.
 
-import { spawn } from 'node:child_process';
-import { existsSync, mkdtempSync } from 'node:fs';
+import { spawn, spawnSync } from 'node:child_process';
+import { existsSync, mkdtempSync, readdirSync, rmSync, statSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+
+// **Every profile is deleted when its browser goes, and nobody should have to
+// clear them by hand.** Each is a fresh directory in the temp folder, around 40 MB
+// once Chrome has written its caches, and a full loop opens thirty of them. Before
+// this they were never removed, and a week of driver runs filled the disk.
+//
+// Three layers, because a driver can end three ways. `close()` is the ordinary
+// one. The `exit` handler covers a driver that threw or called `process.exit`
+// without closing, and Ctrl+C, which is turned into an exit below. The sweep in
+// `open()` covers the one nothing in-process can: node itself killed outright,
+// which leaves the browser running and its profile locked until it dies.
+const PROFILE_PREFIX = 'slate-cdp-';
+const live = new Set();
+
+/** Kills the browser's whole process tree and deletes its profile.
+ *
+ *  The tree rather than the process: Chrome's renderers and GPU process hold
+ *  files in the profile too, and on Windows a file that is open cannot be
+ *  deleted. Synchronous throughout, because an `exit` handler cannot wait. The
+ *  delete retries for a second while the last handles close, and a profile that
+ *  is still locked after that is left for the next run's sweep. */
+function shutdown(entry) {
+  if (!live.delete(entry)) return;
+  if (process.platform === 'win32') {
+    spawnSync('taskkill', ['/F', '/T', '/PID', String(entry.browser.pid)], { stdio: 'ignore' });
+  } else {
+    entry.browser.kill('SIGKILL');
+  }
+  try {
+    rmSync(entry.profile, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
+  } catch {
+    // Still locked; `sweep` gets it next time.
+  }
+}
+
+process.on('exit', () => {
+  for (const entry of [...live]) shutdown(entry);
+});
+// Ctrl+C ends a node process without firing `exit` unless something handles it.
+process.on('SIGINT', () => process.exit(130));
+
+let swept = false;
+
+/** Deletes profiles an earlier run left behind. Only ones untouched for half an
+ *  hour: drivers run one at a time and the longest takes about a minute, so
+ *  anything that old belongs to no browser still being driven. */
+function sweep() {
+  if (swept) return;
+  swept = true;
+  const cutoff = Date.now() - 30 * 60 * 1000;
+  for (const name of readdirSync(tmpdir())) {
+    if (!name.startsWith(PROFILE_PREFIX)) continue;
+    const path = join(tmpdir(), name);
+    try {
+      if (statSync(path).mtimeMs < cutoff) rmSync(path, { recursive: true, force: true });
+    } catch {
+      // Locked by a browser that outlived its driver, or already gone.
+    }
+  }
+}
 
 /** Where a browser might be, in the order worth trying. `SLATE_BROWSER` wins. */
 const BROWSERS = [
@@ -61,7 +121,8 @@ export async function open(
   url,
   { port = 9333, width = 1280, height = 860, autoplay = false } = {},
 ) {
-  const profile = mkdtempSync(join(tmpdir(), 'slate-cdp-'));
+  sweep();
+  const profile = mkdtempSync(join(tmpdir(), PROFILE_PREFIX));
   const browser = spawn(findBrowser(), [
     '--headless=new',
     `--remote-debugging-port=${port}`,
@@ -72,6 +133,8 @@ export async function open(
     ...(autoplay ? ['--autoplay-policy=no-user-gesture-required'] : []),
     url,
   ]);
+  const entry = { browser, profile };
+  live.add(entry);
 
   let target = null;
   for (let attempt = 0; attempt < 40 && target === null; attempt++) {
@@ -84,7 +147,7 @@ export async function open(
     if (target === null) await wait(250);
   }
   if (target === null) {
-    browser.kill();
+    shutdown(entry);
     throw new Error('the browser never opened a debugging port');
   }
 
@@ -195,7 +258,7 @@ export async function open(
     },
 
     close() {
-      browser.kill();
+      shutdown(entry);
     },
   };
 

@@ -11,11 +11,15 @@ $scriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
 $repoRoot = (Resolve-Path -LiteralPath (Join-Path $scriptDir '..\..')).Path
 $clientDir = Join-Path $repoRoot 'client'
 $serverExe = Join-Path $repoRoot 'server\target\release\slate-server.exe'
-# The two libraries the DM picks from. They stay in the repo rather than moving
+# The libraries the DM picks from. They stay in the repo rather than moving
 # under the data directory: picking copies into uploads, so what is backed up
-# there is still every map and portrait the room has actually used.
+# there is still every picture and track the room has actually used. All four
+# are set here because the server's defaults are relative to the working
+# directory, which for this script is wherever it was run from.
 $mapsDir = Join-Path $repoRoot 'maps'
 $portraitsDir = Join-Path $repoRoot 'portraits'
+$backdropsDir = Join-Path $repoRoot 'backdrops'
+$tracksDir = Join-Path $repoRoot 'tracks'
 
 if (-not (Test-Path -LiteralPath $serverExe -PathType Leaf)) {
     throw 'The release server has not been built. Run .\deploy\windows\Build-Slate.ps1 first.'
@@ -60,6 +64,8 @@ $env:SLATE_STATE = $statePath
 $env:SLATE_UPLOADS = $uploadsDir
 $env:SLATE_MAPS = $mapsDir
 $env:SLATE_PORTRAITS = $portraitsDir
+$env:SLATE_BACKDROPS = $backdropsDir
+$env:SLATE_TRACKS = $tracksDir
 $env:SLATE_DM_SECRET = $dmSecret
 
 Write-Host ''
@@ -69,6 +75,8 @@ Write-Host "  DM URL:     $localUrl/?dm=$dmSecret"
 Write-Host "  Data:       $dataDir"
 Write-Host "  Maps:       $mapsDir"
 Write-Host "  Portraits:  $portraitsDir"
+Write-Host "  Backdrops:  $backdropsDir"
+Write-Host "  Tracks:     $tracksDir"
 Write-Host ''
 Write-Host 'For a remote rehearsal, leave this running and open another terminal:'
 Write-Host "  cloudflared tunnel --url $localUrl"

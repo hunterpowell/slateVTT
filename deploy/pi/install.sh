@@ -185,6 +185,12 @@ if [ -n "$unexpected" ]; then
 fi
 say "client tree holds exactly index.html, dist, assets, spells and status"
 
+# The spell prose outside SRD 5.1 is under no open licence, and this tree is
+# served to anyone with the hostname. Deploy-Slate.ps1 leaves it behind; this
+# catches a hand deploy that copied the whole folder.
+[ ! -e "$OPT/client.new/spells/text.json" ] ||
+    die "spells/text.json is in the staged client tree -- it must not be served; delete it from the stage"
+
 say "new tree built; nothing live has been touched yet"
 
 # ---------------------------------------------------------------------------
@@ -264,7 +270,7 @@ rm -rf "$OPT/client.failed" "$OPT/bin/slate-server.failed"
 # failure, because rolling back would not fix it.
 if journalctl -u slate --since '2 minutes ago' --no-pager 2>/dev/null | grep -q 'no .* library there'; then
     printf '\n  WARNING: slate logged a missing library. Check SLATE_MAPS / SLATE_PORTRAITS /\n'
-    printf '           SLATE_BACKDROPS in %s against /var/lib/slate.\n' "$ENV_FILE"
+    printf '           SLATE_BACKDROPS / SLATE_TRACKS in %s against /var/lib/slate.\n' "$ENV_FILE"
 fi
 
 say "$(systemctl is-active slate) -- $(journalctl -u slate -n 1 --no-pager -o cat 2>/dev/null | head -1)"

@@ -107,8 +107,9 @@ const calibrated = new Set();
 
 for (const { saved } of rooms) {
   // What that board is actually showing. `staged` is `#[serde(flatten)]`ed, so
-  // its map fields sit directly on it rather than under a `map` key.
-  for (const url of [saved.map?.url, saved.staged?.url]) {
+  // its map fields sit directly on it rather than under a `map` key. The
+  // backdrop is persisted too, as a bare URL, and the table may be looking at it.
+  for (const url of [saved.map?.url, saved.staged?.url, saved.backdrop]) {
     const name = fileOf(url);
     if (name) inUse.add(name);
   }
@@ -160,7 +161,7 @@ console.log(
 console.log(`${rows.length} files, ${mb(total)} total\n`);
 
 for (const [kind, blurb] of [
-  ['in use', 'the live board, the staged one, or a token'],
+  ['in use', 'the live board, the staged one, the backdrop, or a token'],
   ['remembered', 'not shown, but the DM has calibrated it — loading it again keeps the grid'],
   ['unreferenced', 'nothing in the room points at these'],
 ]) {

@@ -426,9 +426,9 @@ server\target\aarch64-unknown-linux-gnu\release\slate-server  ->  stage/slate-se
 client\index.html                                             ->  stage/client/
 client\dist                                                   ->  stage/client/
 client\assets                                                 ->  stage/client/
-client\spells                                                 ->  stage/client/
 client\status                                                 ->  stage/client/
 build.json                                                    ->  stage/build.json
+client\spells\<each file but text.json>                       ->  stage/client/spells/
 deploy\pi\install.sh                                          ->  stage/install.sh
 ```
 
@@ -436,10 +436,17 @@ deploy\pi\install.sh                                          ->  stage/install.
 **`client\spells` and `client\status` aren't part of the bundle and are copied on their own.**
 esbuild never touches them, so they arrive only if those lines run. The client links to `/spells/`
 from its bottom-right corner, and a missing copy is a 404 behind a link that looked fine on the build
-machine. `text.json` is gitignored and absent here as it is everywhere else; the page falls back to
-the row naming a page, which is the licensing decision in `client/spells/README.md`, not a broken
-deploy. `build.json` is the stamp the script writes naming the commit being deployed; it goes outside
-the client tree (see `SLATE_BUILD_INFO` above).
+machine.
+
+**`client\spells` goes one file at a time so `text.json` stays behind.** It's the prose for the
+spells outside SRD 5.1, under no open licence, and everything under `/opt/slate/client` is served to
+anyone with the hostname. `install.sh` refuses it too, which catches a hand deploy that copied the
+whole folder. Without it the page shows those spells as a row naming a page (see
+`client/spells/README.md`). The folder has no subdirectories, and the script refuses to deploy if
+one appears, because it would otherwise be left out.
+
+`build.json` is the stamp the script writes naming the commit being deployed; it goes outside the
+client tree (see `SLATE_BUILD_INFO` above).
 
 Then, on the Pi, it runs `sudo bash stage/install.sh stage`.
 
@@ -468,8 +475,8 @@ missed `client\spells` or `client\status` copy is a 404 the build machine can't 
 Two preflight checks on the Windows side are worth knowing about, because they fail early and their
 messages are short. `ssh -o BatchMode=yes … sudo -n true` runs before anything is built: it proves the
 key works and that `sudo` on the Pi won't wait for a password, which over a non-interactive `ssh` is
-a *hang* rather than an error. And `cargo zigbuild --version` is checked before `npm ci`, so a missing
-cross-compiler costs a message rather than five minutes.
+a *hang* rather than an error. And `cargo-zigbuild` and `zig` must both be on `PATH` before `npm ci`
+runs, so a missing cross-compiler costs a message rather than five minutes.
 
 ### Seeding the libraries (install time only)
 
@@ -504,15 +511,17 @@ sudo cp -rn /opt/slate/maps/.       /var/lib/slate/maps/
 sudo cp -rn /opt/slate/portraits/.  /var/lib/slate/portraits/
 sudo chown -R slate:slate /var/lib/slate
 sudo rm -rf /opt/slate/maps /opt/slate/portraits
-# then update SLATE_MAPS / SLATE_PORTRAITS and add SLATE_BACKDROPS in
-# /etc/slate/slate.env, and start it again
+# then update SLATE_MAPS / SLATE_PORTRAITS and add SLATE_BACKDROPS and
+# SLATE_TRACKS in /etc/slate/slate.env, and start it again
 sudo systemctl start slate
 ```
 
 ### Doing it by hand
 
 `install.sh` is a plain shell script that reads top to bottom. If you need to deploy without the
-PowerShell half (from a machine that isn't the build machine, say), the `scp` table above and
+PowerShell half (from a machine that isn't the build machine, say), the `scp` table above (with
+`mkdir -p stage/client/spells` first, or `scp -r client\spells` to `stage/client/` on a machine
+with no `text.json`) and
 `sudo bash stage/install.sh stage` are all it takes.
 
 ## Verify
@@ -945,8 +954,9 @@ hand deploy can still hit them.
   answered: either `ssh` doesn't work with a key from this machine, or `sudo -n true` on the Pi wants
   a password. The second matters more than it looks, because over a non-interactive `ssh` a password
   prompt is a *hang*, not an error.
-- **`cargo zigbuild is not available`**: the cross-compiler was never installed, or `zig` isn't on
-  `PATH` because the terminal wasn't restarted. See *Once, to set up the cross-compiler*.
+- **`cargo-zigbuild is not on PATH`** or **`zig is not on PATH`**: the cross-compiler was never
+  installed, or the terminal wasn't restarted after installing `zig`. See *Once, to set up the
+  cross-compiler*.
 - **`… is not aarch64`** or **`is not an ELF binary`**: the wrong `--target`, caught on the build
   machine before the upload. If you see this from `install.sh` instead, the staged binary isn't the
   one that was just built.
@@ -956,6 +966,9 @@ hand deploy can still hit them.
   than `index.html`, `dist`, `assets`, `spells` or `status` is in `client\`. This matters beyond
   tidiness: the client directory is served to anyone, so a map sitting in it can be downloaded by
   URL, bypassing the DM-only map picker entirely.
+- **`spells/text.json is in the staged client tree`**: the spell prose was copied along with the
+  rest of `client\spells`, which only a hand deploy does. Delete `~/stage/client/spells/text.json`
+  and run `install.sh` again. Nothing has been stopped.
 - **`slate did not serve within 20s`**: the new build installed and wouldn't answer. It has been
   rolled back and the old one is running again; what failed is kept at `/opt/slate/client.failed` and
   `/opt/slate/bin/slate-server.failed`. Start with `journalctl -u slate -n 50`. A 200 from `/` but not

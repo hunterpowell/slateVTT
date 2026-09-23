@@ -210,6 +210,26 @@ export async function lattice(session, { reach = 4, halo = 100, smallest = 45, z
       );
     },
 
+    /** Whether a cell is on the canvas *and not under a panel*, `pad` pixels
+     *  either way from its centre. The canvas runs under the dock, the
+     *  initiative panel and the corner, so `onScreen` alone can pass a cell whose
+     *  click lands on a button. Where the grid lines fall is a fact about the
+     *  map, so a cell that was clear on one map can be under the chat tab on
+     *  the next. */
+    async clear(i, j, pad = 0) {
+      const [x, y] = screenOfCell(i, j);
+      const points = [
+        [x, y],
+        [x - pad, y - pad],
+        [x + pad, y - pad],
+        [x - pad, y + pad],
+        [x + pad, y + pad],
+      ];
+      return session.evaluate(
+        `${JSON.stringify(points)}.every(([x, y]) => document.elementFromPoint(x, y)?.id === 'stage')`,
+      );
+    },
+
     /** One line for the driver to `note`, so a run's log says what it measured
      *  and every later coordinate in it can be read back. */
     describe: `a cell is ${gx.size.toFixed(1)} px at ${showing}, the middle of the view is cell ${origin.x},${origin.y}`,
@@ -298,6 +318,9 @@ export async function emptyCell(session, grid, from, radius = 4) {
   for (let distance = 0; distance <= radius; distance++) {
     for (const cell of ring(from, distance)) {
       if (!grid.onScreen(cell.x, cell.y, 60)) continue;
+      // A covered cell clicks a panel, so `tokenAt` finds nothing there and it
+      // would pass for bare board.
+      if (!(await grid.clear(cell.x, cell.y, 10))) continue;
       if ((await tokenAt(session, grid, cell)) === null) return cell;
     }
   }

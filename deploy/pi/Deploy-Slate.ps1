@@ -8,7 +8,7 @@
     the Pi, and hand off to install.sh which does the swap and the rollback.
 
     Nothing here writes to /var/lib/slate. The saved rooms, the uploads and the
-    three libraries are the DM's and a deploy has nothing to say about them --
+    four libraries are the DM's and a deploy has nothing to say about them --
     seeding those is an install step, in the README, run once by hand.
 
     The failure design has one rule: refuse before the service stops. Every
@@ -366,7 +366,7 @@ try {
     # Clear the stage first. A file left behind by a deploy that failed half way
     # through would otherwise be installed by this one, which is the kind of
     # thing that works until the one time it does not.
-    Invoke-Native -Exe 'ssh.exe' -Arguments @('-o', 'ConnectTimeout=10', $PiTarget, 'rm -rf $HOME/stage && mkdir -p $HOME/stage/client') -What 'clearing the stage directory'
+    Invoke-Native -Exe 'ssh.exe' -Arguments @('-o', 'ConnectTimeout=10', $PiTarget, 'rm -rf $HOME/stage && mkdir -p $HOME/stage/client/spells') -What 'clearing the stage directory'
 
     # core.autocrlf is true on this machine, so install.sh is very likely checked
     # out with CRLF, and bash fails on a \r with an error naming the wrong line.
@@ -397,12 +397,26 @@ try {
         @{ Local = 'client\index.html';          Remote = 'stage/client/';       Recurse = $false }
         @{ Local = 'client\dist';                Remote = 'stage/client/';       Recurse = $true  }
         @{ Local = 'client\assets';              Remote = 'stage/client/';       Recurse = $true  }
-        @{ Local = 'client\spells';              Remote = 'stage/client/';       Recurse = $true  }
         @{ Local = 'client\status';              Remote = 'stage/client/';       Recurse = $true  }
         @{ Local = 'build.json';                 Remote = 'stage/build.json';    Recurse = $false }
     )
     # client\src and client\node_modules are deliberately absent: the Pi serves
     # the bundle, not the sources.
+
+    # client\spells goes file by file so that text.json can be left behind. It is
+    # the prose for the non-SRD spells, gitignored because it is under no open
+    # licence, and anything under client/ is served to whoever has the hostname.
+    # install.sh refuses it as well, for a hand deploy that used scp -r. The
+    # folder is flat; a subdirectory would be skipped here, so it is refused
+    # instead and needs its own line.
+    $spellsDir = Join-Path $repoRoot 'client\spells'
+    $spellsSubdirs = @(Get-ChildItem -LiteralPath $spellsDir -Directory)
+    if ($spellsSubdirs.Count -gt 0) {
+        throw "client\spells has a subdirectory ($($spellsSubdirs[0].Name)), which this script does not ship. Add it to the upload list."
+    }
+    foreach ($file in @(Get-ChildItem -LiteralPath $spellsDir -File | Where-Object { $_.Name -ne 'text.json' })) {
+        $uploads += @{ Local = "client\spells\$($file.Name)"; Remote = 'stage/client/spells/'; Recurse = $false }
+    }
 
     foreach ($u in $uploads) {
         # Not $args: that is an automatic variable, and assigning to it in a

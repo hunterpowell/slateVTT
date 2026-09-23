@@ -17,8 +17,8 @@ centred and whole, with no cropping and no camera, so the image can be any shape
 are normal.
 
 Picking one **copies it into the uploads directory** rather than serving it from this folder, the
-same rule maps and portraits follow. Unlike those two there's no upload button: this folder is the
-collection, which is also why keeping a few presets here costs nothing.
+same rule maps and portraits follow. **upload a backdrop…** on the same panel writes a file into this
+folder and then picks it, so an uploaded backdrop stays in the list for next time.
 
 `dusk.png` is a placeholder from `tools/gen-assets.mjs`, here so the picker isn't an empty list on a
 fresh clone. Delete it once there's real art in the folder.

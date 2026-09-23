@@ -30,7 +30,8 @@ accepted: an MP4 container doesn't say in its header whether there's a video tra
 audio, so accepting it would let a film into the music library. Re-export to MP3 or Ogg.
 
 Picking one **copies it into the uploads directory** rather than serving it from this folder, the
-same rule maps, portraits and backdrops follow.
+same rule maps, portraits and backdrops follow. **upload a track…** writes a file into this folder and
+then picks it.
 
 `drone.wav` is a placeholder from `tools/gen-assets.mjs`, here so the picker isn't an empty list on a
 fresh clone and so `tools/drive-sound.mjs` has something to pick. Delete it once there's real music

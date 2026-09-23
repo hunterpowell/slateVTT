@@ -27,6 +27,17 @@ replaces Foundry for one group that only needs a shared map, tokens, and turn or
 - A scratchpad each: one box of text, kept with the room, that no other screen is ever sent. The
   DM's is no different from anybody's
 - A loaner die: seven dice in the chat panel, thrown by the server, for whoever came without theirs
+- A backdrop: a picture the DM shows everyone in place of the board, for stretches of the evening
+  with nothing to move, which leaves the board untouched underneath
+- One looping music track the DM picks, at a volume each person sets for themselves
+- Coloured markers on a token, and an X for a dead one, that everyone can see
+- Square or isometric grids, and tokens that carry a light of their own
+- Who's connected, a prompt when it's your turn, a colour each player picks, and everyone's pointer
+  on everyone's board
+- Undo for the DM, ten changes deep, and a player view that redraws the DM's board as the table
+  sees it
+- Several rooms on one server, each with its own board and cast, so a one-shot doesn't disturb
+  the campaign
 - State is saved to a JSON file on disk and restored on restart
 
 See [CLAUDE.md](.claude/CLAUDE.md) for the architecture, invariants, and non-goals, and [docs/](docs/)
@@ -102,11 +113,16 @@ and their tokens follow them.
 
 ```
 client/   TypeScript source, canvas rendering, esbuild config
+  spells/ the spell index at /spells/, a static page outside the bundle (its own README)
+  status/ the host status page at /status/, and the Kindle renderer (their own READMEs)
 server/   axum server: room actor, wire protocol, JSON persistence
+docs/     one file per subsystem, explaining why it works the way it does
+deploy/   hosting from Windows (windows/) and from a Raspberry Pi (pi/)
 tools/    check.mjs: every check that doesn't need a browser, in one command
           gen-assets.mjs: placeholder map/token/backdrop art and one track, for local dev
           audit-uploads.mjs: what is in uploads/ and what the room still points at
           cdp.mjs, board.mjs, drive-*.mjs: drive the real client in a headless browser
+          *-spells.mjs: build, import and validate the spell index's data
 maps/     the map library, which the DM picks from during play
 portraits/ the token-art library, the same idea for faces
 backdrops/ pictures shown *instead of* the board, for parts of an evening with nothing to move
@@ -136,15 +152,19 @@ separate integration test, because they drive `RoomState` through its private AP
 way to assert what a client was *not* sent, which is most of what matters in a room that filters
 every message per recipient.
 
-The client's tests cover its pure logic: the coordinate spaces, the two distance rules and the
-trail, the wall-crossing test, shape coverage, and the DM's flood fill. They run under Node's own
+The client's tests cover its pure logic, one `src/*.test.ts` per module: among them the coordinate
+spaces and the isometric grid, the two distance rules and the trail, the wall-crossing test, shape
+coverage, the DM's flood fill, what player view strips out, the damage box's grammar, and the
+client's half of the protocol drift check against `protocol-tags.json`. They run under Node's own
 test runner against an esbuild bundle, because the client imports its own modules as `./coords.js`
 and Node won't resolve that to a `.ts` file. Anything needing a canvas or a socket is left to the
 browser drivers below.
 
-One more test sits outside `check.mjs`: `python3 client/status/kindle/kindle_test.py` covers the
-Kindle renderer, which draws the status page as a PNG for a jailbroken Kindle. It needs Pillow, so
-it's run separately. See [client/status/kindle/README.md](client/status/kindle/README.md).
+Two more sets of tests sit outside `check.mjs`. `python3 client/status/kindle/kindle_test.py` covers
+the Kindle renderer, which draws the status page as a PNG for a jailbroken Kindle. It needs Pillow,
+so it's run separately. See [client/status/kindle/README.md](client/status/kindle/README.md). The
+spell index has `node --test client/spells/query.test.mjs` and `node tools/check-spells.mjs`; see
+[client/spells/README.md](client/spells/README.md).
 
 ### Driving the real client
 
@@ -167,7 +187,7 @@ which token is standing on a given square.
 | `drive-select.mjs` | Shift-click selection, the group drag that moves them together, and Delete removing them | both     |
 | `drive-staged.mjs` | Tracing and painting the next dungeon, and the table not being told | both     |
 | `drive-undo.mjs`   | The DM's undo reaching the table, and not rebuilding their page    | both     |
-| `drive-panels.mjs` | The initiative panel folding, `n` advancing the turn, and the sight check no longer being offered | both     |
+| `drive-panels.mjs` | The initiative panel folding, `n` advancing the turn, the damage box, token markers, and the sight check no longer being offered | both     |
 | `drive-chat.mjs`   | Whisper and shout, and the loaner die, each absent from a *third* person's page | three    |
 | `drive-notes.mjs`  | The scratchpad: one person in two tabs, and the DM holding none of it | three    |
 | `drive-presence.mjs` | Who is connected, the colour a player picks, and being told it's your turn | three    |
@@ -266,17 +286,22 @@ pixels. **A driver may not assume the map it was written against.**
 
 ### Running the lot
 
-**The sixteen drivers in the loop below take about five minutes**, so run all of them whenever the
-client changes rather than picking the ones that look relevant. Picking isn't worth the thought:
-they all sit on `coords.ts`, `render.ts`, `input.ts` and `scene.ts`, and almost every client commit
-touches one of those, so any rule about which to skip says "none of them" nearly every time.
+**The twenty-one drivers in the loop below take about seven and a half minutes**, so run all of them
+whenever the client changes rather than picking the ones that look relevant. Picking isn't worth the
+thought: they all sit on `coords.ts`, `render.ts`, `input.ts` and `scene.ts`, and almost every client
+commit touches one of those, so any rule about which to skip says "none of them" nearly every time.
+`drive-library.mjs` is the one left out, because it writes to the library folders.
 
-| player | names | ui  | rail | undo | chat | notes | presence | staged | fog | ruler | select | ping | panels | cursors |
-| ------ | ----- | --- | ---- | ---- | ---- | ----- | -------- | ------ | --- | ----- | ------ | ---- | ------ | ------- |
-| 4s     | 6s    | 9s  | 12s  | 14s  | 16s  | 16s   | 17s      | 22s    | 23s | 25s   | 30s    | 39s  | 49s    | 59s     |
+| player | names | ui  | chat | undo | isometric | sound | rail | backdrop | notes | presence |
+| ------ | ----- | --- | ---- | ---- | --------- | ----- | ---- | -------- | ----- | -------- |
+| 3s     | 6s    | 9s  | 10s  | 11s  | 11s       | 13s   | 15s  | 15s      | 17s   | 17s      |
 
-`drive-cursors.mjs` is the slowest and `drive-ping.mjs` is next, for the same reason: most of their
-time is spent waiting for something to expire, which is the behaviour they test.
+| mirror | status | fit | rooms | ruler | staged | fog | select | ping | panels | cursors |
+| ------ | ------ | --- | ----- | ----- | ------ | --- | ------ | ---- | ------ | ------- |
+| 18s    | 18s    | 22s | 24s   | 25s   | 26s    | 27s | 31s    | 40s  | 46s    | 57s     |
+
+`drive-cursors.mjs` and `drive-ping.mjs` are slow for the same reason: most of their time is spent
+waiting for something to expire, which is the behaviour they test.
 
 The per-run cost isn't the drivers, it's the room: a fresh one means restarting the server, so run
 the suite against **one** server rather than restarting between drivers. Run them sequentially,
@@ -285,37 +310,46 @@ because of the shared debug ports:
 ```sh
 cd server
 rm -f scratch.json      # the room is only read at boot, so this is what resets it
-SLATE_DM_SECRET=test-secret SLATE_STATE=scratch.json cargo run &
+SLATE_DM_SECRET=test-secret SLATE_STATUS_KEY=test-status SLATE_STATE=scratch.json cargo run &
 until curl -sf http://127.0.0.1:3000/ >/dev/null; do sleep 1; done
 
 cd ..
-for d in player names ui rail undo panels chat notes presence backdrop staged fog ruler select ping cursors; do node tools/drive-$d.mjs; done
+for d in player names ui rail undo panels chat notes presence backdrop staged fog ruler select ping cursors rooms mirror isometric fit sound status; do node tools/drive-$d.mjs; done
 ```
 
-That whole block takes a little over five minutes on the machine it was written on. The cheap
-drivers go first, so a broken client fails `drive-player.mjs` four seconds in rather than two
+That whole block takes about seven and a half minutes on the machine it was written on. The cheap
+drivers go first, so a broken client fails `drive-player.mjs` a few seconds in rather than two
 minutes in. The order is only a convenience; nothing depends on it.
 
-A driver killed partway leaves two things behind that make the *next* run fail misleadingly: a
-Chrome still holding the debug port, which the next `open()` attaches to and hangs on, and whatever
-tokens it hadn't tidied away yet. `taskkill //F //IM chrome.exe` and a fresh scratch file fix both.
-**Never pipe a driver through `head`**: it dies on the broken pipe partway through and leaves
-exactly that mess.
+Each browser a driver opens gets a throwaway profile in the temp folder, and `cdp.mjs` deletes it
+along with the browser, including when the driver throws or is stopped with Ctrl+C. The first
+`open()` of a run also deletes any profile more than half an hour old, which catches the ones a
+killed process left behind.
+
+A driver that stops partway still leaves whatever tokens it hadn't tidied away, and one whose node
+process is killed outright (by a timeout or Task Manager) also leaves its Chrome holding the debug
+port, which the next `open()` attaches to and hangs on. `taskkill //F //IM chrome.exe` and a fresh
+scratch file fix both. **Never pipe a driver through `head`**: it dies on the broken pipe partway
+through and leaves tokens behind.
 
 ## What is in `uploads/`
 
-Every direct upload gets a fresh UUID filename and nothing ever deletes one, so the directory only
-grows. A map is capped at 25 MB, and re-uploading the same battle map five times keeps five copies.
-A library *pick* is fingerprinted and lands on one file however many times it's picked; an upload is
-not (see [docs/maps.md](docs/maps.md) for why). On an always-on Pi that also grows every backup.
+Every file in `uploads/` is a copy of a library file. Uploading from a panel adds the file to the
+library and then picks it, and a pick copies it here under a name fingerprinted by content, so
+picking the same file twice lands on one copy (see [docs/maps.md](docs/maps.md)). Nothing ever
+deletes a copy, including when the DM removes the original from the library, so the directory only
+grows by one copy per distinct file ever picked. A map is capped at 25 MB, and on an always-on Pi
+the directory is in every backup.
 
 ```sh
 node tools/audit-uploads.mjs [state.json] [uploads/]
 ```
 
-It reads the save file and the directory and sorts the files three ways: **in use** by the live
-board, the staged one or a token; **remembered**, meaning nothing shows it but the DM has calibrated
-it, so loading it again keeps its grid; and **unreferenced**, which nothing in the room points at.
+It reads every room's save file and the directory and sorts the files three ways: **in use** by a
+live board, a staged one, a backdrop or a token; **remembered**, meaning nothing shows it but the DM has
+calibrated it, so loading it again keeps its grid; and **unreferenced**, which nothing in any room
+points at. A music track's copy always shows as unreferenced, because the room's music isn't saved;
+don't remove one the room is playing.
 
 **It deletes nothing.** It prints the `rm` lines and the DM runs the ones they want, with the server
 stopped. A cleanup job inside the room was considered and not built: the room would have to know

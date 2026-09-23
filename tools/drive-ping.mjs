@@ -366,8 +366,22 @@ note(`fog was ${fogOn ? 'already on' : 'turned on for this check'}`);
 // pixels for the same reason as the bare patch above — the far corner of a
 // canvas is a fact about the canvas — and carried to the other screen as the
 // cell it lands on, which is the only form the two clients agree about.
-const darkCell = await dmGrid.cellUnder(dmGrid.middle.x + 420, dmGrid.middle.y + 300);
-const reaches = darkCell !== null && playerGrid.onScreen(darkCell.x, darkCell.y, 60);
+//
+// **Stepped back toward the middle until the DM's hold lands on the canvas.**
+// The canvas runs under the dock in that corner, and whether the aimed-at cell's
+// centre is under the chat tab depends on where this map's grid lines fall: on
+// the built-in map it cleared the tab by a few pixels, and on the map
+// `drive-staged` promotes it did not. A hold on a button sends no ping, which
+// read as a ping that never reached the player. The player's side needs no such
+// care, because the box below is read off the canvas, which is drawn under a
+// panel all the same.
+let darkCell = await dmGrid.cellUnder(dmGrid.middle.x + 420, dmGrid.middle.y + 300);
+for (let step = 0; darkCell !== null && step < 4; step++) {
+  if (await dmGrid.clear(darkCell.x, darkCell.y, 10)) break;
+  darkCell = { x: darkCell.x - 1, y: darkCell.y - 1 };
+}
+const dmClear = darkCell !== null && (await dmGrid.clear(darkCell.x, darkCell.y, 10));
+const reaches = dmClear && playerGrid.onScreen(darkCell.x, darkCell.y, 60);
 const dark = darkCell === null ? null : at(dmGrid, darkCell);
 const playerDark = reaches ? at(playerGrid, darkCell) : null;
 
@@ -386,11 +400,14 @@ const litShare = async (spot) =>
 const darkness = reaches ? await litShare(playerDark) : null;
 if (reaches) note(`${(darkness * 100).toFixed(1)}% of that patch is lit on the player's screen`);
 
-if (!reaches) {
+if (!dmClear) {
+  note('every square tried is under a panel on the DM’s screen — the fog arm is untested on this room');
+} else if (!reaches) {
   note('that square is off the edge of the player’s canvas — the fog arm is untested on this room');
 } else if (darkness > 0.2) {
   note('that spot is not dark on this map — the fog arm is untested on this room');
 } else {
+  note(`pinging the dark at cell ${darkCell.x},${darkCell.y}`);
   await remember(player, ...boxAt(playerDark.x, playerDark.y));
   await hold(dm, dark.x, dark.y);
   await dm.wait(300);
