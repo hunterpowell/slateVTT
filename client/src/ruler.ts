@@ -1,14 +1,14 @@
 // The movement ruler: how far the token being dragged has come from where its
-// drag began. No command, no event, nothing persisted — the whole feature is
-// this file, four calls into it, and one drawing pass.
+// drag began. No command, no event, nothing persisted: the feature is this
+// file, four calls into it, and one drawing pass.
 //
-// It is not the dragger's alone, though. Every client draws one for any token it
-// sees moving, and that costs nothing on the wire: `TokenMoved` already says
-// whether a frame is a drag or a drop, and a watcher's copy of a token sits at
-// its settled position until the first drag frame lands. That position *is* the
-// origin, which is why `seen` takes it from before the frame is applied and
-// ignores it thereafter — captured a frame later it would be the token
-// mid-drag, and a ruler measuring from itself always reads zero.
+// Every client draws one for any token it sees moving, not only the dragger,
+// and that costs nothing on the wire: `TokenMoved` already says whether a frame
+// is a drag or a drop, and a watcher's copy of a token sits at its settled
+// position until the first drag frame lands. That position *is* the origin, so
+// `seen` takes it from before the frame is applied and ignores it after that.
+// Captured a frame later it would be the token mid-drag, and a ruler measuring
+// from itself always reads zero.
 //
 // Nothing here can leak. The frames a ruler is built from are the ones the room
 // already decided to send: a hidden token's are dropped for players, and a plan
@@ -17,33 +17,33 @@
 import type { Vec2 } from './coords.js';
 import type { Diagonals } from './protocol.js';
 
-/** A grid cell is five feet. The only place this project converts. */
+/** A grid cell is five feet. `shapes.ts` holds the same constant. */
 const FEET_PER_CELL = 5;
 
 /**
  * How long a ruler survives without a fresh drag frame.
  *
- * A drop frame is what normally ends one. This is only for the client that
- * vanishes mid-drag and never sends it, leaving a line stranded on five other
- * screens until somebody reloads.
+ * A drop frame normally ends one. This is only for the client that vanishes
+ * mid-drag and never sends it, leaving a line stranded on five other screens
+ * until somebody reloads.
  *
- * Generous on purpose, and it has to be: frames come from `pointermove`, so a
- * drag that pauses sends nothing at all. Silence means "they stopped moving the
- * mouse" far more often than it means "they are gone", and a DM who holds a
- * token still while working out where it goes must not have their ruler
- * evaporate on the table's screens. Nothing is lost by waiting — the line is
- * still drawn against the position everyone can see.
+ * It has to be generous: frames come from `pointermove`, so a drag that pauses
+ * sends nothing at all. Silence means "they stopped moving the mouse" far more
+ * often than "they are gone", and a DM who holds a token still while working
+ * out where it goes must not have their ruler disappear from the table's
+ * screens. Nothing is lost by waiting: the line is still drawn against the
+ * position everyone can see.
  */
 const STALE_MS = 15_000;
 
 /**
  * How long a ruler stays on screen after the drop that ended it.
  *
- * A different clock from `STALE_MS` above, for a different failure — that one is
- * a guess about a client that vanished, this one is a deliberate pause. The drop
- * is the moment everyone looks up, and a line that disappears on the same frame
- * as it lands is a line nobody read. Short, because it is the only thing on the
- * board drawn for a move that has already happened.
+ * A different clock from `STALE_MS` above, for a different purpose: that one
+ * guesses that a client vanished, this one is a pause. The drop is the moment
+ * everyone looks up, and a line that disappears on the frame it lands is a
+ * line nobody read. Short, because it is the only thing on the board drawn for
+ * a move that has already happened.
  */
 const LINGER_MS = 2_000;
 
@@ -58,16 +58,16 @@ export interface Ruler {
   staged: boolean;
   /**
    * When the last drag frame for it arrived, or null for the drag this client is
-   * performing itself — that one ends on pointerup and cannot go stale.
+   * performing itself, which ends on pointerup and can't go stale.
    */
   seenAt: number | null;
   /**
    * When the drop landed, or null while the drag is still running.
    *
-   * Non-null means the ruler is fading rather than live, which is the only
-   * difference between the two states — it is still measured against the same
-   * origin, and the token has stopped moving, so the reading and the trail are
-   * frozen without anything having to freeze them.
+   * Non-null means the ruler is fading, not live, and that is the only
+   * difference between the two states. It is still measured against the same
+   * origin, and the token has stopped moving, so the reading and the trail stay
+   * still without anything having to freeze them.
    */
   endedAt: number | null;
 }
@@ -79,7 +79,7 @@ export interface Rulers {
   /** A drag frame for somebody else's token, with our copy's position from
    *  *before* it is applied. Only the first frame's origin is kept. */
   seen(id: string, from: Vec2, staged: boolean, now: number): void;
-  /** The drop frame. Starts the ruler fading rather than removing it — the move
+  /** The drop frame. Starts the ruler fading instead of removing it: the move
    *  it describes is the one worth looking at. A no-op for an id with no ruler. */
   end(id: string, now: number): void;
   /** The token going away: deleted, or hidden from us mid-drag. Unlike a drop
@@ -88,8 +88,8 @@ export interface Rulers {
   forget(id: string): void;
   /** `forget` for everything not in `keep`, which is what an undo needs: a
    *  restore can take several tokens off the board at once and there is no
-   *  per-token frame to hang a `forget` on. Same argument as that one — a trail
-   *  left by a token that just vanished points at where it went. */
+   *  per-token frame to call `forget` from. The reason is the same as for
+   *  `forget`: a trail left by a vanished token points at where it went. */
   forgetExcept(keep: ReadonlySet<string>): void;
   /** Every live ruler, having dropped the ones that have finished fading and the
    *  ones nothing has moved for a while. */
@@ -156,26 +156,25 @@ export function createRulers(): Rulers {
  * where a token settles: a drag starts from a settled position, the lattice a
  * token settles on is spaced one cell apart whatever its size, so the difference
  * between the two ends is a whole number of cells. Which cell it lands *in* is
- * `snap_to_cell`'s business, and stays on the server as the only copy of that
+ * decided by `snap_to_cell`, which stays on the server as the only copy of that
  * rule.
  *
  * The move is then `straight` orthogonal steps and `diagonal` diagonal ones,
- * which is the only decomposition of a straight line on a king-move lattice —
- * and the two conventions differ solely in what the second sort costs:
+ * which is the only decomposition of a straight line on a king-move lattice,
+ * and the two conventions differ only in what a diagonal step costs:
  *
  *   equal        every step is one cell. A 3-cell diagonal is 15 ft.
  *   alternating  every *second* diagonal costs two. A 3-cell diagonal is 20 ft.
  *
- * `⌊diagonal / 2⌋` is where the doubling lands, and it is what makes the second
- * convention free of history: it counts from the start of this reading, so the
- * first diagonal of anything anybody measures costs five. Nothing here holds a
- * creature's movement budget to carry a remainder in, and a number that depended
- * on how far you had already come this turn could not be checked by looking at
- * it.
+ * `⌊diagonal / 2⌋` is where the doubling lands. It counts from the start of
+ * this reading, so the first diagonal of anything anybody measures costs five.
+ * Nothing here holds a creature's movement budget to carry a remainder in, and
+ * a number that depended on how far you had already come this turn couldn't be
+ * checked by looking at it.
  *
- * Both stay multiples of five, which is the property worth protecting: it is
- * what the table says out loud. The distance a *shape* reports is Euclidean and
- * disagrees with both — see `feetOf` in shapes.ts, which argues it there.
+ * Both stay multiples of five, which is worth protecting: it is what the table
+ * says out loud. The distance a *shape* reports is Euclidean and disagrees
+ * with both (see `feetOf` in shapes.ts).
  */
 export function feetMoved(from: Vec2, to: Vec2, diagonals: Diagonals): number {
   const dx = Math.abs(Math.round(to.x - from.x));
@@ -193,7 +192,7 @@ export function feetMoved(from: Vec2, to: Vec2, diagonals: Diagonals): number {
  * `LINGER_MS` once it has landed.
  *
  * One number for the line, the reading and the trail alike. They are three
- * halves of one annotation and fading them on separate clocks would only make
+ * parts of one annotation, and fading them on separate clocks would only make
  * the last one left look like a bug.
  */
 export function rulerAlpha(ruler: Ruler, now: number): number {
@@ -203,29 +202,29 @@ export function rulerAlpha(ruler: Ruler, now: number): number {
 }
 
 /**
- * The cells a move crossed, as flat pairs — the way `coveredCells` returns them,
+ * The cells a move crossed, as flat pairs, the way `coveredCells` returns them
  * and for the same reason: this is rebuilt every frame of every drag on screen.
  *
- * The straight line from origin to destination rather than the path the mouse
- * actually took, and that is what makes it *the reading, drawn*. Stepped over
- * the rounded delta, so it lands exactly `feetMoved / 5` steps away and yields
- * exactly that many cells plus the one it started in. The picture and the number
- * cannot disagree, because they are computed from the same two integers.
+ * The straight line from origin to destination, not the path the mouse took,
+ * so the trail is the reading drawn on the board. Stepped over the rounded
+ * delta, so it lands `feetMoved / 5` steps away and yields that many cells plus
+ * the one it started in. The picture and the number can't disagree, because
+ * they are computed from the same two integers.
  *
  * It also costs nothing on the wire and nothing in state: `from` is already on
  * the ruler and `to` is where the token is, both of which every client watching
  * the drag already holds. All six screens rasterise the same line.
  *
- * A wide token traces its centre, one cell across whatever it is — the trail
+ * A wide token traces its centre, one cell across whatever its size. The trail
  * answers "which way did it come", and a 4×4 footprint swept over four cells of
- * travel is a smear rather than a path.
+ * travel is a smear, not a path.
  *
- * A step can land exactly on a cell boundary — four across and two down does it
- * twice — and `floor` takes the later cell. Either is defensible when the line
- * runs down the join, and what matters is that it is the same answer everywhere:
- * the same two integers go in on every client, and the same square lights up.
- * Reversing the drag lights the same squares too, since the ties fall on whole
- * numbers, which floor to themselves from both directions.
+ * A step can land on a cell boundary (four across and two down does it twice),
+ * and `floor` takes the later cell. Either is defensible when the line runs
+ * down the join; what matters is that it is the same answer everywhere, since
+ * the same two integers go in on every client. Reversing the drag lights the
+ * same squares too, since the ties fall on whole numbers, which floor to
+ * themselves from both directions.
  */
 export function trailCells(from: Vec2, to: Vec2): number[] {
   const dx = Math.round(to.x - from.x);

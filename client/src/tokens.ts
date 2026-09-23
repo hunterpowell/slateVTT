@@ -2,21 +2,21 @@
 //
 // One form does both jobs. With nothing selected it describes a token that does
 // not exist yet and the button says "create"; select a token on the map and the
-// same fields fill in with what that token is, and the button says "save". The
-// alternative — a separate creation dialog — is two ways to say the same five
-// fields, and they drift.
+// same fields fill in with what that token is, and the button says "save".
+// Don't add a separate creation dialog: it would be a second form for the same
+// fields, and the two would drift.
 //
-// Nothing here is predicted locally. A create cannot be, because the id is the
-// server's to invent, and an edit is a deliberate click rather than a drag, so
-// there is no round trip anyone can feel. The panel changes what is on screen
-// only when the server says so.
+// Nothing here is predicted locally. A create can't be, because the server
+// invents the id, and an edit is a click, not a drag, so there is no round trip
+// anyone can feel. The panel changes what is on screen only when the server
+// says so.
 //
 // The panel works in preview mode as well as on the board, and which slot it is
 // pointed at decides only one thing: whether a *new* token is built on the map
 // being prepared or on the one everyone is looking at. Every other field it
-// sends is shared by both boards, so an edit lands everywhere at once — only
-// position and existence fork. That is what the panel has to teach, because a
-// board where some things are shared and others are not is worse than either.
+// sends is shared by both boards, so an edit lands everywhere at once; only
+// position and existence fork. The panel has to make that clear, because a
+// board where some things are shared and others aren't is worse than either.
 //
 // Players never see this. It is only created for a DM connection, and the
 // server re-checks every command regardless.
@@ -60,7 +60,7 @@ export interface TokenTool {
   /**
    * Deletes these tokens, after asking. The panel's own button is this with
    * one id; the Delete key in main.ts is it with everything wearing a ring.
-   * Ids that name nothing on the board are dropped rather than sent.
+   * Ids that name nothing on the board are dropped, not sent.
    */
   remove(ids: Iterable<string>): void;
   /** Called on Welcome and after every token delta. */
@@ -68,9 +68,9 @@ export interface TokenTool {
   /**
    * Puts the panel down, called by the rail as it closes this tab.
    *
-   * Only the portrait list, and only so the tab reopens on the panel rather
-   * than mid-browse — unlike the map and wall panels this one arms nothing on
-   * the canvas, and the selection it holds is a ring the DM can still see.
+   * Closes only the portrait list, so the tab reopens on the panel instead of
+   * mid-browse. Unlike the map and wall panels this one arms nothing on the
+   * canvas, and the selection it holds is a ring the DM can still see.
    */
   stop(): void;
 }
@@ -122,8 +122,8 @@ export function createTokenTool(
     ui.name.value = token?.name ?? '';
     ui.size.value = String(token?.size ?? 1);
     ui.owner.value = token === null ? DM_OWNER : ownerValue(token.owner);
-    // Both blank is how "the DM keeps no total on this one" is said, which is
-    // most tokens most of the time — see `hitPoints`.
+    // Both blank means the DM keeps no total on this one, which is most tokens
+    // most of the time (see `hitPoints`).
     ui.hp.value = token?.hp === undefined || token.hp === null ? '' : String(token.hp.current);
     ui.hpMax.value = token?.hp === undefined || token.hp === null ? '' : String(token.hp.max);
     ui.light.value =
@@ -143,11 +143,11 @@ export function createTokenTool(
   };
 
   /**
-   * The six toggles, rebuilt wholesale rather than updated in place.
+   * The marker toggles, rebuilt wholesale instead of updated in place.
    *
    * `markerRow` is shared with the initiative panel so that the swatch here and
-   * the pip on the board cannot come to disagree about which colour `blue` is -
-   * `hpColour`'s argument, one field over.
+   * the pip on the board can't disagree about which colour `blue` is, the same
+   * reason `hpColour` is shared.
    */
   const showMarks = (): void => {
     ui.markers.replaceChildren(
@@ -157,22 +157,22 @@ export function createTokenTool(
         (next) => {
           marks = next;
           showMarks();
-          // Committed on the spot for a token that exists, exactly as the
-          // hidden switch and a chosen portrait are: marking a creature happens
-          // *while* something is going on, and a mark that needs a second click
-          // to take lands a beat after the thing it is about.
+          // Committed on the spot for a token that exists, like the hidden
+          // switch and a chosen portrait: marking a creature happens *while*
+          // something is going on, and a mark that needs a second click to take
+          // lands a beat after the thing it is about.
           if (selected() !== null) save();
         },
       ),
     );
   };
 
-  // **Once on the way up, which nothing else in this form needs.** Every other
+  // **Once at startup, which nothing else in this form needs.** Every other
   // field is initialised by the markup and only rewritten by `show`, and `show`
-  // does not run until something is selected or "+ new token" is pressed - so a
+  // doesn't run until something is selected or "+ new token" is pressed, so a
   // panel opened on a fresh page would offer no swatches at all until the DM
-  // happened to click a token. There is no markup for six generated buttons,
-  // so this is where their empty state comes from.
+  // clicked a token. There is no markup for the generated buttons, so this is
+  // where their empty state comes from.
   showMarks();
 
   /** Names the slot a token would be built into, since the two differ in what
@@ -180,8 +180,8 @@ export function createTokenTool(
   const headingForNew = (): string => (previewing() ? 'New token · next map' : 'New token');
 
   /**
-   * What the DM can do with what is selected — and, in preview, what a drag
-   * there will actually mean, since the same gesture writes a different field.
+   * What the DM can do with what is selected, and, in preview, what a drag
+   * there will mean, since the same gesture writes a different field.
    */
   const hintFor = (token: Token | null): string => {
     if (token === null) {
@@ -215,9 +215,9 @@ export function createTokenTool(
   /**
    * The two boxes read as one total, or as none at all.
    *
-   * Filling one in and leaving the other alone is the common case — a DM types
-   * a monster's total once and then only ever edits the left-hand number — so
-   * an empty box copies the one that was filled rather than refusing to save.
+   * Filling one in and leaving the other alone is the common case (a DM types
+   * a monster's total once and then only ever edits the left-hand number), so
+   * an empty box copies the one that was filled instead of refusing to save.
    * Both empty is `null`, which is what a party member the DM keeps no total
    * for looks like.
    */
@@ -233,9 +233,9 @@ export function createTokenTool(
   /**
    * How far this token lights the board, or null for one carrying no light.
    *
-   * Blank is the ordinary answer, and it is why this is a box rather than a
+   * Blank is the ordinary answer, and it is why this is one box instead of a
    * switch and a number beside it: most tokens carry nothing, a player's own
-   * falls back to the map's radius, and there is no third state to say.
+   * falls back to the map's radius, and there is no third state.
    */
   const lightFt = (): number | null => {
     const ft = Number.parseFloat(ui.light.value);
@@ -284,12 +284,12 @@ export function createTokenTool(
       hp: hitPoints(),
       light_ft: lightFt(),
       markers: marks,
-      // The slot on screen, exactly as `set_map` reads it. Building the
-      // ambush for next week's room is standing on next week's map.
+      // The slot on screen, the same way `set_map` reads it. Building the
+      // ambush for next week's room means standing on next week's map.
       staged: previewing(),
     });
-    // Deliberately stays on "new token" with the fields as they are: six
-    // goblins is six clicks, and `spaceFor` puts each one in its own cell.
+    // Stays on "new token" with the fields as they are: six goblins is six
+    // clicks, and `spaceFor` puts each one in its own cell.
     ui.name.select();
   };
 
@@ -308,9 +308,9 @@ export function createTokenTool(
   ui.hp.addEventListener('keydown', saveOnEnter);
   ui.hpMax.addEventListener('keydown', saveOnEnter);
 
-  // Committed on the spot rather than waiting for save, the way an uploaded
+  // Committed on the spot without waiting for save, the way an uploaded
   // portrait is. The party has just walked in; a hide that needs a second click
-  // to take effect is a hide that happens a beat too late.
+  // to take effect happens a beat too late.
   ui.hidden.addEventListener('change', () => {
     if (selected() !== null) save();
   });
@@ -318,24 +318,23 @@ export function createTokenTool(
   /**
    * The seventh goblin, when it is a copy of one already built.
    *
-   * The form deliberately keeps its fields after a create, so a run of
-   * identical monsters is already cheap - what it cannot keep is the art, the
-   * total, the radius and the owner of a creature that was built earlier in the
-   * evening, because those are read out of a *token* rather than typed. This is
-   * that same send with the fields taken off the selection instead of the form.
+   * The form keeps its fields after a create, so a run of identical monsters
+   * is already cheap. What it can't keep is the art, the total, the radius and
+   * the owner of a creature built earlier in the evening, because those are
+   * read out of a *token*, not typed. This is the same send with the fields
+   * taken off the selection instead of the form.
    *
    * **No `duplicate_token` on the wire.** The server already invents the id and
-   * already snaps the position, so a command of its own would buy a protocol
-   * tag, four enumerated arms and nothing at all.
+   * already snaps the position, so a command of its own would add a protocol
+   * tag and four enumerated arms and do nothing new.
    *
    * `create_token` carries every field but the plan, so the copy arrives
-   * unplanned. That is right rather than a gap: a plan is a cell, and two
-   * creatures do not want the same one.
+   * unplanned. That is correct: a plan is a cell, and two creatures don't want
+   * the same one.
    *
-   * It searches out from the *original* rather than from the middle of the view
-   * the way a create does, which is the one place the two differ. A copy is a
-   * second of something, and the second goblin belongs beside the first rather
-   * than wherever the camera happens to be pointed.
+   * It searches out from the *original*, where a create searches from the
+   * middle of the view; that is the one difference between the two. The second
+   * goblin belongs beside the first, not wherever the camera is pointed.
    */
   ui.duplicate.addEventListener('click', () => {
     const token = selected();
@@ -361,12 +360,12 @@ export function createTokenTool(
       hp: token.hp,
       light_ft: token.lightFt,
       markers: token.markers,
-      // The slot on screen, exactly as the create above reads it. Copying the
-      // ambush's first goblin is standing on next week's map.
+      // The slot on screen, the same way the create above reads it. Copying
+      // the ambush's first goblin means standing on next week's map.
       staged: previewing(),
     });
-    // The panel stays on the token that was copied rather than following the
-    // copy: the id is the server's to invent and has not arrived yet, and
+    // The panel stays on the token that was copied instead of following the
+    // copy: the server invents the id and it hasn't arrived yet, and
     // duplicating twice is the ordinary case.
   });
 
@@ -392,8 +391,8 @@ export function createTokenTool(
       : what;
     if (!window.confirm(warning)) return;
 
-    // N ordinary deletes, the group drag's arrangement: the room already takes
-    // them one at a time and there is nothing a batch would answer differently.
+    // N ordinary deletes, like the group drag: the room already takes them one
+    // at a time and a batch would do nothing differently.
     for (const token of tokens) send({ type: 'delete_token', id: token.id });
     if (selectedId !== null && wanted.has(selectedId)) select(null);
   }
@@ -402,8 +401,6 @@ export function createTokenTool(
     const token = selected();
     if (token !== null) remove([token.id]);
   });
-
-  // --- the board's own switch -----------------------------------------------
 
   // --- art ------------------------------------------------------------------
 
@@ -416,12 +413,11 @@ export function createTokenTool(
    * Both ways of getting a portrait end here, because from this side they are
    * the same thing: some bytes are now served at `url`. Picking one out of
    * `portraits/` is a copy into the uploads directory, so what lands on the
-   * token is the same kind of URL an upload produces — the map panel's rule,
-   * one folder over.
+   * token is the same kind of URL an upload produces, as with maps.
    *
-   * Committed on the spot for a token that already exists, rather than waiting
-   * for save: choosing a face for the creature on screen is almost never
-   * something the DM then wants to press a second button for.
+   * Committed on the spot for a token that already exists, without waiting for
+   * save: choosing a face for the creature on screen is almost never something
+   * the DM then wants to press a second button for.
    */
   const useArt = (url: string): void => {
     art = url;
@@ -429,10 +425,10 @@ export function createTokenTool(
     if (selected() !== null) save();
   };
 
-  // The party's portraits are the same six files every session, so uploading
-  // them once per token is work the folder can do instead — and since the
-  // upload button became the library's, uploading one *is* putting it in the
-  // folder. The art a DM drags in for one monster is there for the next one.
+  // The party's portraits are the same six files every session, so they live in
+  // a folder instead of being uploaded once per token. The upload button is the
+  // library's, so uploading one puts it in the folder, and the art a DM drags
+  // in for one monster is there for the next one.
   const library = createLibraryList(
     {
       root: ui.root,
@@ -465,15 +461,15 @@ export function createTokenTool(
 
       // Greyed while the board it would light carries no fog, the way the fog
       // panel greys its own radius: a light casts nothing where there is no fog
-      // to push back, and a number that quietly does nothing is worse than a box
-      // that will not take one. The placeholder carries the reason, because the
-      // hint below is only rewritten when a token is put into the form.
+      // to push back, and a number that silently does nothing is worse than a
+      // box that won't take one. The placeholder carries the reason, because
+      // the hint below is only rewritten when a token is put into the form.
       const fogged = shownBoard(next).fog;
       ui.light.disabled = !fogged;
       ui.light.placeholder = fogged ? 'none' : 'unfogged map';
 
-      // A token deleted out from under the panel — by this DM on another tab,
-      // or by this one — leaves the form describing something that is gone.
+      // A token deleted out from under the panel (by this DM on another tab,
+      // or by this one) leaves the form describing something that is gone.
       if (selectedId !== null && token === null) {
         select(null);
         return;
@@ -504,8 +500,8 @@ function ownerValue(owner: Owner): string {
  *
  * Without this, building six goblins in a row makes one goblin-shaped stack and
  * five invisible tokens underneath it. The offsets are whole cells, so the
- * server's snapping — which the client deliberately does not duplicate — cannot
- * fold two of them back onto each other.
+ * server's snapping (which the client doesn't duplicate) can't fold two of
+ * them back onto each other.
  */
 function spaceFor(scene: Scene | null, centre: Vec2 | null): Vec2 | null {
   if (scene === null || centre === null) return null;

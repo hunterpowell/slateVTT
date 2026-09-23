@@ -2,16 +2,17 @@
 // everyone can see it. Foundry's gesture, chosen because half the table has
 // already used it.
 //
-// This file is the whole feature on the client bar the gesture in input.ts and
-// the drawing in render.ts. It holds three things that are easier to reason
-// about apart than together: the rings currently on screen, whose colour each
-// one is, and where a ring off the edge of the view gets an arrow instead.
+// This file is the whole feature on the client, apart from the gesture in
+// input.ts and the drawing in render.ts. It holds three things that are easier
+// to reason about apart than together: the rings currently on screen, whose
+// colour each one is, and where a ring off the edge of the view gets an arrow
+// instead.
 //
 // Nothing here can leak, and for a stronger reason than the ruler's: a ping
 // carries a position and nothing else. There is no anchor to resolve, no token
-// to look up, no state it could read out of the room. That is exactly why it is
-// the one thing the table is shown over ground they have never explored — see
-// *Ping* in `docs/drawings.md`.
+// to look up, no state it could read out of the room. That is why it is the
+// one thing the table is shown over ground they have never explored (see
+// *Ping* in `docs/drawings.md`).
 
 import type { Vec2 } from './coords.js';
 import type { Colours, Owner, RosterEntry } from './protocol.js';
@@ -19,49 +20,47 @@ import type { Colours, Owner, RosterEntry } from './protocol.js';
 /**
  * How long a hold has to last before it fires.
  *
- * The whole gesture separates from the click underneath it by *duration*
- * rather than by target, which is what lets it coexist with the one place in
- * this project where what a click means depends on what is under it: a door
- * still swings, because a door swings on a release before this elapses.
+ * The gesture is told apart from the click underneath it by *duration*, not
+ * by target, which lets it coexist with the one place in this project where
+ * what a click means depends on what is under it: a door still swings, because
+ * a door swings on a release before this elapses.
  */
 export const HOLD_MS = 400;
 
 /**
  * When the ring starts growing under the held button, well before it fires.
  *
- * Not decoration, and the two reasons pull in opposite directions and both
- * land here. 400ms of nothing happening is how a long press feels broken, so
- * something has to appear before it fires; and a ring that has *started*
- * growing is how an accidental ping gets noticed in time to be cancelled by
- * letting go. A preview that appeared at 0ms would flicker on every click, and
- * one that appeared at 390ms would be neither.
+ * Two reasons, pulling in opposite directions, set this value. 400ms of
+ * nothing happening makes a long press feel broken, so something has to
+ * appear before it fires; and a ring that has *started* growing lets an
+ * accidental ping be noticed in time to cancel it by letting go. A preview at
+ * 0ms would flicker on every click, and one at 390ms would do neither job.
  */
 export const GROW_FROM_MS = 150;
 
 /**
  * How long a ring lives, measured from the moment the button went down.
  *
- * From the button rather than from the moment it fires, which is what makes the
- * held preview and the landed ring one continuous drawing rather than two that
- * have to be handed off between. The cost is that the pinger's own ring expires
- * `HOLD_MS` before everybody else's, which nobody can perceive because nobody
- * is looking at two screens.
+ * From the button, not from the moment it fires, so the held preview and the
+ * landed ring are one continuous drawing instead of two with a handoff. The
+ * cost is that the pinger's own ring expires `HOLD_MS` before everybody
+ * else's, which nobody can perceive because nobody is looking at two screens.
  */
 const LIFE_MS = 2600;
 
 /** How long the ring takes to fade out at the end of that. */
 const FADE_MS = 600;
 
-/** The ring's full radius, in *screen* pixels — see `ringRadius`. */
+/** The ring's full radius, in *screen* pixels (see `ringRadius`). */
 const RADIUS_PX = 34;
 
 /**
  * A ring on the board.
  *
  * `at` is in grid units like everything else a client holds a position for, so
- * a ping stays where it was pointed if somebody recalibrates the map under it
- * — which will not happen inside two and a half seconds, but costs nothing to
- * get right and is invariant 1 either way.
+ * a ping stays where it was pointed if somebody recalibrates the map under it.
+ * That won't happen inside two and a half seconds, but it costs nothing and is
+ * invariant 1 either way.
  */
 export interface Ping {
   owner: Owner;
@@ -76,27 +75,27 @@ export interface Pings {
    * fires only if `commit` follows.
    */
   hold(at: Vec2, startedAt: number): void;
-  /** The hold was cancelled — it moved, or it was released early. A no-op when
+  /** The hold was cancelled: it moved, or it was released early. A no-op when
    *  there is no hold, which is most releases. */
   drop(): void;
   /**
    * The hold lasted. Promotes the preview to a real ring and returns where it
    * landed so the caller can send it, or null if there is no hold to promote.
    *
-   * The ring keeps the preview's own `startedAt`, so it does not restart.
+   * The ring keeps the preview's own `startedAt`, so it doesn't restart.
    */
   commit(): Vec2 | null;
-  /** A ping from somebody else. Ours never arrives this way — the server does
-   *  not echo it, because `commit` already put it on our own board. */
+  /** A ping from somebody else. Ours never arrives this way: the server
+   *  doesn't echo it, because `commit` already put it on our own board. */
   add(owner: Owner, at: Vec2, now: number): void;
   /**
    * Every ring to draw, oldest first, having dropped the expired.
    *
-   * **The hold in progress is one of them**, which is what makes the preview
-   * and the landed ring one continuous drawing: firing moves the same object
-   * from one list to the other without touching its `startedAt`, so nothing on
-   * screen restarts, jumps or blinks at the moment it commits. The renderer
-   * cannot tell the two apart and has no reason to.
+   * **The hold in progress is one of them**, so the preview and the landed
+   * ring are one continuous drawing: firing moves the same object from one
+   * list to the other without touching its `startedAt`, so nothing on screen
+   * restarts, jumps or blinks at the moment it commits. The renderer can't
+   * tell the two apart and has no reason to.
    */
   active(now: number): readonly Ping[];
 }
@@ -140,16 +139,14 @@ export function createPings(me: Owner): Pings {
  * How big a ring draws, in screen pixels, or 0 while it is still too young to
  * appear.
  *
- * **Screen pixels rather than world units**, which is the one thing about
- * drawing a ping that is not obvious. A ring sized in cells is invisible zoomed
- * out — and zoomed out over the whole dungeon is exactly when somebody needs
- * to point at a corner of it. Its *position* is world-anchored like everything
- * else; only its size is not.
+ * **Screen pixels, not world units.** A ring sized in cells is invisible
+ * zoomed out, and zoomed out over the whole dungeon is when somebody most
+ * needs to point at a corner of it. Its *position* is world-anchored like
+ * everything else; only its size isn't.
  *
- * It grows to full by the moment it fires and then holds. A pulse afterwards
- * was considered and left out: the ring has already announced itself by
- * arriving, and the thing that has to be legible for two seconds is where it
- * is, not that it is animating.
+ * It grows to full by the moment it fires and then holds. Don't add a pulse
+ * afterwards: the ring has already announced itself by arriving, and what has
+ * to be legible for two seconds is where it is, not that it is animating.
  */
 export function ringRadius(ping: Ping, now: number): number {
   const age = now - ping.startedAt;
@@ -161,8 +158,8 @@ export function ringRadius(ping: Ping, now: number): number {
 /**
  * How solidly a ring draws: full until the last `FADE_MS` of its life, then out.
  *
- * One number for the ring and the name beside it, on `rulerAlpha`'s argument —
- * they are one annotation, and a label outliving its ring by a frame reads as a
+ * One number for the ring and the name beside it, as with `rulerAlpha`: they
+ * are one annotation, and a label outliving its ring by a frame looks like a
  * rendering fault.
  */
 export function ringAlpha(ping: Ping, now: number): number {
@@ -174,27 +171,24 @@ export function ringAlpha(ping: Ping, now: number): number {
 /**
  * The ping vocabulary: one colour per roster slot, plus the DM's.
  *
- * **The one place these six hues exist.** The server stores an index into this
- * list and holds its length as `PALETTE`, and knows nothing else about it — so
+ * The only place these six hues are defined. The server stores an index into
+ * this list, holds its length as `PALETTE`, and knows nothing else about it, so
  * changing a hue here changes it everywhere and touches no Rust.
  *
- * Originally derived rather than chosen: every client holds the same roster from
- * the same `Welcome`, so indexing it gave six people six colours all six screens
- * agreed on with nothing on the wire at all. Milestone 27 kept that whole
- * arrangement as the **default** and let a player say otherwise — which is what
- * this file predicted it would cost, and it was right: the body of `colourOf`
- * below, and nothing else.
+ * By default a player's colour is their roster position: every client holds
+ * the same roster from the same `Welcome`, so indexing it gives six people six
+ * colours all six screens agree on with nothing on the wire. A player's pick
+ * overrides that, which costs only the body of `colourOf` below.
  *
- * The hues avoid the token ring vocabulary in render.ts — gold is ownership,
- * blue is in progress, white is the turn, violet is hidden, teal is staged-only
- * — for the reason the draw palette does: a ring on the board should not be
- * mistakeable for something the board is saying about a creature. **That is also
- * why what a player picks is an index into this list rather than a colour**: a
- * free choice includes gold, and a ring in gold is the board lying about who
- * owns a creature. There is a name written beside it regardless, which is the
- * real answer to six people at one table, because colour alone does not scale to
- * seven — and it is what makes two people picking the same swatch legible rather
- * than broken, which is why nothing refuses it.
+ * The hues avoid the token ring colours in render.ts (gold is ownership, blue
+ * is in progress, white is the turn, violet is hidden, teal is staged-only),
+ * for the same reason the draw palette does: a ring on the board shouldn't be
+ * mistakable for something the board is saying about a creature. **That is
+ * also why a player picks an index into this list, not a colour**: a free
+ * choice includes gold, and a ring in gold would tell the table the wrong
+ * owner. A name is written beside it regardless, which is what really tells
+ * seven people apart, since colour alone doesn't scale. It also makes two
+ * people picking the same swatch legible, which is why nothing refuses it.
  */
 export const PLAYER_HUES: readonly string[] = [
   '#f43f5e', // rose
@@ -205,25 +199,24 @@ export const PLAYER_HUES: readonly string[] = [
   '#ec4899', // pink
 ];
 
-/** The DM's, deliberately outside the six above: the one ring at the table that
- *  is not one of the players. */
+/** The DM's, outside the six above: the one ring at the table that isn't one
+ *  of the players. */
 const DM_HUE = '#e8e6e1';
 
 /**
  * What colour this owner's ring is, as `#rrggbb`.
  *
- * Three answers in order, and the order is the feature. **What they picked**, if
- * they picked; otherwise **their roster position**, which is what every client
- * agreed on before anybody could pick and is still what a room with an empty
- * table looks like; otherwise the DM's, for a sender who is not in the roster
- * this client holds. That last one is the closed door in the only sense
- * available here — there is nothing to protect, so "closed" means the ring draws
- * anyway rather than vanishing over a roster two clients disagree about.
+ * Three answers, in this order. What they picked, if they picked;
+ * otherwise their roster position, which is what a player who hasn't
+ * picked gets; otherwise the DM's, for a sender who isn't in the roster this
+ * client holds. That last one is a fallback, not a refusal: there is nothing
+ * to protect, so the ring draws anyway instead of vanishing over a roster two
+ * clients disagree about.
  *
- * **The DM is answered before any of that**, and there is no entry in `colours`
- * that could reach them: the server refuses a `set_colour` from the DM, and the
- * table it keeps is keyed by player. Theirs is the one ring at this table that
- * is not a player's, and it stays outside the six.
+ * **The DM is answered before any of that**, and no entry in `colours` can
+ * reach them: the server refuses a `set_colour` from the DM, and the table it
+ * keeps is keyed by player. Theirs is the one ring at this table that isn't a
+ * player's, and it stays outside the six.
  */
 export function colourOf(
   owner: Owner,
@@ -239,7 +232,7 @@ export function colourOf(
 }
 
 /** What to write beside the ring. The slug is the fallback, so an unknown
- *  sender is attributed to something rather than to nobody. */
+ *  sender is still attributed to something. */
 export function nameOf(owner: Owner, roster: readonly RosterEntry[]): string {
   if (owner.kind === 'dm') return 'DM';
   return roster.find((slot) => slot.id === owner.id)?.name ?? owner.id;
@@ -258,19 +251,18 @@ export interface EdgeMarker {
  * is on screen and the ring itself is what draws.
  *
  * Six players looking at different parts of the map is the normal case, so a
- * ping nobody sees is worse than no ping at all — and this is the cheap half of
- * fixing that. It is deliberately **not** a camera pan: moving the board under
- * whoever is mid-drag is the same thing the initiative panel refuses to do on a
- * turn change, and being told where to look is a different act from being taken
- * there.
+ * ping nobody sees is worse than no ping at all, and an arrow is the cheap fix.
+ * **Don't pan the camera instead**: moving the board under whoever is mid-drag
+ * is what the initiative panel also refuses to do on a turn change, and being
+ * told where to look is different from being taken there.
  *
  * The arrow sits where the line from the middle of the view to the ping leaves
- * a rectangle inset by `inset` — so it stays clear of the edge by the room its
+ * a rectangle inset by `inset`, so it stays clear of the edge by the room its
  * own head needs, and a ping directly above the camera lands at the top middle
- * rather than in a corner. `t` is that line's parameter at the crossing, and
- * the smaller of the two axis limits is the side it leaves by; a ping already
- * inside the inset band is close enough to on-screen that its ring is doing the
- * work, which is what the early return says.
+ * instead of in a corner. `t` is that line's parameter at the crossing, and
+ * the smaller of the two axis limits is the side it leaves by. A ping already
+ * inside the inset band is close enough to on-screen that its ring does the
+ * job, hence the early return.
  */
 export function edgeMarker(
   at: Vec2,
@@ -289,8 +281,8 @@ export function edgeMarker(
   if (Math.abs(dx) <= halfW && Math.abs(dy) <= halfH) return null;
 
   // How far along the line we may go before leaving the box on either axis. A
-  // zero component never limits anything, which is what `Infinity` says — a
-  // ping directly left of the camera is bounded by x alone.
+  // zero component never limits anything, hence `Infinity`: a ping directly
+  // left of the camera is bounded by x alone.
   const tx = dx === 0 ? Infinity : halfW / Math.abs(dx);
   const ty = dy === 0 ? Infinity : halfH / Math.abs(dy);
   const t = Math.min(tx, ty);
