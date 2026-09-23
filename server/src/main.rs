@@ -36,62 +36,59 @@ const MAX_MAP_BYTES: usize = 25 * 1024 * 1024;
 /// Token art is drawn inside a circle a cell wide. Anything approaching this is
 /// already far more image than the board can show.
 const MAX_TOKEN_BYTES: usize = 4 * 1024 * 1024;
-/// A bed the table hears for an hour, not a stem to mix. Bounded well under the
-/// map cap because `copy_out` reads a whole file into memory and the box this
-/// runs on has a gigabyte of it, and because a track is fetched by seven
-/// browsers rather than drawn by one. They only fetch it once each: `/uploads`
-/// is `immutable` and a copy's name is a fingerprint of its bytes.
+/// Background music the table hears for an hour. Bounded well under the map cap
+/// because `copy_out` reads a whole file into memory and the box this runs on
+/// has a gigabyte of it, and because seven browsers fetch a track. They only
+/// fetch it once each: `/uploads` is `immutable` and a copy's name is a
+/// fingerprint of its bytes.
 const MAX_TRACK_BYTES: usize = 16 * 1024 * 1024;
 /// Protocol frames are tiny JSON commands. Keeping this bounded prevents a
 /// public WebSocket from using one frame to reserve an unreasonable buffer.
 ///
-/// **Inbound only** — `max_message_size` and `max_frame_size` gate tungstenite's
-/// *read* path, so nothing here bounds a `Welcome` on its way out. What it does
-/// bound is every command, and one of them carries a variable-length collection:
+/// **Inbound only.** `max_message_size` and `max_frame_size` gate tungstenite's
+/// *read* path, so nothing here bounds a `Welcome` on its way out. It does
+/// bound every command, and one of them carries a variable-length collection:
 /// `SetFogOverride` names its cells one pair at a time. `MAX_OVERRIDE_CELLS` is
-/// reconciled against this number and a test in `room::tests::fog_of_war`
-/// serialises the largest legal one and asserts it fits — see `docs/net.md`.
-/// It shipped at 16 KiB, which was under a legitimate room fill and dropped the
-/// DM's socket rather than refusing the command.
+/// set against this number, and a test in `room::tests::fog_of_war` serialises
+/// the largest legal one and asserts it fits (see `docs/net.md`). A cap below a
+/// legitimate room fill drops the DM's socket instead of refusing the command.
 ///
 /// The cost of the larger number is that a socket which has not said who it is
-/// yet may push this much; acceptable behind a tunnel with a DM secret, and
-/// worth saying out loud rather than leaving implied.
+/// yet may push this much. That's acceptable behind a tunnel with a DM secret.
 pub(crate) const MAX_WS_MESSAGE_BYTES: usize = 128 * 1024;
 const DM_SECRET_HEADER: &str = "x-slate-dm-secret";
 /// Read by `/api/status` only, and never a substitute for the DM secret. A
-/// display pinned to a wall holds this one and nothing else — see
+/// display on the wall holds this one and nothing else. See
 /// `client/status/README.md`.
 const STATUS_KEY_HEADER: &str = "x-slate-status-key";
 /// How long `/api/status` waits on one room before calling it unresponsive.
 ///
-/// **The whole reason this is bounded**: a wedged room actor never drains its
-/// mailbox, and an unbounded wait would hang the status page at exactly the
-/// moment it is the only thing that could tell you why. Generous next to a
-/// healthy room, which answers in microseconds.
+/// **Bounded because a wedged room actor never drains its mailbox**, and an
+/// unbounded wait would hang the status page when it is the only thing that
+/// could tell you why. Generous next to a healthy room, which answers in
+/// microseconds.
 const STATUS_TIMEOUT: Duration = Duration::from_secs(2);
 /// What `/api/status` calls wrong. **Decided here, once**, because the page has
-/// two renderers — `status.js` in a browser and `kindle.py` drawing a PNG — and
-/// two copies of a threshold drift. Both paint what `verdict` says and judge
+/// two renderers (`status.js` in a browser and `kindle.py` drawing a PNG) and
+/// two copies of a threshold drift. Both show what `verdict` says and judge
 /// nothing themselves.
 ///
-/// The collector runs every minute, so five minutes is four misses of headroom:
-/// a status page that cries wolf gets ignored, which is the only way one fails.
+/// The collector runs every minute, so five minutes allows four misses. A
+/// status page that raises false alarms gets ignored.
 const HOST_STALE_S: u64 = 300;
 const CPU_HOT_C: f64 = 75.0;
 const DISK_FULL_PCT: f64 = 90.0;
 
 /// Every room's handle, keyed by the id in `room::ROOMS`.
 ///
-/// **No lock**, which is the shape of the whole feature: the rooms are known
-/// before the first socket opens, so this map is built once in `main` and only
-/// ever read. `ROADMAP.md` budgeted an `RwLock` here — a lock guards a table
-/// that changes, and nothing changes this one. It would arrive with a room the
-/// DM could create at runtime, which is not built and is not wanted.
+/// **No lock.** The rooms are known before the first socket opens, so this map
+/// is built once in `main` and only read after that. Don't add an `RwLock`: a
+/// lock guards a table that changes, and nothing changes this one. It would
+/// only be needed for rooms the DM could create at runtime, which aren't
+/// wanted.
 ///
 /// Read on connect only, and never on a token move: a socket resolves its room
-/// once in `ws_handler` and then talks to that actor's `mpsc` directly, exactly
-/// as it did when there was one handle in this struct.
+/// once in `ws_handler` and then talks to that actor's `mpsc` directly.
 #[derive(Clone)]
 struct AppState {
     rooms: Arc<HashMap<String, RoomHandle>>,
@@ -99,55 +96,53 @@ struct AppState {
     /// because an HTTP upload never reaches the room actor to be checked there.
     dm_secret: Arc<str>,
     uploads: Arc<Path>,
-    /// The four libraries the DM picks out of. None is served directly — a
-    /// pick copies into `uploads`, so there stays one kind of image URL.
+    /// The four libraries the DM picks from. None is served directly: a pick
+    /// copies into `uploads`, so there is one kind of image URL.
     maps: Arc<Path>,
     portraits: Arc<Path>,
     backdrops: Arc<Path>,
-    /// The one that is not pictures, and the reason `library::Formats` exists:
-    /// everything above it is sniffed against `IMAGES` and this is sniffed
+    /// The one library that isn't pictures, and the reason `library::Formats`
+    /// exists: the three above are sniffed against `IMAGES` and this one
     /// against `AUDIO`. See `docs/sound.md`.
     tracks: Arc<Path>,
-    /// The status page's own credential, or `None` — in which case
-    /// `/api/status` is **not mounted at all**, which is why this is read
-    /// before the router is built. Deliberately not the DM secret: it buys
-    /// nothing but this one read-only JSON.
+    /// The status page's own credential. When `None`, `/api/status` is **not
+    /// mounted at all**, which is why this is read before the router is built.
+    /// It isn't the DM secret because it grants nothing but this one read-only
+    /// JSON.
     status_key: Option<Arc<str>>,
     /// A file some *other* process on the box writes with the host's vitals,
-    /// re-emitted verbatim. The server stays platform-blind — it never learns
-    /// what `/sys/class/thermal` is — and on a machine with no collector the
-    /// section simply reads `null`.
+    /// passed through verbatim. The server stays platform-independent (it never
+    /// reads `/sys/class/thermal`), and on a machine with no collector the
+    /// section reads `null`.
     host_status: Option<Arc<Path>>,
-    /// The same trick, for what the deploy stamped. Read once at boot because
-    /// unlike the host's vitals it cannot change while the process runs.
+    /// The same, for what the deploy stamped. Read once at boot because unlike
+    /// the host's vitals it can't change while the process runs.
     build: Option<Value>,
-    /// For `uptime_s`, and its wall-clock twin for `started_unix`. An `Instant`
-    /// cannot be formatted and a `SystemTime` jumps when the clock is set, so
-    /// the honest answer needs both.
+    /// For `uptime_s`, and its wall-clock counterpart for `started_unix`. An
+    /// `Instant` can't be formatted and a `SystemTime` jumps when the clock is
+    /// set, so the status needs both.
     started_at: Instant,
     started_unix: u64,
 }
 
 /// Which folder a listing or a pick is about.
 ///
-/// A map and a portrait are the same operation — prove some bytes are an image,
-/// give them a name of ours, report the URL — against different directories and
-/// different size caps, exactly as the two upload routes already are. This is
-/// what tells them apart, so there is one copy of the path handling that
-/// `library.rs` guards rather than two that can drift.
+/// Every library does the same operation (prove some bytes are the right kind
+/// of file, give them a name of ours, report the URL) against a different
+/// directory and size cap. This enum tells them apart, so there is one copy of
+/// the path handling that `library.rs` guards, not one per library.
 #[derive(Clone, Copy)]
 enum Library {
     Maps,
     Portraits,
-    /// Pictures shown *instead of* the board, with no grid on them and nothing
-    /// standing on them. A third folder rather than a corner of `maps/` because
-    /// a picker over the maps is a list of things to play on, and mixing in the
-    /// things you cannot play on is what makes both lists worse.
+    /// Pictures shown *instead of* the board, with no grid and nothing standing
+    /// on them. A separate folder from `maps/` because the map picker lists
+    /// things to play on, and mixing in pictures you can't play on makes both
+    /// lists worse.
     Backdrops,
-    /// The music the room plays. A fourth folder for the third folder's reason,
-    /// and one it makes more sharply: nothing in here is a picture at all, so
-    /// this is the library that turned "what may a library hold" from a const
-    /// into a question each one answers.
+    /// The music the room plays. A separate folder for the same reason, and
+    /// nothing in it is a picture, so each library says what it may hold
+    /// (`formats`).
     Tracks,
 }
 
@@ -159,9 +154,9 @@ impl Library {
             "maps" => Some(Self::Maps),
             "portraits" => Some(Self::Portraits),
             "backdrops" => Some(Self::Backdrops),
-            // **Exactly this plural.** `client/src/library.ts` derives the noun
-            // it puts in a refusal by dropping one letter from the segment, so
-            // this and `noun` below have to agree that way round.
+            // **This plural and no other.** `client/src/library.ts` derives the
+            // noun it puts in a refusal by dropping the last letter of the
+            // segment, so this must be `noun` below plus an "s".
             "tracks" => Some(Self::Tracks),
             _ => None,
         }
@@ -190,29 +185,26 @@ impl Library {
         match self {
             Self::Maps => MAX_MAP_BYTES,
             Self::Portraits => MAX_TOKEN_BYTES,
-            // A map's cap and not a portrait's: a backdrop fills the whole
-            // window, so it is the same kind of picture as a battle map with
-            // the grid left off.
+            // A map's cap: a backdrop fills the whole window, so it is the
+            // same kind of picture as a battle map with the grid left off.
             Self::Backdrops => MAX_MAP_BYTES,
-            // A loop the table hears for an hour, not a stem. Sixteen mebibytes
-            // is around seventeen minutes at 128 kbps and about ninety seconds
-            // of uncompressed WAV, which is the cap doing its job rather than
-            // failing at it: a DM who drops a five-minute WAV in gets one clear
-            // sentence back instead of a Pi reading fifty megabytes into a
-            // gigabyte of RAM.
+            // Sixteen mebibytes is around seventeen minutes at 128 kbps and
+            // about ninety seconds of uncompressed WAV. Refusing the WAV is
+            // intended: a DM who drops a five-minute WAV in gets one clear
+            // error instead of a Pi reading fifty megabytes into a gigabyte
+            // of RAM.
             Self::Tracks => MAX_TRACK_BYTES,
         }
     }
 
     /// Prepended to the key the copy's name is derived from, so `cave.png` in
-    /// one library and `cave.png` in the other do not resolve to one file — the
-    /// second pick would find the first already there, skip the write, and hand
-    /// back a map as somebody's portrait.
+    /// two libraries doesn't resolve to one file. Otherwise the second pick
+    /// would find the first already there, skip the write, and hand back a map
+    /// as somebody's portrait.
     ///
-    /// **Maps deliberately keep the empty prefix.** Their copy names predate this
-    /// and the remembered calibration table is keyed on the URL those names
-    /// produce, so changing it would silently orphan every map the DM has ever
-    /// calibrated.
+    /// **Maps keep the empty prefix.** The remembered calibration table is
+    /// keyed on the URL their names produce, so adding one would orphan every
+    /// map the DM has ever calibrated.
     fn prefix(self) -> &'static str {
         match self {
             Self::Maps => "",
@@ -222,48 +214,43 @@ impl Library {
         }
     }
 
-    /// Whether a copy is named from the bytes it holds rather than from the path
-    /// it came from. The second axis a library differs by, and for the same
-    /// reason as `prefix`: what feeds the name decides what a re-pick resolves
-    /// to.
+    /// Whether a copy is named from the bytes it holds or from the path it
+    /// came from. Like `prefix`, what feeds the name decides what a re-pick
+    /// resolves to.
     ///
     /// **Portraits are named from their contents** so that replacing the art in
     /// the folder replaces it on the token. Named from the path, the copy is
     /// written once and every later pick finds it already there and skips the
-    /// write — the DM swaps a portrait, re-picks it, builds a new token, and is
-    /// handed the old image every time with nothing to say why.
+    /// write: the DM swaps a portrait, re-picks it, builds a new token, and
+    /// gets the old image every time with nothing to say why.
     ///
-    /// **Maps are named from their path, and must stay that way.** The
-    /// remembered calibration table is keyed on the URL these names produce, so
-    /// naming a map by its contents would orphan every map the DM has ever
-    /// calibrated — the same trap as giving maps a prefix, one field over. The
-    /// cost is that replacing a map's art in `maps/` still does nothing; that is
-    /// the standing asymmetry with uploads described in `docs/maps.md`, and
-    /// closing it means migrating the calibration table rather than changing
-    /// this.
+    /// Maps are named from their path and must stay that way. The remembered
+    /// calibration table is keyed on the URL these names produce, so naming a
+    /// map by its contents would orphan every map the DM has ever calibrated,
+    /// the same trap as giving maps a prefix. The cost is that replacing a
+    /// map's art in `maps/` does nothing. That asymmetry with uploads is
+    /// described in `docs/maps.md`, and closing it means migrating the
+    /// calibration table, not changing this.
     fn names_by_content(self) -> bool {
         match self {
             Self::Maps => false,
             Self::Portraits => true,
-            // The portraits' answer, for the portraits' reason and with none of
-            // the maps' objection: nothing is keyed on a backdrop's URL — the
-            // room holds one, and holding a stale one is what a re-pick is for
-            // — so replacing the art in the folder can and should replace the
-            // picture the table is looking at.
+            // As for portraits, and the maps' objection doesn't apply: nothing
+            // is keyed on a backdrop's URL (the room holds one, and replacing
+            // a stale one is what a re-pick is for), so replacing the art in
+            // the folder should replace the picture the table is looking at.
             Self::Backdrops => true,
-            // The backdrops' answer for the backdrops' reason: nothing is keyed
-            // on a track's URL, so re-encoding a loop in the folder and
-            // re-picking it should hand back the new bytes.
+            // As for backdrops: nothing is keyed on a track's URL, so
+            // re-encoding a loop in the folder and re-picking it should hand
+            // back the new bytes.
             Self::Tracks => true,
         }
     }
 
     /// What this library will list, accept and refuse.
     ///
-    /// **The one grouped arm on this type, and that is the guarantee.** Three
-    /// libraries held pictures before there were four, and writing them as one
-    /// arm is what says a track library was added rather than the other three
-    /// changed. See `library::Formats`.
+    /// The three picture libraries share one arm, so adding the track library
+    /// visibly changed nothing about the other three. See `library::Formats`.
     fn formats(self) -> &'static library::Formats {
         match self {
             Self::Maps | Self::Portraits | Self::Backdrops => &library::IMAGES,
@@ -274,19 +261,19 @@ impl Library {
 
 static NEXT_CLIENT_ID: AtomicU64 = AtomicU64::new(1);
 
-/// What the client is allowed to reuse without asking, and it is nothing.
+/// The client may reuse nothing without asking.
 ///
 /// **`index.html` and `dist/main.js` are fixed names with no content hash in
 /// them**, so a browser or a proxy holding an old copy serves an old Slate
-/// against a new server, with nothing on screen to say so. Deployed behind a
-/// Cloudflare Tunnel that is not theoretical: with no `Cache-Control` at all —
-/// which is what this served before — an intermediary is free to invent its own
-/// freshness, and a shipped fix can stay invisible for as long as it does.
+/// against a new server, with nothing on screen to say so. Behind a Cloudflare
+/// Tunnel this happens: with no `Cache-Control` at all, an intermediary is free
+/// to choose its own freshness, and a shipped fix can stay invisible for as
+/// long as it likes.
 ///
-/// `no-cache` is *revalidate*, not *do not store*: the bundle is 82 KB and the
-/// answer to an unchanged file is a 304 carrying no body. One round trip per
-/// file per load is the whole cost, and it buys "a deploy is live the moment
-/// somebody reloads".
+/// `no-cache` means *revalidate*, not *do not store*: the bundle is 82 KB and
+/// the answer to an unchanged file is a 304 with no body. The cost is one round
+/// trip per file per load, and in return a deploy is live the moment somebody
+/// reloads.
 async fn always_revalidate(req: Request, next: Next) -> Response {
     let mut res = next.run(req).await;
     res.headers_mut().insert(
@@ -296,20 +283,20 @@ async fn always_revalidate(req: Request, next: Next) -> Response {
     res
 }
 
-/// The opposite, for the one directory that has earned it.
+/// The opposite, for uploads.
 ///
-/// **An upload's name is fingerprinted by content** — `the-field-551e4c12.png` —
-/// so the bytes behind a URL here never change; a new picture is a new name.
-/// That is exactly the condition `immutable` describes, and it is why the rule
-/// above would be wrong here: map art is megabytes and revalidating every image
-/// on every load is a round trip per token portrait, over a tunnel, for an
-/// answer that is always 304.
+/// An upload's name is fingerprinted by content (`the-field-551e4c12.png`), so
+/// the bytes behind a URL here never change; a new picture is a new name. That
+/// is the condition `immutable` describes, and it is why `always_revalidate`
+/// would be wrong here: map art is megabytes, and revalidating every image on
+/// every load is a round trip per token portrait, over a tunnel, for an answer
+/// that is always 304.
 async fn cache_forever(req: Request, next: Next) -> Response {
     let mut res = next.run(req).await;
-    // **Only on a success**, which is not a detail: a year is a long time to
-    // remember that a file was missing. A 404 carrying `immutable` is cacheable
-    // exactly as a 200 is, so a portrait asked for a moment before it exists
-    // would stay absent on that screen until the browser's data is cleared.
+    // **Only on a success.** A 404 carrying `immutable` is cached just as a
+    // 200 is, so a portrait requested a moment before it exists would stay
+    // missing on that screen for a year, or until the browser's data is
+    // cleared.
     if res.status().is_success() {
         res.headers_mut().insert(
             header::CACHE_CONTROL,
@@ -332,8 +319,8 @@ async fn main() {
     let client_dir = std::env::var("SLATE_CLIENT_DIR").unwrap_or_else(|_| "../client".to_owned());
 
     // Kept out of the source tree so it never lands in git. Unset means a fresh
-    // random secret per boot, logged once — fine for a session, but set it in
-    // the environment if you want the DM link to survive a restart.
+    // random secret per boot, logged once. That's fine for a session, but set
+    // it in the environment if you want the DM link to survive a restart.
     let dm_secret = std::env::var("SLATE_DM_SECRET").unwrap_or_else(|_| {
         let generated = Uuid::new_v4().simple().to_string();
         info!("SLATE_DM_SECRET unset — generated one for this run");
@@ -351,11 +338,10 @@ async fn main() {
     std::fs::create_dir_all(&uploads_dir)
         .unwrap_or_else(|err| panic!("could not create {uploads_dir}: {err}"));
 
-    // Deliberately not created if any is absent. They hold files someone put
-    // there on purpose, so an empty one conjured at boot would hide a mistyped
-    // SLATE_MAPS, SLATE_PORTRAITS, SLATE_BACKDROPS or SLATE_TRACKS behind a
-    // picker that
-    // simply looks empty.
+    // Not created if absent. They hold files someone put there by hand, so an
+    // empty one created at boot would hide a mistyped SLATE_MAPS,
+    // SLATE_PORTRAITS, SLATE_BACKDROPS or SLATE_TRACKS behind a picker that
+    // just looks empty.
     let maps_dir = std::env::var("SLATE_MAPS").unwrap_or_else(|_| "../maps".to_owned());
     if !Path::new(&maps_dir).is_dir() {
         warn!(%maps_dir, "no map library there; the DM can still upload maps");
@@ -380,8 +366,8 @@ async fn main() {
 
     // Unset means the status page does not exist on this server: the route is
     // never mounted, so an unguarded status surface cannot appear by accident
-    // on a dev box. Empty is treated as unset for the same reason — an env file
-    // with `SLATE_STATUS_KEY=` in it is somebody who meant to turn it off.
+    // on a dev box. Empty is treated as unset for the same reason: an env file
+    // with `SLATE_STATUS_KEY=` in it means someone wanted it off.
     let status_key = std::env::var("SLATE_STATUS_KEY")
         .ok()
         .filter(|key| !key.is_empty());
@@ -390,17 +376,16 @@ async fn main() {
         info!("status page enabled at /status/");
     }
 
-    // Written by something else on the box — a timer on the Pi — and passed
+    // Written by something else on the box (a timer on the Pi) and passed
     // through untouched. See `client/status/README.md`.
     let host_status = std::env::var("SLATE_HOST_STATUS")
         .ok()
         .filter(|path| !path.is_empty());
 
-    // The same trick for what the deploy stamped, read once because it cannot
-    // change while this process is alive. A missing or broken file is a warning
-    // and a `null` section, never a failure to boot: nothing here is load
-    // bearing, and refusing to start a game server over a build stamp would be
-    // the tail wagging the dog.
+    // The same for what the deploy stamped, read once because it can't change
+    // while this process is alive. A missing or broken file is a warning and a
+    // `null` section, never a failure to boot: nothing depends on it, and a
+    // build stamp isn't a reason to refuse to start the game server.
     let build = match std::env::var("SLATE_BUILD_INFO")
         .ok()
         .filter(|p| !p.is_empty())
@@ -426,12 +411,12 @@ async fn main() {
         let path = save_path(&state_path, id);
         let store = store::Store::new(path.clone());
 
-        // Startup, so a panic is the right answer here — and refusing to boot is
-        // the safe answer. Starting a fresh room on top of a save we could not
-        // read would destroy the group's game with the first token move. One
-        // unreadable room stops the whole process rather than the others
-        // carrying on without it, for the same reason: a server that is
-        // *partly* up is one the DM finds out about mid-session.
+        // Startup, so a panic is allowed here, and refusing to boot is the safe
+        // answer. Starting a fresh room on top of a save we couldn't read would
+        // destroy the group's game with the first token move. One unreadable
+        // room stops the whole process instead of the others carrying on
+        // without it: a server that is *partly* up is one the DM finds out
+        // about mid-session.
         let saved = store
             .load()
             .await
@@ -444,8 +429,8 @@ async fn main() {
             (None, false) => info!(%id, "no save found; starting an empty room"),
         }
 
-        // `ROOMS` is a const and its ids are unique — there is a test for it —
-        // so this cannot silently drop a room.
+        // `ROOMS` is a const and its ids are unique (there is a test for it),
+        // so this can't silently drop a room.
         let roster =
             room::roster_of(id).unwrap_or_else(|| panic!("{id} is in ROOMS but has no roster"));
         info!(%id, %name, slots = roster.len(), "room ready");
@@ -478,32 +463,28 @@ async fn main() {
 
     let app = Router::new()
         .route("/ws", get(ws_handler))
-        // **The one route under `/api` that is not the DM's**, and it has to be:
-        // it is what the room picker is built from, and a player has no
-        // credential to offer. What it discloses is the room names, which are
-        // not secrets in the way the map library's contents are — a name on a
-        // picker against a list of every dungeon the DM has prepared. The
-        // unguessable subdomain is the access control here as it is everywhere
-        // else in this project.
+        // **The one route under `/api` that isn't the DM's.** The room picker
+        // is built from it, and a player has no credential to offer. It
+        // discloses the room names, which aren't secret the way the map
+        // library is: a name on a picker, against a list of every dungeon the
+        // DM has prepared. The unguessable subdomain is the access control
+        // here, as everywhere else in this project.
         //
         // Static segments outrank `{library}` in axum's router, and
-        // `Library::named("rooms")` is `None` regardless, so this is safe twice
-        // over. There is a test for the second half.
+        // `Library::named("rooms")` is `None` anyway, so either guard alone
+        // would do. There is a test for the second.
         .route("/api/rooms", get(room_listing))
-        // **Three libraries and four things to do to one**, so the folder is a
-        // path segment rather than twelve routes each a line of their own. It
-        // was six wrappers when there were two verbs; `Library::named` is what
-        // replaced them, and an unknown segment is a 404 rather than the client
-        // fallback it used to fall through to.
+        // Four libraries and four things to do to each, so the folder is a
+        // path segment resolved by `Library::named`, not sixteen routes. An
+        // unknown segment is a 404, not the client fallback.
         //
-        // There is no separate upload route any more. Adding an image *is*
-        // putting it in the library — see `add`, which ends by picking the file
-        // it just wrote, so an upload and a pick answer with the same URL for
-        // the same bytes.
+        // There is no separate upload route. Adding an image *is* putting it
+        // in the library: `add` ends by picking the file it just wrote, so an
+        // upload and a pick answer with the same URL for the same bytes.
         .route("/api/{library}", get(listing))
         .route("/api/{library}/pick", post(pick))
         // The body limit is the largest any library allows, because one route
-        // serves all three; the per-library cap is checked inside the handler,
+        // serves them all. The per-library cap is checked inside the handler,
         // where it can be refused with a sentence instead of a dropped
         // connection.
         .route(
@@ -523,15 +504,14 @@ async fn main() {
                 .layer(middleware::from_fn(always_revalidate)),
         );
 
-    // **Mounted only when there is a key**, so "no key" is a 404 rather than a
-    // 403: an endpoint that answers "wrong credential" is an endpoint that has
-    // announced it exists. It also keeps `/api/rooms` the only route under
-    // `/api` a client can reach without one, which the comment above says is
-    // deliberate and is worth staying true.
+    // **Mounted only when there is a key**, so "no key" is a 404, not a 403:
+    // an endpoint that answers "wrong credential" has announced it exists. It
+    // also keeps `/api/rooms` the only route under `/api` a client can reach
+    // without a credential.
     //
     // Static `/api/status` outranks `{library}` in axum's router and
-    // `Library::named("status")` is `None` regardless — the same belt and
-    // braces `/api/rooms` has, and the same test covers both.
+    // `Library::named("status")` is `None` anyway: the same two guards as
+    // `/api/rooms`, and the same test covers both.
     let app = if serve_status {
         app.route("/api/status", get(status))
     } else {
@@ -540,8 +520,8 @@ async fn main() {
 
     let app = app.with_state(state);
 
-    // Startup failures are fatal and there is nothing to recover to, so this is
-    // the one place a panic is the right answer.
+    // Startup failures are fatal and there is nothing to recover to, so a
+    // panic is the right answer here.
     let listener = tokio::net::TcpListener::bind(&addr)
         .await
         .unwrap_or_else(|err| panic!("could not bind {addr}: {err}"));
@@ -553,8 +533,8 @@ async fn main() {
             shutdown_signal().await;
             // Closing a room drops its per-client senders, which closes the
             // WebSockets and lets axum finish draining its active connections.
-            // Every room, and none of them skipped on a failure: the one that
-            // could not save is the one whose message matters, and the others
+            // Every room, with none skipped on a failure: the one that
+            // couldn't save is the one whose message matters, and the others
             // still have their own last change to flush.
             for (id, room) in rooms.iter() {
                 if !room.shutdown().await {
@@ -568,14 +548,14 @@ async fn main() {
 
 /// Where one room's save file lives.
 ///
-/// **`SLATE_STATE` still names the primary room's file, exactly as it always
-/// has; every other room's sits beside it as `<id>.json`.** That is the whole
-/// rule, and it was chosen over making `SLATE_STATE` a directory because it
-/// needs no migration: the Pi's env file is unchanged, the live
-/// `/var/lib/slate/slate-state.json` keeps being the campaign, and the backup
-/// that greps the tar for that filename keeps passing. See `docs/rooms.md`.
+/// **`SLATE_STATE` names the primary room's file; every other room's sits
+/// beside it as `<id>.json`.** This was chosen over making `SLATE_STATE` a
+/// directory because it needs no migration: the Pi's env file is unchanged,
+/// the live `/var/lib/slate/slate-state.json` is still the campaign, and the
+/// backup that greps the tar for that filename still passes. See
+/// `docs/rooms.md`.
 ///
-/// A room id is a slug — there is a test — so it cannot climb out of the
+/// A room id is a slug (there is a test), so it can't climb out of the
 /// directory it is joined onto.
 fn save_path(state_path: &str, id: &str) -> std::path::PathBuf {
     let primary = Path::new(state_path);
@@ -596,12 +576,11 @@ struct RoomEntry {
 
 /// The rooms a client may pick between.
 ///
-/// The picker cannot be drawn without it and the picker comes before the
-/// socket, which is why this is HTTP rather than a `ServerMsg`: a frame
-/// carrying the room list would have to arrive on a connection that has not
-/// chosen a room yet, and every connection in this server belongs to exactly
-/// one room actor from the moment it is registered. Keeping the choice in the
-/// URL is what leaves the wire protocol untouched — see `docs/rooms.md`.
+/// HTTP, not a `ServerMsg`, because the picker comes before the socket: a
+/// frame carrying the room list would have to arrive on a connection that
+/// hasn't chosen a room yet, and every connection belongs to one room actor
+/// from the moment it is registered. Keeping the choice in the URL leaves the
+/// wire protocol untouched. See `docs/rooms.md`.
 async fn room_listing() -> Json<Vec<RoomEntry>> {
     Json(
         room::rooms()
@@ -612,22 +591,21 @@ async fn room_listing() -> Json<Vec<RoomEntry>> {
 
 /// The status page's credential, as a query parameter.
 ///
-/// **Accepted in the URL as well as in a header**, which is not laxness: the
-/// eventual reader is a jailbroken Kindle's browser, and a browser loading a
-/// URL cannot set a header. The DM link has put its secret in a query string
-/// since the first commit, so this is existing practice rather than a new
-/// weakening — and what this key unlocks is one read-only JSON document.
+/// Accepted in the URL as well as in a header, because the reader may be a
+/// jailbroken Kindle's browser, and a browser loading a URL can't set a header.
+/// The DM link already puts its secret in a query string, and this key unlocks
+/// only one read-only JSON document.
 #[derive(Deserialize)]
 struct StatusQuery {
     key: Option<String>,
 }
 
-/// `is_dm`'s neighbour, and a plain function for the same reason: one route
-/// wants it, and middleware for one route is indirection with nothing to gain.
+/// A plain function like `is_dm`: one route uses it, and middleware for one
+/// route adds indirection for nothing.
 ///
-/// A `None` key cannot be matched by anything, but that path is unreachable —
-/// the route is not mounted without one. It is written to fail closed anyway,
-/// so that mounting it unconditionally later could not silently open it.
+/// A `None` key can't be matched by anything, but that path is unreachable
+/// because the route isn't mounted without one. It fails closed anyway, so
+/// mounting the route unconditionally later couldn't silently open it.
 fn status_allowed(state: &AppState, headers: &HeaderMap, query: &StatusQuery) -> bool {
     let Some(expected) = state.status_key.as_deref() else {
         return false;
@@ -643,9 +621,9 @@ fn status_allowed(state: &AppState, headers: &HeaderMap, query: &StatusQuery) ->
 /// **Read-only, and it must stay that way.** A restart button here would need
 /// the DM secret and a much harder argument than "it would be convenient".
 ///
-/// The shape is three sections the server knows nothing about the contents of —
-/// `build` and `host` are files somebody else wrote, re-emitted verbatim — and
-/// one it does: the rooms, each asked over its own `mpsc`.
+/// `build` and `host` are files somebody else wrote, passed through verbatim.
+/// `server`, `rooms` and `verdict` are the server's own; each room is asked
+/// over its own `mpsc`.
 async fn status(
     State(state): State<AppState>,
     headers: HeaderMap,
@@ -656,17 +634,16 @@ async fn status(
         return (StatusCode::FORBIDDEN, "not the status key").into_response();
     }
 
-    // Every room at once rather than one after another, so a slow room costs
-    // the page its own timeout and not the sum of them. In `room::rooms()`
-    // order — the picker's order — because a status page whose rows moved
-    // between refreshes would be unreadable at a glance, which is the only way
-    // a wall display is ever read.
+    // Every room at once, so a slow room costs the page its own timeout and
+    // not the sum of them. In `room::rooms()` order (the picker's order),
+    // because a wall display is read at a glance and rows that moved between
+    // refreshes would make that impossible.
     let rooms = futures_util::future::join_all(room::rooms().map(|(id, name)| {
         let handle = state.rooms.get(id).cloned();
         async move {
             let reported = match handle {
-                // `Some(None)` from the timeout and `None` from a closed channel
-                // are the same fact — the room did not answer — so they flatten
+                // `Some(None)` from the timeout and `None` from a closed
+                // channel both mean the room didn't answer, so they flatten
                 // into one.
                 Some(handle) => tokio::time::timeout(STATUS_TIMEOUT, handle.status())
                     .await
@@ -699,8 +676,8 @@ async fn status(
     .into_response()
 }
 
-/// Coarse on purpose, and the same coarseness as the page's `duration`: "5d 22h"
-/// is the whole of what anyone wants from an age in an alarm.
+/// Coarse, like the page's `duration`: "5d 22h" is all anyone wants from an
+/// age in an alarm.
 fn duration(s: u64) -> String {
     let (d, h, m) = (s / 86400, (s % 86400) / 3600, (s % 3600) / 60);
     if d > 0 {
@@ -716,19 +693,18 @@ fn duration(s: u64) -> String {
 
 /// What is wrong, as a list of sentences and the flags a renderer inverts a
 /// cell on. Empty `alarms` is the verdict `OK`; anything in it is `ATTENTION`.
-/// `UNREACHABLE` is not here — it is the one verdict about failing to fetch
-/// this, so it can only ever be the reader's.
+/// `UNREACHABLE` isn't here: it means this couldn't be fetched, so only the
+/// reader can decide it.
 ///
 /// **Every card is judged before any is drawn**, which is why this is one
-/// function over the whole payload rather than a flag per section: an alarm a
-/// renderer learns about after it has laid out the strip is a number inverted
-/// on screen with nothing anywhere saying why, which is how the restart count
-/// first shipped.
+/// function over the whole payload and not a flag per section. An alarm a
+/// renderer learns about after laying out the strip becomes a number inverted
+/// on screen with nothing saying why.
 ///
-/// `pending` is deliberately *not* an alarm: a change inside the two-second
-/// debounce is what a healthy room in use looks like most of the time, and an
-/// alarm that fires on the ordinary case is one you learn to ignore. Only the
-/// write that is actually failing shouts.
+/// `pending` is *not* an alarm: a change inside the two-second debounce is
+/// what a healthy room in use looks like most of the time, and an alarm that
+/// fires on the ordinary case is one you learn to ignore. Only a write that is
+/// failing raises one.
 fn verdict(rooms: &[Value], server_now: u64, host: &Value) -> Value {
     let mut alarms: Vec<String> = Vec::new();
 
@@ -794,8 +770,8 @@ fn verdict(rooms: &[Value], server_now: u64, host: &Value) -> Value {
     })
 }
 
-/// One room's row. A room that did not answer still gets a row: **the absence
-/// is the news**, and dropping it would leave the page looking complete.
+/// One room's row. **A room that didn't answer still gets a row**; dropping it
+/// would leave the page looking complete.
 fn room_status_json(id: &str, name: &str, reported: Option<RoomStatus>) -> Value {
     match reported {
         Some(status) => json!({
@@ -815,25 +791,23 @@ fn room_status_json(id: &str, name: &str, reported: Option<RoomStatus>) -> Value
 
 /// Parse one of the two files this server did not write.
 ///
-/// **Tolerates a UTF-8 BOM**, and that is the whole reason it exists rather
-/// than a bare `from_str` at each call site. "Somebody else wrote it" includes
-/// a PowerShell on Windows, whose `Set-Content -Encoding utf8` emits one --
-/// and `serde_json` refuses a byte order mark before `{`, so a stamp that
-/// looked correct in every editor was dropped with one line in the journal.
-/// A file this server merely relays is not the place to be strict about three
-/// bytes every text editor hides.
+/// **Tolerates a UTF-8 BOM**, which is why this exists instead of a bare
+/// `from_str` at each call site. The writer may be PowerShell on Windows, whose
+/// `Set-Content -Encoding utf8` emits one, and `serde_json` refuses a byte
+/// order mark before `{`. The file then looks correct in every editor and is
+/// dropped with one line in the journal. A file this server only relays isn't
+/// the place to be strict about three bytes every text editor hides.
 fn parse_foreign_json(text: &str) -> Result<Value, serde_json::Error> {
     serde_json::from_str(text.trim_start_matches('\u{feff}'))
 }
 
 /// The host's vitals, as whatever wrote them left them.
 ///
-/// Three outcomes and they are deliberately different. No file configured is
-/// `null` — there is no collector here, which is the ordinary case on Windows.
-/// A file that will not read or will not parse is `{"error": ...}`, because a
-/// collector that has broken must not be indistinguishable from one that was
-/// never installed: the second reads as "nothing to report" and would hide a
-/// dead timer for weeks.
+/// No file configured is `null`: there is no collector, which is the ordinary
+/// case on Windows. A file that won't read or won't parse is
+/// `{"error": ...}`, because a broken collector must be distinguishable from
+/// one that was never installed. `null` reads as "nothing to report" and would
+/// hide a dead timer for weeks.
 async fn host_json(path: Option<&Path>) -> Value {
     let Some(path) = path else {
         return Value::Null;
@@ -858,10 +832,10 @@ async fn ws_handler(
     Query(which): Query<WhichRoom>,
 ) -> Response {
     // Resolved before the upgrade, so a socket only ever exists attached to a
-    // room. A client builds this from `/api/rooms`, so an id that is not here is
-    // a stale link or a hand-typed one — 404 rather than an upgrade, because a
-    // socket that opened and then said "no such room" would be indistinguishable
-    // to `net.ts` from the server restarting, and it would reconnect forever.
+    // room. A client builds this from `/api/rooms`, so an unknown id is a stale
+    // or hand-typed link. It gets a 404 instead of an upgrade, because to
+    // `net.ts` a socket that opened and then said "no such room" would look
+    // like the server restarting, and it would reconnect forever.
     let Some(room) = state.rooms.get(&which.room) else {
         warn!(room = %which.room, "rejected a socket for a room that does not exist");
         return (StatusCode::NOT_FOUND, "there is no such room").into_response();
@@ -911,8 +885,9 @@ struct StoredImage {
 }
 
 /// The DM secret is the only credential this project has, and every endpoint
-/// under `/api` wants it. A player has none to offer, which is the point: giving
-/// them one would be the authentication Slate deliberately does not build.
+/// under `/api` except `/api/rooms` and `/api/status` wants it. A player has
+/// none to offer: giving them one would be the authentication Slate doesn't
+/// build.
 fn is_dm(state: &AppState, headers: &HeaderMap) -> bool {
     headers
         .get(DM_SECRET_HEADER)
@@ -927,21 +902,21 @@ fn not_the_dm(what: &str) -> (StatusCode, String) {
 
 #[derive(Serialize)]
 struct Listing {
-    /// Neutrally named because both libraries answer with this shape, and the
-    /// client parsing it does not care which folder the paths came out of.
+    /// Named neutrally because every library answers with this shape, and the
+    /// client parsing it doesn't care which folder the paths came from.
     files: Vec<String>,
 }
 
-/// **Neither of the two routes that hand back a URL touches the room.** The DM's
-/// client follows one with a `set_map`, a `create_token` or a `set_backdrop`, so
-/// the change players actually see goes through the same permission check, event
-/// pipeline and visibility filter as everything else, rather than getting a
-/// private back door into `RoomState`.
 /// Which library a request is about, or a 404 saying there is no such folder.
 ///
 /// Every handler below starts here, and none of them is reachable without the
-/// secret: the DM's credential is the only one Slate has, and a player
-/// enumerating the maps folder is the next dungeon in devtools.
+/// secret: a player listing the maps folder sees the next dungeon in devtools.
+///
+/// **Neither route that hands back a URL (`pick`, `add`) touches the room.**
+/// The DM's client follows one with a `set_map`, a `create_token` or a
+/// `set_backdrop`, so the change players see goes through the same permission
+/// check, event pipeline and visibility filter as everything else, with no
+/// private way into `RoomState`.
 fn library_named(
     state: &AppState,
     headers: &HeaderMap,
@@ -959,9 +934,9 @@ fn library_named(
 
 /// Everything in a library, as paths to hand back to the routes below.
 ///
-/// DM-only. No room state is involved, so this is not invariant 4 in the strict
-/// sense, but a player reading off the names of every map the DM has prepared is
-/// the same problem wearing a different hat.
+/// DM-only. No room state is involved, so this isn't invariant 4 strictly, but
+/// a player reading the names of every map the DM has prepared is the same
+/// kind of leak.
 async fn listing(
     State(state): State<AppState>,
     UrlPath(segment): UrlPath<String>,
@@ -976,16 +951,16 @@ async fn listing(
 
 #[derive(Deserialize)]
 struct LibraryPath {
-    /// Relative to the library root, exactly as the listing reported it.
+    /// Relative to the library root, as the listing reported it.
     path: String,
 }
 
 /// Copies a file out of a library into the uploads directory and reports the
 /// URL it is now served at.
 ///
-/// The response is deliberately the same shape an add returns: from the client's
-/// point of view a pick and an add differ only in whether the bytes were already
-/// on the disk, and both are followed by an ordinary `set_map` or `update_token`.
+/// The response has the same shape an add returns: to the client, a pick and
+/// an add differ only in whether the bytes were already on the disk, and both
+/// are followed by an ordinary `set_map` or `update_token`.
 async fn pick(
     State(state): State<AppState>,
     UrlPath(segment): UrlPath<String>,
@@ -996,10 +971,10 @@ async fn pick(
     copy_out(&state, which, &request.path).await
 }
 
-/// The pick itself, without the extraction — so that `add` can finish by picking
-/// the file it has just written rather than working out the same URL a second
-/// way. There is one path from "a file in the library" to "a URL it is served
-/// at", which is what makes an add and a later pick of the same file agree.
+/// The pick itself, without the request extraction, so that `add` can finish
+/// by picking the file it has just written. There is one path from "a file in
+/// the library" to "the URL it is served at", which is what makes an add and a
+/// later pick of the same file agree.
 async fn copy_out(
     state: &AppState,
     which: Library,
@@ -1021,8 +996,8 @@ async fn copy_out(
         ),
     })?;
 
-    // Checked before the read rather than after, so a file that does not belong
-    // in a library cannot be pulled into memory just to be rejected.
+    // Checked before the read, so a file too large for the library isn't
+    // pulled into memory just to be rejected.
     let size = fs::metadata(&pick.path).await.map_err(|err| {
         error!(%err, path = %pick.path.display(), "could not read that {noun}");
         (
@@ -1045,9 +1020,9 @@ async fn copy_out(
         )
     })?;
 
-    // Sniffed rather than taken from the name, for the same reason an add is:
-    // the extension decides the `Content-Type` the copy is later served with, and
-    // a file's name is not evidence of what is inside it.
+    // Sniffed, not taken from the name, as in `add`: the extension decides the
+    // `Content-Type` the copy is later served with, and a file's name is not
+    // evidence of what is inside it.
     let Some(extension) = library::sniff(which.formats(), &bytes) else {
         return Err((
             StatusCode::UNSUPPORTED_MEDIA_TYPE,
@@ -1064,12 +1039,11 @@ async fn copy_out(
     let name = library::copy_name(&key, fingerprint, extension);
     let path = state.uploads.join(&name);
 
-    // An existing copy under this name is already this file, so there is nothing
-    // to write. For a portrait that is a fact about the bytes — the name came
-    // from them — and for a map it is the weaker promise that the same path was
-    // picked before. Rewriting either would only churn the disk and, worse,
-    // break the URL the calibration table is keyed on if the write failed
-    // halfway.
+    // An existing copy under this name is already this file, so there is
+    // nothing to write. When the name comes from the bytes that is certain;
+    // for a map it only means the same path was picked before. Rewriting
+    // either would churn the disk and, if the write failed halfway, break the
+    // URL the calibration table is keyed on.
     if fs::metadata(&path).await.is_err() {
         fs::write(&path, &bytes).await.map_err(|err| {
             error!(%err, path = %path.display(), "could not copy that {noun}");
@@ -1088,24 +1062,23 @@ async fn copy_out(
 
 #[derive(Deserialize)]
 struct AddRequest {
-    /// What the DM called the file on their own machine. A name and never a
-    /// path — `library::destination` refuses anything with a separator in it,
-    /// rather than taking the last segment and quietly meaning something else.
+    /// What the DM called the file on their own machine. A name, never a path:
+    /// `library::destination` refuses anything with a separator in it instead
+    /// of silently taking the last segment.
     name: String,
 }
 
-/// Writes an image into a library folder, then picks it.
+/// Writes a file into a library folder, then picks it.
 ///
-/// **This is what the upload button does now, and there is no second route.**
-/// An image the DM uploads used to land in `uploads/` under a fresh UUID, which
-/// made it a one-off: it could not be found again next session and a second
-/// upload of the same file was a second URL, so the remembered calibration and
-/// the walls traced on it belonged to nobody. Adding to the library first makes
-/// an uploaded map exactly as durable as one that came out of the folder,
-/// because it *is* one.
+/// **This is what the upload button does, and there is no second route.**
+/// Don't write uploads straight into `uploads/` under a fresh name: that makes
+/// each one a one-off that can't be found next session, and a second upload
+/// of the same file gets a second URL, so the remembered calibration and the
+/// walls traced on it are lost. Adding to the library first makes an uploaded
+/// map as durable as one that came out of the folder, because it *is* one.
 ///
-/// The bytes are sniffed before anything is written, so what lands in the folder
-/// is an image with the extension it actually has.
+/// The bytes are sniffed before anything is written, so what lands in the
+/// folder is a file with the extension its contents match.
 async fn add(
     State(state): State<AppState>,
     UrlPath(segment): UrlPath<String>,
@@ -1116,9 +1089,9 @@ async fn add(
     let which = library_named(&state, &headers, &segment, "add to")?;
     let noun = which.noun();
 
-    // The route's own limit is the largest of the three, so this is where a
-    // portrait-sized cap is actually applied. Refused with a sentence rather
-    // than by dropping the connection, which is what the layer would do.
+    // The route's own limit is the largest of any library, so this is where a
+    // smaller cap is applied. Refused with a sentence, where the layer would
+    // drop the connection.
     if body.len() > which.max_bytes() {
         return Err((
             StatusCode::PAYLOAD_TOO_LARGE,
@@ -1174,15 +1147,15 @@ async fn add(
 
 /// Deletes a file from a library folder.
 ///
-/// **The copy in `uploads/` is deliberately left alone**, and so is everything
-/// keyed on the URL it is served at. Removing a map from the picker is saying
-/// "stop offering me this", not "erase this from the room" — a map currently on
-/// the board goes on being served, and the grid, the walls and the paint the DM
-/// prepared on it stay on the shelf. Re-adding a file under the same name later
-/// lands on the same URL and finds all of it waiting.
+/// **The copy in `uploads/` is left alone**, and so is everything keyed on the
+/// URL it is served at. Removing a map from the picker means "stop offering me
+/// this", not "erase this from the room": a map on the board is still served,
+/// and the grid, walls and paint the DM prepared on it stay on the shelf.
+/// Re-adding a file under the same name later lands on the same URL and finds
+/// all of it again.
 ///
-/// Only ever a file: `library::resolve` refuses a directory, so there is nothing
-/// here that can empty a folder.
+/// Only ever a file: `library::resolve` refuses a directory, so nothing here
+/// can empty a folder.
 async fn remove(
     State(state): State<AppState>,
     UrlPath(segment): UrlPath<String>,
@@ -1225,13 +1198,13 @@ mod tests {
 
     #[test]
     fn only_the_four_libraries_are_named() {
-        // The path segment is what routes twelve operations through four
-        // handlers, so an unknown one has to be a 404 rather than something the
-        // fallback quietly serves an index page for.
+        // The path segment routes sixteen operations through four handlers,
+        // so an unknown one has to be a 404, not something the fallback
+        // serves an index page for.
         assert!(Library::named("maps").is_some());
         assert!(Library::named("portraits").is_some());
         assert!(Library::named("backdrops").is_some());
-        // Exactly this plural: the client drops one letter to get "track".
+        // This plural only: the client drops one letter to get "track".
         assert!(Library::named("tracks").is_some());
         for nonsense in ["map", "Maps", "track", "uploads", "..", ""] {
             assert!(
@@ -1243,9 +1216,9 @@ mod tests {
 
     #[test]
     fn the_primary_rooms_save_file_is_slate_state_itself() {
-        // The whole of why `SLATE_STATE` did not become a directory. Change
-        // this and the Pi's env file, the live campaign save and the backup
-        // that greps the tar for this filename all need a migration.
+        // Why `SLATE_STATE` isn't a directory. Change this and the Pi's env
+        // file, the live campaign save and the backup that greps the tar for
+        // this filename all need a migration.
         let primary = room::rooms()
             .map(|(id, _)| id)
             .find(|id| room::is_primary(id))
@@ -1275,20 +1248,20 @@ mod tests {
     #[test]
     fn rooms_is_not_a_library() {
         // `/api/rooms` is the one route under `/api` without the DM secret in
-        // front of it. Static segments outrank `{library}` in axum's router, so
-        // this is belt and braces — but if that ever changed, a `rooms` library
-        // would put the room list behind the secret the picker cannot offer.
+        // front of it. Static segments outrank `{library}` in axum's router,
+        // so this is a second guard: if that ever changed, a `rooms` library
+        // would put the room list behind the secret the picker can't offer.
         assert!(Library::named("rooms").is_none());
-        // `/api/status` is the second static segment under `/api` and wants the
-        // same guarantee for the opposite reason: a `status` library would put
-        // the map folder behind the key a wall display holds.
+        // `/api/status` is the second static segment under `/api` and needs
+        // the same guarantee for the opposite reason: a `status` library would
+        // put the map folder behind the key a wall display holds.
         assert!(Library::named("status").is_none());
     }
 
     // --- the status page's credential -------------------------------------
 
     /// Enough of an `AppState` to ask the guard a question. The room table is
-    /// empty on purpose: nothing here reaches an actor.
+    /// empty because nothing here reaches an actor.
     fn app_state(status_key: Option<&str>) -> AppState {
         AppState {
             rooms: Arc::new(HashMap::new()),
@@ -1323,8 +1296,8 @@ mod tests {
 
     #[test]
     fn the_status_key_is_accepted_in_a_header_or_in_the_url() {
-        // Both, and the URL half is not laxness: a Kindle's browser loads a URL
-        // and cannot set a header. TRMNL sends the header.
+        // Both: a Kindle's browser loads a URL and can't set a header. TRMNL
+        // sends the header.
         let state = app_state(Some("status-key"));
         assert!(status_allowed(
             &state,
@@ -1352,9 +1325,9 @@ mod tests {
 
     #[test]
     fn the_status_key_and_the_dm_secret_are_not_each_other() {
-        // The whole reason there are two. A display pinned to a wall holds the
-        // status key; if that opened the library routes it would be the DM
-        // secret with extra steps.
+        // Why there are two credentials. A display on the wall holds the
+        // status key; if that opened the library routes, it would be a second
+        // copy of the DM secret.
         let state = app_state(Some("status-key"));
         assert!(!status_allowed(
             &state,
@@ -1377,9 +1350,9 @@ mod tests {
 
     #[test]
     fn with_no_key_configured_nothing_gets_in() {
-        // Unreachable in practice — the route is not mounted without a key — but
+        // Unreachable in practice (the route isn't mounted without a key), but
         // written to fail closed so that mounting it unconditionally one day
-        // could not silently open it.
+        // couldn't silently open it.
         let state = app_state(None);
         assert!(!status_allowed(&state, &HeaderMap::new(), &query(None)));
         assert!(!status_allowed(
@@ -1393,8 +1366,8 @@ mod tests {
 
     #[test]
     fn a_room_that_did_not_answer_still_gets_a_row() {
-        // The absence is the news. Dropping the row would leave a page that
-        // looks complete while a room is wedged.
+        // Dropping the row would leave a page that looks complete while a
+        // room is wedged.
         let row = room_status_json("campaign", "Campaign", None);
         assert_eq!(row["id"], "campaign");
         assert_eq!(row["responding"], false);
@@ -1421,8 +1394,8 @@ mod tests {
 
     #[test]
     fn a_healthy_server_has_nothing_to_say() {
-        // `unsaved` is set on the row above and must not appear here: a change
-        // inside the debounce is the ordinary case, not a fault.
+        // `unsaved` is set on this row and must not raise an alarm: a change
+        // inside the debounce is the ordinary case.
         let v = verdict(&[room_row("Campaign", false, Some(90))], 100, &Value::Null);
         assert_eq!(v["alarms"], json!([]));
         assert_eq!(v["host_age_s"], Value::Null, "no collector, no age");
@@ -1465,8 +1438,8 @@ mod tests {
         assert_eq!(fresh["host_age_s"], 200);
         assert_eq!(fresh["host_stale"], false);
         assert_eq!(fresh["alarms"], json!([]));
-        // Stale: the file still parses and still looks like data. Age is the
-        // only thing that can catch a dead timer.
+        // Stale: the file still parses and looks like data. Only its age can
+        // catch a dead timer.
         let stale = verdict(&[], 10_000, &json!({ "at": 9_000 }));
         assert_eq!(stale["host_stale"], true);
         assert_eq!(stale["alarms"], json!(["host readings are 16m old"]));
@@ -1491,8 +1464,9 @@ mod tests {
         assert_eq!(v["disk_full"], true);
         assert_eq!(v["restarted"], true);
 
-        // Just under each line is calm, and a board that dipped and recovered
-        // reads as calm too — `undervoltage_ever` is a row, not an alarm.
+        // Just under each threshold raises nothing, and neither does a board
+        // that dipped and recovered: `undervoltage_ever` is a row, not an
+        // alarm.
         let calm = json!({
             "at": 100, "cpu_c": 74.9, "disk_pct": 89.9, "undervoltage": false,
             "undervoltage_ever": true, "restarts": 0
@@ -1519,10 +1493,10 @@ mod tests {
 
     #[tokio::test]
     async fn a_file_written_by_powershell_still_parses() {
-        // Windows PowerShell 5.1 writes a UTF-8 BOM and calls it utf8. Both of
-        // the files this server relays are written on Windows or by a shell, so
-        // three bytes an editor hides must not be the difference between a
-        // build stamp and a blank card. This is the regression, not a nicety.
+        // Windows PowerShell 5.1 writes a UTF-8 BOM and calls it utf8. Both
+        // files this server relays may be written by it, and three bytes an
+        // editor hides must not turn a build stamp into a blank card. This bug
+        // has happened.
         let path = std::env::temp_dir().join(format!(
             "slate-bom-{}-{}.json",
             std::process::id(),
@@ -1543,8 +1517,8 @@ mod tests {
     #[tokio::test]
     async fn a_missing_collector_and_a_broken_one_read_differently() {
         // No file configured is the ordinary case on a machine with no
-        // collector. A file that will not read has to say so instead: a dead
-        // timer that looked like "nothing to report" would hide for weeks.
+        // collector. A file that won't read has to say so: a dead timer that
+        // looked like "nothing to report" would hide for weeks.
         assert_eq!(host_json(None).await, Value::Null);
 
         let absent = std::env::temp_dir().join(format!(
@@ -1597,16 +1571,16 @@ mod tests {
 
     #[test]
     fn a_picked_map_keeps_the_name_it_has_always_had() {
-        // The calibration table is keyed on the URL this produces, so either of
-        // these would orphan every map the DM has ever calibrated.
+        // The calibration table is keyed on the URL this produces, so changing
+        // either would orphan every map the DM has ever calibrated.
         assert_eq!(Library::Maps.prefix(), "");
         assert!(!Library::Maps.names_by_content());
     }
 
     #[test]
     fn a_replaced_portrait_is_a_new_copy_and_a_replaced_map_is_not() {
-        // The asymmetry `Library::names_by_content` exists for, both halves of
-        // it, so neither can be flipped without a test saying what it costs.
+        // Both halves of `Library::names_by_content`, so neither can be
+        // flipped without a test saying what it costs.
         assert_ne!(
             copy_name_for(Library::Portraits, "cleo.jpg", b"the old art", "jpg"),
             copy_name_for(Library::Portraits, "cleo.jpg", b"the new art", "jpg"),
@@ -1627,7 +1601,7 @@ mod tests {
         assert_eq!(library::sniff(&library::IMAGES, b"\x7fELF"), None);
         // A truncated RIFF header must not be read past the end.
         assert_eq!(library::sniff(&library::IMAGES, b"RIFF\x00\x00\x00"), None);
-        // RIFF, but a wave file rather than an image.
+        // RIFF, but a wave file.
         assert_eq!(
             library::sniff(&library::IMAGES, b"RIFF\x00\x00\x00\x00WAVEfmt "),
             None
@@ -1665,10 +1639,9 @@ mod tests {
 
     #[test]
     fn a_riff_container_is_a_webp_here_and_a_wav_there() {
-        // **The pair that keeps the four libraries from drifting into one.**
-        // Both files open with `RIFF` and each is refused by the other's table,
-        // which is the whole argument for the table being per-library rather
-        // than one list everything is checked against.
+        // Both files open with `RIFF` and each is refused by the other's
+        // table, which is why the table is per library and not one list
+        // everything is checked against.
         let webp = b"RIFF\x00\x00\x00\x00WEBPVP8 ";
         let wav = b"RIFF\x00\x00\x00\x00WAVEfmt ";
         assert_eq!(library::sniff(&library::IMAGES, webp), Some("webp"));
@@ -1689,8 +1662,8 @@ mod tests {
 
     #[test]
     fn every_library_but_the_tracks_holds_pictures() {
-        // The grouped arm in `Library::formats` said as an assertion: adding a
-        // library must not quietly change what the three older ones accept.
+        // The grouped arm in `Library::formats`, as an assertion: adding a
+        // library must not change what the three picture libraries accept.
         for which in [Library::Maps, Library::Portraits, Library::Backdrops] {
             assert_eq!(
                 library::sniff(which.formats(), b"\x89PNG\r\n\x1a\n"),

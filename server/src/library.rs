@@ -1,17 +1,17 @@
-//! The map library: the folder of maps on disk, listed and picked from.
+//! The libraries: folders of maps, portraits, backdrops and tracks on disk,
+//! listed, picked from, added to and removed from.
 //!
-//! This is the only place a client-supplied path reaches the filesystem. An
-//! upload sidesteps the problem by inventing its own name; a pick cannot, so a
-//! requested path is checked twice. First structurally, before anything is
-//! opened: a path must be a plain sequence of names, which rules out `..`, an
-//! absolute path and a Windows drive prefix alike. Then against the
-//! canonicalised library root, which is what catches a symlink that sits inside
-//! `maps/` and points out of it.
+//! This is where a client-supplied path reaches the filesystem, in two places.
+//! A pick's requested path is checked twice. First structurally, before
+//! anything is opened: a path must be a plain sequence of names, which rules
+//! out `..`, an absolute path and a Windows drive prefix alike. Then against
+//! the canonicalised library root, which catches a symlink that sits inside
+//! the library and points out of it. An add is stricter (see `destination`).
 //!
-//! A pick is a copy into the uploads directory rather than a second way to serve
-//! files, so the name of that copy has to be derived from the source path — the
-//! same map picked twice must land on one file and one URL instead of piling up
-//! a duplicate per pick.
+//! A pick is a copy into the uploads directory, not a second way to serve
+//! files, so the name of that copy has to be derived deterministically: the
+//! same file picked twice must land on one file and one URL instead of piling
+//! up a duplicate per pick.
 
 use std::path::{Component, Path, PathBuf};
 
@@ -21,24 +21,24 @@ use tokio::fs;
 /// nor a copy's name can be grown without bound by whoever asks.
 const MAX_PATH_LEN: usize = 256;
 /// How much of the source path survives into the copy's name. The hash appended
-/// after it is what actually keeps the name unique, so this only trades
-/// readability against length.
+/// after it keeps the name unique, so this only trades readability against
+/// length.
 const MAX_SLUG_LEN: usize = 60;
 /// How long a name the DM may give a file they are adding, before the sniffed
 /// extension is put back on it. Shorter than a path because it is one segment.
 const MAX_STEM_LEN: usize = 80;
-/// A library is a folder of maps, not a tree worth crawling. Both caps bound the
-/// work one request can ask for.
+/// A library is a folder of files, not a tree worth crawling. Both caps bound
+/// the work one request can ask for.
 const MAX_DEPTH: usize = 8;
 const MAX_ENTRIES: usize = 500;
 
 /// One accepted format: the extension a copy is written under, and the predicate
 /// that recognises it from the file's leading bytes.
 ///
-/// A predicate rather than an `(offset, literal)` table because MP3 is the one
-/// that needs masking — a bare MPEG frame header is eleven sync bits and a
-/// handful of reserved fields, not a string. Everything else is one or two
-/// `starts_with`s and would have fitted a table.
+/// A predicate, not an `(offset, literal)` table, because MP3 needs masking: a
+/// bare MPEG frame header is eleven sync bits and a handful of reserved
+/// fields, not a string. Everything else is one or two `starts_with`s and
+/// would fit a table.
 pub struct Format {
     pub extension: &'static str,
     pub matches: fn(&[u8]) -> bool,
@@ -46,20 +46,19 @@ pub struct Format {
 
 /// What one library will list, accept and refuse.
 ///
-/// **The fourth axis a library differs by**, beside its folder, its cap and what
-/// a copy's name is fingerprinted over. Before this existed the answer was a
-/// single const and the question was never asked, which was correct exactly as
-/// long as every library held pictures.
+/// One of four things a library differs by, beside its folder, its size cap
+/// and what a copy's name is fingerprinted over (`Library` in `main.rs`).
 pub struct Formats {
-    /// Sniffed in order, first match wins. This is the truth about what a file
-    /// is; the list below is only a hint about what is worth showing.
+    /// Sniffed in order, first match wins. This decides what a file is; the
+    /// list below only decides what is worth showing.
     pub formats: &'static [Format],
-    /// What the listing shows, and what `filename` will strip so `bed.mp3` does
-    /// not land as `bed.mp3.mp3`. A separate list because `.jpeg` is listed and
-    /// never written, and `.oga` and `.opus` are the same file as `.ogg`.
+    /// What the listing shows, and what `filename` will strip so `bed.mp3`
+    /// doesn't land as `bed.mp3.mp3`. A separate list because `.jpeg` is
+    /// listed and never written, and `.oga` and `.opus` are the same file as
+    /// `.ogg`.
     pub extensions: &'static [&'static str],
-    /// The noun phrase both refusals are built from, so there is one list here
-    /// and no sentence anywhere else that can drift out of step with it.
+    /// The noun phrase both refusals are built from, so no sentence anywhere
+    /// else can get out of step with the list.
     pub named: &'static str,
 }
 
@@ -79,20 +78,20 @@ const WEBP: Format = Format {
 /// Every Ogg page opens with the capture pattern, page zero included, so this is
 /// the same kind of check as PNG's. Vorbis and Opus are both Ogg here and both
 /// are written `.ogg`: the leading bytes are identical either way, the codec is
-/// named inside the stream, and browsers read it from there rather than from the
+/// named inside the stream, and browsers read it from there, not from the
 /// extension.
 const OGG: Format = Format {
     extension: "ogg",
     matches: |bytes| bytes.starts_with(b"OggS"),
 };
 
-/// **The loosest check here, and the only one worth distrusting.** An ID3 tag is
-/// unambiguous and is what essentially every encoder writes, but a bare frame
-/// header is eleven sync bits — enough that some other file could open with one
-/// by accident. The three masks after it reject the combinations MPEG itself
-/// calls reserved or invalid, which is as far as the leading bytes can go. The
-/// consequence of a false positive here is a track the browser visibly refuses
-/// to play, on a route only the DM can reach.
+/// **The loosest check here, and the only one worth distrusting.** An ID3 tag
+/// is unambiguous and is what nearly every encoder writes, but a bare frame
+/// header is eleven sync bits, so some other file could open with one by
+/// accident. The three masks after it reject the combinations MPEG itself
+/// calls reserved or invalid, which is as far as the leading bytes can go. A
+/// false positive here is a track the browser visibly refuses to play, on a
+/// route only the DM can reach.
 const MP3: Format = Format {
     extension: "mp3",
     matches: |bytes| {
@@ -112,10 +111,9 @@ const MP3: Format = Format {
     },
 };
 
-/// WebP's check with four different bytes, which is only unambiguous because
-/// each library sniffs against its own table — a RIFF container is a WebP in
-/// `maps/` and a WAV in `tracks/`, and neither library is ever asked about the
-/// other's.
+/// WebP's check with four different bytes. Unambiguous only because each
+/// library sniffs against its own table: a RIFF container is a WebP in `maps/`
+/// and a WAV in `tracks/`, and neither library is ever asked about the other's.
 const WAV: Format = Format {
     extension: "wav",
     matches: |bytes| bytes.len() >= 12 && bytes.starts_with(b"RIFF") && &bytes[8..12] == b"WAVE",
@@ -127,14 +125,14 @@ pub const IMAGES: Formats = Formats {
     named: "a PNG, JPEG or WebP image",
 };
 
-/// **`.m4a` is deliberately absent.** Its `ftyp` box carries a brand, and the
-/// brand does not say whether there is a video track beside the audio: `M4A ` is
-/// audio-only but plenty of ordinary AAC files are stamped `mp42` or `isom`,
-/// which is what an MP4 *video* carries too. Accepting any `ftyp` lets a film
-/// into the music library, where it plays its soundtrack and reads as a bug;
-/// accepting only `M4A ` refuses files that are fine. The way out is to
-/// re-export, and if that ever stops being acceptable the addition is one arm
-/// checking both boxes.
+/// **`.m4a` is not accepted.** Its `ftyp` box carries a brand, and the brand
+/// doesn't say whether there is a video track beside the audio: `M4A ` is
+/// audio-only, but plenty of ordinary AAC files are stamped `mp42` or `isom`,
+/// which an MP4 *video* carries too. Accepting any `ftyp` lets a film into the
+/// music library, where it plays its soundtrack and looks like a bug;
+/// accepting only `M4A ` refuses files that are fine. The DM can re-export
+/// instead. If that stops being acceptable, the addition is one arm checking
+/// both boxes.
 pub const AUDIO: Formats = Formats {
     formats: &[OGG, MP3, WAV],
     extensions: &["ogg", "oga", "opus", "mp3", "wav"],
@@ -144,9 +142,9 @@ pub const AUDIO: Formats = Formats {
 /// The format these bytes actually are, as the extension a copy of them is
 /// written under, or `None` for something this library does not hold.
 ///
-/// Deliberately not the filename and not the `Content-Type` header — the client
-/// controls both and neither is evidence of what the file is. What this returns
-/// is also what decides the `Content-Type` browsers are later served it with.
+/// Not the filename and not the `Content-Type` header: the client controls
+/// both and neither is evidence of what the file is. What this returns also
+/// decides the `Content-Type` browsers are later served it with.
 pub fn sniff(formats: &Formats, bytes: &[u8]) -> Option<&'static str> {
     formats
         .formats
@@ -161,7 +159,7 @@ pub enum PickError {
     /// detail than that: the difference between "malformed" and "outside the
     /// library" is only useful to someone probing for what is on the disk.
     Rejected,
-    /// Well-formed, but there is no such map.
+    /// Well-formed, but there is no such file.
     Missing,
 }
 
@@ -171,9 +169,9 @@ pub struct Pick {
     /// The file itself, canonicalised.
     pub path: PathBuf,
     /// The relative path, lowercased with `/` separators. The copy's name comes
-    /// from this rather than from what the client sent, so the same map asked
-    /// for two different ways still resolves to one copy. Lowercasing is because
-    /// the deployment target is Windows, where the two spellings are one file.
+    /// from this, not from what the client sent, so the same file asked for
+    /// two different ways still resolves to one copy. Lowercased because on
+    /// Windows, one of the hosts, the two spellings are one file.
     pub key: String,
 }
 
@@ -212,9 +210,9 @@ pub fn resolve(maps_dir: &Path, requested: &str) -> Result<Pick, PickError> {
         .canonicalize()
         .map_err(|_| PickError::Missing)?;
 
-    // The component check above already makes a traversal unrepresentable, so
-    // this is not that check repeated: `canonicalize` resolves symlinks, and a
-    // link inside the library pointing outside it is the case only this catches.
+    // The component check above already rules out a traversal. This catches
+    // a different case: `canonicalize` resolves symlinks, and a link inside
+    // the library pointing outside it is caught only here.
     if !path.starts_with(&base) {
         return Err(PickError::Rejected);
     }
@@ -240,16 +238,17 @@ pub enum AddError {
 ///
 /// **The second place a client-supplied path reaches the filesystem, and it is
 /// guarded more tightly than the first.** A pick may name a file in a
-/// subdirectory, so it is normalised and then checked against the canonicalised
-/// root. An add may not: the name has to be a *single* component, which makes
-/// the result unable to leave the library at all rather than merely proven not
-/// to have. Nothing is created except one file directly in the folder, so there
-/// are no directories to make and none to tidy up after a remove.
+/// subdirectory, so it is normalised and then checked against the
+/// canonicalised root. An add may not: the name has to be a *single*
+/// component, so the result can't leave the library at all, instead of being
+/// checked afterwards. Nothing is created except one file directly in the
+/// folder, so there are no directories to make and none to tidy up after a
+/// remove.
 ///
-/// **The extension is the sniffed one, never the supplied one.** The DM's name
-/// decides what the picker reads and what the copy's key is derived from; what
-/// is actually in the file decides how it is served. A `.png` holding a JPEG
-/// would otherwise be copied out under a name that lies about it.
+/// The extension is the sniffed one, never the supplied one. The DM's name
+/// decides what the picker shows and what the copy's key is derived from; what
+/// is in the file decides how it is served. A `.png` holding a JPEG would
+/// otherwise be copied out under a wrong extension.
 pub fn destination(
     dir: &Path,
     supplied: &str,
@@ -258,11 +257,10 @@ pub fn destination(
 ) -> Result<PathBuf, AddError> {
     let name = filename(supplied, extension, formats).ok_or(AddError::Rejected)?;
     let path = dir.join(&name);
-    // Refused rather than overwritten. Silently replacing a map is the one
-    // outcome the DM cannot undo, and for a map it would not even work the way
-    // it looks: a copy is named from its path, so the old bytes would go on
-    // being served under the same URL — the wart *The calibration table is why a
-    // map is named from its path* describes, arrived at by a different road.
+    // Refused, not overwritten. Silently replacing a map is an outcome the DM
+    // can't undo, and for a map it wouldn't even work the way it looks: a copy
+    // is named from its path, so the old bytes would still be served under the
+    // same URL. That's the asymmetry described in `docs/maps.md`.
     if path.exists() {
         return Err(AddError::Taken);
     }
@@ -271,20 +269,19 @@ pub fn destination(
 
 /// The single filename an add may write, or `None`.
 ///
-/// Windows is a deployment target and the Pi is the other one, so this refuses
-/// what either would mishandle rather than what only Unix cares about: the
-/// characters Windows reserves, its device names, and the trailing dots and
-/// spaces it strips on the way to disk — a name that arrives as `nul` or that
-/// silently becomes a different one is a file the DM cannot then remove by
-/// asking for the name they gave.
+/// Windows and the Pi are both hosts, so this refuses what either would
+/// mishandle, not only what Unix cares about: the characters Windows reserves,
+/// its device names, and the trailing dots and spaces it strips on the way to
+/// disk. A name that arrives as `nul`, or that silently becomes a different
+/// one, is a file the DM can't then remove by asking for the name they gave.
 fn filename(supplied: &str, extension: &str, formats: &Formats) -> Option<String> {
     if supplied.is_empty() || supplied.len() > MAX_PATH_LEN {
         return None;
     }
 
-    // Exactly one plain component. A separator, a `..` or a drive prefix is
-    // refused rather than having its last segment taken — taking it would accept
-    // `../../evil.png` by quietly meaning something else.
+    // One plain component. A separator, a `..` or a drive prefix is refused;
+    // taking the last segment instead would accept `../../evil.png` as
+    // `evil.png`.
     let mut components = Path::new(supplied).components();
     let Some(Component::Normal(only)) = components.next() else {
         return None;
@@ -294,8 +291,8 @@ fn filename(supplied: &str, extension: &str, formats: &Formats) -> Option<String
     }
     let only = only.to_str()?;
 
-    // Dropped if it is one this library would list anyway, so `cave.png` does
-    // not land as `cave.png.png`. Any other suffix is part of the name.
+    // Dropped if it is one this library would list anyway, so `cave.png`
+    // doesn't land as `cave.png.png`. Any other suffix is part of the name.
     let stem = only
         .rsplit_once('.')
         .filter(|(_, ext)| listed_extension(ext, formats))
@@ -320,7 +317,7 @@ fn filename(supplied: &str, extension: &str, formats: &Formats) -> Option<String
 }
 
 /// The DOS device names, which Windows still resolves ahead of any file of the
-/// same name — with or without an extension, in any case.
+/// same name, with or without an extension, in any case.
 fn is_reserved(stem: &str) -> bool {
     const DEVICES: [&str; 4] = ["con", "prn", "aux", "nul"];
     let lower = stem.to_ascii_lowercase();
@@ -335,8 +332,8 @@ fn is_reserved(stem: &str) -> bool {
     numbered("com") || numbered("lpt")
 }
 
-/// FNV-1a. Not a cryptographic hash and does not need to be — it distinguishes
-/// two paths a DM actually has, and the path itself is not a secret.
+/// FNV-1a. Not a cryptographic hash and doesn't need to be: it distinguishes
+/// two files a DM actually has, and neither is a secret.
 fn fnv1a(bytes: &[u8]) -> u32 {
     let mut hash: u32 = 0x811c_9dc5;
     for &byte in bytes {
@@ -361,7 +358,7 @@ fn slug(text: &str) -> String {
         }
     }
 
-    // Only ASCII was pushed, so this cannot split a character in half.
+    // Only ASCII was pushed, so this can't split a character in half.
     out.truncate(MAX_SLUG_LEN);
     while out.ends_with('-') {
         out.pop();
@@ -372,22 +369,21 @@ fn slug(text: &str) -> String {
 /// The name a picked file is copied to: a readable slug of `Pick::key`, and a
 /// short hash of `fingerprint`.
 ///
-/// Readable because `%LOCALAPPDATA%\Slate` is meant to be a backup someone can
-/// look through, and hashed because the slug alone collides: two files whose
-/// names differ only in punctuation would otherwise overwrite each other and the
-/// DM would pick one and get the other.
+/// Readable because the data directory (`%LOCALAPPDATA%\Slate` on Windows) is
+/// meant to be a backup someone can look through. Hashed because the slug
+/// alone collides: two files whose names differ only in punctuation would
+/// overwrite each other, and the DM would pick one and get the other.
 ///
-/// **The fingerprint is the caller's choice and the two libraries differ on it**
-/// — see `Library::names_by_content` in `main.rs`. Passing the key gives a name
+/// **The fingerprint is the caller's choice and the libraries differ on it**
+/// (see `Library::names_by_content` in `main.rs`). Passing the key gives a name
 /// that is stable across a change to the file's contents; passing the contents
-/// gives one that is stable across a change to its name. Either way the slug
-/// comes from the key, so what the DM reads in the folder is the path they
-/// picked.
+/// gives one that changes with them. Either way the slug comes from the key,
+/// so what the DM reads in the folder is the path they picked.
 pub fn copy_name(key: &str, fingerprint: &[u8], extension: &str) -> String {
-    // The extension is dropped from the readable half — it is already the
+    // The extension is dropped from the readable half, since it is already the
     // extension of the copy. A key fingerprint keeps it, so the same name as a
-    // PNG and as a JPEG stays two files; a content fingerprint does not need it,
-    // because two encodings of one image are already two different byte strings.
+    // PNG and as a JPEG stays two files; a content fingerprint doesn't need it,
+    // because two encodings of one image are already different bytes.
     let stem = key.rsplit_once('.').map_or(key, |(stem, _)| stem);
     let readable = slug(stem);
     let readable = if readable.is_empty() {
@@ -398,10 +394,10 @@ pub fn copy_name(key: &str, fingerprint: &[u8], extension: &str) -> String {
     format!("{readable}-{:08x}.{extension}", fnv1a(fingerprint))
 }
 
-/// Whether this library would show a file with that extension. Case-insensitive
-/// because the DM's filenames are, and the one place both `listed` and the
-/// stem-strip in `filename` agree about what "an extension this library holds"
-/// means.
+/// Whether this library would show a file with that extension.
+/// Case-insensitive because the DM's filenames are. Both `listed` and the
+/// stem-strip in `filename` call this, so they agree on what "an extension
+/// this library holds" means.
 fn listed_extension(extension: &str, formats: &Formats) -> bool {
     formats
         .extensions
@@ -413,13 +409,14 @@ fn listed(name: &str, formats: &Formats) -> bool {
         .is_some_and(|(_, extension)| listed_extension(extension, formats))
 }
 
-/// Every map in the library, as paths relative to its root, with `/` separators.
+/// Every file in the library this library would hold, as paths relative to its
+/// root, with `/` separators.
 ///
-/// Case is preserved: this is what the DM reads in the picker. `resolve` is what
-/// folds it to a key, so a listing entry can be sent straight back as a pick.
+/// Case is preserved: this is what the DM reads in the picker. `resolve` folds
+/// it to a key, so a listing entry can be sent straight back as a pick.
 ///
-/// An unreadable directory is skipped rather than failing the request — the rest
-/// of the library is still worth showing.
+/// An unreadable directory is skipped instead of failing the request, because
+/// the rest of the library is still worth showing.
 pub async fn list(maps_dir: &Path, formats: &Formats) -> Vec<String> {
     let mut found: Vec<String> = Vec::new();
     let mut stack: Vec<(PathBuf, String, usize)> = vec![(maps_dir.to_path_buf(), String::new(), 0)];
@@ -435,7 +432,7 @@ pub async fn list(maps_dir: &Path, formats: &Formats) -> Vec<String> {
                 break;
             }
 
-            // A name that is not UTF-8 could not survive the wire as JSON, and
+            // A name that isn't UTF-8 can't survive the wire as JSON, and
             // there is nothing useful to show for it.
             let Some(name) = entry.file_name().to_str().map(str::to_owned) else {
                 continue;
@@ -449,9 +446,9 @@ pub async fn list(maps_dir: &Path, formats: &Formats) -> Vec<String> {
                 continue;
             }
 
-            // Deliberately does not follow symlinks: a link is neither a file
-            // nor a directory here, so it is skipped, and the walk cannot be
-            // sent round a loop by one.
+            // Doesn't follow symlinks: a link is neither a file nor a
+            // directory here, so it is skipped, and a link can't send the walk
+            // round a loop.
             let Ok(kind) = entry.file_type().await else {
                 continue;
             };
@@ -465,8 +462,8 @@ pub async fn list(maps_dir: &Path, formats: &Formats) -> Vec<String> {
         }
     }
 
-    // Case-insensitively, so the order matches how the names read rather than
-    // where the capitals happen to fall.
+    // Case-insensitively, so the order matches how the names read, not where
+    // the capitals fall.
     found.sort_by_key(|entry| entry.to_lowercase());
     found
 }
@@ -544,8 +541,8 @@ mod tests {
 
     #[test]
     fn a_backslash_traversal_is_refused_too() {
-        // The deployment target is Windows, where this is the spelling that
-        // matters and where `\` is a separator `Path` actually splits on.
+        // On a Windows host this is the spelling that matters, and `\` is a
+        // separator `Path` splits on.
         let library = TempLibrary::new();
         library.with("Digital/map.jpg");
 
@@ -623,8 +620,8 @@ mod tests {
 
     #[test]
     fn the_sniffed_extension_wins_over_the_one_the_dm_sent() {
-        // A `.png` holding a JPEG would otherwise be copied out under a name
-        // that lies about it, and the copy's `Content-Type` comes from that name.
+        // A `.png` holding a JPEG would otherwise be copied out under the
+        // wrong extension, and the copy's `Content-Type` comes from that name.
         let library = TempLibrary::new();
 
         let path = destination(library.path(), "cave.png", "jpg", &IMAGES).expect("a place");
@@ -647,9 +644,9 @@ mod tests {
     #[test]
     fn an_added_name_may_not_be_a_path_at_all() {
         // Tighter than a pick, which may name a file in a subdirectory. An add
-        // writes one file directly into the folder, so anything with a separator
-        // in it is refused rather than having its last segment taken — taking it
-        // would accept a traversal by quietly meaning something else.
+        // writes one file directly into the folder, so anything with a
+        // separator in it is refused. Taking its last segment instead would
+        // accept a traversal as a different name.
         let library = TempLibrary::new();
 
         for attempt in [
@@ -701,9 +698,9 @@ mod tests {
 
     #[test]
     fn a_name_already_taken_is_refused_rather_than_overwritten() {
-        // Silently replacing a map is the one outcome the DM cannot undo — and
-        // for a map it would not even do what it looks like, since the copy is
-        // named from the path and the old bytes would go on being served.
+        // Silently replacing a map is an outcome the DM can't undo, and for a
+        // map it wouldn't even do what it looks like, since the copy is named
+        // from the path and the old bytes would still be served.
         let library = TempLibrary::new();
         library.with("cave.png");
 
@@ -720,8 +717,8 @@ mod tests {
 
     #[test]
     fn an_added_name_is_one_a_pick_can_ask_for() {
-        // The property the whole add path rests on: it finishes by picking the
-        // file it just wrote, so what `destination` produces has to resolve.
+        // `add` finishes by picking the file it just wrote, so what
+        // `destination` produces has to resolve.
         let library = TempLibrary::new();
 
         let path =
@@ -776,8 +773,8 @@ mod tests {
 
     #[test]
     fn a_slug_reads_as_the_path_however_the_name_was_fingerprinted() {
-        // What the DM browses in `%LOCALAPPDATA%\Slate` comes from the key in
-        // both libraries; only the eight hex digits after it differ.
+        // What the DM browses in the data directory comes from the key in
+        // every library; only the eight hex digits after it differ.
         let name = copy_name("portrait/cleo.jpg", b"some image bytes", "jpg");
         assert!(
             name.starts_with("portrait-cleo-"),
@@ -788,7 +785,7 @@ mod tests {
 
     #[test]
     fn two_maps_that_slug_alike_still_get_their_own_file() {
-        // The whole reason the name is not the slug on its own.
+        // Why the name isn't the slug on its own.
         let one = by_path("digital/goblin camp.jpg", "jpg");
         let two = by_path("digital/goblin-camp.jpg", "jpg");
         assert_ne!(
@@ -804,8 +801,8 @@ mod tests {
 
     #[test]
     fn replacing_the_art_under_one_path_gives_a_new_name() {
-        // The portrait bug: the DM swaps the file in `portraits/`, re-picks it,
-        // and must not be handed the copy made from the bytes it replaced.
+        // The DM swaps the file in `portraits/`, re-picks it, and must not be
+        // handed the copy made from the bytes it replaced.
         let before = copy_name("portrait/cleo.jpg", b"the old portrait", "jpg");
         let after = copy_name("portrait/cleo.jpg", b"the new portrait", "jpg");
         assert_ne!(
@@ -816,8 +813,8 @@ mod tests {
 
     #[test]
     fn the_same_art_picked_twice_is_still_one_file() {
-        // The other half of it: re-picking an unchanged portrait must not pile
-        // up a duplicate per pick, exactly as for a map.
+        // The other half: re-picking an unchanged portrait must not pile up a
+        // duplicate per pick, just as for a map.
         assert_eq!(
             copy_name("portrait/cleo.jpg", b"the portrait", "jpg"),
             copy_name("portrait/cleo.jpg", b"the portrait", "jpg")
@@ -874,7 +871,7 @@ mod tests {
 
     #[tokio::test]
     async fn a_listed_map_can_be_picked_by_the_string_it_was_listed_as() {
-        // The listing and the pick have to agree, or the picker is decorative.
+        // The listing and the pick have to agree, or the picker is useless.
         let library = TempLibrary::new();
         library.with("Digital/Forest Encampment (night).jpg");
 
@@ -891,10 +888,9 @@ mod tests {
 
     #[tokio::test]
     async fn one_folder_lists_differently_to_two_libraries() {
-        // **The regression guard for the whole per-library gate.** The same
-        // folder, asked twice, must answer twice — if these ever agree, the
-        // four libraries have drifted back into one and a track has become
-        // something the map picker offers.
+        // The same folder, listed as two libraries, must give two answers. If
+        // these ever agree, a track has become something the map picker
+        // offers.
         let library = TempLibrary::new();
         library.with("cave.png").with("bed.ogg").with("boss.mp3");
 
@@ -907,9 +903,9 @@ mod tests {
 
     #[test]
     fn a_track_does_not_land_with_its_extension_twice() {
-        // The stem-strip in `filename` reading the right list. With the images'
-        // list it would not recognise `.mp3`, keep it as part of the name, and
-        // write `boss.mp3.mp3`.
+        // The stem-strip in `filename` must read this library's list. With the
+        // images' list it wouldn't recognise `.mp3`, would keep it as part of
+        // the name, and would write `boss.mp3.mp3`.
         let library = TempLibrary::new();
         let path =
             destination(library.path(), "boss.mp3", "mp3", &AUDIO).expect("a place for a track");
@@ -921,9 +917,9 @@ mod tests {
 
     #[test]
     fn a_suffix_this_library_does_not_hold_is_part_of_the_name() {
-        // The other half of the rule above, and why the strip has to be per
-        // library rather than "drop whatever is after the last dot": a track
-        // called `cave.png` keeps that name and gains the sniffed one.
+        // The other half of the rule above, and why the strip is per library
+        // and not "drop whatever is after the last dot": a track called
+        // `cave.png` keeps that name and gains the sniffed extension.
         let library = TempLibrary::new();
         let path =
             destination(library.path(), "cave.png", "ogg", &AUDIO).expect("a place for a track");
