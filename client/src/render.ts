@@ -43,22 +43,22 @@ const GRID_HALO_WIDTH = 4;
 const GRID_CORE_WIDTH = 1;
 /**
  * Below this many screen pixels per cell the halo is dropped. Four pixels of
- * halo on cells six pixels apart is not a grid, it is a dark wash — and zoomed
- * out that far the grid is orientation, not something anyone measures against.
+ * halo on cells six pixels apart reads as a dark wash, and zoomed out that far
+ * the grid is for orientation, not for measuring against.
  */
 const HALO_MIN_CELL_PX = 14;
 /** Laid over the parts of the image outside the play area. */
 const OUTSIDE_PLAY_AREA = 'rgba(11, 13, 16, 0.55)';
 /** The fill a click would commit, before it is committed. Translucent, and
- *  outlined at full strength — the outline is the region and the fill is what it
- *  would become, which is the same split a drawn shape makes. */
+ *  outlined at full strength: the outline is the region and the fill is what it
+ *  would become, the same split a drawn shape makes. */
 const PREVIEW_FILL_ALPHA = 0.3;
 const TOKEN_RIM = 'rgba(0, 0, 0, 0.55)';
 /** Yours. Warm, so it never reads as the blue "being dragged" state. */
 const OWNED_RING = 'rgba(240, 212, 140, 0.9)';
 const DRAG_RING = 'rgba(120, 190, 255, 0.95)';
 /** The token the DM's panel is editing. Dashed, so it cannot be mistaken for
- *  ownership or for whose turn it is — both of which are solid rings. */
+ *  ownership or for whose turn it is, both of which are solid rings. */
 const SELECTED_RING = 'rgba(120, 190, 255, 0.9)';
 /** Acting this turn. Neutral white, so it reads against every token hue and
  *  never competes with the ownership ring it sits outside of. */
@@ -66,21 +66,21 @@ const TURN_RING = 'rgba(255, 255, 255, 0.95)';
 const LABEL_TEXT = '#e8e6e1';
 const LABEL_HALO = 'rgba(0, 0, 0, 0.85)';
 /**
- * The marker band, in screen pixels so it holds its weight as the camera zooms
- * — every ring on a token does the same.
+ * The marker band, in screen pixels so it keeps its weight as the camera
+ * zooms, like every ring on a token.
  *
  * `MARKER_BAND_W` is how thick the arcs are stroked and the band is centred
- * that far inside the token's own rim, so it sits in the one place on a token
- * nothing else draws. Everything that means something about *state* — gold for
- * yours, white for the turn, dashed blue for the selection — is outside the
- * rim, which is what keeps a yellow arc from reading as ownership.
+ * that far inside the token's own rim, where nothing else on a token draws.
+ * Everything that means something about *state* (gold for yours, white for the
+ * turn, dashed blue for the selection) is outside the rim, which keeps a
+ * yellow arc from reading as ownership.
  */
 const MARKER_BAND_W = 4;
 /** Between two arcs, in radians, so a band of three reads as three. */
 const MARKER_ARC_GAP = 0.16;
 /** A continuous dark track under the arcs, like the one under the hit point
- *  bar. It does the work a halo would and one thing a halo would not: it makes
- *  the *gaps* read as gaps rather than as portrait showing through. */
+ *  bar. It does what a halo would, and also makes the *gaps* read as gaps
+ *  instead of as portrait showing through. */
 const MARKER_TRACK = 'rgba(0, 0, 0, 0.6)';
 /** How far across the portrait the X reaches, as a fraction of the radius, and
  *  how thickly. Screen pixels for the second, like everything above. */
@@ -96,26 +96,26 @@ const CAL_DIVISION = 'rgba(120, 190, 255, 0.55)';
  * like and dashed alone is what the selection already is.
  */
 const HIDDEN_ALPHA = 0.55;
-/** Hidden. Violet, so it collides with nothing the ring vocabulary already
- *  means: gold is yours, blue is in progress, white is the turn. */
+/** Hidden. Violet, so it collides with nothing the ring colours already mean:
+ *  gold is yours, blue is in progress, white is the turn. */
 const HIDDEN_RING = 'rgba(178, 156, 232, 0.95)';
 /**
- * Does not exist on the board yet — only on the map being prepared. Teal, the
- * last hue the ring vocabulary has left, and solid: this token is as draggable
- * as any other, which is the whole of what replaced ghosting.
+ * Does not exist on the board yet, only on the map being prepared. Teal, the
+ * last hue the ring colours have left, and solid: this token is as draggable
+ * as any other.
  *
- * Tokens no longer fade over a staged map. Fading meant "not a piece", and
- * everything on that board is a piece now; what is worth drawing instead is
- * which of them are real yet. Hidden still fades and still dashes, so a monster
- * built on the next map *and* hidden reads as teal, faint and dashed — three
+ * Don't fade tokens over a staged map. Fading means "not a piece", and
+ * everything on that board is a piece; what is worth drawing is which of them
+ * are on the live board yet. Hidden still fades and still dashes, so a monster
+ * built on the next map *and* hidden reads as teal, faint and dashed: three
  * marks for three independent facts, none of which cancels another.
  */
 const STAGED_ONLY_RING = 'rgba(96, 200, 190, 0.95)';
 
 /**
- * The movement ruler, in the same blue as a drag — it only ever exists during
- * one, and "in progress" is exactly what it means. Haloed like the labels are,
- * because it has to read on parchment and on a cave floor alike.
+ * The movement ruler, in the same blue as a drag: it only exists during one,
+ * and it means "in progress". Haloed like the labels, because it has to read on
+ * parchment and on a cave floor alike.
  */
 const RULER_LINE = 'rgba(120, 190, 255, 0.95)';
 const RULER_HALO = 'rgba(0, 0, 0, 0.65)';
@@ -129,14 +129,14 @@ const RULER_FONT = '600 12px ui-sans-serif, system-ui, sans-serif';
 const RULER_TEXT_GAP = 10;
 
 /**
- * The squares the move crossed, in the ruler's own blue — it is the same
+ * The squares the move crossed, in the ruler's own blue: it is the same
  * annotation, and a second colour would imply a second thing being said.
  *
- * Fainter than a drawn shape's tint, because a shape is the subject of the
- * question being asked and this is the answer to one nobody asked out loud. The
- * outline is what makes the individual squares countable at a glance, which is
- * the entire point of drawing them rather than the line alone; it is ruled at a
- * constant screen width like the fog preview's.
+ * Fainter than a drawn shape's tint, because a shape is what the table is
+ * looking at and this is background information. The outline makes the
+ * individual squares countable at a glance, which is why they are drawn at all
+ * and not just the line; it is ruled at a constant screen width like the fog
+ * preview's.
  */
 const TRAIL_FILL = 'rgba(120, 190, 255, 0.9)';
 const TRAIL_FILL_ALPHA = 0.16;
@@ -145,18 +145,18 @@ const TRAIL_EDGE_ALPHA = 0.45;
 /**
  * The ruler when the move it measures passes through a wall or a shut door.
  *
- * **Only ever on the DM's screen**, and not by a check — a player's scene holds
- * no walls, so there is nothing for `crossesWall` to find and this never comes
- * up for them. It is a hint and never a refusal: nothing is blocked, no command
- * is rejected, and the DM says "there is a wall there" the way they would at a
- * table. `ROADMAP.md` has why blocking the move instead would be a leak.
+ * **Only ever on the DM's screen**, with no check needed: a player's scene
+ * holds no walls, so there is nothing for `crossesWall` to find. It is a hint
+ * and never a refusal: nothing is blocked, no command is rejected, and the DM
+ * says "there is a wall there" as they would at a table. Blocking the move
+ * would be a leak; see `docs/drawings.md`.
  *
- * Amber, which the board already spends on a door — the two things this line is
- * ever about — and which the ring vocabulary leaves alone.
+ * Amber, which the board already uses for a door (walls and doors are what
+ * this line is about) and which the ring colours leave alone.
  */
 const RULER_BLOCKED = 'rgba(255, 176, 74, 0.95)';
 
-/** The hit point bar, in screen pixels — it does not scale with the camera, for
+/** The hit point bar, in screen pixels: it does not scale with the camera, for
  *  the same reason a name does not. */
 const HP_BAR_H = 5;
 const HP_BAR_MIN_W = 30;
@@ -165,19 +165,15 @@ const HP_BAR_MAX_W = 92;
 const HP_BAR_GAP = 6;
 const HP_TEXT_GAP = 2;
 /**
- * There used to be an `HP_FONT_PX` beside this and an `HP_STACK_H` under it,
- * summing the numbers above into how far the hit point chrome reached above a
- * token so the pip row could stack on top of it rather than through it. The
- * marks moved onto the creature, so nothing stacks over the numerals any more
- * and the sum had no reader. That is the structural win of the band, small but
- * real: the column over a token is a bar and a total again, and how tall it is
- * is nobody else's business.
+ * Nothing stacks above the hit point numerals: markers are drawn on the token
+ * itself, so the column over a token is a bar and a total, and no other code
+ * needs to know how tall it is.
  */
 const HP_FONT = '600 11px ui-sans-serif, system-ui, sans-serif';
 const HP_TRACK = 'rgba(0, 0, 0, 0.55)';
 const HP_EDGE = 'rgba(0, 0, 0, 0.85)';
-/** Three bands rather than a gradient: a DM glancing at six monsters wants to
- *  sort them, not read a percentage. Nothing here knows what "bloodied" means. */
+/** Three bands, not a gradient: a DM glancing at six monsters wants to sort
+ *  them, not read a percentage. Nothing here knows what "bloodied" means. */
 const HP_HEALTHY = 'rgba(122, 184, 116, 0.95)';
 const HP_HURT = 'rgba(214, 173, 84, 0.95)';
 const HP_LOW = 'rgba(200, 92, 92, 0.95)';
@@ -187,8 +183,8 @@ const HP_LOW = 'rgba(200, 92, 92, 0.95)';
  *
  * The colour on the wire carries its own alpha, and these multiply it: an
  * outline is meant to be read and a fill is meant to be seen through, because
- * whatever is standing under a spell area is the thing anyone is actually
- * looking at. A sketch is drawn fainter still — it is a proposal, not a fact.
+ * whatever is standing under a spell area is what everyone is looking at. A
+ * sketch is drawn fainter still: it is a proposal, not a fact.
  */
 const SHAPE_FILL_ALPHA = 0.24;
 const SHAPE_EDGE_ALPHA = 1;
@@ -208,18 +204,19 @@ const PING_FONT = '600 12px ui-sans-serif, system-ui, sans-serif';
 /** How long the arrow's head is, in screen pixels. */
 const PING_ARROW_PX = 13;
 /**
- * A pointer's dot and the name under it, both in screen pixels — a cursor that
- * shrank as the camera pulled back would stop being a cursor, which is
- * `ringRadius`' argument arriving for the second time.
+ * A pointer's dot and the name under it, both in screen pixels: a cursor that
+ * shrank as the camera pulled back would stop reading as a cursor (the same
+ * argument as `ringRadius`).
  *
- * **A dot and not an arrow.** An arrow is what a desktop draws under your own
- * hand, and seven of them on a board already carrying tokens, nameplates, hit
- * point bars, rulers, trails, shapes and fog read as seven things demanding to
- * be clicked. A dot marks a spot and claims nothing, which is what ambient
- * presence is: it says a hand is *here*, not that it is about to do something.
+ * A dot, not an arrow. An arrow is what a desktop draws under your own hand,
+ * and seven of them on a board already carrying tokens, nameplates, hit point
+ * bars, rulers, trails, shapes and fog read as seven things asking to be
+ * clicked. A dot marks a spot and says a hand is *here*, not that it is about
+ * to do something.
  *
- * Smaller and quieter than a ping's ring on purpose, and quieter again through
- * `CURSOR_ALPHA`. The gesture these are *not* is the one that means "look here".
+ * Smaller and quieter than a ping's ring, and quieter again through
+ * `CURSOR_ALPHA`, because a ping is the gesture that means "look here" and a
+ * cursor is not.
  */
 const CURSOR_R_PX = 5;
 const CURSOR_HALO_WIDTH = 2;
@@ -229,11 +226,11 @@ const CURSOR_TEXT_GAP = 5;
 /**
  * How solidly a pointer draws at rest, on top of its own fade.
  *
- * The one constant here that is a *volume* rather than a size. Everything else
- * on this canvas is something somebody decided — a token is where it was put, a
- * ring is where somebody pointed — and a cursor is the only mark that is merely
- * true. It should be legible when looked for and invisible when not, which is
- * what a mark below full strength is for. Turn it down before the decay.
+ * The one constant here that is a *volume* and not a size. Everything else on
+ * this canvas is something somebody decided (a token is where it was put, a
+ * ring is where somebody pointed), and a cursor is the only mark nobody chose
+ * to make. It should be legible when looked for and easy to ignore when not.
+ * If cursors are too loud, turn this down before shortening the decay.
  */
 const CURSOR_ALPHA = 0.55;
 /** Between a shape's far point and its reading. */
@@ -242,11 +239,10 @@ const SHAPE_TEXT_GAP = 8;
 /**
  * Traced walls, and the doors hung in them.
  *
- * Rose and amber, neither of which the board says anything else with — the ring
- * vocabulary is gold, blue, white, violet and teal, and the drawing palette
- * avoids all five. A door is told from a wall by hue and by whether it is open
- * by dash: solid blocks, dashed does not, which is the same thing the line is
- * about to mean once there is sight to block.
+ * Rose and amber, which the board uses for nothing else: the ring colours are
+ * gold, blue, white, violet and teal, and the drawing palette avoids all five.
+ * Hue tells a door from a wall, and dash tells whether it is open: solid
+ * blocks sight, dashed does not.
  */
 const WALL_LINE = 'rgba(255, 110, 160, 0.95)';
 const DOOR_LINE = 'rgba(255, 200, 90, 0.95)';
@@ -259,7 +255,7 @@ const WALL_HALO_WIDTH = 6;
  * Walls are always on the DM's screen and never on anybody else's, so the
  * question is only how loudly. Faint is enough to answer "have I traced this
  * room" at a glance during a fight; the editor brings them up to full when the
- * DM is actually working on them.
+ * DM is working on them.
  *
  * Doors are exempt and stay at full strength always, because the DM can swing
  * one at any time with no tool in hand. What can be clicked is drawn like it.
@@ -289,19 +285,19 @@ export interface Frame {
   /** `performance.now()` for this frame. The only clock the renderer reads, and
    *  it reads it for one thing: how far a landed ruler has faded. */
   now: number;
-  /** Token art, keyed by image URL — see `loadArt` in main.ts. */
+  /** Token art, keyed by image URL. See `loadArt` in main.ts. */
   tokenImages: Map<string, HTMLImageElement>;
   /** Every token being dragged right now. More than one is a shift-click group
    *  moving together. */
   draggingIds: ReadonlySet<string>;
-  /** Movement rulers by token id — ours and everyone else's alike. */
+  /** Movement rulers by token id, ours and everyone else's alike. */
   rulers: ReadonlyMap<string, Ruler>;
   /** The token the DM has selected for editing. Null for everyone else. */
   selectedId: string | null;
   /** The tokens shift-click has gathered, which drag together. Empty unless a
-   *  group has actually been built — see `selection` in input.ts. */
+   *  group has been built. See `selection` in input.ts. */
   selection: ReadonlySet<string>;
-  /** Every sweep in progress — ours and everyone else's. */
+  /** Every sweep in progress, ours and everyone else's. */
   sketches: readonly Sketch[];
   /** The shape the pointer is over and could erase, or null. Only ever set
    *  while the draw tool is in hand, since that is the only time clicking a
@@ -312,16 +308,16 @@ export interface Frame {
   /** Every ring on the board, ours and everyone else's, plus the one still
    *  being held down if there is one. */
   pings: readonly Ping[];
-  /** Everybody else's pointer. Never our own — the machine under our hand is
-   *  already drawing that one, and a second arrow a round trip behind it is the
-   *  rubber-band a token drag refuses. */
+  /** Everybody else's pointer. Never our own: the OS is already drawing that
+   *  one, and a second pointer a round trip behind it is the rubber-banding a
+   *  token drag avoids by not echoing. */
   cursors: readonly Cursor[];
   /** The cast list, so a ring can be attributed to a name and a colour. Held
-   *  by every client since `Welcome` and not a secret — it is the same list
+   *  by every client since `Welcome` and not a secret: it is the same list
    *  everyone was offered at the identity picker. */
   roster: readonly RosterEntry[];
   /** What each of those names picked to draw in. Held beside the roster because
-   *  the two answer one question together — the roster gives the default and
+   *  the two answer one question together: the roster gives the default and
    *  this overrides it. */
   colours: Colours;
   /** The DM's in-progress grid reference box. Null for everyone else. */
@@ -329,9 +325,9 @@ export interface Frame {
   /** The wall editor's state: whether it is armed, the run being traced, where
    *  the next corner would land, and which segment the pointer is over.
    *
-   *  Null for a player — but the walls themselves are gated by being absent
-   *  from their scene rather than by this, which is the difference between a
-   *  secret and a widget. */
+   *  Null for a player, but that is not what keeps walls off their screen:
+   *  the walls are absent from their scene. This is editor state, not the
+   *  secret. */
   walls: {
     armed: boolean;
     run: readonly Vec2[];
@@ -341,10 +337,10 @@ export interface Frame {
   /** The fog tool's state: whether the panel is open, what the brush is loaded
    *  with, and the cells a fill would take if the DM clicked now.
    *
-   *  Null for a player, who has no panel and — like the walls above — no
-   *  overrides in their scene to draw either way. `armed` only decides how
-   *  strongly the layer washes, because unlike the wall editor this tool has
-   *  nothing to draw that is not already on the board. */
+   *  Null for a player, who has no panel and, as with the walls, no overrides
+   *  in their scene to draw either way. `armed` only decides how strongly the
+   *  layer washes, because unlike the wall editor this tool has nothing to draw
+   *  that is not already on the board. */
   fog: {
     armed: boolean;
     paint: FogPaint | null;
@@ -357,7 +353,7 @@ export interface Frame {
    * DM is checking it. Null the rest of the time and always for a player, whose
    * client holds no walls to compute one from.
    *
-   * It replaces the wash rather than joining it because the two answer different
+   * It replaces the wash instead of joining it because the two answer different
    * questions and overlaying them would answer neither. See `solo.ts`.
    */
   solo: Fog | null;
@@ -365,9 +361,9 @@ export interface Frame {
    * The DM is looking at the board as the table sees it.
    *
    * The scene has already been narrowed by `asTable` before it reaches here, so
-   * nothing below draws a wall or a monster it should not — this flag exists for
-   * the one thing a filtered scene cannot say, which is how *dark* the fog
-   * should be. Always false for a player, whose board is that answer already.
+   * nothing below draws a wall or a monster it should not. This flag carries
+   * the one thing a filtered scene cannot say: how *dark* the fog should be.
+   * Always false for a player, whose board is already the table's.
    */
   playerView: boolean;
 }
@@ -375,17 +371,16 @@ export interface Frame {
 /**
  * Draws a picture over the whole canvas, instead of the board.
  *
- * **Screen space, not world space** — and that is the entire design of it. It
- * never touches the camera, so there is no pan, no zoom, no grid, no hit test
- * and nothing to keep in step with `coords.ts`; `main.ts` calls this *instead
- * of* `render` rather than as a layer inside it. A board drawn under a picture
- * nobody can see would only be a way for the two to disagree.
+ * **Screen space, not world space.** It never touches the camera, so there is
+ * no pan, no zoom, no grid, no hit test and nothing to keep in step with
+ * `coords.ts`; `main.ts` calls this *instead of* `render`, not as a layer
+ * inside it. A board drawn under a picture nobody can see would only be a way
+ * for the two to disagree.
  *
- * Contained rather than covered, unlike a token's portrait: the DM picked this
- * image to be looked at, so cropping the top off a treeline to fill a wide
- * window is the one thing it must not do. Letterbox bars are `VOID`, which is
- * what surrounds a map too, so the window does not change colour when the
- * picture goes up.
+ * Contained, not covered, unlike a token's portrait: the DM picked this image
+ * to be looked at, so it must not crop the top off a treeline to fill a wide
+ * window. Letterbox bars are `VOID`, which is what surrounds a map too, so the
+ * window does not change colour when the picture goes up.
  */
 export function drawBackdrop(
   ctx: CanvasRenderingContext2D,
@@ -434,55 +429,52 @@ export function render(ctx: CanvasRenderingContext2D, view: Viewport, frame: Fra
 
   // Over the terrain and under everything standing on it.
   //
-  // Under the tokens, and that is the DM's half of the feature: their monsters
-  // stay at full strength over a faint wash, so the board they are playing on is
-  // still legible while it also says what the table can see. A player has no
-  // token in the dark to be washed out — every one they hold is a vision source,
-  // or is standing where one is looking — so the order costs them nothing.
+  // Under the tokens, so the DM's monsters stay at full strength over a faint
+  // wash: the board they are playing on stays legible while it also says what
+  // the table can see. A player has no token in the dark to be washed out
+  // (every one they hold is a vision source, or is standing where one is
+  // looking), so the order costs them nothing.
   //
-  // Nothing while previewing, and this is the one thing here that milestone 20
-  // deliberately did *not* stage. The bitsets are the party's memory and their
-  // line of sight, and neither means anything on a map they have not been shown
-  // — no ray has ever been cast on it. Previewing the staged map's fog is a
-  // second raycast and is out of scope; see `docs/fog.md`.
+  // Nothing while previewing: the staged map has no fog. The bitsets are the
+  // party's memory and line of sight, and neither means anything on a map they
+  // have not been shown, since no ray has been cast on it. Previewing the
+  // staged map's fog is a second raycast and is out of scope; see
+  // `docs/fog.md`.
   if (!showingStaged(frame.scene)) drawFog(ctx, frame, board, area);
 
-  // And directly over it, because it is an annotation *on* the fog: which parts
-  // of that wash the DM put there by hand rather than the walls casting. A
+  // Directly over the fog, because it annotates the fog: which parts of that
+  // wash the DM put there by hand, as opposed to the walls casting it. A
   // player's scene has none, so this draws nothing for them without needing to
   // ask who they are.
   //
-  // Drawn over either board, unlike the wash it annotates: the staged one
-  // carries a mask of its own. There it is the only thing on screen saying so,
-  // with nothing underneath it — which is why the panel's hint says in words
-  // what the board cannot.
+  // Drawn over either board, unlike the wash: the staged one carries a mask of
+  // its own. There it is the only thing on screen, with no fog underneath,
+  // which is why the panel's hint says in words what the board cannot.
   drawOverrides(ctx, frame, board);
 
   // Under the tokens, unlike the ruler's line that measures the same move: the
-  // squares are terrain being pointed at, and the thing standing on them is what
-  // anyone is actually looking at. It is the shapes' argument one line down,
-  // reached from the other side.
+  // squares are terrain being pointed at, and the creature standing on them is
+  // what everyone is looking at. The shapes below are drawn over the tokens for
+  // the opposite reason.
   drawTrails(ctx, frame, board);
 
   drawTokens(ctx, frame, board);
 
-  // Over the tokens, not under them. A spell area is being asked about *now* —
-  // where it reaches and who is caught in it — so it has to read across the
-  // creatures inside it rather than being hidden by the two of them standing on
-  // top. The fill is translucent enough that a token under one is still a
-  // token, and its name and hit points are drawn later still, in screen space,
-  // so nothing a shape covers becomes unreadable.
+  // Over the tokens. A spell area is being asked about *now* (where it reaches
+  // and who is caught in it), so it has to read across the creatures inside it
+  // instead of being hidden by them. The fill is translucent enough that a
+  // token under one is still a token, and its name and hit points are drawn
+  // later, in screen space, so nothing a shape covers becomes unreadable.
   //
-  // Nothing is drawn while previewing. Shapes belong to the board, the staged
-  // map has none, and painting the board's onto the map being prepared would
-  // put a fireball on a dungeon it was never cast in.
+  // Nothing is drawn while previewing. Shapes belong to the live board, the
+  // staged map has none, and painting the live board's onto the map being
+  // prepared would put a fireball on a dungeon it was never cast in.
   if (!showingStaged(frame.scene)) drawShapes(ctx, frame, board);
 
-  // Over everything on the board, and for a different reason than the shapes
-  // are: a wall is not about what is standing on it, it is the room the tokens
-  // are standing *in*, and it has to be traceable across a crowded board. Over
-  // either board, since each carries its own — unlike the drawings one line up,
-  // where the staged map genuinely has none.
+  // Over everything on the board, for a different reason than the shapes: a
+  // wall is the room the tokens are standing *in*, and it has to be traceable
+  // across a crowded board. Over either board, since each carries its own
+  // walls, unlike the shapes.
   drawWalls(ctx, frame);
 
   if (frame.calibration !== null) drawCalibration(ctx, cam, frame.calibration);
@@ -495,32 +487,29 @@ export function render(ctx: CanvasRenderingContext2D, view: Viewport, frame: Fra
   drawRulers(ctx, frame, board);
   drawTokenChrome(ctx, frame, board);
 
-  // Last, over everything including the names and the hit point bars, and it is
-  // the only thing in this function that earns that. A ping is somebody at the
-  // table saying *look here* — it is worth more for the two seconds it lasts
+  // Under the pings and over everything else: a ping is somebody asking for
+  // attention and a pointer is only somebody's hand. Nothing while previewing,
+  // for the pings' reason below.
+  if (!showingStaged(frame.scene)) drawCursors(ctx, frame, board);
+  // Last, over everything including the names and the hit point bars, and the
+  // only thing in this function drawn that high. A ping is somebody at the
+  // table saying *look here*: it is worth more for the two seconds it lasts
   // than anything it covers, and it uncovers it again by itself.
   //
-  // Nothing while previewing, for the reason the shapes and the walls draw
-  // nothing there: a ping's position is in the live board's grid units, and
-  // painting it onto the map being prepared would put the ring in a cell nobody
-  // pointed at. The DM misses pings while they are preparing the next room,
-  // which is the same trade preview already makes with every other board-level
-  // thing on screen.
-  // Under the rings and over everything else, which is the order the two
-  // gestures deserve: a ping is somebody asking for attention and a pointer is
-  // somebody having a hand. Nothing while previewing, for pings' reason exactly
-  // — these positions are in the live board's grid units, and the staged map is
-  // a different dungeon's lattice.
-  if (!showingStaged(frame.scene)) drawCursors(ctx, frame, board);
+  // Nothing while previewing, as with the shapes: a ping's position is in the
+  // live board's grid units, and painting it onto the map being prepared would
+  // put the ring in a cell nobody pointed at. The DM misses pings while
+  // preparing the next room, the same trade preview makes with everything else
+  // on the live board.
   if (!showingStaged(frame.scene)) drawPings(ctx, view, frame, board);
 }
 
 /**
  * How solidly a token draws. One reason to fade now: the table cannot see it.
  *
- * `globalAlpha` is canvas state rather than an argument, so every caller pairs
- * its set with a `restore`. Left set, it survives into the next frame and washes
- * out the map itself — including the fill meant to clear the previous one.
+ * `globalAlpha` is canvas state, not an argument, so every caller pairs its set
+ * with a `restore`. Left set, it survives into the next frame and washes out
+ * the map itself, including the fill meant to clear the previous one.
  */
 function alphaFor(token: Token): number {
   return token.hidden ? HIDDEN_ALPHA : 1;
@@ -529,11 +518,11 @@ function alphaFor(token: Token): number {
 /**
  * The grid, drawn as a contrasting halo with the chosen colour on top.
  *
- * A single translucent stroke can only work against backgrounds it happens to
- * contrast with — white at 10% is fine on a cave floor and invisible on
- * parchment. Two strokes of the same path fix that for nothing: whichever of
- * the pair the map does not match is the one you see. It is the same trick the
- * token labels already use for text.
+ * A single translucent stroke only works against backgrounds it happens to
+ * contrast with: white at 10% is fine on a cave floor and invisible on
+ * parchment. Two strokes of the same path fix that cheaply: whichever of the
+ * pair the map does not match is the one you see. The token labels do the same
+ * for text.
  */
 function drawGrid(
   ctx: CanvasRenderingContext2D,
@@ -548,16 +537,17 @@ function drawGrid(
 
   // Two families of parallel lines: the ones along which `x` is a whole number,
   // and the ones along which `y` is. On a square grid they come out vertical and
-  // horizontal, which is what this used to say directly; on an isometric one
-  // they lean, and the play area no longer bounds either family axis by axis.
+  // horizontal; on an isometric one they lean, and the play area no longer
+  // bounds either family axis by axis.
   //
-  // So the extent is taken in *grid* space — the bounding box of the play area's
-  // four corners, which is what says how many lines of each family reach it —
-  // and the play area does the trimming as a clip. Intersecting each line with
-  // the rectangle by hand would be the same picture and much more arithmetic.
-  // Inward: the whole-numbered lines *inside* the play area. The slack is float
-  // slop, and it is why this is not a bare ceil/floor — an edge landing on an
-  // exact multiple is the common case, and dropping its line looks like a bug.
+  // So the extent is taken in *grid* space (the bounding box of the play area's
+  // four corners, which says how many lines of each family reach it) and the
+  // play area does the trimming as a clip. Intersecting each line with the
+  // rectangle by hand would be the same picture and much more arithmetic.
+  // Inward: the whole-numbered lines *inside* the play area. The slack absorbs
+  // float error, which is why this is not a bare ceil/floor: an edge landing
+  // on an exact multiple is the common case, and dropping its line looks like a
+  // bug.
   const reach = gridBounds(grid, area);
   const slack = 1e-6;
   const fromX = Math.ceil(reach.minX - slack);
@@ -587,16 +577,16 @@ function drawGrid(
   // Both widths stay constant on screen at any zoom: the transform scales world
   // units by cam.zoom, so n/zoom world units is always n CSS pixels.
   //
-  // `minSpan` rather than `px`, because what decides whether a halo is legible
-  // is the *shortest* a cell measures on screen — the same number on a square
-  // grid, and the diamond's height on an isometric one.
+  // `minSpan`, not `px`, because what decides whether a halo is legible is the
+  // *shortest* a cell measures on screen: the same number on a square grid, and
+  // the diamond's height on an isometric one.
   if (minSpan(grid) * frame.cam.zoom >= HALO_MIN_CELL_PX) {
     ctx.strokeStyle = halo;
     ctx.lineWidth = GRID_HALO_WIDTH / frame.cam.zoom;
     ctx.stroke();
   }
 
-  // The same path, stroked again — building it twice would be the only cost.
+  // The same path, stroked again, so it is built only once.
   ctx.strokeStyle = board.gridColor;
   ctx.lineWidth = GRID_CORE_WIDTH / frame.cam.zoom;
   ctx.stroke();
@@ -607,21 +597,20 @@ function drawGrid(
  * The fog: dark where the party has never been, dim where they have been and
  * are not, and clear where they are looking.
  *
- * **One `drawImage`, whatever the dungeon looks like.** The fog arrives as a
- * rectangle of cells and `fog.ts` has already turned it into a canvas one pixel
- * per cell, so this stretches that over the board instead of filling a few
- * thousand rectangles every frame. Smoothing is off, which is what keeps the
- * edge on the cell boundary the server actually decided rather than half a cell
- * either side of it.
+ * One `drawImage`, whatever the dungeon looks like. The fog arrives as a
+ * rectangle of cells and `fog.ts` has already turned it into a canvas, so this
+ * stretches that over the board instead of filling a few thousand rectangles
+ * every frame. Smoothing is left on to feather the edge; see the comment above
+ * the `drawImage` for why that doesn't move it.
  *
- * Everything outside that rectangle is dark by definition — the rectangle is
- * only as big as what has been explored — so the four bands around it are filled
- * flat, clipped to the board. Same trick as the play-area dim below, and here it
- * is what lets the packed frame shrink to the interesting part of a large map.
+ * Everything outside that rectangle is dark (the rectangle is only as big as
+ * what has been explored), so the four bands around it are filled flat,
+ * clipped to the board. The play-area dim below works the same way, and here
+ * it lets the packed frame shrink to the explored part of a large map.
  *
  * Nothing here is a visibility decision. A creature the table cannot see is
- * absent from the scene rather than painted over: drawing it and covering it
- * would put the position on the client, which is what invariant 4 forbids.
+ * absent from the scene, not painted over: drawing it and covering it would
+ * put the position on the client, which invariant 4 forbids.
  */
 function drawFog(
   ctx: CanvasRenderingContext2D,
@@ -632,16 +621,15 @@ function drawFog(
   // Solo sight wins where it is set: it is what the DM asked to look at, and
   // drawing the table's wash underneath or over it would make neither readable.
   const fog = frame.solo ?? frame.scene.fog;
-  // And it draws at the *table's* strength rather than the DM's faint one. The
+  // Solo sight draws at the *table's* strength, not the DM's faint one. The
   // faint wash exists so the DM can still play on a board that also says what
-  // the party can see; this is a question with an answer, and a legible answer
-  // is the whole point of asking it.
+  // the party can see; solo sight is a question the DM asked, and the answer
+  // has to be legible.
   //
-  // Player view says the same thing about the whole board rather than about one
-  // creature, so it lands in the same place: a mirror of a board the DM can see
-  // through is not a mirror. This is the only line in the renderer that reads
-  // the flag — everything else was decided by `asTable` before the frame was
-  // built.
+  // Player view asks the same about the whole board, so it also draws at full
+  // strength: a board the DM can see through is not what the table sees. This
+  // is the only line in the renderer that reads the flag; everything else was
+  // decided by `asTable` before the frame was built.
   const faint = frame.solo === null && frame.identity.isDm && !frame.playerView;
   if (fog === null || area.w <= 0 || area.h <= 0) return;
 
@@ -661,18 +649,18 @@ function drawFog(
     return;
   }
 
-  // Into grid space, where the packed rectangle *is* its own coordinates and the
-  // canvas of one pixel per cell stretches over it as a plain image. On a sheared
-  // lattice the matrix turns both into the right parallelograms; on a square one
-  // it is the arithmetic this used to do by hand.
+  // Into grid space, where the packed rectangle's coordinates are cells and the
+  // fog canvas stretches over it as a plain image. On a sheared lattice the
+  // matrix turns both into the right parallelograms; on a square one it is a
+  // scale and an offset.
   //
   // The clip above stays in world space, outside the transform, because it is
   // the play area and the play area is a rectangle on the image.
   ctx.transform(...gridTransform(board.grid));
 
   // The four bands around the explored rectangle. Drawn out to the play area's
-  // own extent and padded a cell, which is generous in both directions on a
-  // sheared grid — the clip is what makes generous free.
+  // own extent and padded a cell, which overshoots in both directions on a
+  // sheared grid. The clip makes the overshoot harmless.
   const reach = gridBounds(board.grid, area);
   const outLeft = Math.floor(reach.minX) - 1;
   const outRight = Math.floor(reach.maxX) + 2;
@@ -686,19 +674,19 @@ function drawFog(
   ctx.fillRect(outLeft, fog.y, fog.x - outLeft, fog.h);
   ctx.fillRect(seenRight, fog.y, outRight - seenRight, fog.h);
 
-  // Smoothing left *on*, which is what feathers the fog edge. It is safe to
-  // interpolate here only because `fogFromWire` draws each cell as a solid block
-  // of `SUBCELLS` pixels: the boundary stays where the server put it and the
-  // ramp is confined to a quarter of a cell. Interpolating a one-pixel-per-cell
-  // canvas would ramp across the whole square and move the edge half a cell,
-  // which is why this used to be switched off. The override tint below keeps its
-  // hard edge — see `SUBCELLS` in `fog.ts` for why the two differ.
+  // Smoothing left *on*, which feathers the fog edge. It is safe to interpolate
+  // here only because `fogFromWire` draws each cell as a solid block of
+  // `SUBCELLS` pixels: the boundary stays where the server put it and the ramp
+  // is confined to a quarter of a cell. Don't feed this a one-pixel-per-cell
+  // canvas: interpolating it would ramp across the whole square and move the
+  // edge half a cell. The override tint below keeps its hard edge; see
+  // `SUBCELLS` in `fog.ts` for why the two differ.
   //
   // The table's own canvas when this is not the faint wash, falling back to the
   // one canvas a player or a solo answer has. That fallback is why nothing here
-  // asks who is reading: the four cases — the DM playing, the DM mirroring, the
-  // DM checking one creature, and a player — pick the right shade between them
-  // from `faint` alone.
+  // asks who is reading: the four cases (the DM playing, the DM mirroring, the
+  // DM checking one creature, and a player) pick the right shade from `faint`
+  // alone.
   ctx.drawImage(faint ? fog.shade : (fog.table ?? fog.shade), fog.x, fog.y, fog.w, fog.h);
   ctx.restore();
 }
@@ -708,15 +696,15 @@ function drawFog(
  *
  * Two layers with one thing in common: neither is a visibility decision. The
  * board is already dark where the party cannot see; this says which of that the
- * DM *decided*, which they cannot otherwise tell a blacked-out room from a wall's
- * shadow. With no undo, that difference is the whole usability of the tool.
+ * DM *decided*. Without it they cannot tell a blacked-out room from a wall's
+ * shadow, and without undo that difference is what makes the tool usable.
  *
- * The same `drawImage` trick the fog uses, for the same reason — a filled dungeon
- * room is a few thousand cells — and the same reason smoothing goes off: the edge
- * belongs on the cell boundary that was actually painted.
+ * One `drawImage`, like the fog, because a filled dungeon room is a few
+ * thousand cells. Unlike the fog, smoothing goes off: the tint is one pixel per
+ * cell, and its edge belongs on the cell boundary that was painted.
  *
- * Faint while the DM is playing, stronger while the panel is open. Masonry's
- * bargain, and it is why this is one `globalAlpha` rather than two canvases.
+ * Faint while the DM is playing, stronger while the panel is open, like the
+ * walls. That is why this is one `globalAlpha` and not two canvases.
  */
 function drawOverrides(ctx: CanvasRenderingContext2D, frame: Frame, board: Board): void {
   const overrides = shownOverrides(frame.scene);
@@ -724,8 +712,8 @@ function drawOverrides(ctx: CanvasRenderingContext2D, frame: Frame, board: Board
 
   if (overrides.tint !== null) {
     ctx.save();
-    // In grid space, like the fog above and for the same reason: the tint is one
-    // pixel per cell, and the matrix is what turns those pixels into cells.
+    // In grid space, like the fog above: the tint is one pixel per cell, and
+    // the matrix turns those pixels into cells.
     ctx.transform(...gridTransform(board.grid));
     ctx.globalAlpha = tool?.armed === true ? OVERRIDE_ALPHA.armed : OVERRIDE_ALPHA.idle;
     const smoothing = ctx.imageSmoothingEnabled;
@@ -736,14 +724,14 @@ function drawOverrides(ctx: CanvasRenderingContext2D, frame: Frame, board: Board
   }
 
   // The fill the DM has not committed yet, in the colour it would commit in.
-  // Drawn as one path of a few thousand `rect`s, which is what the shape tint
-  // already does and for the same reason a `fillRect` each would not be.
+  // Drawn as one path of a few thousand `rect`s, as the shape tint is, because
+  // a `fillRect` each would be a few thousand calls a frame.
   if (tool === null || tool.preview.length === 0) return;
   const { grid } = board;
   ctx.save();
   // In grid space, so a cell is the unit square and the lattice's own shear puts
-  // it where it belongs. `cellPath` builds it; the stroke below is why the
-  // transform is not simply left on — `lineWidth` would be sheared with it.
+  // it where it belongs. `cellPath` builds it; the transform is not left on
+  // because of the stroke below, whose `lineWidth` would be sheared with it.
   const path = cellPath(grid, tool.preview);
   ctx.globalAlpha = PREVIEW_FILL_ALPHA;
   ctx.fillStyle = paintColor(tool.paint);
@@ -759,15 +747,15 @@ function drawOverrides(ctx: CanvasRenderingContext2D, frame: Frame, board: Board
  * A path covering the given cells, in world coordinates.
  *
  * `cells` is a flat `[x, y, x, y, …]`, which is what the fog tool and the shape
- * coverage rule both hand over. One `Path2D` of many cells and one `fill` is
- * what makes a filled dungeon room affordable — a `fillRect` each would be a few
- * thousand calls a frame.
+ * coverage rule both hand over. One `Path2D` of many cells and one `fill` keeps
+ * a filled dungeon room cheap; a `fillRect` each would be a few thousand calls
+ * a frame.
  *
- * Built through the grid transform rather than by adding `grid.px` to a corner,
- * which is the one thing that stopped being true when a cell stopped being a
- * square: under the matrix, one cell is the unit square at `(cx, cy)` whatever
- * shape the lattice is. Returned as a `Path2D` so the caller can stroke it
- * *outside* the transform, where `lineWidth` still means screen pixels.
+ * Built through the grid transform, not by adding `grid.px` to a corner, which
+ * only works on a square grid: under the matrix, one cell is the unit square at
+ * `(cx, cy)` whatever shape the lattice is. Returned as a `Path2D` so the
+ * caller can stroke it *outside* the transform, where `lineWidth` still means
+ * screen pixels.
  */
 function cellPath(grid: GridSpec, cells: readonly number[]): Path2D {
   const inGrid = new Path2D();
@@ -783,8 +771,8 @@ function cellPath(grid: GridSpec, cells: readonly number[]): Path2D {
 /**
  * Dims the image outside the play area, so the board reads as the board.
  *
- * Four rectangles around it rather than one fill with a hole: the alternative
- * is an even-odd path, which is more machinery to say the same thing.
+ * Four rectangles around it instead of one fill with a hole: the alternative
+ * is an even-odd path, which is more machinery for the same result.
  */
 function drawOutsidePlayArea(
   ctx: CanvasRenderingContext2D,
@@ -804,7 +792,7 @@ function drawOutsidePlayArea(
 
 /**
  * A halo in whichever direction the line itself is not, so the pair reads on
- * any background. Null when the colour is fully transparent — there is nothing
+ * any background. Null when the colour is fully transparent: there is nothing
  * to outline, and the DM asked for no grid at all.
  *
  * `color` is `#rrggbbaa`; the server accepts no other shape.
@@ -826,8 +814,8 @@ function haloFor(color: string): string | null {
  * Everything drawn on the board, and every sweep in progress on top of it.
  *
  * Kept shapes and sketches go through one function because they are the same
- * picture — the only difference is that one of them is a fact and the other is
- * somebody's mouse still being held down, which is what the dash says.
+ * picture. The only difference is that a sketch is somebody's mouse still being
+ * held down, which is what the dash says.
  */
 function drawShapes(ctx: CanvasRenderingContext2D, frame: Frame, board: Board): void {
   const { scene } = frame;
@@ -918,10 +906,9 @@ function paintShape(
       break;
 
     case 'cone': {
-      // Apex, out along one edge, round the far end, back along the other. The
-      // arc rather than a flat base because the far edge of a wedge is every
-      // point at the same distance from the apex, which is what it is measured
-      // in — the same reason a circle is not a square.
+      // Apex, out along one edge, round the far end, back along the other. An
+      // arc, not a flat base, because a cone's length is measured from the apex,
+      // so its far edge is every point at that distance.
       const length = Math.hypot(e.x - o.x, e.y - o.y);
       const heading = Math.atan2(e.y - o.y, e.x - o.x);
       ctx.moveTo(o.x, o.y);
@@ -939,8 +926,8 @@ function paintShape(
  * What each shape measures, beside its far point.
  *
  * Screen space, like the token names and the movement ruler, and for the same
- * reason: it is an annotation on the board rather than something painted on the
- * map, so it keeps its size as the camera moves.
+ * reason: it is an annotation on the board, not something painted on the map,
+ * so it keeps its size as the camera moves.
  */
 function drawShapeLabels(ctx: CanvasRenderingContext2D, frame: Frame, board: Board): void {
   const { scene, cam } = frame;
@@ -979,7 +966,7 @@ function drawTokens(ctx: CanvasRenderingContext2D, frame: Frame, board: Board): 
   const { scene, tokenImages, draggingIds, cam, identity, currentTurn, selectedId } = frame;
 
   for (const token of scene.tokens) {
-    // Null is a token that is not on this board — one built on the map being
+    // Null is a token that is not on this board: one built on the map being
     // prepared, seen from the live one. Absent, not faint.
     const at = shownPos(scene, token);
     if (at === null) continue;
@@ -990,8 +977,8 @@ function drawTokens(ctx: CanvasRenderingContext2D, frame: Frame, board: Board): 
     const centre = gridToWorld(board.grid, at.x, at.y);
     const img = tokenImages.get(token.img);
 
-    // Wraps the rings as well as the art: fading only the picture and leaving a
-    // full-strength outline round it is what a hidden token must not look like.
+    // Wraps the rings as well as the art: a hidden token must not have a faded
+    // picture inside a full-strength outline.
     ctx.save();
     ctx.globalAlpha = alphaFor(token);
 
@@ -1017,19 +1004,19 @@ function drawTokens(ctx: CanvasRenderingContext2D, frame: Frame, board: Board): 
 
     ctx.restore();
 
-    // Over the art and inside the rim, which is why it is here rather than in
+    // Over the art and inside the rim, which is why it is here and not in
     // `drawTokenChrome` with the name and the numerals: a mark is a property of
     // the creature, so it is drawn on the creature. Everything below is a
-    // property of the *situation* — being dragged, whose turn it is, what this
-    // gesture is about — and all of it draws outside.
+    // property of the *situation* (being dragged, whose turn it is, what this
+    // gesture is about), and all of it draws outside.
     if (token.markers.length > 0) {
       drawMarks(ctx, centre, radius, cam.zoom, token.markers);
     }
 
-    // One ring, five meanings now: being dragged, not on the board yet, hidden,
+    // One ring, five meanings: being dragged, not on the board yet, hidden,
     // yours, or none of them. The dash is separate from the colour and says
-    // hidden on its own, so a token that is both teal and dashed reads as both
-    // rather than as whichever the precedence happened to pick.
+    // hidden on its own, so a token that is both teal and dashed reads as both,
+    // not as whichever the precedence picked.
     const dragging = draggingIds.has(token.id);
     const mine = ownsToken(identity, token);
 
@@ -1062,13 +1049,13 @@ function drawTokens(ctx: CanvasRenderingContext2D, frame: Frame, board: Board): 
 
     // Further out again, and dashed. Two things land on this ring: the token the
     // DM is editing, and every member of a shift-click group. One ring for both
-    // because they are one question — which tokens is this gesture about — and
-    // because they overlap on the token that is both, where two rings at the
-    // same radius would be one ring drawn twice.
+    // because they answer one question (which tokens is this gesture about),
+    // and on a token that is both, two rings at the same radius would be one
+    // ring drawn twice.
     //
     // The group is empty until somebody builds one, so a client that never
-    // shift-clicks sees exactly what it saw before: the DM's edit ring, and for
-    // a player no ring at all.
+    // shift-clicks sees only the DM's edit ring, and for a player no ring at
+    // all.
     if (token.id === selectedId || frame.selection.has(token.id)) {
       ctx.beginPath();
       ctx.arc(centre.x, centre.y, radius + 10 / cam.zoom, 0, TAU);
@@ -1086,17 +1073,16 @@ function drawTokens(ctx: CanvasRenderingContext2D, frame: Frame, board: Board): 
 /**
  * The traced walls, and the run being traced over them.
  *
- * In world units, because a wall *is* a mark on the map image — unlike a name or
+ * In world units, because a wall *is* a mark on the map image, unlike a name or
  * a ruler, which are annotations and keep their weight at every zoom. The
  * strokes are the exception: their widths are divided by zoom so a wall stays
  * three pixels of line whether the DM is tracing a doorway up close or checking
  * a whole floor at once.
  *
  * Nothing here is gated on identity. `shownWalls` is empty for a player because
- * the server sent them none, which is where that decision belongs — invariant 4
- * is about what a client holds, not about what it draws. It is empty over a
- * preview for a DM who has not traced the next dungeon yet, which is the same
- * shape of answer arrived at from the other direction.
+ * the server sent them none, which is where that decision belongs: invariant 4
+ * is about what a client holds, not about what it draws. It is also empty over
+ * a preview for a DM who has not traced the next dungeon yet.
  */
 function drawWalls(ctx: CanvasRenderingContext2D, frame: Frame): void {
   const { scene, cam, walls: editor } = frame;
@@ -1111,15 +1097,15 @@ function drawWalls(ctx: CanvasRenderingContext2D, frame: Frame): void {
   for (const wall of traced) {
     const open = wall.door === true;
 
-    // Full strength while the editor is in hand, faint the rest of the time —
-    // except for doors, which stay legible always, because the DM can swing one
+    // Full strength while the editor is in hand, faint the rest of the time,
+    // except for doors, which always stay legible because the DM can swing one
     // with no tool in hand at any point in the evening. Anything clickable is
-    // drawn like it is; masonry, which is not, recedes into the map.
+    // drawn at full strength; plain walls, which are not, fade into the map.
     ctx.globalAlpha = armed || wall.door !== null ? 1 : WALL_IDLE_ALPHA;
 
     // Haloed like the grid and the rulers, and for the same reason: a rose line
-    // on a rose-lit map is not a line. The halo is skipped for an open door,
-    // which is meant to read as absence rather than as structure.
+    // on a rose-lit map would disappear. The halo is skipped for an open door,
+    // which should read as a gap, not as structure.
     if (!open) {
       ctx.beginPath();
       ctx.moveTo(wall.from.x, wall.from.y);
@@ -1148,13 +1134,13 @@ function drawWalls(ctx: CanvasRenderingContext2D, frame: Frame): void {
 /**
  * The corners placed so far and the rubber band to where the next one would go.
  *
- * Blue, like every other in-progress thing on this board — a calibration box, a
+ * Blue, like every other in-progress thing on this board: a calibration box, a
  * token being dragged, a movement ruler. It is drawn at full strength whatever
  * the walls under it are doing, because it is the thing being worked on.
  *
- * The band is dashed for the reason it is blue: it is a proposal. Nothing about
- * it exists anywhere but this client until the run is finished, which is also
- * why a browser that closes mid-trace leaves nothing behind to clean up.
+ * The band is dashed for the same reason it is blue: it is a proposal. It
+ * exists only on this client until the run is finished, so a browser that
+ * closes mid-trace leaves nothing behind to clean up.
  */
 function drawWallRun(
   ctx: CanvasRenderingContext2D,
@@ -1186,7 +1172,7 @@ function drawWallRun(
   }
 
   // A dot on every corner placed, so a run doubling back on itself is still
-  // countable — and so the DM can see that the click landed at all.
+  // countable, and so the DM can see that the click landed at all.
   for (const corner of run) {
     ctx.beginPath();
     ctx.arc(corner.x, corner.y, WALL_CORNER_R * scale, 0, TAU);
@@ -1205,10 +1191,9 @@ function drawCalibration(
   { box, cells, shape }: { box: Box; cells: number; shape: CalShape },
 ): void {
   // The isometric gesture is one cell *edge*, so the overlay is the diamond that
-  // edge describes rather than a box of squares. Drawing the square affordance
-  // for it says the DM is selecting a region, which is the wrong thing to aim —
-  // and the whole difficulty of this gesture is aiming it at art whose tiles are
-  // a few dozen pixels across.
+  // edge describes, not a box of squares. A box would suggest the DM is
+  // selecting a region, which is the wrong thing to aim, and aiming is the hard
+  // part of this gesture on art whose tiles are a few dozen pixels across.
   if (shape !== 'square') {
     drawCalibrationDiamond(ctx, cam, box, shape, cells);
     return;
@@ -1223,7 +1208,7 @@ function drawCalibration(
   ctx.fillRect(left, top, width, height);
 
   // The divisions are square, so the horizontal ones use the width-derived cell
-  // size too — which is exactly what makes a wrong cell count visible.
+  // size too, which is what makes a wrong cell count visible.
   const px = width / cells;
   if (px > 0) {
     ctx.beginPath();
@@ -1252,21 +1237,21 @@ function drawCalibration(
  * The drag runs corner to corner along one lattice direction, so it spans
  * `cells` whole cells; each is half a cell's width across and half its height
  * down from the last, and the other edges of each are that vector mirrored.
- * Drawn from the *start* of the drag rather than from a bounding box, because
- * which corner the DM began on is the thing they are aiming.
+ * Drawn from the *start* of the drag, not from a bounding box, because the
+ * corner the DM began on is what they are aiming.
  *
- * **The chain is the feedback the count needs**, and it is the edge gesture's
- * version of the divisions the square path rules inside its box: with the count
- * right, the diamonds land on the tiles printed on the art, and the DM can see
- * that before releasing. Tracing a whole room and dividing it is the easier
- * gesture precisely because a mistake in it is visible over the whole run
- * rather than hidden in one tile and multiplied later.
+ * The chain is the feedback the count needs, like the divisions the square
+ * path rules inside its box: with the count right, the diamonds land on the
+ * tiles printed on the art, and the DM can see that before releasing. Dragging
+ * along a whole room and dividing it is easier than aiming one tile, because a
+ * mistake shows over the whole run instead of hiding in one tile and being
+ * multiplied later.
  *
- * **What the drag says a diamond is comes from `isoDiamond`**, which is what
- * `gridFromEdge` builds the lattice from — so under the fixed shape the drawn
- * diamond is the pinned one and not the loose one under the pointer, and the DM
- * aims the thing they are about to commit. Two functions deriving it separately
- * is how a preview comes to disagree with its result.
+ * **The diamond comes from `isoDiamond`**, which `gridFromEdge` also builds the
+ * lattice from. Under the fixed shape the drawn diamond is the pinned one, not
+ * the loose one under the pointer, so the DM aims what they are about to
+ * commit. If the two derived it separately, the preview could disagree with
+ * the result.
  */
 function drawCalibrationDiamond(
   ctx: CanvasRenderingContext2D,
@@ -1279,16 +1264,16 @@ function drawCalibrationDiamond(
   if (diamond === null) return;
   const { halfW, halfH } = diamond;
 
-  // One cell along the drag, which is what separates one diamond in the chain
-  // from the next. Its horizontal sign is whichever way the DM dragged; its
+  // One cell along the drag: the step from one diamond in the chain to the
+  // next. Its horizontal sign is whichever way the DM dragged; its
   // vertical is why the anchor below has two cases.
   const stepX = box.x1 >= box.x0 ? halfW : -halfW;
   const down = box.y1 >= box.y0;
 
-  // Anchored on the corner the drag *began* on, which is the one the DM aimed
-  // at a real one and the point `gridFromEdge` reduces into the origin cell.
-  // Dragging down from it makes it the first diamond's top corner and dragging
-  // up makes it the bottom one — the same lattice either way, since all four
+  // Anchored on the corner the drag *began* on, which the DM aimed at a real
+  // corner and which `gridFromEdge` reduces into the origin cell. Dragging
+  // down from it makes it the first diamond's top corner and dragging up makes
+  // it the bottom one. It is the same lattice either way, since all four
   // corners of a diamond are points of it, and the same lattice as the one
   // being committed even under the fixed shape, where the far end of the drag
   // is no longer a corner of anything.
@@ -1313,30 +1298,18 @@ function drawCalibrationDiamond(
 }
 
 /**
- * How far each token being dragged has come from where its drag began — ours as
- * we drag it, and everyone else's as their frames arrive.
+ * Whether this move passes through something that stops sight, which only the
+ * DM's client can answer: a player holds no walls.
  *
- * Screen space like the names and the hit point bars: a ruler is an annotation
- * on the board rather than something painted on the map, so it keeps its weight
- * at every zoom. It is deliberately not faded for a hidden token the way the
- * chrome above it is — it lasts a couple of seconds and its entire job is to be
- * read.
- */
-/**
- * Whether this move passes through something that stops sight, which is the
- * question only the DM's client can answer — a player holds no walls.
+ * **Asked of the board on screen**, through `shownWalls`. Over a staged map a
+ * plan is measured against the staged walls, the dungeon it is a plan for;
+ * testing it against the live board's walls would warn about a wall that is
+ * not there.
  *
- * **Asked of the board on screen**, which is what milestone 20 changed: this
- * used to return false over a staged map without asking, because there was no
- * staged masonry to test a plan against and this board's would have warned
- * about a wall that is not there. Now there is, and the plan is measured
- * against the dungeon it is a plan for. Deleting that early return is the whole
- * of the change here.
- *
- * Recomputed per frame per ruler rather than cached on one. It is a couple of
- * hundred segments against one line, the walls can change under it when a door
- * swings, and a cache would have to be invalidated by the one event most likely
- * to be the reason the DM is looking.
+ * Recomputed per frame per ruler, not cached. It is a couple of hundred
+ * segments against one line, the walls can change under it when a door swings,
+ * and a cache would have to be invalidated by the one event most likely to be
+ * the reason the DM is looking.
  */
 function rulerBlocked(scene: Scene, board: Board, ruler: Ruler, at: Vec2): boolean {
   const walls = shownWalls(scene);
@@ -1349,18 +1322,17 @@ function rulerBlocked(scene: Scene, board: Board, ruler: Ruler, at: Vec2): boole
 /**
  * The squares each move crossed: the ruler's reading, drawn on the ground.
  *
- * World space, unlike the line and the label above it, because these are cells
- * and a cell is a thing on the map — it has to sit exactly on the grid at every
- * zoom, which is the opposite requirement from a label that must not shrink.
+ * World space, unlike the ruler's line and label, because these are cells and a
+ * cell is a thing on the map: it has to sit on the grid at every zoom, the
+ * opposite requirement from a label that must not shrink.
  *
- * One `cellPath` and one `fill`, the trick `paintShape` and the fog preview both
- * use: a move is at most a few dozen squares, but there can
- * be one of these per token in flight and a `fillRect` each would be a few
- * hundred calls a frame for a picture one call draws.
+ * One `cellPath` and one `fill`, as in `paintShape` and the fog preview: a move
+ * is at most a few dozen squares, but there can be one of these per token in
+ * flight, and a `fillRect` each would be a few hundred calls a frame.
  *
- * Every skip here mirrors `drawRulers` exactly, and has to: the two are one
- * annotation drawn in two coordinate spaces, and a trail surviving a frame that
- * its own reading was skipped on is a path with no number on the end of it.
+ * Every skip here must match `drawRulers`: the two are one annotation drawn in
+ * two coordinate spaces, and a trail drawn on a frame where its reading was
+ * skipped is a path with no number on the end of it.
  */
 function drawTrails(ctx: CanvasRenderingContext2D, frame: Frame, board: Board): void {
   const { scene, cam, rulers, now } = frame;
@@ -1378,17 +1350,16 @@ function drawTrails(ctx: CanvasRenderingContext2D, frame: Frame, board: Board): 
     if (at === null) continue;
 
     const cells = trailCells(ruler.from, at);
-    // Still in the cell it was picked up from — the same nothing-to-report the
-    // reading skips on, arrived at from the geometry rather than from the
-    // arithmetic.
+    // Still in the cell it was picked up from: the same case the reading skips
+    // on when it computes zero feet.
     if (cells.length === 0) continue;
 
     const alpha = rulerAlpha(ruler, now);
     if (alpha <= 0) continue;
 
-    // The whole trail rather than the squares either side of the wall: the DM is
-    // being told this move went through something, and picking out which step
-    // did it is a precision the hint does not have and does not need.
+    // The whole trail, not the squares either side of the wall: the DM is
+    // being told this move went through something, and the hint isn't precise
+    // enough to say which step did it.
     const colour = rulerBlocked(scene, board, ruler, at) ? RULER_BLOCKED : TRAIL_FILL;
 
     const path = cellPath(grid, cells);
@@ -1403,6 +1374,15 @@ function drawTrails(ctx: CanvasRenderingContext2D, frame: Frame, board: Board): 
   ctx.restore();
 }
 
+/**
+ * How far each token being dragged has come from where its drag began: ours as
+ * we drag it, and everyone else's as their frames arrive.
+ *
+ * Screen space like the names and the hit point bars: a ruler is an annotation
+ * on the board, not something painted on the map, so it keeps its weight at
+ * every zoom. It is not faded for a hidden token the way the token chrome is:
+ * it lasts a couple of seconds and exists to be read.
+ */
 function drawRulers(ctx: CanvasRenderingContext2D, frame: Frame, board: Board): void {
   const { scene, cam, rulers } = frame;
   if (rulers.size === 0) return;
@@ -1432,11 +1412,11 @@ function drawRulers(ctx: CanvasRenderingContext2D, frame: Frame, board: Board): 
     if (feet === 0) continue;
 
     // Full while the drag runs, fading once it has landed. Set on the context
-    // rather than folded into each colour, so the halo, the line and the text
-    // go together — they are one annotation and a halo outliving its line by a
-    // frame reads as a rendering fault.
-    // `frame.now` rather than a destructured one: the local `now` just below is
-    // where the token is *now*, which pairs with `start` and reads better there.
+    // instead of folded into each colour, so the halo, the line and the text
+    // fade together: they are one annotation, and a halo outliving its line by
+    // a frame reads as a rendering fault.
+    // `frame.now`, not destructured: the local `now` just below is where the
+    // token is *now*, which pairs with `start` and reads better there.
     const alpha = rulerAlpha(ruler, frame.now);
     if (alpha <= 0) continue;
     ctx.globalAlpha = alpha;
@@ -1447,7 +1427,7 @@ function drawRulers(ctx: CanvasRenderingContext2D, frame: Frame, board: Board): 
     const to = worldToScreen(cam, now.x, now.y);
     const radius = (board.grid.px * token.size * cam.zoom) / 2;
 
-    // Stopped at the token's edge rather than run under it, so the line points
+    // Stopped at the token's edge instead of run under it, so the line points
     // at what is moving instead of crossing the art. A 4×4 dragged one cell has
     // not left its own radius, and gets the reading without the line.
     const dx = to.x - from.x;
@@ -1463,14 +1443,14 @@ function drawRulers(ctx: CanvasRenderingContext2D, frame: Frame, board: Board): 
     ctx.strokeStyle = RULER_HALO;
     ctx.lineWidth = RULER_HALO_WIDTH;
     ctx.stroke();
-    // Amber where the move went through masonry. The DM's screen only, and
+    // Amber where the move went through a wall. The DM's screen only, and
     // without asking who they are: a player's scene carries no walls to hit.
     ctx.strokeStyle = rulerBlocked(scene, board, ruler, at) ? RULER_BLOCKED : RULER_LINE;
     ctx.lineWidth = RULER_WIDTH;
     ctx.stroke();
 
-    // Beside the token rather than above or below it, where the hit point bar
-    // and the name already are.
+    // Beside the token, not above or below it, where the hit point bar and the
+    // name already are.
     const text = `${feet} ft`;
     ctx.lineWidth = 3;
     ctx.strokeStyle = LABEL_HALO;
@@ -1485,17 +1465,17 @@ function drawRulers(ctx: CanvasRenderingContext2D, frame: Frame, board: Board): 
 /**
  * Every ring on the board, and an arrow at the edge for each one that is not.
  *
- * In screen space and sized in screen pixels, which is the one decision here
- * that is not obvious: a ring measured in cells vanishes when the camera pulls
- * back, and pulling back to see the whole dungeon is exactly the moment
- * somebody needs to point at a corner of it. Only its *anchor* is world-space.
+ * In screen space and sized in screen pixels: a ring measured in cells
+ * vanishes when the camera pulls back, and pulling back to see the whole
+ * dungeon is when somebody needs to point at a corner of it. Only its *anchor*
+ * is world-space.
  *
- * There is no visibility test anywhere in this function and that is deliberate.
- * A ping is drawn wherever it landed, over explored ground, over the fog, and
- * over ground the party has never seen. It carries a position and a name and
- * nothing else — a ring over black says somebody is gesturing in a direction,
- * not what is standing there — and the server has already made the same
- * decision by relaying it unfiltered. See *Ping* in `docs/drawings.md`.
+ * There is no visibility test in this function. A ping is drawn wherever it
+ * landed: over explored ground, over the fog, and over ground the party has
+ * never seen. It carries a position and a name and nothing else (a ring over
+ * black says somebody is pointing there, not what is standing there), and the
+ * server relays it unfiltered for the same reason. See *Ping* in
+ * `docs/drawings.md`.
  */
 function drawPings(
   ctx: CanvasRenderingContext2D,
@@ -1527,9 +1507,9 @@ function drawPings(
 
     ctx.globalAlpha = alpha;
 
-    // Off the edge of the view: an arrow rather than a ring, because six people
+    // Off the edge of the view: an arrow instead of a ring, because six people
     // looking at different parts of the map is the normal case and a ping
-    // nobody sees is worse than no ping at all. Never a camera pan — see
+    // nobody sees is worse than no ping at all. Never a camera pan; see
     // `edgeMarker`.
     const edge = edgeMarker(at, view, EDGE_INSET_PX);
     if (edge !== null) {
@@ -1547,9 +1527,8 @@ function drawPings(
     ctx.lineWidth = PING_WIDTH;
     ctx.stroke();
 
-    // Under the ring rather than inside it. A name in the middle competes with
-    // whatever is being pointed at, which is the one thing the gesture exists
-    // to make legible.
+    // Under the ring, not inside it. A name in the middle competes with
+    // whatever is being pointed at, which the gesture exists to make legible.
     label(ctx, name, at.x, at.y + radius + PING_TEXT_GAP, colour);
   }
 
@@ -1559,19 +1538,17 @@ function drawPings(
 /**
  * Everybody else's pointer, in their own colour with their name beside it.
  *
- * **No visibility test here either, and for a different reason from `drawPings`
- * one function up.** That one draws unfiltered because a ping is relayed
- * unfiltered; this one draws unfiltered because the *room* has already decided
- * — the DM's pointer over ground the party has not explored never arrives, so
- * there is nothing on this side to withhold. Invariant 4 the safe way round: a
- * client cannot draw what it was not sent.
+ * No visibility test here either, but for a different reason from
+ * `drawPings`. A ping is drawn unfiltered because it is relayed unfiltered;
+ * a cursor is drawn unfiltered because the *room* has already filtered it
+ * (`cursor_seen`): the DM's pointer over ground the party has not explored
+ * never arrives, so there is nothing on this side to withhold. A client cannot
+ * draw what it was not sent (invariant 4).
  *
- * Off the edge of the view is nothing at all, which is where this parts company
- * with a ping for the second time. An arrow at the screen edge exists because a
- * ping is a deliberate gesture that would otherwise be missed; seven permanent
- * markers pinned around the border for hands that are simply elsewhere is the
- * clutter this feature is most at risk of, and the answer is to draw nothing.
- * The canvas clips these for free.
+ * Off the edge of the view, nothing is drawn, unlike a ping. A ping gets an
+ * edge arrow because it is a deliberate gesture that would otherwise be
+ * missed; seven permanent markers around the border for hands that are simply
+ * elsewhere would be clutter. The canvas clips these for free.
  */
 function drawCursors(ctx: CanvasRenderingContext2D, frame: Frame, board: Board): void {
   const { cam, cursors, roster, colours, now } = frame;
@@ -1593,8 +1570,8 @@ function drawCursors(ctx: CanvasRenderingContext2D, frame: Frame, board: Board):
 
     ctx.globalAlpha = alpha * CURSOR_ALPHA;
     drawDot(ctx, at, colour);
-    // Under it, which is where a ping's name goes and for the same reason: the
-    // one thing a mark on the board must not cover is what it is marking.
+    // Under it, like a ping's name and for the same reason: a mark on the board
+    // must not cover what it is marking.
     label(
       ctx,
       nameOf(cursor.owner, roster),
@@ -1608,8 +1585,8 @@ function drawCursors(ctx: CanvasRenderingContext2D, frame: Frame, board: Board):
 }
 
 /** The pointer glyph: a small filled dot on the spot, with the dark halo every
- *  other mark on this canvas gets — a coloured circle on a parchment map is
- *  otherwise a smudge, and on a cave floor it is nothing. */
+ *  other mark on this canvas gets. Without it a coloured circle is a smudge on
+ *  a parchment map and invisible on a cave floor. */
 function drawDot(ctx: CanvasRenderingContext2D, at: Vec2, colour: string): void {
   ctx.beginPath();
   ctx.arc(at.x, at.y, CURSOR_R_PX, 0, TAU);
@@ -1621,8 +1598,8 @@ function drawDot(ctx: CanvasRenderingContext2D, at: Vec2, colour: string): void 
 }
 
 /** A filled triangle pointing along `angle`, in the sender's colour with the
- *  same dark halo the ring gets — an arrow on a light map is otherwise a shape
- *  the size of a cursor with nothing behind it. */
+ *  same dark halo the ring gets, so a cursor-sized arrow still reads on a light
+ *  map. */
 function drawPingArrow(
   ctx: CanvasRenderingContext2D,
   at: Vec2,
@@ -1647,8 +1624,8 @@ function drawPingArrow(
 
 /** Text with the halo every other label on this canvas gets, so a name is
  *  legible over a cave floor and over parchment alike. The colour is the
- *  sender's, because a name and a ring in different colours would be two people
- *  as far as anybody reading it at speed is concerned. */
+ *  sender's, because a name and a ring in different colours read as two people
+ *  at a glance. */
 function label(
   ctx: CanvasRenderingContext2D,
   text: string,
@@ -1665,14 +1642,13 @@ function label(
 
 /**
  * The name under each token and the DM's hit point bar over it, both in screen
- * space so they keep a fixed size as the camera zooms — the things on the map
- * that should not scale with the world.
+ * space so they keep a fixed size as the camera zooms.
  *
- * `scene.showNames` puts the names away, for everyone at once — it is the DM's
+ * `scene.showNames` puts the names away for everyone at once. It is the DM's
  * switch and the same value on every client, so this is not a visibility
- * decision and there is nothing here to filter. The bar is untouched by it: a
+ * decision and there is nothing here to filter. It doesn't affect the bar: a
  * running total is not a label, it already reaches nobody but the DM, and a
- * switch that took it away as well would be two features on one checkbox.
+ * switch that hid it as well would be two features on one checkbox.
  */
 function drawTokenChrome(ctx: CanvasRenderingContext2D, frame: Frame, board: Board): void {
   const { scene, cam } = frame;
@@ -1682,8 +1658,8 @@ function drawTokenChrome(ctx: CanvasRenderingContext2D, frame: Frame, board: Boa
   ctx.lineJoin = 'round';
 
   for (const token of scene.tokens) {
-    // Same question, same answer, same skip: a token with no name drawn under
-    // it is better than one whose name floats over a board it is not on.
+    // The same skip as `drawTokens`: a token with no name drawn under it is
+    // better than a name floating over a board the token is not on.
     const at = shownPos(scene, token);
     if (at === null) continue;
 
@@ -1716,9 +1692,9 @@ function drawTokenChrome(ctx: CanvasRenderingContext2D, frame: Frame, board: Boa
  * The DM's running total: a bar to sort six monsters by at a glance, and the
  * numbers to subtract the next hit from.
  *
- * This never runs on a player's screen, and not because of a check here — `hp`
+ * This never runs on a player's screen, and not because of a check here: `hp`
  * is redacted server-side, so their copy of the token carries null and there is
- * nothing to decline to draw. That is invariant 4's whole shape.
+ * nothing to decline to draw (invariant 4).
  *
  * `top` is the middle of the token's upper edge in screen pixels, `radius` its
  * radius in the same.
@@ -1742,7 +1718,7 @@ function drawHitPoints(
     ctx.fillStyle = hpColour(filled);
     ctx.fillRect(left, y, width * filled, HP_BAR_H);
   }
-  // Half-pixel inset so a 1px stroke lands on pixels rather than straddling two.
+  // Half-pixel inset so a 1px stroke lands on pixels instead of straddling two.
   ctx.lineWidth = 1;
   ctx.strokeStyle = HP_EDGE;
   ctx.strokeRect(left + 0.5, y + 0.5, width - 1, HP_BAR_H - 1);
@@ -1763,22 +1739,21 @@ function drawHitPoints(
  * The DM's marks on a creature: a band of arcs stroked inside the token's own
  * rim, and an X across the portrait for `dead`.
  *
- * **Rules-neutral by construction and not by discipline**: this draws arcs and
- * two lines, and there is nowhere in it for a rule to live. Nothing here knows
- * what any mark means — including `dead`, which changes nothing about how the
- * token behaves and is a picture like the other six. That is the whole boundary
- * the feature is built inside; see the non-goal in `.claude/CLAUDE.md`.
+ * **Rules-neutral**: this draws arcs and two lines, and there is nowhere in it
+ * for a rule to live. Nothing here knows what any mark means, including
+ * `dead`, which changes nothing about how the token behaves and is a picture
+ * like the other six. Keep it that way; see the non-goal in
+ * `.claude/CLAUDE.md`.
  *
  * No check for who is reading it, unlike the hit point bar and like the name.
  * Markers are public: `view_for` copies them for everybody, so a player's copy
- * of a token carries the same list and draws the same band. That is the point
- * rather than an oversight — a mark the table cannot see is not a mark.
+ * of a token carries the same list and draws the same band. A mark the table
+ * cannot see would be useless.
  *
  * World space, unlike the name and the numerals, because these are drawn *on*
- * the token rather than pinned above it; the widths divide by `zoom` so they
- * still hold a constant weight on screen, exactly as the rings do. The caller
- * has already set `globalAlpha`, so a hidden creature fades its marks with the
- * rest of it for free.
+ * the token, not pinned above it; the widths divide by `zoom` so they keep a
+ * constant weight on screen, as the rings do. The caller has already set
+ * `globalAlpha`, so a hidden creature's marks fade with the rest of it.
  */
 function drawMarks(
   ctx: CanvasRenderingContext2D,
@@ -1788,10 +1763,9 @@ function drawMarks(
   markers: readonly Marker[],
 ): void {
   // **Sorted into `MARKERS` order, not the order the DM added them in.** The
-  // room stores the list unsorted and has no opinion about it, so two creatures
-  // carrying red and blue can carry them either way round. A row of pips did
-  // not care; a band does, because recognising the same state on two monsters
-  // at a glance is the entire reason this stopped being pips.
+  // room stores the list unsorted, so two creatures carrying red and blue can
+  // carry them either way round. The band has to be in a fixed order so the
+  // same marks look the same on two monsters at a glance.
   const arcs = markers
     .filter(isColour)
     .sort((a, b) => MARKERS.indexOf(a) - MARKERS.indexOf(b));
@@ -1800,11 +1774,10 @@ function drawMarks(
 
   if (arcs.length > 0) {
     // Centred half a band's width inside the rim, so the band's outer edge
-    // meets it and the two read as one edge rather than as two rings.
+    // meets it and the two read as one edge, not as two rings.
     const r = radius - MARKER_BAND_W / 2 / zoom;
-    // A guard rather than an assumption: a 0.5-cell token zoomed a long way out
-    // has a radius smaller than the band is thick, and an arc at a negative
-    // radius throws.
+    // A 0.5-cell token zoomed a long way out has a radius smaller than the band
+    // is thick, and an arc at a negative radius throws.
     if (r > 0) {
       ctx.lineWidth = (MARKER_BAND_W + 2) / zoom;
       ctx.strokeStyle = MARKER_TRACK;
@@ -1813,10 +1786,9 @@ function drawMarks(
       ctx.stroke();
 
       // One mark takes the whole band and there is no gap to leave; two or more
-      // divide it evenly from twelve o'clock clockwise. Dividing rather than
-      // stacking is what keeps the footprint identical whether a creature
-      // carries one mark or six — the failure the old right-hand pip column had
-      // and the reason a ring per marker was never on the table.
+      // divide it evenly from twelve o'clock clockwise. Dividing, not stacking,
+      // keeps the footprint identical whether a creature carries one mark or
+      // six. Don't draw a ring per marker: the token would grow with each mark.
       ctx.lineWidth = MARKER_BAND_W / zoom;
       const step = TAU / arcs.length;
       const gap = arcs.length > 1 ? MARKER_ARC_GAP : 0;
@@ -1831,11 +1803,10 @@ function drawMarks(
     }
   }
 
-  // Across the portrait rather than round it, because it is not one of the
-  // arcs and must not be mistaken for one. Haloed the way a name is — that is
-  // the convention on this canvas for anything that has to read on parchment
-  // and on a cave floor alike, and using it here is what makes the X look like
-  // a label and the arcs look like a ring.
+  // Across the portrait, not round it, because it is not one of the arcs and
+  // must not be mistaken for one. Haloed the way a name is, the convention on
+  // this canvas for anything that has to read on parchment and on a cave floor
+  // alike, which makes the X look like a label and the arcs like a ring.
   if (markers.includes('dead')) {
     const reach = radius * DEAD_X_REACH;
     ctx.lineCap = 'round';
@@ -1870,12 +1841,11 @@ export function hpFilled(hp: Hp): number {
 /**
  * The colour a bar that full is drawn in.
  *
- * Exported, and it is the only thing in this file the initiative panel imports —
- * that panel draws the same bar in DOM, and two copies of these three numbers
- * would let the board and the panel disagree about which monster is nearly down.
- * The bands are three rather than a gradient for the reason given where the
- * colours are defined: a DM glancing at six monsters is sorting them, not
- * reading a percentage.
+ * Exported with `hpFilled` for the initiative panel, which draws the same bar
+ * in DOM. Two copies of these three numbers would let the board and the panel
+ * disagree about which monster is nearly down. Three bands, not a gradient,
+ * for the reason given where the colours are defined: a DM glancing at six
+ * monsters is sorting them, not reading a percentage.
  */
 export function hpColour(filled: number): string {
   return filled > 0.5 ? HP_HEALTHY : filled > 0.25 ? HP_HURT : HP_LOW;

@@ -26,7 +26,7 @@ import { wallFromWire } from './walls.js';
 export interface Token {
   id: string;
   name: string;
-  /** Cell centre, in grid units. Never pixels — invariant 1. */
+  /** Cell centre, in grid units. Never pixels (invariant 1). */
   x: number;
   y: number;
   owner: Owner;
@@ -38,9 +38,9 @@ export interface Token {
    *  unlike the three fields below it, because a mark the table cannot see is
    *  not a mark. */
   markers: Marker[];
-  /** The table cannot see this one. Only ever true on the DM's client — a
-   *  player is never sent a hidden token, so nothing here has to defend
-   *  against drawing one. The DM's board marks it instead. */
+  /** The table cannot see this one. Only ever true on the DM's client: a
+   *  player is never sent a hidden token, so nothing here has to guard against
+   *  drawing one. The DM's board marks it instead. */
   hidden: boolean;
   /** The DM's running total, or null. Null on every token for a player. */
   hp: Hp | null;
@@ -52,9 +52,9 @@ export interface Token {
    *  because the DM's sight check casts rays of its own. */
   lightFt: number | null;
   /** Where this token lands when the staged map is promoted, or null for one
-   *  staying put. Null on every token for a player. In grid units like `x, y` —
-   *  a plan is a cell, which is what makes recalibrating the staged map after
-   *  placing monsters safe. */
+   *  staying put. Null on every token for a player. In grid units like `x, y`:
+   *  a plan is a cell, which makes recalibrating the staged map after placing
+   *  monsters safe. */
   stagedPos: Vec2 | null;
   /** Built on the map the DM is preparing and not on the board yet. Only ever
    *  true on the DM's client, and absent from their live board as much as from
@@ -67,7 +67,7 @@ export interface Board {
   mapUrl: string;
   grid: GridSpec;
   /** The overlay colour as `#rrggbbaa`. Not part of `GridSpec`, which is
-   *  geometry — this is only ever read by the renderer. */
+   *  geometry; only the renderer reads this. */
   gridColor: string;
   /** The playable region, or null for the whole image. */
   playArea: Rect | null;
@@ -85,15 +85,15 @@ export interface Board {
  * The staged slot: the map the DM is preparing, and what they have prepared on
  * it.
  *
- * `Board`'s superset rather than a second shape, so everything that draws or
+ * A superset of `Board`, not a second shape, so everything that draws or
  * hit-tests can go on reading a `Board` through `shownBoard` and only the three
  * things that fork have to know this exists.
  *
- * There is no `fog` here beside the walls and the overrides, and that is the
- * one deliberate hole: nothing raycasts the staged board. The DM is deciding
- * what the party will be handed when it lands, not looking at what they will
- * see — "will they spot the dragon when the door opens" is a second raycast and
- * is out of scope. See `docs/fog.md`.
+ * There is no `fog` here beside the walls and the overrides, because nothing
+ * raycasts the staged board. The DM is deciding what the party will be handed
+ * when it lands, not looking at what they will see. "Will they spot the dragon
+ * when the door opens" is a second raycast and is out of scope. See
+ * `docs/fog.md`.
  */
 export interface StagedBoard extends Board {
   /** Traced on the next dungeon, in image pixels like the live board's. Empty
@@ -111,66 +111,64 @@ export interface Scene {
    *  null for a player: the server never sends them one, and one null withholds
    *  all three. */
   staged: StagedBoard | null;
-  /** The DM is looking at `staged` instead of `live`. Purely local — no
-   *  command, no event, nothing persisted, and nobody else can tell. */
+  /** The DM is looking at `staged` instead of `live`. Local only: no command,
+   *  no event, nothing persisted, and nobody else can tell. */
   previewing: boolean;
   /** Draw order; later entries render on top and win hit-tests. */
   tokens: Token[];
   /** What is drawn on the board, in draw order. Belongs to the live board
-   *  alone — there is nothing to draw on a map the table has not been shown, so
+   *  alone: there is nothing to draw on a map the table has not been shown, so
    *  unlike tokens these do not fork. Replaced wholesale by every
    *  `shapes_changed`, which is why nothing here is predicted locally. */
   shapes: Shape[];
-  /** The traced walls and doors, in image pixels rather than grid units — they
-   *  are anchored to the art, not to a cell. Always empty for a player: the
-   *  server sends them none, and empty is also what an untraced map looks like.
+  /** The traced walls and doors, in image pixels, not grid units: they are
+   *  anchored to the art, not to a cell. Always empty for a player: the server
+   *  sends them none, and empty is also what an untraced map looks like.
    *
-   *  **The live board's.** The staged one carries its own; read `shownWalls`
-   *  rather than this, exactly as everything reads `shownBoard` rather than
-   *  `live`. Still one slot and not the scene concept — a promote moves one
-   *  list into the other rather than a list existing per map. */
+   *  **The live board's.** The staged one carries its own; read `shownWalls`,
+   *  not this, as everything reads `shownBoard` and not `live`. Still one slot
+   *  and not a scene system: a promote moves one list into the other, and
+   *  there is no list per map. */
   walls: Wall[];
   /** What the party can see, or null on a map with fog turned off.
    *
-   *  Unlike the walls above it, everyone holds this and everyone holds the same
-   *  one — fog is party-shared, so there is a single answer, and the DM's copy
+   *  Unlike the walls, everyone holds this and everyone holds the same one:
+   *  fog is party-shared, so there is a single answer, and the DM's copy
    *  differs only in how faintly it draws.
    *
    *  It is not a filter. A creature the table cannot see is absent from `tokens`
    *  entirely; this is the *terrain*, and nothing here decides who is drawn. */
   fog: Fog | null;
   /** The cells the DM has painted over that fog by hand. Always empty for a
-   *  player, like `walls` two fields up rather than like `fog` between them —
-   *  the walls and this are what the DM authored, and the fog is what the table
-   *  gets to see of both.
+   *  player, like `walls` and unlike `fog`: the walls and this are what the DM
+   *  authored, and the fog is what the table gets to see of both.
    *
-   *  **The live board's**, like `walls` above and read through
-   *  `shownOverrides`. The staged board carries its own — there is no fog on it
-   *  to be masked, but what is painted there is what the party is handed the
-   *  moment it is promoted. */
+   *  **The live board's**, like `walls`, and read through `shownOverrides`.
+   *  The staged board carries its own. There is no fog on it to be masked, but
+   *  what is painted there is what the party is handed the moment it is
+   *  promoted. */
   overrides: Overrides;
-  /** Whether the board writes each token's name under it. The DM's to set and
-   *  everyone's to hold, so this is the same for every client — a board labelled
-   *  one way for the DM and another for the table is the thing it prevents.
+  /** Whether the board writes each token's name under it. The DM sets it and
+   *  everyone holds it, so it is the same for every client and the DM's board
+   *  can't be labelled differently from the table's.
    *
-   *  Room-wide, so it is here rather than on `Board`: it applies to the map
-   *  being previewed as much as to the one on screen. */
+   *  Room-wide, so it is here and not on `Board`: it applies to the map being
+   *  previewed as much as to the one on screen. */
   showNames: boolean;
   /** How the movement ruler charges a diagonal. Room-wide and the same for every
-   *  client, exactly like the switch above it — and here rather than on `Board`
-   *  for the same reason too: it is how the table counts, not a property of the
-   *  image they are counting over. */
+   *  client, like `showNames`, and here and not on `Board` for the same reason:
+   *  it is how the table counts, not a property of the image they are counting
+   *  over. */
   diagonals: Diagonals;
   /** Whether everybody's pointer is drawn on everybody's board. Room-wide and
-   *  the same for every client, exactly like the two switches above it — and
-   *  here rather than on `Board` for their reason too.
+   *  the same for every client, and here and not on `Board`, like `showNames`.
    *
-   *  The one of the three that `input.ts` reads as well as the renderer: with it
-   *  off the room relays nothing, so a client that went on sending its own
-   *  pointer would be paying the whole cost of a feature nobody can see. */
+   *  `input.ts` reads this as well as the renderer: with it off the room relays
+   *  nothing, so a client that kept sending its own pointer would pay the full
+   *  cost of a feature nobody can see. */
   showCursors: boolean;
   /** Whether the DM's own pointer is drawn on the players' boards. Room-wide
-   *  and the same for every client like the switch above it.
+   *  and the same for every client, like `showCursors`.
    *
    *  The renderer never reads this and neither does `input.ts`: the room drops
    *  the DM's frames itself, so a player is sent this and does nothing with it.
@@ -179,27 +177,26 @@ export interface Scene {
   /** The picture in front of the table, or null when they are looking at the
    *  board.
    *
-   *  Room-wide and the same for every client like the three switches above it,
-   *  and here rather than on `Board` for a stronger version of their reason:
-   *  it is not a property of either board, it is what is being shown *instead*
-   *  of one. Everything on `Board` — the grid, the walls, the fog, the tokens
-   *  standing on it — is still exactly as it was while this is set, which is
-   *  why putting the picture away needs nothing from the server. */
+   *  Room-wide and the same for every client, like the switches above. It is
+   *  not on `Board` because it is not a property of either board: it is shown
+   *  *instead* of one. Everything on `Board` (the grid, the walls, the fog, the
+   *  tokens standing on it) is unchanged while this is set, which is why
+   *  putting the picture away needs nothing from the server. */
   backdrop: string | null;
   /** The track the room is playing, or null.
    *
-   *  Here for the field above's reason and read by nobody who draws — there is
-   *  no `shownAudio` twin beside `shownBackdrop`, because what the table hears
-   *  does not depend on which board the DM happens to be looking at. It is on
-   *  the scene at all so that `adoptView` carries it with no second field list,
-   *  and so the table panel can read back whether anything is playing. */
+   *  Room-wide like `backdrop`, and read by nothing that draws. There is no
+   *  `shownAudio` beside `shownBackdrop`, because what the table hears does not
+   *  depend on which board the DM is looking at. It is on the scene so that
+   *  `adoptView` carries it with no second field list, and so the table panel
+   *  can read back whether anything is playing. */
   audio: string | null;
 }
 
 /**
  * Whether the board on screen is the staged one. `shownBoard` answers which
  * board to draw on; this is the same question as a yes or no, for the callers
- * that compare it against something rather than draw on it.
+ * that compare it against something instead of drawing on it.
  */
 export function showingStaged(scene: Scene): boolean {
   return scene.previewing && scene.staged !== null;
@@ -207,24 +204,23 @@ export function showingStaged(scene: Scene): boolean {
 
 /**
  * The board on screen. Everything that draws or hit-tests goes through this
- * rather than reaching for `scene.live`, which is what keeps preview mode from
- * being a special case in each of them.
+ * instead of reading `scene.live`, so preview mode isn't a special case in
+ * each of them.
  */
 export function shownBoard(scene: Scene): Board {
-  // Spelled out rather than asking `showingStaged`, whose answer does not narrow
-  // `staged` away from null for the type checker.
+  // Spelled out instead of calling `showingStaged`, whose answer does not
+  // narrow `staged` away from null for the type checker.
   return scene.previewing && scene.staged !== null ? scene.staged : scene.live;
 }
 
 /**
  * The walls of the board on screen, and the paint on it.
  *
- * `shownBoard`'s twins, for the two things that live beside a board rather than
- * on it. Everything that draws, hit-tests or sends a wall command reads these
- * rather than `scene.walls` — the milestone-10 shape for the third time, and
- * the same argument each time: without one function answering it, a single
- * missing branch traces the next dungeon's masonry across the board the table
- * is looking at.
+ * The same as `shownBoard`, for the two things kept beside a board instead of
+ * on it. Everything that draws, hit-tests or sends a wall command reads these,
+ * never `scene.walls`: without one function answering it, a single missing
+ * branch traces the next dungeon's walls across the board the table is looking
+ * at.
  *
  * Empty when nothing is staged, which is what an untraced map looks like too.
  */
@@ -239,31 +235,30 @@ export function shownOverrides(scene: Scene): Overrides {
 /**
  * The picture to draw instead of the board, or null to draw the board.
  *
- * `shownBoard`'s fourth twin, and the one that answers a question one step
- * earlier than the other three: they pick *which* board, this decides whether a
- * board is drawn at all.
+ * Like `shownBoard`, but a step earlier: the others pick *which* board, and
+ * this decides whether a board is drawn at all.
  *
- * **Preview wins**, which is the whole of the branch. A backdrop is what the
- * *table* is looking at, and the DM previewing the staged map is asking to see
- * the next dungeon — so the party can roleplay at the campfire while the DM
- * traces the crypt they are about to walk into. Without this line the DM would
- * have to take the picture off six other screens to get any work done.
+ * **Preview wins.** A backdrop is what the *table* is looking at, and the DM
+ * previewing the staged map is asking to see the next dungeon, so the party
+ * can roleplay at the campfire while the DM traces the crypt they are about to
+ * walk into. Without this the DM would have to take the picture off six other
+ * screens to get any work done.
  */
 export function shownBackdrop(scene: Scene): string | null {
   return showingStaged(scene) ? null : scene.backdrop;
 }
 
 /**
- * Where a token draws, given which board is on screen — or null when it is not
+ * Where a token draws, given which board is on screen, or null when it is not
  * on that board at all.
  *
- * The token-shaped twin of `shownBoard`, and for the same reason: without one
- * function answering this, a planned position gets written into the live one by
- * a single missing branch, and a token that does not exist yet gets drawn on the
- * board the table is looking at. Every draw and every hit-test goes through it.
+ * `shownBoard` for tokens, and for the same reason: without one function
+ * answering this, a single missing branch writes a planned position into the
+ * live one, or draws a token that does not exist yet on the board the table is
+ * looking at. Every draw and every hit-test goes through it.
  *
  * A token with no plan shows at its own position while previewing, because that
- * is where it lands on a promote — tokens keep their cells.
+ * is where it lands on a promote: tokens keep their cells.
  */
 export function shownPos(scene: Scene, token: Token): Vec2 | null {
   if (scene.previewing && scene.staged !== null) {
@@ -273,13 +268,13 @@ export function shownPos(scene: Scene, token: Token): Vec2 | null {
 }
 
 /**
- * Everything about a scene that comes off the wire — which is every field but
- * `previewing`, and the `Omit` is what says so.
+ * Everything about a scene that comes off the wire: every field but
+ * `previewing`, as the `Omit` says.
  *
- * It exists so `sceneFromView` and `adoptView` share one field list. Two lists
- * would rot in the direction that fails silently: a field added to `Scene` and
- * built here but forgotten in the adopt path is a restore that quietly keeps
- * the stale value, which looks like a server bug rather than a missing line.
+ * It exists so `sceneFromView` and `adoptView` share one field list. With two
+ * lists, a field added to `Scene` and built here but forgotten in the adopt
+ * path would make a restore keep the stale value silently, which looks like a
+ * server bug instead of a missing line.
  *
  * The server sends tokens in a stable order, and that order is z-order, so it
  * is preserved verbatim.
@@ -307,28 +302,27 @@ export function sceneFromView(view: WireRoomView, isDm: boolean): Scene {
 }
 
 /**
- * Takes a whole `RoomView` as the truth for a scene that already exists —
+ * Takes a whole `RoomView` as the truth for a scene that already exists:
  * `sceneFromView` for the second and later ones.
  *
- * **In place, and that is the entire point.** The board captured this object
- * when it started and draws from it every frame; the panels were handed it
- * once. Assigning a *new* scene over `room.scene` would leave the renderer
- * drawing the old one forever, which is why a restore cannot simply rebuild
- * what `Welcome` built.
+ * **In place.** The board captured this object when it started and draws from
+ * it every frame; the panels were handed it once. Assigning a *new* scene over
+ * `room.scene` would leave the renderer drawing the old one forever, which is
+ * why a restore cannot simply rebuild what `Welcome` built.
  *
- * `previewing` survives, which the type enforces rather than the author
- * remembering: it is local state about where the DM is looking, and a frame
- * from the room has no opinion about that. If the restore empties the staged
- * slot, `shownBoard` falls back to the live board on its own and the map tool
- * reports the mode change, exactly as a discard already does.
+ * `previewing` survives, and the type enforces it: it is local state about
+ * where the DM is looking, and a frame from the room says nothing about that.
+ * If the restore empties the staged slot, `shownBoard` falls back to the live
+ * board on its own and the map tool reports the mode change, as a discard
+ * does.
  */
 export function adoptView(scene: Scene, view: WireRoomView, isDm: boolean): void {
   Object.assign(scene, fromView(view, isDm));
 }
 
 /**
- * The staged slot off the wire, or null for an empty one — which is also what a
- * player is always sent, indistinguishably.
+ * The staged slot off the wire, or null for an empty one. A player is always
+ * sent null, and can't tell it apart from an empty slot.
  *
  * The map's fields sit directly on the frame beside `walls` and `overrides`
  * (that is `#[serde(flatten)]` on the server), so `boardFromWire` reads it
@@ -346,15 +340,15 @@ export function stagedFromWire(wire: WireStaged | null): StagedBoard | null {
 /**
  * The two cell axes in world pixels: where `(1, 0)` and `(0, 1)` land.
  *
- * **The one place `WireGridShape` is read.** An isometric grid is an affine image
- * of a square one, so everything downstream goes on asking its questions of a
- * lattice and none of them learns there is more than one shape — the same
- * discipline `shownBoard` keeps over which of the two boards is on screen.
- * `fog::basis` in `server/src/fog.rs` is its twin and the two must agree exactly,
- * or the fog the server packs lands somewhere else on the client's board.
+ * The one place `WireGridShape` is read. An isometric grid is an affine image
+ * of a square one, so everything downstream asks its questions of a lattice
+ * and none of it learns there is more than one shape, as `shownBoard` hides
+ * which of the two boards is on screen. **`fog::basis` in `server/src/fog.rs`
+ * must agree with this exactly**, or the fog the server packs lands somewhere
+ * else on the client's board.
  *
- * The square case is `(px, 0)` and `(0, px)`, which reduces `gridToWorld` to the
- * arithmetic it held before there was a basis.
+ * The square case is `(px, 0)` and `(0, px)`, which reduces `gridToWorld` to
+ * plain scaling.
  */
 export function gridBasis(map: WireMapInfo): GridSpec {
   const shape = map.grid_shape;
@@ -362,8 +356,8 @@ export function gridBasis(map: WireMapInfo): GridSpec {
   const offsetY = map.offset_y;
   if (shape.kind === 'iso') {
     // A diamond `grid_px` tall and `grid_px * ratio` wide, so the two axes run
-    // to its right-hand and left-hand corners. Mirrored about vertical rather
-    // than free, which is what makes one dragged edge enough to calibrate one.
+    // to its right-hand and left-hand corners. Symmetric about the vertical,
+    // which is why one dragged edge is enough to calibrate one.
     const halfW = (map.grid_px * shape.ratio) / 2;
     const halfH = map.grid_px / 2;
     return { px: map.grid_px, ax: halfW, ay: halfH, bx: -halfW, by: halfH, offsetX, offsetY };
@@ -372,13 +366,13 @@ export function gridBasis(map: WireMapInfo): GridSpec {
 }
 
 /**
- * The shape a `GridSpec` describes — `gridBasis` read backwards.
+ * The shape a `GridSpec` describes: `gridBasis` in reverse.
  *
  * The client builds a basis to draw with and has to send a *shape* back, because
  * the wire carries the descriptor. The two are exact inverses for the only two
- * lattices that exist, which is what `a_grid_survives_the_round_trip_through_the_wire`
- * holds; anything that constructs a `GridSpec` by hand rather than through
- * `squareGrid` or `gridFromEdge` is what would break it.
+ * lattices that exist, which `a_grid_survives_the_round_trip_through_the_wire`
+ * tests. A `GridSpec` built by hand instead of through `squareGrid` or
+ * `gridFromEdge` could break that.
  */
 export function shapeOf(grid: GridSpec): WireGridShape {
   // A square's second axis has no horizontal component and its first none
@@ -424,7 +418,7 @@ function tokenFromWire(t: WireToken): Token {
  * The re-sort is what keeps every client agreeing about z-order: the server
  * sorts a join snapshot by id, so a client that learned about this token from a
  * delta has to end up in the same order as one that joined afterwards. Returns
- * whether the token is new, which is what decides if its art needs fetching.
+ * whether the token is new, which decides if its art needs fetching.
  */
 export function upsertToken(scene: Scene, wire: WireToken): boolean {
   const token = tokenFromWire(wire);
