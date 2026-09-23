@@ -34,3 +34,6 @@ uploads/
 # overlay and does without it. See client/spells/LICENSE-SRD.md.
 spells_tmp/
 client/spells/text.json
+
+
+COMMENTS-PASS.md
