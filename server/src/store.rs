@@ -3,7 +3,7 @@
 //! One JSON file, rewritten whole. There is no database and no migration step:
 //! invariant 2 puts `#[serde(default)]` on every persisted container, so a file
 //! written by an older build still loads against a newer schema, and a field
-//! this build has never heard of is ignored rather than fatal.
+//! this build has never heard of is ignored, not fatal.
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -18,179 +18,152 @@ use crate::protocol::{
 
 /// What actually goes to disk.
 ///
-/// Deliberately neither `RoomView` nor `RoomState`. Not `RoomView`, because that
-/// is the world as one particular client may see it and fog of war will make
-/// those differ — the file must hold everything. Not `RoomState`, because the DM
-/// secret comes from the environment and connected clients die with the process.
+/// Neither `RoomView` nor `RoomState`. Not `RoomView`, because that is the room
+/// as one client may see it, and fog of war makes those differ: the file must
+/// hold everything. Not `RoomState`, because the DM secret comes from the
+/// environment and connected clients die with the process.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Saved {
     pub map: MapInfo,
-    /// The map the DM is preparing, with the walls and overrides they have
-    /// prepared on it. Persisted, but never part of a player's view — the second
-    /// thing here the whole room holds and one client's copy of it does not,
-    /// after `calibrations`.
+    /// The map the DM is preparing, with the walls and overrides prepared on
+    /// it. Persisted, but never part of a player's view.
     ///
-    /// It is saved for the reason the calibration table is: Slate runs only
-    /// while the group is playing, so a map staged at the end of one evening
-    /// for the next would otherwise be gone before it was ever wanted — and a
-    /// dungeon traced on a Tuesday for the Saturday is the whole of milestone 20.
+    /// Saved for the same reason as the calibration table: a dungeon traced on a
+    /// Tuesday for the Saturday has to survive any restart in between.
     ///
     /// The map inside it is flattened, so a file written when this was an
     /// `Option<MapInfo>` still loads its staged map. See `StagedView`.
     pub staged: Option<StagedView>,
-    /// A list rather than a map keyed by id: the id already lives inside each
-    /// token, and the room rebuilds its `HashMap` on load.
+    /// A list, not a map keyed by id: the id already lives inside each token,
+    /// and the room rebuilds its `HashMap` on load.
     pub tokens: Vec<Token>,
     pub initiative: Initiative,
     /// Drawn shapes, in draw order. Already a `Vec` in the room, so unlike the
     /// tokens there is nothing to sort on the way out.
     ///
-    /// Persisted for the reason staging is: Slate runs only while the group is
-    /// playing, so an area the DM places while prepping would otherwise be gone
-    /// before the party arrived. Sketches are not here and never will be — one
-    /// lasts as long as a mouse is held down.
+    /// Persisted so an area the DM places while prepping is still there when
+    /// the party arrives. Sketches in progress are never saved; one lasts as
+    /// long as a mouse button is held down.
     pub shapes: Vec<Shape>,
-    /// Traced walls and doors, in image pixels. The third thing here the whole
-    /// room holds and no player's copy of it does, after `calibrations` and
+    /// Traced walls and doors, in image pixels. DM-only, like `calibrations` and
     /// `staged`.
     ///
-    /// Tracing a dungeon is half an hour of work and it belongs to a map that
-    /// will still be on the board next week, so this is the one thing on `Saved`
-    /// that would make the feature unusable if it were not persisted.
+    /// Tracing a dungeon is half an hour of work for a map that will still be on
+    /// the board next week. Without persistence the wall editor would be
+    /// unusable.
     pub walls: Vec<Wall>,
     /// Everywhere the party has explored, packed the way the wire packs it.
     ///
-    /// Only half the fog is here, and the half that is not is the interesting
-    /// one: `visible` is derived from where the tokens are standing and what
-    /// blocks sight between them, both of which this file already holds, so it is
-    /// recomputed on boot rather than restored. A stored one could only disagree
-    /// with the room it was stored beside — a door shut after the last save would
-    /// describe sight straight through it.
+    /// Only `revealed` is saved. `visible` is derived from where the tokens
+    /// stand and what blocks sight between them, both of which this file holds,
+    /// so it is recomputed on boot. A stored copy could only disagree with the
+    /// room: a door shut after the last save would show sight straight through
+    /// it.
     ///
-    /// Reusing `FogView` rather than a list of cell pairs is the same bargain the
-    /// wire makes: a few thousand characters laid out as a map instead of a few
-    /// thousand numbers. The file happens to record every explored cell as `o`,
-    /// since it is packed against an empty `visible`, and `fog::unpack` reads both
-    /// lit states the same way so neither side has to know that.
+    /// `FogView`, not a list of cell pairs, for the same reason as on the wire:
+    /// a few thousand characters laid out as a map instead of a few thousand
+    /// numbers. The file records every explored cell as `o`, since it is packed
+    /// against an empty `visible`, and `fog::unpack` reads both lit states the
+    /// same way, so neither side has to know that.
     pub revealed: FogView,
-    /// The DM's manual overrides, packed in their own alphabet — `#` forced dark,
+    /// The DM's manual overrides, packed in their own alphabet: `#` forced dark,
     /// `o` forced explored, `*` forced in sight.
     ///
-    /// The mirror image of the field above it. That one is half a derived thing
-    /// and records only the half that cannot be recomputed; this one is not
-    /// derived at all — it is what somebody decided, and no amount of walls and
-    /// tokens would give it back. It is the walls' neighbour on this file rather
-    /// than the fog's.
+    /// Unlike `revealed`, nothing about this is derived. It is what the DM
+    /// decided, and no walls or tokens could give it back, so it is restored
+    /// whole, like the walls.
     pub overrides: OverrideView,
     /// Whether the board writes each token's name under it. Room-wide, and the
     /// DM's to set.
     ///
-    /// **The one field here that carries a default of its own**, because the
-    /// container's is wrong for it. Every other field falls back to
-    /// `Saved::default()`, where a bool is `false` — so a file written before
-    /// this existed would load with every name gone from the board, which is a
-    /// change nobody asked for. `MapInfo::grid_px` is the same trap and `fog`
-    /// defaulting off is the same argument pointing the other way: the safe
-    /// default is whatever the room was already doing.
+    /// **Carries its own default, because the container's is wrong for it.**
+    /// Every field without one falls back to `Saved::default()`, where a bool is
+    /// `false`, so a file written before this field existed would load with
+    /// every name gone from the board. The safe default is whatever the room was
+    /// already doing: `MapInfo::grid_px` follows the same rule, and so does
+    /// `fog` defaulting off.
     #[serde(default = "shown")]
     pub show_names: bool,
     /// How the movement ruler charges a diagonal. Room-wide, and the DM's to set.
     ///
-    /// `show_names`' neighbour that does *not* need a default of its own, and the
-    /// reason is worth keeping beside the note above: `Diagonals::Equal` is what
-    /// the ruler did before this field existed, so the container's default and
-    /// "whatever the room was already doing" are the same value here. That is not
-    /// luck — the variants were ordered to make it true.
+    /// Needs no default of its own: `Diagonals::Equal` is what the ruler did
+    /// before this field existed, so the container's default is already what the
+    /// room was doing. The variants are ordered to make that true.
     pub diagonals: Diagonals,
     /// Whether everybody's pointer is drawn on everybody's board. Room-wide, and
     /// the DM's to set.
     ///
-    /// **The second field here to carry a default of its own**, and for a
-    /// different reason from `show_names` above: there was no cursor at all
-    /// before this existed, so "whatever the room was already doing" cannot
-    /// decide it. What decides it is that a feature switched off in every room
-    /// that predates it is a feature nobody finds — and the DM who does not want
-    /// it has one checkbox, where the DM who never learns it exists has nothing.
+    /// Defaults on for a different reason from `show_names`: rooms that predate
+    /// this had no cursors, so "whatever the room was already doing" can't
+    /// decide it. A feature switched off in every existing room is one nobody
+    /// finds. A DM who doesn't want it has one checkbox; a DM who never learns
+    /// it exists has nothing.
     #[serde(default = "shown")]
     pub show_cursors: bool,
     /// Whether the DM's own pointer is drawn on the players' boards. Room-wide,
     /// and the DM's to set.
     ///
-    /// **The third field here to carry a default of its own, and for the
-    /// narrower of the two reasons.** `show_names` defaults on because that is
-    /// what the board was already doing; this one defaults on because that is
-    /// what the room above it was already doing — a file written before this
-    /// existed came from a room where the DM's pointer went out with everyone
-    /// else's, and loading it as `false` would silently take a pointer off six
-    /// screens.
+    /// Defaults on because a file written before this field existed came from a
+    /// room where the DM's pointer went out with everyone else's. Loading it as
+    /// `false` would take a pointer off six screens without anyone asking.
     #[serde(default = "shown")]
     pub show_dm_cursor: bool,
     /// Everything the DM has prepared, keyed by map URL: the grid they
     /// calibrated, the walls they traced and the fog they painted.
     ///
-    /// The first thing here that is not part of any client's view of the room.
-    /// It is persisted because Slate only runs while the group is playing — an
-    /// in-memory table would be empty at the start of every session, which is
-    /// exactly when re-picking last week's map wants to find one.
+    /// Not part of any client's view of the room. Persisted because an
+    /// in-memory table would be empty after every restart, and re-picking last
+    /// week's map needs to find its entry.
     ///
     /// It grows by an entry per distinct map ever set and is never pruned. A
-    /// calibration is a hundred bytes; an entry carrying a fully traced dungeon
-    /// is nearer a couple of hundred kilobytes, so this is no longer free — and
-    /// it is still not worth a cap, because the thing a cap would drop is the
-    /// half-hour of tracing this milestone exists to keep. The bound that
-    /// matters is `MAX_WALLS`, applied where a wall is traced.
+    /// calibration is a hundred bytes; an entry with a fully traced dungeon is
+    /// nearer a couple of hundred kilobytes. It still isn't worth a cap, because
+    /// a cap would drop the half-hour of tracing this table exists to keep. The
+    /// bound that matters is `MAX_WALLS`, applied where a wall is traced.
     pub calibrations: HashMap<String, Prepared>,
     /// Everybody's scratchpad, the DM's among them.
     ///
-    /// **A list of pairs rather than the `HashMap<Owner, String>` the room
-    /// holds**, for two reasons that both come from this being a file. JSON has
-    /// no object key an adjacently tagged enum can be written as, so a map would
-    /// need `Owner` to have a string form invented for the disk and parsed back;
-    /// and a list can be *sorted*, which keeps the file from churning on every
-    /// write the way the token list does.
+    /// **A list of pairs, not the `HashMap<Owner, String>` the room holds**,
+    /// for two reasons that both come from this being a file. JSON has no object
+    /// key an adjacently tagged enum can be written as, so a map would need
+    /// `Owner` to have a string form invented for the disk and parsed back. And
+    /// a list can be sorted, which stops the file churning on every write the
+    /// way the token list does.
     ///
-    /// Persisted at all because "it is in the window and it survives a restart"
-    /// is the entire thing this is worth over the Notepad window everyone
-    /// already has open. Be accurate about how far that goes: the DM hosts the
-    /// server, so anyone holding this file can read every one of these. What the
-    /// room guarantees is narrower and is the only guarantee its architecture
-    /// makes about anything — **no client is ever sent somebody else's**.
+    /// Persisted because surviving a restart is what makes this worth more than
+    /// the Notepad window everyone already has open. That has a limit: the DM
+    /// hosts the server, so anyone holding this file can read every note. What
+    /// the room guarantees is narrower: no client is ever sent somebody else's.
     pub notes: Vec<SavedNote>,
     /// Which colour each player picked, by roster slug.
     ///
-    /// **A map, where the field above it had to become a list**, and the two
-    /// together are the whole reason either shape was chosen. `Owner` is an
-    /// adjacently tagged enum and JSON has no object key that can carry one, so
-    /// a scratchpad table had to be flattened into pairs and then sorted by hand
-    /// to stop the file churning. `PlayerId` is a newtype over `String`, so it is
-    /// a key already — and `BTreeMap` sorts itself, which is the other half for
-    /// free.
+    /// A map, where `notes` had to be a list. `Owner` is an adjacently tagged
+    /// enum and JSON has no object key that can carry one, so the scratchpads
+    /// are flattened into pairs and sorted by hand. `PlayerId` is a newtype over
+    /// `String`, so it is a valid key already, and `BTreeMap` sorts itself.
     ///
-    /// Persisted because a colour picked once at the start of a campaign that
-    /// had to be picked again every session would not be worth picking. It is the
-    /// second thing on this file a *player* wrote, after the notes, and the
-    /// second the undo ring is told to leave alone.
+    /// Persisted because a colour that had to be picked again every session
+    /// would not be worth picking. It is the second field here a player writes,
+    /// after the notes, and the second the undo ring is told to leave alone.
     pub colours: Colours,
     /// The picture in front of the table, or `None` for the board.
     ///
-    /// **The one field here that names an image and is not a map**, which is the
-    /// whole of why it is a field rather than a second `MapInfo`: there is
-    /// nothing to calibrate, nothing to trace and nothing to explore, so none of
-    /// the six fields above it fork.
+    /// Names an image but is not a map, which is why it is a string and not a
+    /// second `MapInfo`: there is nothing to calibrate, trace or explore, so no
+    /// other field here forks for it.
     ///
-    /// It needs no default of its own, unlike the three `shown` fields above
-    /// it. The container's `None` *is* "whatever the room was already
-    /// doing" — a file written before this existed came from a room with no
-    /// backdrop, and that is exactly what it loads as.
+    /// Needs no default of its own, unlike the three `shown` fields. A file
+    /// written before this existed came from a room with no backdrop, and the
+    /// container's `None` loads it that way.
     pub backdrop: Option<String>,
 }
 
 /// One person's scratchpad as it is written down.
 ///
-/// It never reaches the wire, which is why it lives here rather than in
-/// `protocol.rs` beside the types that do: what a client is sent is its own
-/// `String` and no owner at all, because the only box it may have is its own.
+/// It never reaches the wire, so it lives here, not in `protocol.rs`. A client
+/// is sent only its own `String` with no owner, because the only box it may
+/// have is its own.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(default)]
 pub struct SavedNote {
@@ -199,9 +172,8 @@ pub struct SavedNote {
 }
 
 /// The default for `Saved::show_names`, `Saved::show_cursors` and
-/// `Saved::show_dm_cursor`. Serde wants a
-/// function rather than a literal, and these are the three fields on this file
-/// whose safe default is not the container's.
+/// `Saved::show_dm_cursor`. Serde wants a function, not a literal, and these are
+/// the three fields here whose safe default is not the container's.
 fn shown() -> bool {
     true
 }
@@ -235,8 +207,8 @@ pub struct Store {
 impl Store {
     pub fn new(path: impl Into<PathBuf>) -> Self {
         let path = path.into();
-        // Appended to the whole path rather than swapping the extension, so it
-        // cannot collide with the save itself whatever the path looks like.
+        // Appended to the whole path, not swapped for the extension, so it
+        // can't collide with the save itself whatever the path looks like.
         let mut tmp = path.clone().into_os_string();
         tmp.push(".tmp");
         Self {
@@ -249,7 +221,7 @@ impl Store {
         &self.path
     }
 
-    /// `Ok(None)` means there is no save yet — a first boot, not a failure.
+    /// `Ok(None)` means there is no save yet: a first boot, not a failure.
     /// Anything else is an error the caller must not paper over: starting a
     /// fresh room on top of an unreadable one destroys it with the next write.
     pub async fn load(&self) -> Result<Option<Saved>, StoreError> {
@@ -300,7 +272,7 @@ mod tests {
         std::env::temp_dir().join(format!("{prefix}-{}-{n}", std::process::id()))
     }
 
-    /// A path under the OS temp dir, cleaned up when it drops — a leftover file
+    /// A path under the OS temp dir, cleaned up when it drops. A leftover file
     /// would make the next run of these tests pass for the wrong reason.
     struct TempFile(PathBuf);
 
@@ -339,9 +311,9 @@ mod tests {
                 }),
                 fog: true,
                 vision_ft: 45.0,
-                // Room, which is not the default, for the reason `show_names`
-                // below is off: a field that only ever round-trips its own
-                // default proves nothing about the round trip.
+                // Room, not the default: a field that only ever round-trips
+                // its own default proves nothing about the round trip. The
+                // other non-default values below are set for the same reason.
                 lighting: Lighting::Room,
             },
             staged: Some(StagedView {
@@ -350,8 +322,8 @@ mod tests {
                     grid_px: 96.0,
                     ..MapInfo::default()
                 },
-                // Traced on the Tuesday for the Saturday, which is the whole of
-                // why the staged slot holds these at all.
+                // Traced on the Tuesday for the Saturday, which is why the
+                // staged slot holds walls at all.
                 walls: vec![Wall {
                     id: WallId("w1".to_owned()),
                     from: Px { x: 0.0, y: 0.0 },
@@ -368,23 +340,18 @@ mod tests {
                 owner: Owner::Player(PlayerId::new("cleodara")),
                 img: "/assets/tokens/cleodara.png".to_owned(),
                 // Odd, so the position above is a cell centre the snapping rule
-                // would actually produce for a token this wide.
+                // would produce for a token this wide.
                 size: 3.0,
                 hidden: true,
                 hp: Some(Hp {
                     current: 14,
                     max: 31,
                 }),
-                // A lantern, and set rather than left `None` for the reason
-                // `lighting` above is `Room`: `None` is what a save written
-                // before this field existed decodes to, so a round trip that
-                // dropped it entirely would pass.
+                // A lantern. Not `None`, because that is what a missing field
+                // decodes to, so a round trip that dropped it would pass.
                 light_ft: Some(30.0),
-                // Two of them, and set for `light_ft`'s reason: an empty vec is
-                // what a save written before this field existed decodes to, so a
-                // round trip that dropped the list entirely would pass. Two
-                // rather than one, because a list is the first thing on a token
-                // that can round-trip its length wrongly.
+                // Not empty, for the same reason as `light_ft`. Two, not one,
+                // because a list can round-trip its length wrongly.
                 markers: vec![Marker::Red, Marker::Blue],
                 // Where the DM means this one to land when the map staged above
                 // becomes the board.
@@ -399,8 +366,8 @@ mod tests {
                 current: Some(TokenId::new("t1")),
                 round: 4,
             },
-            // One anchored to the token above, since that is the shape with a
-            // reference in it and so the one a round trip could break.
+            // Anchored to the token above, because an anchored shape holds a
+            // reference and so is the one a round trip could break.
             shapes: vec![Shape {
                 id: ShapeId("s1".to_owned()),
                 kind: ShapeKind::Circle,
@@ -409,8 +376,8 @@ mod tests {
                 by: Owner::Player(PlayerId::new("cleodara")),
                 color: "#ff8c42e6".to_owned(),
             }],
-            // One of each kind, since the door is the one that carries state
-            // inside its tag and so the one a round trip could flatten.
+            // One of each kind, because the door carries state inside its tag
+            // and so is the one a round trip could flatten.
             walls: vec![
                 Wall {
                     id: WallId("w1".to_owned()),
@@ -425,8 +392,8 @@ mod tests {
                     kind: WallKind::Door(true),
                 },
             ],
-            // A ragged shape rather than a filled rectangle, since the packing is
-            // row-major and a solid block would survive a transposed one.
+            // A ragged shape, not a filled rectangle: the packing is row-major,
+            // and a solid block would survive being transposed.
             revealed: crate::fog::pack(
                 &std::collections::HashSet::from([(2, 1), (3, 1), (4, 1), (4, 2), (-1, -1)]),
                 &std::collections::HashSet::new(),
@@ -439,19 +406,15 @@ mod tests {
                 ((9, 9), Override::Lit),
                 ((9, 10), Override::Explored),
             ])),
-            // Off, which is not the default — a field that only ever round-trips
-            // its own default proves nothing about the round trip.
+            // Off, not the default.
             show_names: false,
-            // Alternating, for the same reason and it is the same trap: `Equal`
-            // is what a missing field decodes to, so a round trip that lost this
-            // one entirely would pass.
+            // Alternating: `Equal` is what a missing field decodes to, so a
+            // round trip that lost this would pass.
             diagonals: Diagonals::Alternating,
-            // Off, and off for `show_names`' reason rather than `diagonals`':
-            // this one defaults to `true`, so a round trip that dropped it would
-            // come back on and pass a test written the other way round.
+            // Off: this defaults to `true`, so a round trip that dropped it
+            // would come back on.
             show_cursors: false,
-            // And off, for the field above's reason exactly: it defaults to
-            // `true` too, so a round trip that dropped it would come back on.
+            // Off, for the same reason as `show_cursors`.
             show_dm_cursor: false,
             calibrations: HashMap::from([(
                 "/uploads/digital-goblin-camp-1a2b3c4d.jpg".to_owned(),
@@ -465,15 +428,15 @@ mod tests {
                         fog: true,
                         vision_ft: 30.0,
                         lighting: Lighting::Room,
-                        // Isometric on purpose. The calibration rides on a
+                        // Isometric, because the calibration is under a
                         // `#[serde(flatten)]` and this is an internally-tagged
                         // enum, which is the combination worth round-tripping.
                         grid_shape: GridShape::Iso { ratio: 2.0 },
                     },
                     // A map the DM prepared and then loaded away from. The
-                    // calibration above rides on a flattened struct, so these
-                    // two sit beside its fields rather than under a key of their
-                    // own — which is the whole of why an older save still loads.
+                    // calibration above is flattened, so these two sit beside
+                    // its fields, not under a key of their own. That is why an
+                    // older save still loads.
                     walls: vec![Wall {
                         id: WallId("w2".to_owned()),
                         from: Px { x: 8.0, y: 8.0 },
@@ -486,10 +449,10 @@ mod tests {
                     )])),
                 },
             )]),
-            // Two of them, one the DM's and one a player's, because the pair is
-            // what a round trip could collapse: `Owner` is the only enum on this
-            // file used as a key, and a form that lost its variant would put
-            // both boxes on one person.
+            // One the DM's and one a player's, because a round trip could
+            // collapse the pair: `Owner` is the only enum here used as a key,
+            // and a form that lost its variant would give both boxes to one
+            // person.
             notes: vec![
                 SavedNote {
                     by: Owner::Dm,
@@ -500,14 +463,13 @@ mod tests {
                     text: "ask about the sigil".to_owned(),
                 },
             ],
-            // The field above's opposite shape, and the round trip has to prove
-            // it too: this one is a JSON *object* keyed by the slug, which only
-            // works because `PlayerId` is a newtype over `String`.
+            // Unlike `notes`, a JSON object keyed by the slug, which works only
+            // because `PlayerId` is a newtype over `String`. The round trip has
+            // to prove that too.
             colours: Colours::from([(PlayerId::new("cleodara"), 4), (PlayerId::new("saelyn"), 1)]),
-            // Set, which is not the default, for the reason `show_names` is off
-            // above — and here it is the whole of the field: `None` is what a
-            // dropped one decodes to, so a round trip that lost this entirely
-            // would look exactly like a DM who had put the picture away.
+            // Set, not the default. `None` is what a dropped field decodes to,
+            // so a round trip that lost this would look like a DM who had put
+            // the picture away.
             backdrop: Some("/uploads/backdrop-campfire-9f8e7d6c.jpg".to_owned()),
         }
     }
@@ -538,8 +500,8 @@ mod tests {
         let staged = loaded.staged.as_ref().expect("the staged map");
         assert_eq!(staged.map.url, "/uploads/next-week.jpg");
         assert_eq!(staged.map.grid_px, 96.0);
-        // And the dungeon traced on it, which is the half of this slot that has
-        // to survive a restart for the feature to be worth having.
+        // And the dungeon traced on it, which has to survive a restart for the
+        // staged slot to be worth having.
         assert_eq!(staged.walls.len(), 1);
         assert_eq!(
             staged.walls.first().map(|w| w.door()),
@@ -562,9 +524,9 @@ mod tests {
                 max: 31
             })
         );
-        // And so is the plan for where it lands on that staged map. A plan that
-        // did not survive the file would be lost exactly when it is wanted: the
-        // next map is prepared on one evening to be promoted on another.
+        // And so is the plan for where it lands on that staged map. The next
+        // map is prepared on one evening to be promoted on another, so a plan
+        // that didn't survive the file would be lost when it was needed.
         assert_eq!(token.staged_pos, Some(Pos { x: 8.5, y: 2.5 }));
         assert!(!token.staged_only);
 
@@ -572,22 +534,22 @@ mod tests {
         assert_eq!(loaded.initiative.current, Some(TokenId::new("t1")));
         assert_eq!(loaded.initiative.entries.len(), 1);
 
-        // Half an hour of tracing, and the map it belongs to will still be on
-        // the board next week. Losing this to a restart would make the wall
-        // editor something nobody used twice.
+        // Half an hour of tracing, for a map that will still be on the board
+        // next week. Losing it to a restart would make the wall editor
+        // something nobody used twice.
         assert_eq!(loaded.walls.len(), 2);
         let door = loaded.walls.get(1).expect("the door");
         assert_eq!(door.from, Px { x: 64.0, y: 320.0 });
-        // Image pixels, not cells — invariant 1's exception. A wall stored in
-        // grid units slides off the art the moment the grid is corrected.
+        // Image pixels, not cells: invariant 1's exception. A wall stored in
+        // grid units slides off the art as soon as the grid is corrected.
         assert_eq!(door.to, Px { x: 64.0, y: 384.0 });
         // The open flag lives inside the tag, so a round trip that flattened
-        // `WallKind` would come back as masonry rather than as a shut door.
+        // `WallKind` would come back as masonry, not as an open door.
         assert_eq!(door.kind, WallKind::Door(true));
         assert_eq!(door.door(), Some(true));
 
-        // Slate is off between sessions, so a calibration that did not survive
-        // the file would never be found again.
+        // A calibration that didn't survive the file would be gone after the
+        // next restart.
         let remembered = loaded
             .calibrations
             .get("/uploads/digital-goblin-camp-1a2b3c4d.jpg")
@@ -601,9 +563,9 @@ mod tests {
             (11.0, -6.0)
         );
         assert_eq!(remembered.calibration.grid_color, "#00ff00ff");
-        // And the rest of the shelf. The tracing is what makes this table worth
-        // keeping across a restart at all — a calibration is a minute's work and
-        // a walled dungeon is an evening's.
+        // And the rest of the shelf. The tracing is the main reason to keep
+        // this table across a restart: a calibration is a minute's work and a
+        // walled dungeon is an evening's.
         assert_eq!(remembered.walls.len(), 1);
         assert_eq!(
             remembered.walls.first().expect("the remembered wall").to,
@@ -636,10 +598,10 @@ mod tests {
              not a second reading of the first"
         );
 
-        // Surviving a restart is the whole of what a scratchpad is worth over
-        // the Notepad window everyone already has open. Two boxes, kept apart:
-        // `Owner` is the only enum here used as a key, and a form that lost the
-        // variant would hand both of these to one person.
+        // Surviving a restart is what a scratchpad is worth over the Notepad
+        // window everyone already has open. Two boxes, kept apart: `Owner` is
+        // the only enum here used as a key, and a form that lost the variant
+        // would give both of these to one person.
         assert_eq!(loaded.notes.len(), 2);
         let mine = |by: &Owner| {
             loaded
@@ -654,9 +616,8 @@ mod tests {
             Some("ask about the sigil")
         );
 
-        // The other half of the same argument, and the reason this table is a
-        // map where the one above it is a list: a slug is a legal JSON key, so
-        // there is no encoding here to lose a name in.
+        // This table is a map where `notes` is a list because a slug is a
+        // legal JSON key, so there is no encoding here to lose a name in.
         assert_eq!(loaded.colours.get(&PlayerId::new("cleodara")), Some(&4));
         assert_eq!(loaded.colours.get(&PlayerId::new("saelyn")), Some(&1));
     }
@@ -806,16 +767,15 @@ mod tests {
 
     #[tokio::test]
     async fn a_calibration_saved_before_the_shelf_loads_beside_empty_walls() {
-        // Invariant 2 on the one field milestone 31 changed the shape of, and it
-        // is worth its own test because the failure is total and silent: every
-        // map the DM has ever calibrated lives in this table, and an entry that
-        // stopped deserializing would empty all of it on an upgrade.
+        // Invariant 2 on a field whose shape changed. It gets its own test
+        // because the failure is total and silent: every map the DM has ever
+        // calibrated lives in this table, and an entry that stopped
+        // deserializing would empty all of it on an upgrade.
         //
-        // The entry here is what the room wrote before there was a shelf — the
-        // calibration's own fields, with no `walls` or `overrides` beside them.
-        // It loads because `Prepared` flattens the calibration rather than
-        // nesting it under a key, which is `StagedView`'s trick for the same
-        // reason.
+        // The entry here is an older save's: the calibration's own fields, with
+        // no `walls` or `overrides` beside them. It loads because `Prepared`
+        // flattens the calibration instead of nesting it under a key, as
+        // `StagedView` does for the same reason.
         let file = TempFile::new();
         std::fs::write(
             &file.0,
@@ -862,7 +822,7 @@ mod tests {
 
     #[tokio::test]
     async fn saving_creates_the_directory_it_was_pointed_at() {
-        // The Fedora box will point SLATE_STATE somewhere under /var/lib that
+        // A deployment may point SLATE_STATE somewhere under /var/lib that
         // nothing has created yet.
         let dir = unique("slate-test-dir");
         let store = Store::new(dir.join("nested").join("room.json"));

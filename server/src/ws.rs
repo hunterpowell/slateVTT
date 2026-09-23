@@ -1,8 +1,8 @@
 //! One WebSocket connection: split the socket, run a task on each half.
 //!
-//! recv task  — WS stream -> deserialize -> push (ClientId, ClientMsg) to the room
-//! send task  — this client's mpsc::Receiver -> serialize -> WS sink, and a ping
-//!              on a timer so a quiet board does not look like a dead connection
+//! recv task: WS stream -> deserialize -> push (ClientId, ClientMsg) to the room
+//! send task: this client's mpsc::Receiver -> serialize -> WS sink, and a ping
+//!            on a timer so a quiet board does not look like a dead connection
 
 use std::time::Duration;
 
@@ -19,13 +19,13 @@ use crate::room::{CLIENT_MAILBOX, RoomCmd, RoomHandle};
 /// How often an idle socket is pinged.
 ///
 /// Nothing crosses a quiet board in either direction, and a proxy that sees no
-/// traffic for long enough closes the connection — which through a Cloudflare
-/// Tunnel left a DM planning between fights refreshing the page. On loopback
-/// nothing did that, which is why this was not needed until Slate was hosted.
+/// traffic for long enough closes the connection. Through the Cloudflare Tunnel
+/// that drops a DM who is planning between fights. On loopback nothing closes
+/// an idle socket, so the problem only shows once Slate is hosted.
 ///
 /// A browser answers a ping at the protocol level, so this costs the client
-/// nothing and adds no message to the wire format. Well under any plausible
-/// idle timeout rather than tuned to a particular one.
+/// nothing and adds no message to the wire format. The interval is well under
+/// any plausible idle timeout, not tuned to a particular one.
 const KEEPALIVE: Duration = Duration::from_secs(30);
 
 pub async fn handle(socket: WebSocket, room: RoomHandle, client: ClientId) {
@@ -49,7 +49,7 @@ pub async fn handle(socket: WebSocket, room: RoomHandle, client: ClientId) {
         // A stalled sink must not bank ticks and then fire a burst of pings at
         // whatever unblocked it.
         keepalive.set_missed_tick_behavior(MissedTickBehavior::Delay);
-        // The first tick is immediate, so spend it here rather than opening
+        // The first tick is immediate, so spend it here instead of opening
         // every connection with a ping.
         keepalive.tick().await;
 
