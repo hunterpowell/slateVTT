@@ -1,8 +1,8 @@
 // The wire format, mirroring server/src/protocol.rs. Field names are what serde
-// emits, so they stay snake_case here rather than being renamed on the way out.
+// emits, so they stay snake_case here instead of being renamed on the way out.
 //
-// These types are the boundary. Nothing outside net.ts and scene.ts should
-// touch them — the rest of the client works in Scene/Token/Camera.
+// Nothing outside net.ts and scene.ts should touch these types. The rest of
+// the client works in Scene/Token/Camera.
 
 /** Adjacently tagged on the Rust side: `{"kind":"player","id":"saelyn"}`. */
 export type Owner = { kind: 'dm' } | { kind: 'player'; id: string };
@@ -10,10 +10,10 @@ export type Owner = { kind: 'dm' } | { kind: 'player'; id: string };
 /**
  * Which palette entry each player picked, keyed by roster slug.
  *
- * A plain object because that is what a `BTreeMap<PlayerId, u8>` serialises to
- * — `PlayerId` is a newtype over a string, so it is a legal JSON key, which is
- * exactly what `Owner` is not. A slug with no entry never picked, and
- * `colourOf` falls back to the default for that roster position.
+ * A plain object because that is what a `BTreeMap<PlayerId, u8>` serialises
+ * to. `PlayerId` is a newtype over a string, so it is a legal JSON key, which
+ * `Owner` is not. A slug with no entry never picked, and `colourOf` falls back
+ * to the default for that roster position.
  *
  * The numbers index `PLAYER_HUES` in `pings.ts`, which is the only place the
  * hues themselves exist. The server holds the bound and not the list.
@@ -33,8 +33,8 @@ export interface WireMapInfo {
    *  per URL with the rest of the calibration: a dungeon wants fog and the
    *  meadow outside it does not. */
   fog: boolean;
-  /** How far a player-owned token sees, in feet. One radius for the map —
-   *  nothing here knows the word "darkvision". Only read when `fog` is on. */
+  /** How far a player-owned token sees, in feet. One radius for the map, with
+   *  no notion of darkvision. Only read when `fog` is on. */
   vision_ft: number;
   /** How this map's sight is worked out: line of sight from each token, or the
    *  room each token is standing in. Remembered per URL with the two above, so
@@ -48,22 +48,21 @@ export interface WireMapInfo {
 }
 
 /**
- * Which question a fogged map asks — `Lighting` on the server.
+ * How a fogged map works out sight. `Lighting` on the server.
  *
- * The client never answers it. It sets it, it shows it in the panel, and what
- * comes back is the same `WireFog` either way: the mode changes what the party
- * can see and not what any of it means, which is why nothing that draws the
- * board reads this.
+ * The client only sets it and shows it in the panel. What comes back is the
+ * same `WireFog` either way: the mode changes which cells the party can see,
+ * not what a cell means, so nothing that draws the board reads this.
  */
 export type Lighting = 'dynamic' | 'room';
 
 /**
- * The shape of one cell — `GridShape` on the server.
+ * The shape of one cell. `GridShape` on the server.
  *
- * An isometric grid is an affine image of a square one, which is why this is a
- * descriptor rather than a second coordinate system. `gridBasis` in `scene.ts`
- * turns it into the two cell axes and is the only place either variant is read;
- * `fog::basis` in Rust is its twin and the two must agree exactly.
+ * An isometric grid is an affine transform of a square one, so this is a
+ * descriptor and not a second coordinate system. `gridBasis` in `scene.ts`
+ * turns it into the two cell axes and is the only place either variant is read.
+ * `fog::basis` in Rust does the same on the server, and the two must agree.
  *
  * Flat: a diamond lattice, not a 2.5D renderer. Nothing here has a height.
  */
@@ -76,13 +75,12 @@ export type WireGridShape =
  * What the party can see and what they have explored, packed one character per
  * cell.
  *
- * A rectangle of characters rather than an array of per-cell values, because the
- * frames in devtools are meant to be readable and a few thousand numbers is not
- * one. The rectangle is the bounding box of everything explored, so **every cell
- * outside it is dark** and an unexplored map arrives as nothing at all.
+ * A rectangle of characters, not an array of per-cell values, so frames stay
+ * readable in devtools; a few thousand numbers are not. The rectangle is the
+ * bounding box of everything explored, so **every cell outside it is dark** and
+ * an unexplored map arrives as an empty rectangle.
  *
- * `null` in place of one of these is a map with fog turned off — and, like
- * `staged` being null, it is indistinguishable from a map that has none.
+ * `null` in place of one of these is a map with fog turned off.
  */
 export interface WireFog {
   /** Cell coordinates of the rectangle's top-left corner. */
@@ -97,14 +95,13 @@ export interface WireFog {
 /**
  * The cells the DM has overridden by hand, packed the same way the fog is.
  *
- * A different alphabet and the opposite audience. `#` forced dark, `o` forced
- * explored, `*` forced in sight, `-` no override — and unlike the fog, the
- * rectangle has holes in it, because it is bounded by the painted cells rather
- * than describing every cell inside its own box.
+ * A different alphabet: `#` forced dark, `o` forced explored, `*` forced in
+ * sight, `-` no override. Unlike the fog, the rectangle has holes in it: it is
+ * the bounding box of the painted cells, and every other cell inside it is `-`.
  *
- * **Empty for a player, always**, exactly as `walls` is: this is what the DM
- * decided, and `WireFog` above is the shadow the table gets to see. Empty is
- * therefore both "nothing painted" and "you are not the DM".
+ * **Empty for a player, always**, as `walls` is. This is what the DM decided;
+ * `WireFog` above is the result the table is sent. Empty is therefore both
+ * "nothing painted" and "you are not the DM".
  */
 export interface WireOverrides {
   x: number;
@@ -114,9 +111,8 @@ export interface WireOverrides {
   cells: string;
 }
 
-/** What the DM's brush is loaded with. `null` hands the cells back to the rays —
- *  "no override" is an absence rather than a fourth state, on the wire as in the
- *  room. */
+/** What the DM's brush paints. `null` hands the cells back to the raycast: "no
+ *  override" is an absence, not a fourth state, on the wire as in the room. */
 export type FogPaint = 'explored' | 'lit' | 'dark';
 
 export interface WireRect {
@@ -132,8 +128,8 @@ export interface Hp {
   max: number;
 }
 
-/** A position in grid units. Its own type so that "half a position" cannot be
- *  sent — the same reason `Hp` keeps its pair together. */
+/** A position in grid units. Its own type so that half a position can't be
+ *  sent, which is also why `Hp` keeps its pair together. */
 export interface WirePos {
   x: number;
   y: number;
@@ -142,23 +138,22 @@ export interface WirePos {
 /**
  * A mark the DM puts on a creature: six colours, and `dead`.
  *
- * A closed set, checked by serde on the Rust side - an unknown marker does not
- * deserialize. What "red" means tonight is between the DM and the table: a
- * member called `poisoned` would be the 5e rules knowledge this project
- * refuses, and the hues live in `MARKER_HUES` in `markers.ts` because the
- * server has no opinion about what any of them looks like.
+ * A closed set, checked by serde on the Rust side: an unknown marker does not
+ * deserialize. What "red" means tonight is up to the DM and the table. A
+ * member called `poisoned` would be 5e rules knowledge, which is out of scope.
+ * The hues live in `MARKER_HUES` in `markers.ts` because the server doesn't
+ * know what any of them looks like.
  *
- * **`dead` is the one member that is not a colour**, and the rule that admits
- * it is that nothing in Slate knows what a mark *means*: it draws an X across
- * the portrait and stops there. The creature still moves, still holds its
- * initiative row, still keeps its total. See *Markers* in `docs/tokens.md`.
+ * `dead` is the one member that is not a colour. It is allowed because nothing
+ * in Slate acts on a mark: it draws an X across the portrait and nothing more.
+ * The creature still moves, keeps its initiative row and keeps its total. See
+ * *Markers* in `docs/tokens.md`.
  */
 export type Marker = 'red' | 'orange' | 'yellow' | 'green' | 'blue' | 'purple' | 'dead';
 
-/** A token as *this* client may see it — `TokenView` on the Rust side, not
- *  `Token`. A token the table cannot see never arrives at all, and `hp` and the
- *  two staged fields are redacted out on the way to anyone but the DM, so the
- *  two shapes genuinely differ. */
+/** A token as *this* client may see it: `TokenView` on the Rust side, not
+ *  `Token`. A token the table cannot see never arrives at all, and `hp`,
+ *  `light_ft` and the two staged fields are blanked for anyone but the DM. */
 export interface WireToken {
   id: string;
   name: string;
@@ -168,51 +163,51 @@ export interface WireToken {
   owner: Owner;
   /** Site-relative, or empty for a token the client draws as a named disc. */
   img: string;
-  /** Width and height in grid cells. One of 0.5, 1, 2, 3, 4 — see TOKEN_SIZES. */
+  /** Width and height in grid cells. One of 0.5, 1, 2, 3, 4; see TOKEN_SIZES. */
   size: number;
   /** What the DM has marked this creature with.
    *
-   *  **The same value for every recipient**, alone among the fields below it: a
-   *  mark nobody at the table can see is not a mark. There is nothing to redact
+   *  The same value for every recipient, unlike the fields below it: a mark
+   *  nobody at the table can see is not a mark. There is nothing to redact
    *  here because a token the table cannot see never arrives at all. */
   markers: Marker[];
   /** The table cannot see this token. Only ever true on a DM connection: a
-   *  player is not sent one, so their copy is false by construction. */
+   *  hidden token is not sent to a player, so every token a player holds has
+   *  this false. */
   hidden: boolean;
-  /** Null for a player, always — and also null for a DM keeping no total on
-   *  this creature. The two are indistinguishable from here, deliberately. */
+  /** Null for a player, always, and also null for a DM keeping no total on
+   *  this creature. The two can't be told apart from here. */
   hp: Hp | null;
   /** How far this token lights the board, in feet, or null for one carrying no
    *  light of its own.
    *
-   *  Null for a player, always, and they lose nothing by it: what a light does
-   *  reaches them as fog, which is how the walls reach them too. Also null for
-   *  a DM's token that carries none, indistinguishable the way `hp` is. */
+   *  Null for a player, always, and they lose nothing by it: what a light
+   *  does reaches them as fog, as the walls do. Also null for a DM's token
+   *  that carries none, which can't be told apart, as with `hp`. */
   light_ft: number | null;
   /** Where this token lands when the staged map is promoted, or null for one
    *  staying put. Null for a player always: a plan is a cell on a map they have
    *  not been shown. */
   staged_pos: WirePos | null;
-  /** Not on the live board yet — built on the map the DM is preparing. Only
-   *  ever true on a DM connection, and false for a player by construction:
-   *  they are not sent the token at all. */
+  /** Not on the live board yet: built on the map the DM is preparing. Only
+   *  ever true on a DM connection. A player is not sent such a token at all,
+   *  so every token a player holds has this false. */
   staged_only: boolean;
 }
 
-/** The four things anyone can draw. A closed set on the Rust side too — an
+/** The four things anyone can draw. A closed set on the Rust side too: an
  *  unknown kind does not deserialize. */
 export type ShapeKind = 'line' | 'circle' | 'cone' | 'rect';
 
 /** Where a shape's first point is: a cell, or a token it follows.
  *
- *  Adjacently tagged like `Owner`, and an enum for the same reason `Owner` is
- *  one — an anchored shape carrying a position nothing reads is a field that can
- *  go stale. */
+ *  Adjacently tagged like `Owner`. An enum, because an anchored shape carrying
+ *  a position nothing reads would be a field that can go stale. */
 export type WireOrigin = { kind: 'point'; at: WirePos } | { kind: 'token'; at: string };
 
-/** A drawn shape. Unlike a token this is the server's own type rather than a
- *  view of it: there is nothing on it one client may hold and another may not.
- *  A shape the table cannot see is absent, not redacted. */
+/** A drawn shape. Unlike a token this is the server's own type, not a view of
+ *  it: there is nothing on it one client may hold and another may not. A shape
+ *  the table cannot see is absent, not redacted. */
 export interface WireShape {
   id: string;
   kind: ShapeKind;
@@ -226,22 +221,22 @@ export interface WireShape {
   color: string;
 }
 
-/** A point in image pixels — the other coordinate space, and its own type for
- *  the reason the Rust side has one: a wall traces the art, so one stored in
- *  cells would slide off it the moment the grid was corrected. */
+/** A point in image pixels, the other coordinate space. Its own type for the
+ *  reason the Rust side has one: a wall traces the art, so one stored in cells
+ *  would drift off it as soon as the grid was recalibrated. */
 export interface WirePx {
   x: number;
   y: number;
 }
 
-/** Masonry, or a way through it and whether it stands open.
+/** A solid wall, or a door and whether it is open.
  *
- *  Adjacently tagged like `Owner`, and an enum rather than two booleans for the
- *  reason `WireOrigin` is one: "a solid wall that is open" cannot be said. */
+ *  Adjacently tagged like `Owner`. An enum and not two booleans, so "a solid
+ *  wall that is open" can't be represented. */
 export type WireWallKind = { kind: 'solid' } | { kind: 'door'; open: boolean };
 
-/** One traced segment, in image pixels. Flat segments rather than the runs they
- *  are drawn as — the run is how the DM authors, not what the map holds.
+/** One traced segment, in image pixels. The room stores single segments, not
+ *  the runs the DM traces them as.
  *
  *  A player is never sent one of these. There is no redacted form: the list
  *  arrives whole or not at all. */
@@ -269,138 +264,130 @@ export interface Initiative {
  * The staged slot: the map the DM is preparing and everything they have
  * prepared *on* it.
  *
- * One bundle rather than three fields, because the three arrive, sweep and
- * promote together — and because one `null` then withholds all of it. There is
- * no second staged field for a later milestone to add and forget to filter.
+ * One bundle and not three fields, because the three arrive, sweep and promote
+ * together, and one `null` withholds all of it. Don't add a second staged
+ * field beside it: it would be one more thing to remember to filter.
  *
- * The map's own fields sit directly on this rather than under a `map` key,
- * which is `#[serde(flatten)]` on the server and is what keeps a save written
- * before any of this existed loading its staged map.
+ * The map's own fields sit directly on this, not under a `map` key. That is
+ * `#[serde(flatten)]` on the server, and it keeps older saves loading their
+ * staged map.
  */
 export interface WireStaged extends WireMapInfo {
-  /** Traced on the next dungeon before the table has ever seen it. Never sent
-   *  to a player — but then neither is anything else here. */
+  /** Traced on the next map before the table has seen it. Never sent to a
+   *  player, like everything else here. */
   walls: WireWall[];
-  /** Painted on it by hand, and handed to the party the moment it is promoted.
-   *  There is no staged *fog* under this: what the DM is deciding is what the
-   *  party will be given, not a preview of what they can see. */
+  /** Painted by hand, and applied to the party's fog when the map is promoted.
+   *  There is no staged fog under this: the DM is deciding what the party will
+   *  be given, not previewing what they can see. */
   overrides: WireOverrides;
 }
 
 export interface WireRoomView {
   map: WireMapInfo;
-  /** The DM's next map, its masonry and its paint. Always null for a player —
-   *  and null also means nothing is staged, so the two are indistinguishable
-   *  from here. That is deliberate: the server withholds it rather than sending
-   *  it and asking us not to draw. */
+  /** The DM's next map, its walls and its paint. Always null for a player, and
+   *  null also means nothing is staged, so the two can't be told apart from
+   *  here. The server withholds it; it doesn't send it and rely on us not to
+   *  draw it. */
   staged: WireStaged | null;
   tokens: WireToken[];
   initiative: Initiative;
   /** Draw order, already filtered: a shape anchored to a token we cannot see
-   *  never arrives, because an aura on a hidden monster is its position. */
+   *  never arrives, because an aura on a hidden monster gives away its
+   *  position. */
   shapes: WireShape[];
-  /** The traced walls and doors — empty for a player, always. Empty is also
-   *  what a map nobody has traced looks like, so the two are indistinguishable
-   *  from here, exactly as `staged` being null is. */
+  /** The traced walls and doors. Empty for a player, always. Empty is also
+   *  what a map nobody has traced looks like, so the two can't be told apart
+   *  from here, as with `staged`. */
   walls: WireWall[];
   /** What the party can see, or null on an unfogged map.
    *
-   *  The same value for everyone, unlike everything above it — fog is
-   *  party-shared, so there is one answer. The DM is sent it so their own board
-   *  can show, faintly, what the table is looking at. It is the walls one line
-   *  up that stay theirs alone; a player reads the geometry off the edges of
-   *  this instead, which is the whole shape of the feature. */
+   *  The same value for everyone, unlike everything above it: fog is
+   *  party-shared, so there is one answer. The DM is sent it so their own
+   *  board can show, faintly, what the table is looking at. The walls stay
+   *  the DM's alone; a player can only infer the geometry from the edges of
+   *  this. */
   fog: WireFog | null;
-  /** The cells the DM has painted over the fog by hand — and empty for a player,
-   *  always, like the walls three lines up rather than like the fog between
-   *  them. The walls and this are what the DM authored; the fog is the shadow
-   *  both of them cast. */
+  /** The cells the DM has painted over the fog by hand. Empty for a player,
+   *  always, like the walls and unlike the fog. The walls and this are what the
+   *  DM authored; the fog is what they produce. */
   overrides: WireOverrides;
   /** Whether the board writes each token's name under it.
    *
-   *  The same value for everyone, like `fog` and unlike the two fields above it:
-   *  the DM flips it, and the point of it is that every board is labelled the
-   *  same way afterwards. Room-wide, not per map — swapping the dungeon is not a
-   *  request to relabel the tokens standing on it. */
+   *  The same value for everyone, like `fog`: the DM flips it, and every board
+   *  is labelled the same way afterwards. Room-wide, not per map, because
+   *  loading a new map shouldn't relabel the tokens standing on it. */
   show_names: boolean;
   /** How the movement ruler charges a diagonal.
    *
-   *  The field above it in every respect: the DM's to set, everyone's to hold,
-   *  the same value for every client. A counting convention only half the table
-   *  holds is worse than either convention. */
+   *  Like `show_names`: set by the DM, the same value for every client. A
+   *  counting convention only half the table holds is worse than either
+   *  convention. */
   diagonals: Diagonals;
   /** Whether everybody's pointer is drawn on everybody's board.
    *
-   *  The third of these and the same value for everyone, with one job the other
-   *  two do not have: **we read it to decide whether to send**. A page that
-   *  joined without it would ship its own pointer at 30Hz into a room that has
-   *  switched cursors off. */
+   *  The same value for everyone, and it also decides whether this client
+   *  sends its own pointer. **A page that ignored it would send its pointer at
+   *  30Hz into a room that has switched cursors off.** */
   show_cursors: boolean;
   /** Whether the DM's own pointer is drawn on the players' boards.
    *
-   *  The narrow half of the switch above, and the same value for everyone like
-   *  the rest of them — but with none of that second job: a player is sent this
-   *  and does nothing with it, because the room drops the DM's frames itself.
-   *  What reads it back is the DM's own table panel. */
+   *  The narrower half of the switch above, the same value for everyone, but it
+   *  changes nothing about sending: a player is sent this and ignores it,
+   *  because the room drops the DM's frames itself. Only the DM's table panel
+   *  reads it. */
   show_dm_cursor: boolean;
   /** The picture the table is looking at instead of the board, or null for the
    *  board.
    *
-   *  The fourth of these, and the same value for everyone for the plainest
-   *  version of the reason: the DM decides what is on the screens and there is
-   *  nothing here being kept from anybody. Not a `WireMapInfo` and never one —
-   *  there is no grid to draw on it, nothing standing on it and nothing traced
-   *  across it, which is exactly why the board underneath survives it. */
+   *  The same value for everyone: the DM decides what is on the screens and
+   *  nothing here is kept from anybody. Never a `WireMapInfo`: there is no grid
+   *  on it, nothing standing on it and nothing traced across it, which is why
+   *  the board underneath is left untouched. */
   backdrop: string | null;
   /** The track the room is playing, or null for silence.
    *
-   *  The fifth of these and the same value for everyone, for the fourth's
-   *  reason. It is on the view and not only on the delta because a reconnect is
-   *  a fresh join: a dropped socket reloads this page, so without it somebody
-   *  who blinked comes back silent while the table is still listening. */
+   *  The same value for everyone, for the backdrop's reason. It is on the view
+   *  and not only on the delta because a reconnect is a fresh join: a dropped
+   *  socket reloads this page, and without it that person would come back
+   *  silent while the table is still listening. */
   audio: string | null;
   /** Who is connected right now, the DM among them.
    *
-   *  The same value for everyone, like the two fields above it: there is no
-   *  permission here and nothing to withhold. A table that cannot tell whether
-   *  the DM is still on the other end of the line is what it exists for.
+   *  The same value for everyone: there is no permission here and nothing to
+   *  withhold. It lets the table tell whether the DM is still connected.
    *
-   *  `Owner` rather than `RosterSlot` — which is the difference between this and
-   *  the picker's list, since a slot cannot say "the DM". One entry per person
-   *  and not per socket: somebody on a laptop and a phone is one name. */
+   *  `Owner` and not `RosterSlot`, since a slot can't represent the DM. One
+   *  entry per person, not per socket: somebody on a laptop and a phone is one
+   *  name. */
   here: Owner[];
   /** What colour each player picked for themselves.
    *
-   *  **Public, unlike the scratchpad below**, and the first thing here a player
-   *  writes that everybody else is sent. That is the axis a colour differs from
-   *  a note on: everyone has to draw everyone else's rings, so a colour only its
-   *  owner could see would not be a colour. */
+   *  Public, unlike the scratchpad below, and the first thing a player writes
+   *  that everybody else is sent. Everyone has to draw everyone else's rings,
+   *  so a colour only its owner could see would be useless. */
   colours: Colours;
   /** What the DM's undo would take back, or null for nothing to take.
    *
-   *  **Null on every player connection**, which is the walls' rule rather than
-   *  the fog's — and it is also what an untouched room says, so the two are
-   *  indistinguishable from here. A label rather than a depth because that is
-   *  all the button needs: with no redo, a press has to name its victim before
-   *  it takes it. */
+   *  Null on every player connection, like the walls. It is also what an
+   *  untouched room says, so the two can't be told apart from here. A label and
+   *  not a depth because that is all the button needs: with no redo, the
+   *  button has to say what a press would undo before it is pressed. */
   undo: string | null;
   /** What has been said this session that we are party to.
    *
-   *  **The one field here that is different text per client rather than the
-   *  same text with rows dropped.** Two players hold two different
-   *  conversations, because a whisper only exists in the copies of the two
-   *  people at either end of it.
+   *  **Different content per client, not the same list with rows dropped.**
+   *  Two players hold two different conversations, because a whisper is only
+   *  in the copies of the two people at either end of it.
    *
    *  Session memory on the server: it is never written to disk, so it is empty
    *  on the first join after a restart and never carries last week's game. */
   chat: WireChatLine[];
   /** Our own scratchpad, and never anybody else's.
    *
-   *  **The second field here that is content per client rather than the room's
-   *  copy with rows dropped**, and the first where the DM's is narrower than the
-   *  room's. There is no view of this that carries somebody else's box — not for
-   *  the DM either, which is the point of it. Empty when nothing has been
-   *  written and empty for a client with no slot claimed, indistinguishably. */
+   *  **The second field that differs per client**, and the first where the DM
+   *  is sent less than the room holds. No view of this carries somebody else's
+   *  box, the DM's view included. Empty when nothing has been written and for a
+   *  client with no slot claimed; the two can't be told apart. */
   notes: string;
 }
 
@@ -409,9 +396,9 @@ export interface WireRoomView {
  *
  * `equal` is "5-5-5": every step costs one cell whichever way it goes.
  * `alternating` is "5-10-5": the second diagonal of a reading costs double, and
- * every other one after it. Counted from the start of each measurement rather
- * than across a turn — nothing here holds a movement budget, so the first
- * diagonal of anything anyone measures costs five.
+ * every other one after it. Counted from the start of each measurement, not
+ * across a turn: nothing here holds a movement budget, so the first diagonal
+ * of anything anyone measures costs five.
  *
  * It moves the ruler and nothing else. A drawn circle and a token's vision are
  * geometry, and stay Euclidean on both settings.
@@ -419,15 +406,15 @@ export interface WireRoomView {
 export type Diagonals = 'equal' | 'alternating';
 
 /**
- * Where something typed is going — `ChatTo` on the server.
+ * Where something typed is going. `ChatTo` on the server.
  *
  * **Two destinations for anyone and never a third.** A player says it to the
  * table or to the DM; the DM says it to the table or to one player. There is no
- * player-to-player variant, which is the whole boundary of the feature and the
- * reason the noun is "whisper and shout" rather than "chat".
+ * player-to-player variant. That limit is the feature's scope boundary, and
+ * why it is called "whisper and shout" and not "chat".
  *
- * Adjacently tagged like `Owner`, which it deliberately is not: an owner is a
- * person, and this is a person *or* everybody.
+ * Adjacently tagged like `Owner`, but a separate type: an owner is a person,
+ * and this is a person *or* everybody.
  */
 export type ChatTo = { kind: 'table' } | { kind: 'dm' } | { kind: 'player'; id: string };
 
@@ -435,21 +422,21 @@ export type ChatTo = { kind: 'table' } | { kind: 'dm' } | { kind: 'player'; id: 
  * One thing somebody said.
  *
  * It carries `to` as well as `by` because a whisper has to look like one on the
- * screens of both people party to it — the DM's log holds their whisper to
+ * screens of both people party to it. The DM's log holds their whisper to
  * Saelyn and Saelyn's whisper back, and only `to` tells them apart.
  *
  * Never filtered on this side. What arrives is what we are party to; the server
- * decided that, and the whole of what this client does with `to` is style it.
+ * decided that, and this client only uses `to` for styling.
  */
 export interface WireChatLine {
   by: Owner;
   to: ChatTo;
   text: string;
-  /** The room threw this rather than somebody typing it.
+  /** The server rolled this; nobody typed it.
    *
-   *  Styled, never filtered on — `to`'s job exactly. A witnessed number and a
-   *  claimed one have to be tellable apart or the server doing the throwing
-   *  bought nothing anybody can see. */
+   *  Used for styling, never filtering, like `to`. A number the server rolled
+   *  and one a player typed have to look different, or having the server roll
+   *  gains nothing the table can see. */
   rolled: boolean;
 }
 
@@ -473,7 +460,7 @@ export interface Welcome {
   player_id: string | null;
   state: WireRoomView;
   /** The cast list, so the DM's token panel can offer players by name. Not who
-   *  is connected — that is `RosterSlot`, and only the picker cares. */
+   *  is connected: that is `RosterSlot`, and only the picker uses it. */
   roster: RosterEntry[];
 }
 
@@ -492,148 +479,142 @@ export type ServerMsg =
   | { type: 'choose_identity'; roster: RosterSlot[] }
   | Welcome
   | TokenMoved
-  /** Created or edited — an id we have never seen is the creation. */
+  /** Created or edited. An id we have never seen is a creation. */
   | { type: 'token_changed'; token: WireToken }
   | { type: 'token_removed'; id: string }
   | { type: 'map_changed'; map: WireMapInfo }
   /** The board writes token names under them now, or it stopped. Reaches
-   *  everyone, including the DM who flipped it — nothing here is predicted
-   *  locally, so this frame is how their own checkbox settles. */
+   *  everyone, including the DM who flipped it: nothing here is predicted
+   *  locally, so this frame is what updates their own checkbox. */
   | { type: 'names_changed'; show: boolean }
-  /** The ruler charges diagonals differently now. `names_changed`'s neighbour,
-   *  and echoed to the DM who set it for the same reason. */
+  /** The ruler charges diagonals differently now. Echoed to the DM who set it,
+   *  for the same reason as `names_changed`. */
   | { type: 'diagonals_changed'; diagonals: Diagonals }
   /** There is a picture in front of the table now, or there is not.
    *
-   *  `names_changed`'s neighbour again: identical for everyone, echoed to the DM
-   *  who put it up. **Nothing arrives with it** — the board is being covered
-   *  rather than changed, so the map, walls, shapes and fog we already hold are
-   *  still correct and no frame is owed for them. */
+   *  Like `names_changed`: identical for everyone, echoed to the DM who put it
+   *  up. **Nothing arrives with it.** The board is covered, not changed, so the
+   *  map, walls, shapes and fog we already hold are still correct. */
   | { type: 'backdrop_changed'; url: string | null }
   /** The room is playing a track now, or it is not.
    *
-   *  `backdrop_changed`'s twin above and nothing arrives with it either. What we
-   *  do about it is ours alone — the level it comes out at, and whether it comes
-   *  out at all, live in this browser and never on the wire. */
+   *  Like `backdrop_changed`, and nothing arrives with it either. The volume,
+   *  and whether sound is on at all, are kept in this browser and never sent. */
   | { type: 'audio_changed'; url: string | null }
-  /** The staged slot — map, walls and paint — or null once there is not one. DM
+  /** The staged slot (map, walls and paint), or null once there is none. DM
    *  connections only.
    *
-   *  It carries the whole board rather than only the map, which is what lets a
-   *  staged load sweeping its walls and a staged recalibration dropping its
-   *  paint arrive with no frames of their own. */
+   *  It carries the whole board and not only the map, so a staged load that
+   *  sweeps its walls, or a staged recalibration that drops its paint, needs no
+   *  frames of its own. */
   | { type: 'staged_changed'; board: WireStaged | null }
   | { type: 'initiative_changed'; initiative: Initiative }
   /** Somebody joined or left. The whole list, at most seven names.
    *
-   *  `names_changed`'s shape rather than `walls_changed`'s — identical for every
-   *  recipient, no filter — and unlike either, nobody sent a command to cause
-   *  it. Sent on every join and every leave rather than only when the list
-   *  differs, so a second connection as the same person repaints the same chips
-   *  rather than needing the room to remember what it last said. */
+   *  Identical for every recipient with no filter, like `names_changed`, but no
+   *  command causes it. Sent on every join and every leave, not only when the
+   *  list differs, so a second connection as the same person repaints the same
+   *  chips and the room doesn't have to remember what it last sent. */
   | { type: 'presence'; here: Owner[] }
-  /** A player picked their colour. The whole table, for the reason above.
+  /** A player picked their colour. Sent to the whole table, like `presence`.
    *
    *  Echoed to whoever picked, unlike `notes_changed`: there is no caret for it
-   *  to move and nothing was drawn locally, so this frame is how the chosen
-   *  swatch settles on the client that chose it. */
+   *  to move and nothing was drawn locally, so this frame is what updates the
+   *  chosen swatch on the client that chose it. */
   | { type: 'colours_changed'; colours: Colours }
   /** Somebody else's in-progress sweep, keyed by their connection. Never our
    *  own: we are already drawing that one from our own pointer. */
   | { type: 'sketch'; by: number; kind: ShapeKind; at: WirePos; to: WirePos; color: string }
-  /** That sweep is over — released, or its client went away. */
+  /** That sweep is over: released, or its client went away. */
   | { type: 'sketch_ended'; by: number }
   /** Somebody pinged. Draw a ring there for a second or two.
    *
-   *  Keyed by `Owner` rather than by connection, unlike the two sweeps above:
-   *  a ping replaces no previous frame and needs no release, so what we want
-   *  from it is not which socket sent it but whose ring to draw. Never our own,
-   *  which has been on our board since the hold was 150ms old.
+   *  Keyed by `Owner`, not by connection like the two sweeps above: a ping
+   *  replaces no previous frame and needs no release, so all we need is whose
+   *  ring to draw. Never our own, which has been on our board since the hold
+   *  was 150ms old.
    *
-   *  The one frame carrying a position that no visibility filter touches — a
+   *  **The one frame carrying a position that no visibility filter touches.** A
    *  ping lands wherever it was pointed, unexplored ground included. */
   | { type: 'pinged'; by: Owner; at: WirePos }
   /** Somebody's pointer is here now. Draw it until it stops arriving.
    *
-   *  `pinged`'s twin — an `Owner` for the same reason, never our own for the
-   *  same reason — and its opposite in one respect: this one *is* filtered. The
-   *  DM's pointer is withheld from a player while it is over ground the party
-   *  has not explored, because a ping is a gesture somebody chose to make and a
-   *  cursor is where a hand happens to be. Nothing here has to know that; it is
-   *  the room's decision, and what arrives is what may be drawn. */
+   *  Like `pinged`, it carries an `Owner` and is never our own. Unlike `pinged`,
+   *  it is filtered: the DM's pointer is withheld from a player while it is over
+   *  ground the party has not explored, because a ping is a gesture somebody
+   *  chose to make and a cursor is just where the mouse is. The room decides
+   *  that; whatever arrives may be drawn. */
   | { type: 'cursor_moved'; by: Owner; at: WirePos }
   /** Pointers are drawn on every board now, or they are not.
    *
-   *  `names_changed`'s neighbour, and the one of the three that changes what
-   *  this client *sends*: with it off the room relays nothing, so a client that
-   *  kept sending would be paying for a feature nobody can see. */
+   *  Like `names_changed`, but this one also changes what this client sends:
+   *  with it off the room relays nothing, so a client that kept sending would
+   *  be spending bandwidth for nothing. */
   | { type: 'cursors_changed'; show: boolean }
   /** The DM's pointer is drawn on the players' boards now, or it is not.
    *
-   *  The frame above minus its second job — there is nothing for a client to do
-   *  about this one but put the DM's own checkbox back. */
+   *  Unlike the frame above, this doesn't change what anyone sends. The only
+   *  thing a client does with it is update the DM's own checkbox. */
   | { type: 'dm_cursor_changed'; show: boolean }
-  /** Every shape we may see. The whole list, like the initiative panel. */
-  /** Somebody said something we are party to — a shout, or a whisper at whose
-   *  either end we stand.
+  /** Somebody said something we are party to: a shout, or a whisper we sent or
+   *  received.
    *
-   *  **Including our own**, which is where this differs from `pinged` and
-   *  `sketch` above: a line of text is not drawn locally first, because where it
-   *  lands in the log is the room's to decide and two people type at once. */
+   *  **Including our own**, unlike `pinged` and `sketch` above. A line of text
+   *  is not drawn locally first, because the room decides where it lands in the
+   *  log and two people may type at once. */
   | { type: 'said'; line: WireChatLine }
-  /** Our own scratchpad now reads this — sent when our *other* tab changed it.
+  /** Our own scratchpad now reads this. Sent when our *other* tab changed it.
    *
    *  Never sent to the socket that typed it: that box already holds the text,
-   *  and writing it back a round trip later moves the caret. That is `pinged`'s
-   *  exclusion rather than `said`'s echo, and for the same reason those two
-   *  differ from each other. */
+   *  and writing it back a round trip later moves the caret. So this follows
+   *  `pinged` (no echo), not `said`. */
   | { type: 'notes_changed'; text: string }
+  /** Every shape we may see. The whole list, like the initiative panel. */
   | { type: 'shapes_changed'; shapes: WireShape[] }
-  /** Every wall the DM has traced. DM connections only — a player is not sent
+  /** Every wall the DM has traced. DM connections only. A player is not sent
    *  this frame at all, not even an empty one, because a frame they cannot use
    *  still tells them the DM just did something. */
   | { type: 'walls_changed'; walls: WireWall[]; staged: boolean }
   /** What the party can see now, and everywhere they have been. Null once the
-   *  map is not fogged. Reaches everyone, unlike the walls above it — and only
-   *  on a drop, never on a drag frame. */
+   *  map is not fogged. Reaches everyone, unlike the walls, and only on a drop,
+   *  never on a drag frame. */
   | { type: 'fog_changed'; fog: WireFog | null }
-  /** Every cell the DM has overridden. DM connections only — a player is not
-   *  sent this frame at all, for the reason they are sent no `walls_changed`.
-   *  What they are owed is the `fog_changed` beside it. */
+  /** Every cell the DM has overridden. DM connections only: a player is not
+   *  sent this frame at all, for the same reason as `walls_changed`. What they
+   *  are sent is the resulting `fog_changed`. */
   | { type: 'overrides_changed'; overrides: WireOverrides; staged: boolean }
-  /** The DM undid something and the room is an earlier state — take this as the
-   *  truth for all of it.
+  /** The DM undid something and the room is in an earlier state. Replace all
+   *  held state with this.
    *
-   *  The whole world rather than a diff, which is the feature working rather
-   *  than giving up: the case undo exists for is a map load, which sweeps the
-   *  walls, the drawings and the fog in one command. Filtered by the same
-   *  `snapshot_for` a join goes through, so a player is sent one of these with
-   *  no walls and no staged map in it, exactly as they are on connect.
+   *  The whole world and not a diff, because the main case undo exists for is
+   *  a map load, which sweeps the walls, the drawings and the fog in one
+   *  command. Filtered by the same `snapshot_for` a join goes through, so a
+   *  player is sent one of these with no walls and no staged map in it, as on
+   *  connect.
    *
-   *  **Not a second `welcome`**, and the difference is on this side of the
-   *  wire: `onWelcome` builds the panels, the tools and the board once per
-   *  connection. This only hands over state — no identity, no roster, neither
-   *  of which an undo can change. */
+   *  **Not a second `welcome`**: `onWelcome` builds the panels, the tools and
+   *  the board once per connection. This only hands over state, with no
+   *  identity or roster, neither of which an undo can change. */
   | { type: 'restored'; state: WireRoomView }
-  /** What the DM's next undo would take back. DM connections only, for the
-   *  reason they alone are sent `walls_changed` — except that here what is
-   *  withheld is not a secret but a label for a button a player does not have.
+  /** What the DM's next undo would take back. DM connections only, like
+   *  `walls_changed`, though here it is not a secret, just a label for a button
+   *  a player does not have.
    *
-   *  Arrives beside every change to the room, which is how the button stays
-   *  right when the DM's other tab, or a player's drawing, adds a step. */
+   *  Arrives with every change to the room, which keeps the button right when
+   *  the DM's other tab, or a player's drawing, adds a step. */
   | { type: 'undo_changed'; label: string | null }
   | { type: 'error'; message: string };
 
 export type ClientMsg =
   | { type: 'hello'; dm_secret: string | null; player_id: string | null }
   /** Put the room back the way it was before the last thing that changed it.
-   *  DM-only, and carries nothing — only the top of the room's ring can be
+   *  DM-only, and carries nothing: only the top of the room's ring can be
    *  undone, so there is no depth for this to name. Undoing twice is sending
    *  it twice. */
   | { type: 'undo' }
-  /** `staged` names which of the token's two positions this writes. Intent
-   *  rides on the command because the server does not know we are previewing
-   *  and must not learn — preview is ours alone. DM-only when true. */
+  /** `staged` names which of the token's two positions this writes. The intent
+   *  is on the command because the server must not learn we are previewing;
+   *  preview is client-only. DM-only when true. */
   | {
       type: 'move_token';
       id: string;
@@ -652,51 +633,51 @@ export type ClientMsg =
       offset_y: number;
       grid_color: string;
       play_area: WireRect | null;
-      /** Whether this map is fogged and how far a token sees on it. Here rather
-       *  than on a command of their own for the reason the grid colour is: they
-       *  are fields of the map, remembered per URL with the rest of it. */
+      /** Whether this map is fogged and how far a token sees on it. Here and
+       *  not on a command of their own, like the grid colour: they are fields
+       *  of the map, remembered per URL with the rest of it. */
       fog: boolean;
       vision_ft: number;
       lighting: Lighting;
-      /** What shape the cells are. Here for the reason the three above are: it
-       *  is a field of the map, remembered per URL with the rest of it. */
+      /** What shape the cells are. Here for the same reason as the three
+       *  above. */
       grid_shape: WireGridShape;
       staged: boolean;
     }
   /** Say something, to the table or to one person.
    *
    *  One command for a whisper and a shout, because they differ only in where
-   *  they are going — and the destination is exactly what the server's
-   *  permission check is about. It carries no sender: who said it is what the
-   *  socket already proved. */
+   *  they are going, and the destination is what the server's permission check
+   *  is about. It carries no sender: the socket already identifies who said
+   *  it. */
   | { type: 'say'; to: ChatTo; text: string }
   /** Throw `count` dice of `sides` faces and say the result to `to`.
    *
    *  The loaner die. It comes back as an ordinary `said`, because a roll is a
-   *  line of talk — so there is no frame to handle for it, and a private roll
-   *  to the DM is the destination chip that is already armed.
+   *  chat line. So there is no frame to handle for it, and a private roll to
+   *  the DM uses the destination chip that is already selected.
    *
    *  Counts and no modifiers: a dice bag has the first and not the second. */
   | { type: 'roll'; sides: number; count: number; to: ChatTo }
-  /** Replace our own scratchpad. It carries no key — the box it lands in is the
-   *  one the socket belongs to, because a key we could name is a key we could
-   *  name somebody else's with. */
+  /** Replace our own scratchpad. It carries no key: the box it lands in is
+   *  the one the socket belongs to, because a key we could name is a key we
+   *  could use to name somebody else's. */
   | { type: 'set_notes'; text: string }
-  /** Pick our own colour. It carries no key either, for `set_notes`' reason —
+  /** Pick our own colour. It carries no key either, for `set_notes`' reason:
    *  whose colour it is comes from the socket.
    *
-   *  An index into a closed palette rather than a hex string, and the reason is
-   *  on the board: free hex would let a player take the gold a token ring uses
-   *  for ownership and make their own ring say something false. The server holds
-   *  the bound; `PLAYER_HUES` in `pings.ts` holds the colours. Never sent by the
-   *  DM, whose hue is outside the six on purpose — the server refuses it. */
+   *  An index into a closed palette and not a hex string, because free hex
+   *  would let a player take the gold a token ring uses for ownership and make
+   *  their own ring misleading. The server holds the bound; `PLAYER_HUES` in
+   *  `pings.ts` holds the colours. Never sent by the DM, whose hue is outside
+   *  the six; the server refuses it. */
   | { type: 'set_colour'; colour: number }
   /** DM-only. The staged map becomes the board; tokens keep their cells. */
   | { type: 'promote_staged' }
   /** DM-only. Throw the staged map away. */
   | { type: 'clear_staged' }
-  /** DM-only. No id: the server invents it. `staged` builds it on the map being
-   *  prepared, where it exists for nobody until the promote. */
+  /** DM-only. No id: the server assigns it. `staged` builds it on the map being
+   *  prepared, where nobody else sees it until the promote. */
   | {
       type: 'create_token';
       name: string;
@@ -709,16 +690,16 @@ export type ClientMsg =
       hp: Hp | null;
       light_ft: number | null;
       /** Usually empty. It is here so that duplicating a marked creature is one
-       *  command, which is the only way it is ever anything else. */
+       *  command, which is the only time it is non-empty. */
       markers: Marker[];
       staged: boolean;
     }
-  /** DM-only. Every editable field at once; position is `move_token`'s alone.
-   *  Taking damage is this command with a new `hp` — there is no `set_hp`.
+  /** DM-only. Every editable field at once; only `move_token` sets position.
+   *  Taking damage is this command with a new `hp`; there is no `set_hp`.
    *
-   *  No `staged` flag, unlike its neighbours: every field here is shared by both
-   *  boards, so an edit applies everywhere at once. Only position and existence
-   *  fork. */
+   *  No `staged` flag, unlike the commands around it: every field here is
+   *  shared by both boards, so an edit applies to both at once. Only position
+   *  and existence differ between the two. */
   | {
       type: 'update_token';
       id: string;
@@ -729,55 +710,54 @@ export type ClientMsg =
       hidden: boolean;
       hp: Hp | null;
       light_ft: number | null;
-      /** The whole set, not a toggle. This command replaces the token, so every
-       *  sender has to carry this through - which is what makes a `set_markers`
-       *  beside it unnecessary, and it is required rather than optional here so
-       *  that the compiler is the thing that says so. */
+      /** The whole set, not a toggle. This command replaces the token, so
+       *  every sender has to pass the current markers through, which is why
+       *  there is no `set_markers`. Required, not optional, so the compiler
+       *  catches a sender that forgets. */
       markers: Marker[];
     }
   | { type: 'delete_token'; id: string }
   /** DM-only. Whether the board writes token names under them, for everyone.
    *
-   *  Its own command rather than a field on `set_map`, where the fog switch
-   *  went: this belongs to the room and not to the image, so riding on a map
-   *  change would fork it between the two slots and reset it on every load. */
+   *  Its own command and not a field on `set_map`, where the fog switch is:
+   *  this belongs to the room and not to the image, so on a map command it
+   *  would differ between the two slots and reset on every load. */
   | { type: 'set_show_names'; show: boolean }
   /** DM-only. How the ruler charges a diagonal, for everyone. Room-wide and not
-   *  on `set_map`, for the reason above: the table's counting outlives the
-   *  dungeon it is being done on. */
+   *  on `set_map`, for the reason above: the table's counting convention
+   *  doesn't change with the map. */
   | { type: 'set_diagonals'; diagonals: Diagonals }
   /** DM-only. Whether everybody's pointer is drawn on everybody's board.
    *
-   *  The switch stops the *relay* rather than the drawing, so a client told
-   *  `false` stops sending as well — seven pointers over a board that already
-   *  carries tokens, nameplates, bars, rulers, trails, shapes and fog is a real
-   *  cost, and a switch that saved none of it would be a preference. */
+   *  The switch stops the relay, not just the drawing, so a client told `false`
+   *  stops sending as well. Seven pointers over a board that already carries
+   *  tokens, nameplates, bars, rulers, trails, shapes and fog is a real cost,
+   *  and a switch that saved none of it would only be a display preference. */
   | { type: 'set_show_cursors'; show: boolean }
   /** DM-only. Whether the DM's own pointer is drawn on the players' boards.
    *
-   *  The switch above narrowed to one hand, and it stops the relay only: one
-   *  client in seven is not traffic worth a second condition at the send site,
-   *  so unlike `set_show_cursors` nothing here changes what anybody sends. */
+   *  It stops the relay only. One client in seven is not enough traffic to
+   *  justify a second condition where pointers are sent, so unlike
+   *  `set_show_cursors` nothing here changes what anybody sends. */
   | { type: 'set_show_dm_cursor'; show: boolean }
   /** DM-only. Put a picture in front of the table, or null to take it away.
    *
-   *  Room-wide and not on `set_map` for a sharper version of the reason above:
-   *  a `set_map` is a map *load*, which sweeps the walls, the drawings and
-   *  everywhere the party has explored. Not doing any of that is the command. */
+   *  Room-wide and not on `set_map`, because a `set_map` is a map load, which
+   *  sweeps the walls, the drawings and everywhere the party has explored. This
+   *  command must do none of that. */
   | { type: 'set_backdrop'; url: string | null }
   /** DM-only. Put music on for the room, or null to stop it.
    *
-   *  The command above's twin, and it stays as small for the same reason. The
-   *  room holds a URL and not a playhead: where in the track each browser
-   *  happens to be is that browser's business, and syncing playheads is the
-   *  mixer this feature refuses to be. */
+   *  Kept as small as `set_backdrop`. The room holds a URL and not a playback
+   *  position: where each browser is in the track is up to that browser, and
+   *  syncing positions would turn this toward a mixer. See `docs/sound.md`. */
   | { type: 'set_audio'; url: string | null }
   /** A shape being swept out right now: relayed to everyone watching, stored by
    *  nobody. `drawing: false` is the release that ends it.
    *
-   *  Whether a release keeps anything is ours alone to decide — the measuring
-   *  tool stops here and the area tools follow with an `add_shape`. The server
-   *  is uniform over all four kinds and never learns which tool was in hand. */
+   *  The client decides whether a release keeps anything: the measuring tool
+   *  stops here and the area tools follow with an `add_shape`. The server
+   *  treats all four kinds the same and never learns which tool was used. */
   | {
       type: 'sketch';
       kind: ShapeKind;
@@ -787,68 +767,68 @@ export type ClientMsg =
       drawing: boolean;
     }
   /** Look here. Anyone may send it; it is relayed to everyone else and stored
-   *  by nobody, and there is no `drawing` flag because a ping is one frame
-   *  rather than a stream — the hold is over by the time this goes out.
+   *  by nobody. There is no `drawing` flag because a ping is one frame, not a
+   *  stream: the hold is over by the time this goes out.
    *
-   *  No colour on it either, unlike `sketch`: what a ring looks like is decided
-   *  by who sent it, and every client can work that out from the roster. */
+   *  No colour on it either, unlike `sketch`: the ring's colour follows from who
+   *  sent it, and every client can work that out from the roster. */
   | { type: 'ping'; at: WirePos }
   /** Where our pointer is now, in grid units. Relayed to everyone else and
-   *  stored by nobody — `ping` with the deliberateness taken out.
+   *  stored by nobody.
    *
    *  Throttled to ~30Hz and sent only on movement, because this is the busiest
-   *  thing either side of this wire: drag frames exist while a token is moving,
-   *  and these exist whenever a hand is on the mouse. There is no frame that
-   *  ends one — stillness does, on every recipient's own timer. */
+   *  message in the protocol: drag frames are sent while a token is moving,
+   *  and these whenever the mouse moves. No frame ends one; each recipient
+   *  drops a cursor that stops arriving, on its own timer. */
   | { type: 'move_cursor'; at: WirePos }
-  /** Keep the shape just swept. No id — the server invents it, like a token's. */
+  /** Keep the shape just swept. No id: the server assigns it, like a token's. */
   | { type: 'add_shape'; kind: ShapeKind; from: WireOrigin; to: WirePos; color: string }
   /** Whoever drew it, or the DM. */
   | { type: 'remove_shape'; id: string }
-  /** DM-only: it reaches into five other people's drawings. */
+  /** DM-only: it erases other people's drawings. */
   | { type: 'clear_shapes' }
   /** DM-only. One traced run: its corners in order, in image pixels, and the
-   *  segments between them become that many walls. No ids — the server invents
+   *  segments between them become that many walls. No ids: the server assigns
    *  one per segment, like a shape's.
    *
-   *  The run is sent whole rather than a segment per click because that is the
-   *  milestone: a two-hundred-segment dungeon is otherwise two hundred round
-   *  trips. `door` applies to every segment of it.
+   *  The run is sent whole, not a segment per click, because a
+   *  two-hundred-segment dungeon would otherwise be two hundred round trips.
+   *  `door` applies to every segment of it.
    *
-   *  `staged` names the board, like `move_token` and `set_map` do — intent rides
-   *  on the command because the server does not know we are previewing and must
-   *  not learn. Every wall command below carries it for the same reason. */
+   *  `staged` names the board, like `move_token` and `set_map`: the intent is on
+   *  the command because the server must not learn we are previewing. Every
+   *  wall command below carries it for the same reason. */
   | { type: 'add_walls'; points: WirePx[]; door: boolean; staged: boolean }
-  /** DM-only. One segment — there is no "erase this run", which is what lets a
-   *  single bad segment be fixed without redrawing the trace. */
+  /** DM-only. One segment. There is no "erase this run", so a single bad
+   *  segment can be fixed without redrawing the trace. */
   | { type: 'remove_wall'; id: string; staged: boolean }
-  /** DM-only, and refused on masonry. On the board it opens a room to the
-   *  party mid-fight; on the staged one it is authoring — a door left open is
-   *  the door they find open when the map lands. */
+  /** DM-only, and refused on a solid wall. On the board it opens a room to the
+   *  party mid-fight; on the staged board it is preparation: a door left open
+   *  there is open when the map is promoted. */
   | { type: 'toggle_door'; id: string; staged: boolean }
-  /** DM-only. Every wall on one board — and unlike `clear_shapes` it reaches
-   *  into nobody else's work, since the walls are all the DM's. */
+  /** DM-only. Every wall on one board. Unlike `clear_shapes` it erases nobody
+   *  else's work, since the walls are all the DM's. */
   | { type: 'clear_walls'; staged: boolean }
-  /** DM-only. What one brush stroke or one fill decided, as the cells it
-   *  decided it about.
+  /** DM-only. The cells one brush stroke or one fill covered, and what to set
+   *  them to.
    *
    *  **The cells are the payload, not a seed.** The fill is computed here,
-   *  because the preview has to compute it anyway — sending the previewed cells
-   *  is what makes the preview and the result the same object rather than two
-   *  runs of two implementations that would have to agree. `state` of null hands
-   *  them back to line of sight. */
+   *  because the preview has to compute it anyway. Sending the previewed cells
+   *  makes the preview and the result the same set, instead of two
+   *  implementations that would have to agree. `state` of null hands them back
+   *  to line of sight. */
   | {
       type: 'set_fog_override';
       cells: [number, number][];
       state: FogPaint | null;
       /** Which board's mask. Painting the staged one is not previewing what the
-       *  party will see there — it is deciding what they are handed when the map
-       *  lands, which is why there is no staged fog under it. */
+       *  party will see there: it decides what they are given when the map is
+       *  promoted, which is why there is no staged fog under it. */
       staged: boolean;
     }
   /** DM-only. The whole map back to dark: every override cleared and everywhere
    *  the party has explored forgotten, then line of sight recomputed from where
-   *  the tokens are standing. One command because it is one gesture — "this map
+   *  the tokens are standing. One command because it is one action: "this map
    *  has not been seen yet". */
   | { type: 'reset_fog' }
   | { type: 'set_initiative'; token: string; value: number }

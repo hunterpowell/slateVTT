@@ -20,7 +20,7 @@ import type {
 } from './protocol.js';
 
 export interface Handlers {
-  /** Send the Hello frame from here — the socket is ready and nothing else has been sent. */
+  /** Send the Hello frame from here: the socket is ready and nothing else has been sent. */
   onOpen(): void;
   /** The server does not know who we are; it has sent the roster and no state. */
   onChooseIdentity(roster: RosterSlot[]): void;
@@ -32,77 +32,76 @@ export interface Handlers {
   onTokenRemoved(id: string): void;
   onMapChanged(map: WireMapInfo): void;
   /** The board writes token names under them now, or it stopped. Called on every
-   *  connection — the DM sets it, everyone holds it. */
+   *  connection: the DM sets it, everyone holds it. */
   onNamesChanged(show: boolean): void;
   /** The ruler charges diagonals differently now. Called on every connection,
-   *  for the reason above: the DM sets it, everyone holds it. */
+   *  for the same reason as `onNamesChanged`. */
   onDiagonalsChanged(diagonals: Diagonals): void;
   /** Pointers are drawn on every board now, or they are not. Called on every
-   *  connection, like the two above — and unlike them it changes what this
-   *  client *sends*, because with it off the room relays nothing. */
+   *  connection. Unlike the two above, it changes what this client *sends*,
+   *  because with it off the room relays nothing. */
   onCursorsChanged(show: boolean): void;
   /** The DM's pointer is drawn on the players' boards now, or it is not.
-   *  Called on every connection, like the switch above — and unlike it this one
-   *  changes nothing about what this client sends or draws: the room withholds
-   *  the DM's frames itself, so all a player does with it is hold it. */
+   *  Called on every connection. Unlike `onCursorsChanged`, it changes nothing
+   *  about what this client sends or draws: the room withholds the DM's frames
+   *  itself, so a player only stores it. */
   onDmCursorChanged(show: boolean): void;
   /** There is a picture in front of the table now, or there is not. Called on
-   *  every connection, like the three above. Nothing about the board arrives
-   *  with it and nothing needs to — the board is being covered, not changed. */
+   *  every connection. Nothing about the board arrives with it and nothing
+   *  needs to: the board is covered, not changed. */
   onBackdropChanged(url: string | null): void;
-  /** The room is playing a track now, or it is not. Called on every connection,
-   *  like the one above. Whether this browser makes a sound about it is decided
-   *  further down, in `sound.ts`. */
+  /** The room is playing a track now, or it is not. Called on every
+   *  connection. Whether this browser plays it is decided in `sound.ts`. */
   onAudioChanged(url: string | null): void;
-  /** The staged slot whole — map, walls and paint. Only ever called on a DM
-   *  connection; the server sends no such frame to a player. Null means the slot
-   *  is now empty, indistinguishably from not being the DM. */
+  /** The whole staged slot: map, walls and paint. Only ever called on a DM
+   *  connection; the server sends no such frame to a player. Null means the
+   *  slot is now empty. */
   onStagedChanged(board: WireStaged | null): void;
   onInitiativeChanged(initiative: Initiative): void;
   /** Somebody joined or left. The whole list, the DM among them. Called on every
-   *  connection and never filtered — who is connected is nobody's secret. */
+   *  connection and never filtered: who is connected is not secret. */
   onPresence(here: Owner[]): void;
-  /** A player picked their colour. The whole table, on every connection —
-   *  including the client that picked, which is how its own swatch settles. */
+  /** A player picked their colour. The whole table, on every connection,
+   *  including the client that picked, which is how its own swatch updates. */
   onColoursChanged(colours: Colours): void;
   /** Somebody else's sweep, keyed by their connection. Never our own. */
   onSketch(sketch: Extract<ServerMsg, { type: 'sketch' }>): void;
   onSketchEnded(by: number): void;
   /** Somebody pinged. Never called for our own, which is already on our board.
-   *  Called on every connection and never filtered — a ping is relayed wherever
+   *  Called on every connection and never filtered: a ping is relayed wherever
    *  it lands, unexplored ground included. */
   onPinged(ping: Extract<ServerMsg, { type: 'pinged' }>): void;
-  /** Somebody's pointer moved. Never our own, which our own machine is already
-   *  drawing. Unlike `onPinged` this one *has* been filtered — the DM's pointer
-   *  over ground the party has not explored never arrives — so what lands here
-   *  is what may be drawn, with nothing further to ask. */
+  /** Somebody's pointer moved. Never our own, which this client already draws.
+   *  Unlike `onPinged` this one *has* been filtered (the DM's pointer over
+   *  ground the party has not explored never arrives), so anything that
+   *  arrives may be drawn without further checks. */
   onCursorMoved(cursor: Extract<ServerMsg, { type: 'cursor_moved' }>): void;
-  /** Somebody said something we are party to — including our own, which is the
-   *  one relayed frame in this protocol the sender is echoed. Nothing here is
-   *  filtered: the server decided we may hold this line. */
+  /** Somebody said something we are party to, including our own: the one
+   *  relayed frame in this protocol that is echoed to its sender. Nothing here
+   *  is filtered: the server decided we may hold this line. */
   onSaid(line: WireChatLine): void;
-  /** Our own scratchpad changed in another tab of ours. Never called for our own
-   *  typing — the room does not echo it, so this cannot move our caret — and
+  /** Our own scratchpad changed in another tab of ours. Never called for our
+   *  own typing (the room does not echo it, so this cannot move our caret), and
    *  never called with anybody else's box, because no client is ever sent one. */
   onNotesChanged(text: string): void;
   /** Every shape we may see, replacing whatever we held. */
   onShapesChanged(shapes: WireShape[]): void;
   /** Every wall on one board, and which board that is. Only ever called on a DM
-   *  connection — a player is sent no such frame, empty or otherwise. */
+   *  connection: a player is sent no such frame, empty or otherwise. */
   onWallsChanged(walls: WireWall[], staged: boolean): void;
   /** What the party can see, or null on an unfogged map. Called on every
-   *  connection, unlike the walls above — fog is party-shared, so the DM and the
-   *  table are sent the same frame. */
+   *  connection, unlike the walls: fog is party-shared, so the DM and the table
+   *  are sent the same frame. */
   onFogChanged(fog: WireFog | null): void;
   /** The cells the DM has overridden by hand. Only ever called on a DM
-   *  connection — the walls' rule, not the fog's, because this is what the DM
-   *  decided rather than what the table gets to see of it. */
+   *  connection, like the walls: this is what the DM decided, not what the
+   *  table is shown. */
   onOverridesChanged(overrides: WireOverrides, staged: boolean): void;
-  /** The DM undid something — take this view as the truth for the whole room.
+  /** The DM undid something. Replace the whole room with this view.
    *
-   *  Called on every connection, and it is the one delta that replaces
-   *  everything rather than a part. Deliberately *not* routed to `onWelcome`:
-   *  that one builds the panels and the board and runs exactly once per socket.
+   *  Called on every connection, and the one delta that replaces everything
+   *  instead of a part. **Not routed to `onWelcome`**: that builds the panels
+   *  and the board and must run only once per socket.
    */
   onRestored(state: WireRoomView): void;
   /** What the DM's next undo would take back, or null for nothing. Only ever
@@ -112,8 +111,7 @@ export interface Handlers {
   /** The socket dropped and a new one is being tried. May be called several
    *  times as the backoff climbs. */
   onLost(): void;
-  /** And it is not coming back — the backoff gave up. The floor this file has
-   *  always had, now reached rather than reached for immediately. */
+  /** The socket is not coming back: the backoff gave up. */
   onClose(): void;
 }
 
@@ -127,46 +125,43 @@ export interface Net {
  *
  * It climbs so that a laptop lid closed for a minute is not a hundred requests,
  * and it stops so that a machine left open overnight against a server that is
- * gone does not reconnect at dawn to a board nobody is looking at. Nine
- * attempts is a little over a minute, which covers the case this exists for: the
- * Pi's service restarting, or a tunnel blipping mid-session.
+ * gone does not reconnect hours later to a board nobody is looking at. Nine
+ * attempts is a little over a minute, which covers the cases this is for: the
+ * Pi's service restarting, or the tunnel dropping briefly mid-session.
  */
 const BACKOFF_MS = [500, 1000, 2000, 4000, 8000, 8000, 10000, 10000, 10000];
 
 /**
  * One WebSocket to the room, and a fresh one if it drops.
  *
- * **A reconnect here is a `location.reload()`**, and that is the design rather
- * than a shortcut. `onWelcome` in main.ts builds the pings, the panels, the four
- * tools, the rail and the board once per socket, on the stated assumption of one
- * Welcome per socket — a second one would construct a second of each and
- * register another `window` keydown listener per tool. That is the wall
- * `ServerMsg::Restored` was invented to get around for the undo, and here there
- * is nothing to invent: a refresh is already the supported way back, and this
- * only stops asking the person at the keyboard to do it by hand.
+ * **A reconnect here is a `location.reload()`.** `onWelcome` in main.ts builds
+ * the pings, the panels, the four tools, the rail and the board once per
+ * socket, and assumes one Welcome per socket. A second Welcome would construct
+ * a second of each and register another `window` keydown listener per tool.
+ * Undo gets around this with `ServerMsg::Restored`; a reconnect doesn't need
+ * to, because a refresh is already the supported way back, and this does it
+ * without asking the person at the keyboard.
  *
- * So the socket opened below is a *probe*. It proves the server is answering
- * and then throws the page away; nothing is sent on it and no handler is
- * attached to it but this one.
+ * So the socket opened in `retry` is a probe. It checks the server is
+ * answering and then reloads the page; nothing is sent on it and it has no
+ * other handlers.
  *
- * The banner that used to be the immediate answer is still here — it is what
- * `onClose` means now, which is the backoff having given up.
+ * `onClose` is only called once the backoff has given up.
  */
 export function connect(roomId: string, on: Handlers): Net {
   const scheme = location.protocol === 'https:' ? 'wss:' : 'ws:';
   // **The room is named here and nowhere else on the wire.** A socket belongs
-  // to exactly one room actor from the moment the server registers it, so the
-  // choice has to be made before the connection rather than in a frame after
-  // it — which is what leaves `ClientMsg` and `ServerMsg` untouched by
-  // multi-room. The probe below reuses this URL, so a reconnect returns to the
-  // same room without knowing there is more than one.
+  // to one room actor from the moment the server registers it, so the choice
+  // has to be made before the connection, not in a frame after it. That is why
+  // no `ClientMsg` or `ServerMsg` names a room. The probe below reuses this
+  // URL, so a reconnect returns to the same room.
   const url = `${scheme}//${location.host}/ws?room=${encodeURIComponent(roomId)}`;
   const socket = new WebSocket(url);
 
   let attempt = 0;
-  // Set the moment a probe answers. A reload is not instant, and the probe's own
-  // `close` fires as the page unloads — without this that close would schedule
-  // one more attempt against a page that is already going away.
+  // Set as soon as a probe answers. A reload is not instant, and the probe's own
+  // `close` fires as the page unloads. Without this, that close would schedule
+  // one more attempt from a page that is already unloading.
   let reloading = false;
 
   const retry = (): void => {
@@ -180,14 +175,14 @@ export function connect(roomId: string, on: Handlers): Net {
     on.onLost();
     window.setTimeout(() => {
       const probe = new WebSocket(url);
-      // It answered, so a whole page against a live room is one reload away —
-      // and this socket is not the one that page will use.
+      // It answered, so reload. The reloaded page opens its own socket; this
+      // one is never used.
       probe.addEventListener('open', () => {
         reloading = true;
         location.reload();
       });
       // It did not. `error` fires before `close` on a failed connect, so
-      // hanging the next attempt off `close` alone runs it exactly once.
+      // scheduling the next attempt from `close` alone runs it once.
       probe.addEventListener('close', () => retry());
       probe.addEventListener('error', () => {
         /* the close that follows is what schedules the next attempt */
@@ -299,14 +294,14 @@ export function connect(roomId: string, on: Handlers): Net {
       default:
         // `error` and not `warn`: an unknown frame means the two hand-written
         // copies of this union have drifted, and `cdp.mjs` only collects console
-        // entries of type `error` — so as a warning this failed every browser
-        // driver silently, which is the way a protocol mismatch must not fail.
+        // entries of type `error`. Don't downgrade it: as a warning, a protocol
+        // mismatch passes every browser driver unnoticed.
         console.error('unknown message type', msg);
     }
   });
 
-  // The board is stale from this moment, whatever happens next: the room went
-  // on without us and there is no resync protocol, deliberately.
+  // The board is stale from here on, whatever happens next: the room carried on
+  // without us and there is no resync protocol. Reloading replaces it.
   socket.addEventListener('close', () => retry());
   socket.addEventListener('error', () => console.warn('websocket error'));
 
