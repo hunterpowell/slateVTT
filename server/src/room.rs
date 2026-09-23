@@ -3489,11 +3489,11 @@ impl RoomState {
 
     /// Step 3. Mutates state, returns what happened.
     ///
-    /// `origin` is here for the drawing commands and nothing else. Every command
-    /// before them was checked against who sent it and then applied identically
-    /// whoever that was; a sketch belongs to the connection that swept it, and a
-    /// kept shape records who drew it, so these are the first whose *effect*
-    /// depends on the sender rather than only their permission to send it.
+    /// `origin` is here for the drawing commands and nothing else. Every other
+    /// command is checked against who sent it and then applied the same way
+    /// whoever that was. A sketch belongs to the connection that swept it, and a
+    /// kept shape records who drew it, so for these the *effect* depends on the
+    /// sender, not only their permission to send it.
     fn apply(&mut self, origin: ClientId, msg: ClientMsg) -> Vec<Event> {
         match msg {
             ClientMsg::Hello { .. } => Vec::new(),
@@ -3505,7 +3505,7 @@ impl RoomState {
                 staged,
             } => {
                 let Some(token) = self.tokens.get_mut(&id) else {
-                    // `check` already proved this exists; belt and braces so a
+                    // `check` already proved this exists. The `else` is so a
                     // future reordering of the pipeline cannot panic here.
                     return Vec::new();
                 };
@@ -3517,9 +3517,10 @@ impl RoomState {
                 } else {
                     snap_to_cell(x, y, token.size)
                 };
-                // The whole of routing a drag to the plan instead of the board.
-                // Everything either side of this line — the throttle, the snap,
-                // the debounce — is unaware there are two positions.
+                // This branch is all it takes to route a drag to the plan
+                // instead of the board. Everything either side of it (the
+                // throttle, the snap, the debounce) is unaware there are two
+                // positions.
                 if staged {
                     token.staged_pos = Some(Pos { x, y });
                 } else {
@@ -3549,8 +3550,8 @@ impl RoomState {
                 markers,
                 staged,
             } => {
-                // The id is invented here rather than accepted from the client,
-                // so nothing a DM sends can collide with a token that exists.
+                // The id is made here, not accepted from the client, so nothing
+                // a DM sends can collide with a token that exists.
                 let id = TokenId(Uuid::new_v4().simple().to_string());
                 let (x, y) = snap_to_cell(x, y, size);
                 self.tokens.insert(
@@ -3559,10 +3560,10 @@ impl RoomState {
                         id: id.clone(),
                         name: name.trim().to_owned(),
                         // A staged-only token's `x, y` is a placeholder its own
-                        // plan overwrites on promote, so it is set to the same
-                        // cell rather than to zero: nothing ever reads it, and
-                        // if the invariant that it is unreachable were ever to
-                        // break, the token would be found where it was built.
+                        // plan overwrites on promote. It is set to the same cell
+                        // instead of zero: nothing reads it, and if it were
+                        // ever reached by mistake, the token would be found
+                        // where it was built.
                         x,
                         y,
                         owner,
@@ -3576,9 +3577,9 @@ impl RoomState {
                         staged_only: staged,
                     },
                 );
-                // Nobody held this token a moment ago, which is the same
-                // position the table is in for one created hidden or built on
-                // the next map: there is nothing to take away from them.
+                // Nobody held this token a moment ago, the same as for one
+                // created hidden or built on the next map, so there is nothing
+                // to take away from the table.
                 vec![Event::TokenChanged {
                     id,
                     was_unseen: true,
@@ -3597,11 +3598,10 @@ impl RoomState {
                 markers,
             } => {
                 // Read through `unseen_by_table`, which needs `&self`, so it has
-                // to happen before the mutable borrow below rather than beside
-                // the fields it describes. Asking `Token::unseen` here instead —
-                // which is what this line said before fog existed — makes
-                // renaming a monster that is standing in the dark send the table
-                // a `TokenRemoved` for an id they have never held.
+                // to happen before the mutable borrow below. Don't ask
+                // `Token::unseen` here: renaming a monster standing in the dark
+                // would send the table a `TokenRemoved` for an id they have
+                // never held.
                 let was_unseen = self
                     .tokens
                     .get(&id)
@@ -3619,19 +3619,18 @@ impl RoomState {
                 token.hp = hp;
                 token.light_ft = light_ft;
 
-                // Resizing moves which lattice the token belongs on — a 2×2
-                // settles on a cell corner where a 1×1 settles on a centre — so
-                // growing one where it stands would leave it straddling half a
-                // cell until somebody happened to drag it.
+                // Resizing changes which lattice the token belongs on (a 2×2
+                // settles on a cell corner, a 1×1 on a centre), so growing one
+                // where it stands would leave it straddling half a cell until
+                // somebody dragged it.
                 if token.size != size {
                     token.size = size;
                     let (x, y) = snap_to_cell(token.x, token.y, size);
                     token.x = x;
                     token.y = y;
-                    // The plan is a position on the same lattice and goes the
-                    // same way. Missed, a token resized after being planned
-                    // straddles half a cell the moment it is promoted — the
-                    // original bug, deferred to the one place nobody looks.
+                    // The plan is a position on the same lattice and is snapped
+                    // the same way. Without this, a token resized after being
+                    // planned straddles half a cell the moment it is promoted.
                     token.staged_pos = token.staged_pos.map(|at| {
                         let (x, y) = snap_to_cell(at.x, at.y, size);
                         Pos { x, y }
@@ -3644,39 +3643,37 @@ impl RoomState {
                     was_unseen,
                 }];
                 // Hiding something mid-fight takes its row off the table's panel
-                // and unhiding puts it back, so the panel has to be rebuilt for
-                // the same reason deleting a token rebuilds it. Without this the
-                // players keep a row naming a token their client has just been
-                // told to forget, which draws as a bare id — precisely the thing
-                // `hidden` was asked to conceal.
+                // and unhiding puts it back, so the panel is rebuilt, as it is
+                // when a token is deleted. Without this the players keep a row
+                // naming a token their client has just been told to forget,
+                // which draws as a bare id and gives away what `hidden` hides.
                 //
-                // Asked of `unseen` rather than of `hidden`, so that toggling
-                // the flag on a staged-only token — which the table cannot see
-                // either way — rebuilds nothing.
+                // Asked of `unseen`, not `hidden`, so that toggling the flag on
+                // a staged-only token (which the table can't see either way)
+                // rebuilds nothing.
                 if was_unseen != now_unseen && self.initiative.index_of(&id).is_some() {
                     events.push(Event::InitiativeChanged);
                 }
-                // And the same again for what is drawn on it. An aura anchored
-                // to a monster the DM has just hidden has to leave the table's
-                // board with it, or the shape stays exactly where the creature
-                // is standing — which is the whole of what was withheld.
+                // The same for what is drawn on it. An aura anchored to a
+                // monster the DM has just hidden has to leave the table's board
+                // with it, or the shape stays where the creature is standing,
+                // which is what was being withheld.
                 //
-                // Gated on something actually being anchored to it, not merely
-                // on the flip: an unconditional rebuild would tell the table
-                // that *something happened* every time the DM hid anything.
+                // Gated on something being anchored to it, not only on the
+                // flip: an unconditional rebuild would tell the table that
+                // *something happened* every time the DM hid anything.
                 if was_unseen != now_unseen && self.anchors_a_shape(&id) {
                     events.push(Event::ShapesChanged);
                 }
                 events
             }
 
-            // Its plan goes with it, like any other field on it. Nothing extra
-            // to do: the plan lives on the token rather than beside it, which
-            // is most of why it lives on the token.
+            // Its plan goes with it, like any other field. There's nothing
+            // extra to do because the plan lives on the token, not beside it.
             ClientMsg::DeleteToken { id } => self.delete_token(&id),
 
-            // Emitted whether or not it changed anything, like `ClearWalls` next
-            // to it: a frame that says what the room already said is a no-op on
+            // Emitted whether or not it changed anything, like `ClearWalls`: a
+            // frame that repeats what the room already said is a no-op on
             // arrival, and a comparison here would be a second place the answer
             // is decided.
             ClientMsg::SetShowNames { show } => {
@@ -3684,56 +3681,54 @@ impl RoomState {
                 vec![Event::NamesChanged]
             }
 
-            // Unconditional for the reason above it, and this one has a second:
-            // a client that missed a frame has no way to ask, so a redundant
-            // send is the cheapest resync there is.
+            // Unconditional for the same reason, and a second: a client that
+            // missed a frame has no way to ask, so a redundant send is the
+            // cheapest resync there is.
             ClientMsg::SetDiagonals { diagonals } => {
                 self.diagonals = diagonals;
                 vec![Event::DiagonalsChanged]
             }
 
-            // The third of the three, unconditional for both reasons above —
-            // and the resync one is sharper here than anywhere else, because a
-            // client holding a stale `false` has quietly stopped sending its
-            // own pointer and nothing on its screen would say why.
+            // Unconditional for both reasons above. The resync matters most
+            // here: a client holding a stale `false` stops sending its own
+            // pointer, and nothing on its screen says why.
             ClientMsg::SetShowCursors { show } => {
                 self.show_cursors = show;
                 vec![Event::CursorsChanged]
             }
 
-            // The fourth, unconditional for both reasons above and neither of
-            // them sharpened: a client does nothing with this but put a
-            // checkbox back, so a redundant frame is a redundant checkbox.
+            // Unconditional for both reasons above. A client does nothing with
+            // this but set a checkbox, so a redundant frame costs nothing.
             ClientMsg::SetShowDmCursor { show } => {
                 self.show_dm_cursor = show;
                 vec![Event::DmCursorChanged]
             }
 
-            // **The fifth, and the one arm here that must stay this short.**
-            // Everything a DM might expect to happen when the board is covered
-            // — sweeping the shapes, forgetting the fog, clearing the walls — is
-            // the thing this command exists not to do. One assignment and one
-            // event; the board is untouched, so taking the picture down puts the
-            // table back exactly where they were.
+            // **This arm must stay this short.** Sweeping the shapes,
+            // forgetting the fog and clearing the walls are what a DM might
+            // expect when the board is covered, and are what this command
+            // exists not to do. One assignment and one event: the board is
+            // untouched, so taking the picture down puts the table back where
+            // they were. See `docs/maps.md`.
             ClientMsg::SetBackdrop { url } => {
                 self.backdrop = url;
                 vec![Event::BackdropChanged]
             }
 
-            // The arm above's twin, and it stays this short for the same
-            // reason: nothing on the board is being changed, so nothing on the
-            // board is swept. The room holds a URL and not a playhead — where in
-            // the track each browser happens to be is that browser's business,
-            // and syncing playheads is the mixer this feature refuses to be.
+            // Short like `SetBackdrop`, for the same reason: nothing on the
+            // board changes, so nothing is swept. The room holds a URL, not a
+            // playback position. Where each browser is in the track is up to
+            // that browser, and syncing positions is out of scope. See
+            // `docs/sound.md`.
             ClientMsg::SetAudio { url } => {
                 self.audio = url;
                 vec![Event::AudioChanged]
             }
 
-            // Tokens are deliberately untouched. They are stored in grid units,
-            // so recalibrating changes where a token *draws* without changing
-            // which cell it is in — invariant 1, and the whole reason positions
-            // are not kept in pixels.
+            // Tokens are untouched. They are stored in grid units, so
+            // recalibrating changes where a token *draws* without changing
+            // which cell it is in (invariant 1, and the reason positions are
+            // not kept in pixels).
             ClientMsg::SetMap {
                 url,
                 grid_px,
@@ -3761,19 +3756,19 @@ impl RoomState {
 
                 // The URL alone says which of the two things this is. A URL the
                 // slot is not already showing is a map being loaded, so anything
-                // remembered for it wins over what the client sent — which is
-                // how re-picking a map comes back calibrated without the client
+                // remembered for it wins over what the client sent. That is how
+                // re-picking a map comes back calibrated without the client
                 // knowing the table exists. A URL that matches what the slot
                 // holds is the DM recalibrating it, which is applied as given.
                 //
-                // Recording only in the second case, and on a load of a map with
-                // nothing remembered yet, is what keeps the two halves from
-                // cancelling: if a load recorded too, a remembered calibration
-                // would immediately overwrite itself with the client's guess.
+                // Record only in the second case, and on a load of a map with
+                // nothing remembered yet. If a load recorded too, a remembered
+                // calibration would immediately be overwritten with the
+                // client's guess.
                 //
                 // An empty staged slot holds no URL, so filling it is always a
-                // load — which is what makes a map come back calibrated the
-                // moment it is staged rather than only once it is promoted.
+                // load. That makes a map come back calibrated the moment it is
+                // staged, not only once it is promoted.
                 let showing = if staged {
                     self.staged.as_ref().map(|board| &board.map.url)
                 } else {
@@ -3783,11 +3778,11 @@ impl RoomState {
                 //
                 // **A recalibration writes the calibration and nothing else.**
                 // The entry also holds the walls and the paint prepared on this
-                // image, and they are not the client's to send — an insert of a
-                // whole `Prepared` here would file empty walls over half an hour
-                // of tracing every time the DM nudged the grid, and the board
-                // would go on showing them until the map was next loaded away
-                // from. Assigning the one field is what makes that unsayable.
+                // image, and those aren't the client's to send. Inserting a
+                // whole `Prepared` here would file empty walls over half an
+                // hour of tracing every time the DM nudged the grid, and the
+                // board would go on showing the old ones until the map was next
+                // loaded away from. Assigning the one field rules that out.
                 let calibration = match self.calibrations.get_mut(&url) {
                     Some(prepared) if loading => prepared.calibration.clone(),
                     Some(prepared) => {
@@ -3811,28 +3806,27 @@ impl RoomState {
                 // already calibrated when it is promoted.
                 let finished = calibration.into_map(url.clone());
                 if staged {
-                    // Staged token state belongs to the staged map and dies with
-                    // it. `loading` is what tells the two cases apart, and it is
-                    // the same `loading` the calibration table already turns on:
-                    // a *different* map is a different next room, so the
-                    // monsters placed for the last one go. A recalibration is
-                    // not, and must not sweep them away — correcting the grid
-                    // after placing an ambush is an ordinary thing to do, and
-                    // this is the arm that gets missed.
+                    // Staged token state belongs to the staged map and goes
+                    // with it. The same `loading` as the calibration table tells
+                    // the two cases apart: a *different* map is a different next
+                    // room, so the monsters placed for the last one go. A
+                    // recalibration must not sweep them away. Correcting the
+                    // grid after placing an ambush is an ordinary thing to do,
+                    // and this is the case that gets missed.
                     let mut events = if loading {
                         self.clear_staged_tokens()
                     } else {
                         Vec::new()
                     };
 
-                    // The staged board's own geometry, swept by exactly the rule
-                    // the live board's is swept by one branch down — which is the
-                    // whole argument for the two slots holding the same three
-                    // things. A *load* is a different image and nothing traced on
-                    // the last one means anything on it. A **recalibration keeps
-                    // the walls and drops the paint**: a wall is image pixels and
-                    // still traces the same painted line, and an override is a
-                    // cell whose square has just moved out from under it.
+                    // The staged board's own geometry, swept by the same rule as
+                    // the live board's in the `else` branch below. That is why
+                    // the two slots hold the same three things. A *load* is a
+                    // different image, and nothing traced on the last one means
+                    // anything on it. A **recalibration keeps the walls and
+                    // drops the paint**: a wall is in image pixels and still
+                    // traces the same painted line, and an override is a cell
+                    // whose square has just moved.
                     let reshaped = self.staged.as_ref().is_some_and(|board| {
                         (
                             board.map.grid_px,
@@ -3847,13 +3841,13 @@ impl RoomState {
                         )
                     });
                     let previous = self.staged.take();
-                    // **The second write site, and the one that gets missed.**
-                    // A staged board never passes through `sweep_board`; it dies
-                    // right here, where a load discards whatever was in the slot.
-                    // The rule is the live board's — what a board had traced on
-                    // it is filed under *its* URL as it stops being held — and
-                    // the only difference is that the URL and the walls are both
-                    // in hand rather than on `self`.
+                    // **The second place the shelf is written, and the one that
+                    // gets missed.** A staged board never passes through
+                    // `sweep_board`; it is discarded here, when a load replaces
+                    // whatever was in the slot. The rule is the live board's:
+                    // what a board had traced on it is filed under *its* URL as
+                    // it stops being held. The only difference is that the URL
+                    // and the walls are local values here, not on `self`.
                     if loading && let Some(board) = &previous {
                         self.shelve(
                             &board.map.url,
@@ -3872,10 +3866,10 @@ impl RoomState {
                             },
                         },
                         // A load, or the first map into an empty slot. Nothing is
-                        // carried *across* — but whatever the DM last prepared on
-                        // this image comes back off the shelf with it, which is
-                        // what lets three dungeons be traced on a Tuesday and
-                        // found still traced on Saturday.
+                        // carried *across*, but whatever the DM last prepared on
+                        // this image comes back off the shelf with it. That lets
+                        // three dungeons be traced on a Tuesday and found still
+                        // traced on Saturday.
                         _ => {
                             let (walls, overrides) = self.prepared(&url);
                             StagedBoard {
@@ -3887,29 +3881,29 @@ impl RoomState {
                     };
                     self.staged = Some(carried);
 
-                    // One event still, and that is the bundle earning its keep:
+                    // Still one event, because the slot is one bundle:
                     // `StagedChanged` carries the whole slot, so a load that
                     // swept its walls and a recalibration that dropped its paint
-                    // are both already described by the frame the DM was getting
-                    // anyway. There is no staged `WallsChanged` to remember to
-                    // emit beside it, and so none to forget.
+                    // are both described by the frame the DM was getting anyway.
+                    // There is no staged `WallsChanged` to remember to emit
+                    // beside it.
                     events.push(Event::StagedChanged);
                     events
                 } else {
-                    // The fourth thing that turns on `loading`, and the only one
-                    // that also turns on a recalibration. The explored cells are
-                    // grid-space, so the lattice moving under them is enough on
-                    // its own — a DM who nudges the offset by half a cell has not
-                    // changed which rooms the party has been in, but they have
-                    // changed which squares those rooms are made of, and there is
-                    // no honest way to carry the old answer across. Redrawing the
-                    // play area is the same act at board scale: what was explored
-                    // outside the new edge is not somewhere the party can be.
+                    // Forgetting the fog turns on `loading` and also on a
+                    // recalibration. The explored cells are in grid space, so
+                    // the lattice moving under them is enough on its own. A DM
+                    // who nudges the offset by half a cell hasn't changed which
+                    // rooms the party has been in, but has changed which squares
+                    // those rooms are made of, and there's no correct way to
+                    // carry the old answer across. Redrawing the play area is
+                    // the same change at board scale: what was explored outside
+                    // the new edge is not somewhere the party can be.
                     //
-                    // Asked of the board's shape alone, and that is the point:
-                    // turning the vision radius up is not a reason for the party
-                    // to forget the dungeon, and neither is the grid's colour or
-                    // turning fog off and on again.
+                    // Asked of the board's shape alone: turning the vision
+                    // radius up is not a reason for the party to forget the
+                    // dungeon, and neither is the grid's colour or turning fog
+                    // off and on again.
                     let reshaped = (
                         self.map.grid_px,
                         self.map.offset_x,
@@ -3922,43 +3916,41 @@ impl RoomState {
                         finished.play_area,
                     );
 
-                    // Deliberately not cleared here. A plan describes a cell on
-                    // the staged map, which this command has not touched — the
+                    // Plans are not cleared here. A plan describes a cell on the
+                    // staged map, which this command hasn't touched, so the
                     // plans are still about the map they were made on.
                     //
                     // The URL of the board being left, read before the
                     // assignment overwrites it. `sweep_board` files what was
-                    // traced on it under this, and it cannot work the name out
-                    // for itself — see the note on that function.
+                    // traced on it under this, and can't work the name out for
+                    // itself (see the note on that function).
                     let outgoing = std::mem::replace(&mut self.map, finished).url;
                     let mut events = vec![Event::MapChanged];
                     // The drawings and the walls are the opposite case from the
                     // plans, and turn on `loading`: they describe this image, and
                     // a new one is a new dungeon where none of it means anything.
-                    // A recalibration must leave them alone, exactly as it leaves
-                    // the plans alone — this is the arm that gets missed.
+                    // A recalibration must leave them alone, as it leaves the
+                    // plans alone. This is the case that gets missed.
                     //
-                    // **The two arms are exclusive and that ordering is
-                    // load-bearing since milestone 31.** A load clears
-                    // everything the reshaped arm below clears, so running that
-                    // arm first would be harmless — except that it would empty
-                    // the overrides *before* the sweep files them, and the DM's
-                    // painted fog would go on the shelf as nothing. Whatever a
-                    // board is remembered by has to be read while the board
-                    // still holds it.
+                    // **The two branches must stay exclusive.** A load clears
+                    // everything the `reshaped` branch below clears, but running
+                    // that branch first would empty the overrides *before* the
+                    // sweep files them, and the DM's painted fog would go on the
+                    // shelf as nothing. What a board is remembered by has to be
+                    // read while the board still holds it.
                     if loading {
                         // What the sweep is about to gate its own two events on.
-                        // Read here because both events are materialised at
-                        // *dispatch* against whatever the board holds then, so a
-                        // frame the sweep already pushed will carry the restored
-                        // list and a second naming the same one says nothing.
+                        // Read here because both events are turned into messages
+                        // at *dispatch*, against whatever the board holds then,
+                        // so a frame the sweep already pushed will carry the
+                        // restored list and a second one would repeat it.
                         let swept = (!self.walls.is_empty(), !self.overrides.is_empty());
                         events.append(&mut self.sweep_board(&outgoing));
 
-                        // And the other half of the shelf: whatever the DM last
+                        // The other half of the shelf: whatever the DM last
                         // traced and painted on the image that just arrived
-                        // comes back with it. After the sweep, never before it —
-                        // the sweep clears exactly these two.
+                        // comes back with it. After the sweep, never before it,
+                        // because the sweep clears these two.
                         let (walls, overrides) = self.prepared(&url);
                         self.walls = walls;
                         self.overrides = overrides;
@@ -3970,17 +3962,17 @@ impl RoomState {
                         }
                     } else if reshaped {
                         self.forget_fog();
-                        // And the DM's overrides, by the identical argument: they
-                        // are cells, and the squares they name have just moved
-                        // out from under them. This one needs its own event —
-                        // nothing recomputes it, so the DM's panel would go on
-                        // drawing a mask the room no longer holds.
+                        // The DM's overrides go for the same reason: they are
+                        // cells, and the squares they name have just moved. This
+                        // one needs its own event. Nothing recomputes it, so the
+                        // DM's panel would go on drawing a mask the room no
+                        // longer holds.
                         //
-                        // The shelf is deliberately not written here: a
+                        // The shelf is not written here, because a
                         // recalibration is not the map leaving. What gets filed
-                        // is whatever the board is holding when it does leave,
-                        // which after this is nothing — the same answer the
-                        // board has just given the DM on screen.
+                        // is whatever the board holds when it does leave, which
+                        // after this is nothing, matching what the DM now sees
+                        // on screen.
                         if !self.overrides.is_empty() {
                             self.overrides.clear();
                             events.push(Event::OverridesChanged { staged: false });
@@ -3990,57 +3982,53 @@ impl RoomState {
                 }
             }
 
-            // A token with no plan is still untouched here, and for a stronger
-            // reason than a recalibration: it is stored in cells, and there is
-            // no sensible way to carry a cell across to an unrelated image. It
-            // keeps its coordinates and the DM repositions it. A plan is how the
-            // DM says otherwise in advance, and this is where it comes true.
+            // A token with no plan is untouched here, as on a recalibration,
+            // and for a stronger reason: it is stored in cells, and there is no
+            // sensible way to carry a cell across to an unrelated image. It
+            // keeps its coordinates and the DM repositions it. A plan is how
+            // the DM places it in advance, and this is where the plan applies.
             ClientMsg::PromoteStaged => {
                 let Some(board) = self.staged.take() else {
                     return Vec::new(); // proved to exist by `check`
                 };
 
                 // Tokens first, so that by the time a client is told the slot
-                // has emptied — which is what ends the DM's preview — every
-                // token already holds the position it landed on. It reads the
-                // fog before the sweep below, which is why the order here has
-                // never been free to change.
+                // has emptied (which ends the DM's preview), every token already
+                // holds the position it landed on. It also reads the fog before
+                // the sweep below does, so this order must not change.
                 let mut events = self.promote_staged_tokens();
                 // A promote is a new map arriving on the board, so the drawings
                 // go the way they go for any other load, and so does everywhere
                 // the party had explored: this is a different dungeon and they
                 // have not been in it.
                 //
-                // **The walls and the paint are what milestone 20 changed.** The
-                // sweep still clears the board's, and then the staged board's
-                // land in their place rather than nothing landing — which is the
-                // whole feature, and the reason `sweep_board` is called before
-                // the assignment rather than after it.
+                // The walls and the paint: the sweep clears the board's, and
+                // then the staged board's land in their place. That is why
+                // `sweep_board` is called before the assignment, not after it.
                 //
-                // The URL passed in is the *outgoing* board's, and here that is
-                // simply `self.map` — the assignment is on the line below rather
-                // than above, which is the whole reason `sweep_board` cannot
-                // read it for itself.
+                // The URL passed in is the *outgoing* board's, which here is
+                // still `self.map` because the assignment is on the line below.
+                // Callers differ on that, which is why `sweep_board` can't read
+                // it for itself.
                 let outgoing = self.map.url.clone();
                 events.append(&mut self.sweep_board(&outgoing));
                 self.map = board.map;
                 self.walls = board.walls;
                 self.overrides = board.overrides;
-                // Gated the way the sweep's own halves are, and against what
-                // *arrived* rather than what left: an empty staged board
-                // promoting onto an empty live one is a `WallsChanged` saying
+                // Gated the way the sweep's own events are, but on what
+                // *arrived*, not what left: otherwise an empty staged board
+                // promoting onto an empty live one sends a `WallsChanged` saying
                 // nothing happened. `sweep_board` may have emitted one already
                 // for the clear, and a second frame naming the new list is the
-                // correct order — the DM ends up holding what is actually there.
+                // right order: the DM ends up holding what is there.
                 if !self.walls.is_empty() {
                     events.push(Event::WallsChanged { staged: false });
                 }
                 if !self.overrides.is_empty() {
                     events.push(Event::OverridesChanged { staged: false });
                 }
-                // Then the two that were always here, because two things
-                // happened: the board changed for everyone, and the slot emptied
-                // for the DM.
+                // Then two more, because two things happened: the board
+                // changed for everyone, and the slot emptied for the DM.
                 events.push(Event::MapChanged);
                 events.push(Event::StagedChanged);
                 events
@@ -4048,16 +4036,16 @@ impl RoomState {
 
             ClientMsg::ClearStaged => {
                 let mut events = self.clear_staged_tokens();
-                // The staged slot's other exit, and it files what it is throwing
-                // away for the reason the load arm does: the shelf is keyed by
-                // image, not by slot, so which of the two buttons the DM pressed
-                // must not change what next week's load finds. Discarding the
-                // *prep* is `ClearWalls`, which is a step on the ring; this
-                // discards the slot.
+                // The staged slot's other exit. It files what it is throwing
+                // away, as the load arm does: the shelf is keyed by image, not
+                // by slot, so which of the two buttons the DM pressed must not
+                // change what next week's load finds. Discarding the *prep* is
+                // `ClearWalls`, which is a step on the undo ring; this discards
+                // the slot.
                 //
-                // The plans go the other way and are gone — they are on the
-                // tokens, not on the map. See *Two deliberate omissions* in
-                // `docs/maps.md`.
+                // The plans are not filed and are lost, because they are on the
+                // tokens, not on the map. See *Two omissions, and the second is
+                // the boundary* in `docs/maps.md`.
                 if let Some(board) = self.staged.take() {
                     self.shelve(
                         &board.map.url,
@@ -4069,11 +4057,11 @@ impl RoomState {
                 events
             }
 
-            // Relayed and forgotten. The room does not hold the sweep at all —
-            // there is nothing to hold, since the next frame replaces it and the
-            // release ends it. That is what makes a measuring line cost the save
-            // file nothing, and it is why a client joining mid-sweep is sent no
-            // sketch: `RoomView` can only describe what the room knows.
+            // Relayed and forgotten. The room doesn't hold the sweep at all:
+            // the next frame replaces it and the release ends it. So a
+            // measuring line costs the save file nothing, and a client joining
+            // mid-sweep is sent no sketch, because `RoomView` can only describe
+            // what the room knows.
             ClientMsg::Sketch {
                 kind,
                 at,
@@ -4105,7 +4093,7 @@ impl RoomState {
                 let by = match self.clients.get(&origin) {
                     Some(client) => drawn_by(client),
                     // Proved to be a client by `check`. Falling back to the DM
-                    // is the closed door: it is the identity that can erase it.
+                    // is the safe choice: the DM can erase any shape anyway.
                     None => Owner::Dm,
                 };
                 self.shapes.push(Shape {
@@ -4129,22 +4117,15 @@ impl RoomState {
                 vec![Event::ShapesChanged]
             }
 
-            // Nothing is applied. `apply` is a misnomer for exactly one command
-            // and this is it: there is no `&mut self` in the body, because a
-            // ping changes nothing about the room. It goes through the pipeline
-            // regardless rather than being short-circuited somewhere earlier,
-            // because the four steps are where permission and delivery live and
-            // a command with its own path around them is how one of the two gets
-            // forgotten.
             // The one arm in this function that appends to a list nothing else
             // in the room reads. `check` has already decided the destination is
             // one this client may name, so all that is left is to write down who
-            // said it — from the socket, never from the frame.
+            // said it, from the socket and never from the frame.
             ClientMsg::Say { to, text } => {
                 let by = match self.clients.get(&origin) {
                     Some(client) => drawn_by(client),
-                    // `check` proved this is a client. `Ping`'s fallback and the
-                    // same reasoning: this decides whose name goes on it, and an
+                    // `check` proved this is a client. This decides whose name
+                    // goes on the line, so there is no fallback owner: an
                     // unattributable line is one nobody sent.
                     None => return Vec::new(),
                 };
@@ -4152,7 +4133,7 @@ impl RoomState {
                     by,
                     to,
                     // Trimmed here as well as in `check`, because `check` only
-                    // looked at a borrow — what goes in the log is what the room
+                    // looked at a borrow. What goes in the log is what the room
                     // decided was sayable, not what arrived.
                     text: text.trim().to_owned(),
                     // Somebody typed this.
@@ -4161,13 +4142,13 @@ impl RoomState {
             }
 
             // The room throws the dice, and what comes out is an ordinary line
-            // of talk. Everything after this point — who is party to it, the
-            // cap, the frame, the badge on somebody's dock — is the arm above's
-            // machinery reused without a change to any of it.
+            // of talk. Everything after this point (who is party to it, the
+            // cap, the frame, the badge on somebody's dock) is `Say`'s code,
+            // reused unchanged.
             ClientMsg::Roll { sides, count, to } => {
                 let by = match self.clients.get(&origin) {
                     Some(client) => drawn_by(client),
-                    // `check` proved this is a client, exactly as above: an
+                    // `check` proved this is a client, as in `Say`: an
                     // unattributable roll is one nobody threw.
                     None => return Vec::new(),
                 };
@@ -4176,26 +4157,27 @@ impl RoomState {
                     by,
                     to,
                     text: rolled_text(sides, &faces),
-                    // And the room threw this one, which is the only difference
-                    // between the two and the whole of what the flag says.
+                    // The room threw this one. That is the only difference from
+                    // `Say`, and all the flag means.
                     rolled: true,
                 })
             }
 
-            // Whose box this is comes from the socket, exactly as a line of
-            // talk's author does one arm up. Written whole rather than patched:
-            // it is one string that changes when somebody stops typing.
+            // Whose box this is comes from the socket, as a chat line's author
+            // does. Written whole, not patched: it is one string that changes
+            // when somebody stops typing.
             //
-            // **Emptying it removes the entry rather than storing an empty
-            // string**, which is `Override`'s `Auto` again — one representation
-            // of "there is nothing here", so a cleared box costs the save file
-            // nothing and a player who never opened this leaves no trace in it.
+            // Emptying it removes the entry instead of storing an empty
+            // string, as `Override`'s `Auto` is the absence of an entry. One
+            // representation of "there is nothing here", so a cleared box costs
+            // the save file nothing and a player who never opened this leaves
+            // no trace in it.
             ClientMsg::SetNotes { text } => {
                 let owner = match self.clients.get(&origin) {
                     Some(client) => drawn_by(client),
-                    // `check` proved this is a client. Same reasoning as the two
-                    // arms around it: this decides whose box is being written,
-                    // and a note nobody owns is one nobody can ever be sent.
+                    // `check` proved this is a client. As in `Say` and `Roll`,
+                    // this decides whose box is being written, and a note nobody
+                    // owns is one nobody can ever be sent.
                     None => return Vec::new(),
                 };
                 if text.is_empty() {
@@ -4210,10 +4192,10 @@ impl RoomState {
                 }]
             }
 
-            // The arm above with the private half taken out. Whose colour it is
-            // still comes from the socket and never from the frame — but there
-            // is no `by` on the event, because there is nobody to exclude: this
-            // is one table everybody holds, so everybody is sent the same one.
+            // `SetNotes` without the private half. Whose colour it is still
+            // comes from the socket and never from the frame, but there is no
+            // `by` on the event, because there is nobody to exclude: this is
+            // one table everybody holds, so everybody is sent the same one.
             ClientMsg::SetColour { colour } => {
                 let id = match self.clients.get(&origin) {
                     Some(Client {
@@ -4228,12 +4210,17 @@ impl RoomState {
                 vec![Event::ColoursChanged]
             }
 
+            // Nothing is applied: a ping changes nothing about the room, so the
+            // body only reads `self`. It still goes through the pipeline instead
+            // of being short-circuited earlier, because the four steps are where
+            // permission and delivery live, and a command with its own path
+            // around them is how one of the two gets forgotten.
             ClientMsg::Ping { at } => {
                 let owner = match self.clients.get(&origin) {
                     Some(client) => drawn_by(client),
-                    // Proved to be a client by `check`. `AddShape`'s fallback,
-                    // and harmless here for a reason that one cannot claim —
-                    // this decides a ring's colour rather than who may erase it.
+                    // Proved to be a client by `check`. The same fallback as
+                    // `AddShape`, and harmless here for a simpler reason: this
+                    // decides a ring's colour, not who may erase it.
                     None => Owner::Dm,
                 };
                 vec![Event::Pinged {
@@ -4243,16 +4230,14 @@ impl RoomState {
                 }]
             }
 
-            // The arm above, and the only one in this function that takes
-            // `&self` for nothing but a lookup twice over. **The room is not
-            // touched**: no field is written, nothing is marked dirty, and the
-            // event is the whole of what happened.
+            // Like `Ping`, this only reads `self`. The room is not touched:
+            // no field is written, nothing is marked dirty, and the event is
+            // all that happened.
             //
-            // The fallback is not harmless the way `Ping`'s is and cannot be
-            // reached the way that one describes: an owner guessed as the DM
-            // here would be a pointer that the fog filter then treats as the
-            // DM's. `check` has already proved this is a client, so the arm
-            // returns nothing rather than inventing a sender.
+            // The fallback is not harmless the way `Ping`'s is: an owner
+            // guessed as the DM here would be a pointer that the fog filter
+            // then treats as the DM's. `check` has already proved this is a
+            // client, so the arm returns nothing instead of inventing a sender.
             ClientMsg::MoveCursor { at } => match self.clients.get(&origin) {
                 Some(client) => vec![Event::CursorMoved {
                     by: origin,
@@ -4263,9 +4248,9 @@ impl RoomState {
             },
 
             // One run in, one segment per gap between its corners out. The run
-            // itself is not stored — it was how the DM drew, not what the map
-            // holds — which is what lets one bad segment of a long trace be
-            // erased without redrawing the rest of it.
+            // itself is not stored (it was how the DM drew, not what the map
+            // holds), so one bad segment of a long trace can be erased without
+            // redrawing the rest of it.
             ClientMsg::AddWalls {
                 points,
                 door,
@@ -4275,8 +4260,8 @@ impl RoomState {
                     // Traced shut. A door the DM has to close after drawing it is
                     // a door they will forget to close, and a dungeon's doors are
                     // shut until somebody opens them. That holds on both boards:
-                    // a staged door is traced shut too, and swinging it before
-                    // the promote is how the DM says otherwise.
+                    // a staged door is traced shut too, and the DM can open it
+                    // before the promote.
                     WallKind::Door(false)
                 } else {
                     WallKind::Solid
@@ -4287,7 +4272,7 @@ impl RoomState {
                 for pair in points.windows(2) {
                     let [from, to] = pair else { continue };
                     walls.push(Wall {
-                        // The server's to invent, like a shape's or a token's.
+                        // The server makes the id, as for a shape or a token.
                         id: WallId(Uuid::new_v4().simple().to_string()),
                         from: *from,
                         to: *to,
@@ -4305,13 +4290,13 @@ impl RoomState {
             }
 
             // On the live board this is the party opening a door mid-fight. On
-            // the staged one it is authoring — whatever it is left as is what
+            // the staged one it is preparation: whatever it is left as is what
             // promotes, which is how the DM prepares a room that is already ajar.
             ClientMsg::ToggleDoor { id, staged } => {
                 for wall in self.walls_mut(staged).into_iter().flatten() {
                     if wall.id == id {
-                        // Proved to be a door by `check`; masonry is left alone
-                        // rather than turned into one.
+                        // Proved to be a door by `check`. A solid wall is left
+                        // alone, not turned into a door.
                         if let WallKind::Door(open) = wall.kind {
                             wall.kind = WallKind::Door(!open);
                         }
@@ -4336,10 +4321,10 @@ impl RoomState {
                     return Vec::new(); // proved to exist by `check`
                 };
                 match state {
-                    // `Auto` is the absence of an entry rather than a fourth
-                    // variant, so handing cells back to the rays is a removal.
-                    // One representation of "not overridden", which is what keeps
-                    // `recompute_sight` from having a case that does nothing.
+                    // `Auto` is the absence of an entry, not a fourth variant,
+                    // so handing cells back to the rays is a removal. One
+                    // representation of "not overridden" keeps `recompute_sight`
+                    // from having a case that does nothing.
                     None => {
                         for cell in cells {
                             overrides.remove(&cell);
@@ -4351,22 +4336,22 @@ impl RoomState {
                         }
                     }
                 }
-                // The fog moving is `refresh_fog`'s to report, not this arm's.
-                // It runs against a reading taken before `apply`, so whatever the
-                // mask did to the two sets is already in the difference — and if
-                // the DM painted `Dark` over cells nobody could see anyway, there
-                // is correctly no `FogChanged` at all.
+                // `refresh_fog` reports the fog moving, not this arm. It
+                // compares against a reading taken before `apply`, so whatever
+                // the mask did to the two sets is already in the difference.
+                // If the DM painted `Dark` over cells nobody could see anyway,
+                // there is correctly no `FogChanged` at all.
                 //
-                // Painting the staged board there is nothing for it to report at
-                // all: `moves_sight` says so, and it is right — no ray has ever
-                // been cast on a map the table has not been shown.
+                // Painting the staged board gives it nothing to report:
+                // `moves_sight` says so, because no ray has ever been cast on a
+                // map the table hasn't been shown.
                 vec![Event::OverridesChanged { staged }]
             }
 
             // The whole map back to dark, and then whatever the party can see
-            // from where they are standing. `sweep_board` without the board: the
-            // same three sets and the same mask, minus the shapes and the walls,
-            // because this is the fog starting over and not the map.
+            // from where they are standing. Like `sweep_board` without the
+            // board: the same three sets and the same mask, minus the shapes and
+            // the walls, because this is the fog starting over, not the map.
             ClientMsg::ResetFog => {
                 self.forget_fog();
                 self.overrides.clear();
@@ -4396,49 +4381,41 @@ impl RoomState {
 
             ClientMsg::Undo => {
                 // Pop the state the DM is in, then adopt whatever is behind it.
-                // `check` proved there is one, and the `if let` is what keeps
-                // that proof from being a `expect` — a ring emptied between the
-                // two would leave the room untouched rather than panic.
+                // `check` proved there is one. The `let else` is there instead
+                // of an `expect`, so a ring emptied between the two would leave
+                // the room untouched, not panic.
                 self.undo.pop_back();
                 let Some(back) = self.undo.back() else {
                     return Vec::new();
                 };
-                // Cloned rather than popped: the state being restored *is* the
-                // new top of the ring, because the back of it is always where
-                // the DM now stands. Taking it off would make the next undo skip
-                // a step.
+                // Cloned, not popped: the state being restored *is* the new top
+                // of the ring, because the back of it is always where the DM now
+                // stands. Taking it off would make the next undo skip a step.
                 let back = back.state.clone();
-                // **The one thing a restore is told to leave alone**, and the
-                // only exception `adopt` has ever needed. Milestone 22's rule is
-                // that the ring may hold state the undoing hand wrote; every
-                // scratchpad on that snapshot was written by somebody else, and
-                // restoring one eats a paragraph its author cannot get back and
-                // was never told about. `undid` keeps `SetNotes` from *being* a
-                // step; this is the other half, because a note written between
-                // two other commands is on the snapshot regardless of what put
-                // it there.
+                // **The scratchpads and the player colours are left alone by a
+                // restore.** The ring may only hold state the DM could have
+                // written. Every scratchpad on that snapshot was written by
+                // somebody else, and restoring one loses a paragraph its author
+                // can't get back and was never told about. A colour is a
+                // player's in the same way. `undid` keeps `SetNotes` and
+                // `SetColour` from *being* steps; this is the other half,
+                // because a note or colour written between two other commands
+                // is on the snapshot regardless of what put it there. Both
+                // halves are needed for each. See `docs/undo.md`.
                 //
-                // Taken and put back rather than filtered out of the snapshot at
-                // push time: what belongs here is whatever people have typed
+                // Taken and put back, not filtered out of the snapshot at push
+                // time: what belongs here is whatever people have typed
                 // *since*, which is what the room is holding right now.
-                //
-                // **Two things now, and the second is why this is a rule rather
-                // than a special case.** A colour is a player's the same way a
-                // paragraph is, and neither is the DM's to take back — milestone
-                // 27 is what turned "the only thing exempted by hand" into a
-                // list. Both halves are still needed for each: `undid` keeps the
-                // command from being a step, and this keeps a colour picked
-                // between two other commands off the snapshot they pushed.
                 let notes = std::mem::take(&mut self.notes);
                 let colours = std::mem::take(&mut self.colours);
                 self.adopt(back);
                 self.notes = notes;
                 self.colours = colours;
-                // `adopt` empties both derived sets — a `Saved` holds the party's
-                // memory and not their sight. Done here rather than through
-                // `moves_sight` and `refresh_fog`, because `Restored` already
-                // describes the whole board including its fog and the difference
-                // those would report is a second copy of the same news.
+                // `adopt` empties both derived sets, because a `Saved` holds the
+                // party's memory and not their sight. Recomputed here instead of
+                // through `moves_sight` and `refresh_fog`, because `Restored`
+                // already describes the whole board including its fog, and the
+                // difference those would report would repeat it.
                 self.recompute_sight();
                 vec![Event::Restored, Event::UndoChanged]
             }
@@ -4449,9 +4426,9 @@ impl RoomState {
     fn sight_now(&self) -> Sight {
         Sight {
             fog: self.fog_for(),
-            // Read off the record and pointedly not off the tokens: this has to
-            // be what the table *holds*, and a drag frame has already moved the
-            // one token that could disagree. See `RoomState::shown`.
+            // Read off the record, not off the tokens: this has to be what the
+            // table *holds*, and a drag frame has already moved the one token
+            // that could disagree. See `RoomState::shown`.
             seen: self.shown.clone(),
             shapes: self
                 .shapes
@@ -4464,23 +4441,23 @@ impl RoomState {
 
     /// Recomputes sight and says what changed, as events.
     ///
-    /// This is the milestone in one function. Three things can fall out of a
-    /// party taking one step, and only the first is the fog itself:
+    /// Three things can fall out of a party taking one step, and only the first
+    /// is the fog itself:
     ///
     /// - the fog frame, if what is lit or explored is not what it was;
     /// - a token appearing or vanishing for the table, because the cells it
     ///   stands on just changed state. The player who walked into the room has
     ///   never held the ogre in it, so `was_unseen` is true and `message_for`
-    ///   turns the same event into a whole token for them and a `TokenRemoved`
-    ///   for the reverse. That machinery is milestone 11's and is reused whole;
+    ///   turns the same event into a whole token for them, and into a
+    ///   `TokenRemoved` for the reverse. This reuses the `was_unseen` handling
+    ///   that hiding a token already has;
     /// - the panels that name those tokens. A creature the table cannot see must
-    ///   not be a row in their initiative list or an aura on their board, which
-    ///   is the same pair of gates hiding a monster already goes through.
+    ///   not be a row in their initiative list or an aura on their board, the
+    ///   same two gates that hiding a monster goes through.
     ///
-    /// Both of the last two are gated on something actually having changed, and
-    /// that is load-bearing rather than tidy for the third time in this file: an
-    /// unconditional `ShapesChanged` on every step would tell the table that
-    /// *something happened* every time anybody moved.
+    /// Both of the last two are gated on something having changed, and this is
+    /// required, not tidiness: an unconditional `ShapesChanged` on every step
+    /// would tell the table that *something happened* every time anybody moved.
     fn refresh_fog(&mut self, before: Sight, already: &[Event]) -> Vec<Event> {
         self.recompute_sight();
 
@@ -4489,15 +4466,14 @@ impl RoomState {
             events.push(Event::FogChanged);
         }
 
-        // A token the command has already spoken about is not spoken about
-        // again. Each of those events carries its own `was_unseen`, read through
-        // the same question this one asks, so the transition has been announced
-        // correctly once already and a second frame would only repeat it.
+        // A token the command already produced an event for is skipped. Each
+        // of those events carries its own `was_unseen`, read through the same
+        // question this one asks, so the transition has been announced once
+        // already and a second frame would only repeat it.
         //
-        // `TokenMoved` is deliberately not in that list, and it is the
-        // interesting exclusion: walking out of the light is *how* a creature
-        // stops being visible, and the move frame for it has just been dropped
-        // for exactly the recipients who now need to be told it is gone.
+        // `TokenMoved` is not in that list. Walking out of the light is *how* a
+        // creature stops being visible, and the move frame for it has just been
+        // dropped for the recipients who now need to be told it is gone.
         let spoken: HashSet<&TokenId> = already
             .iter()
             .filter_map(|event| match event {
@@ -4523,11 +4499,11 @@ impl RoomState {
                 | Event::WallsChanged { .. }
                 | Event::FogChanged
                 | Event::OverridesChanged { .. }
-                // Neither can reach here: `moves_sight` is false for `Undo`, so
-                // `refresh_fog` does not run on the command that produces them.
-                // Listed rather than caught by a wildcard, because the whole
-                // point of this match being exhaustive is that a later event
-                // naming a token cannot be forgotten.
+                // `Restored` and `UndoChanged` can't reach here: `moves_sight`
+                // is false for `Undo`, so `refresh_fog` doesn't run on the
+                // command that produces them. Listed instead of caught by a
+                // wildcard, because this match is exhaustive so that a later
+                // event naming a token can't be forgotten.
                 | Event::Restored
                 | Event::PresenceChanged
                 | Event::ColoursChanged
@@ -4537,9 +4513,8 @@ impl RoomState {
             })
             .collect();
 
-        // Sorted, for the reason every other batch in this file is: `HashMap`
-        // order varies per process and decides the order of the frames six
-        // clients receive.
+        // Sorted, like every other batch in this file: `HashMap` order varies
+        // per process and decides the order of the frames six clients receive.
         let mut flipped: Vec<TokenId> = self
             .tokens
             .values()
@@ -4561,12 +4536,12 @@ impl RoomState {
             events.push(Event::InitiativeChanged);
         }
         // The token loop above catches every *anchored* shape, since one of those
-        // is visible exactly when its token is. An unanchored one gates on
-        // `revealed` instead, so the fog opening onto ground somebody drew a
-        // circle on changes it with no token involved — and that is what this
-        // second reading is for. Still one gate and still one event: an
-        // unconditional `ShapesChanged` on every step would tell the table that
-        // *something happened* every time anybody moved.
+        // is visible when its token is. An unanchored one gates on `known`
+        // instead, so the fog opening onto ground somebody drew a circle on
+        // changes it with no token involved. This second reading catches that.
+        // Still one gate and one event: an unconditional `ShapesChanged` on
+        // every step would tell the table that *something happened* every time
+        // anybody moved.
         shapes |= self
             .shapes
             .iter()
@@ -4579,24 +4554,24 @@ impl RoomState {
 
     /// Files what was traced and painted on one image under that image's URL.
     ///
-    /// **The shelf's only write.** Four paths reach it — a load into the live
+    /// **The shelf's only write.** Four paths reach it (a load into the live
     /// slot and a promote, both through `sweep_board`, and the two ways a staged
-    /// board leaves its slot — and they hand over different boards, which is why
-    /// the walls and the paint are arguments rather than read off `self`. The
-    /// rule they share is that a board's authoring is filed whenever that board
-    /// stops being held, so which of them the DM triggered cannot change what
-    /// the shelf remembers.
+    /// board leaves its slot) and they hand over different boards, which is why
+    /// the walls and the paint are arguments, not read off `self`. The rule they
+    /// share is that a board's preparation is filed whenever that board stops
+    /// being held, so which path the DM triggered can't change what the shelf
+    /// remembers.
     ///
-    /// Whatever the board actually holds, including nothing: a DM who cleared
-    /// the walls and then loaded away has cleared them, and filing only
-    /// non-empty lists would make that unsayable.
+    /// Files whatever the board holds, including nothing: a DM who cleared the
+    /// walls and then loaded away has cleared them, and filing only non-empty
+    /// lists would bring the old walls back.
     ///
     /// Nothing is filed about the blank map a fresh room starts on: `check`
     /// refuses an empty map URL, so that string names no map anyone could load
     /// back.
     ///
-    /// The read is not here. `Prepared` is looked up in the one arm that loads a
-    /// map, beside the calibration it has always looked up.
+    /// The read is `prepared`, below, called only from the `SetMap` arm beside
+    /// the calibration lookup.
     fn shelve(&mut self, url: &str, walls: Vec<Wall>, overrides: OverrideView) {
         if url.is_empty() {
             return;
@@ -4621,34 +4596,31 @@ impl RoomState {
     /// image is being replaced.
     ///
     /// Shared by a load into the live slot and by a promote, which is a load. It
-    /// is deliberately *not* reached by a recalibration: the drawings are cells
-    /// on this board and the walls trace this art, and correcting the grid
-    /// changes neither of those facts.
+    /// is *not* reached by a recalibration: the drawings are cells on this board
+    /// and the walls trace this art, and correcting the grid changes neither.
     ///
-    /// **A promote clears with this and then puts the staged board's walls and
-    /// paint in their place.** That is not this function's business — it clears,
-    /// and its caller decides whether anything arrives — and keeping it that way
-    /// is what lets a map load and a promote go on sharing it.
+    /// A promote clears with this and then puts the staged board's walls and
+    /// paint in their place. That stays in the caller: this function clears,
+    /// and its caller decides whether anything arrives, which is what lets a
+    /// map load and a promote share it.
     ///
-    /// Both halves are gated on being non-empty, and that is not tidiness. An
-    /// unconditional `ShapesChanged` on every map load tells the table something
-    /// happened to a board that had nothing on it — the same gate the initiative
-    /// panel uses, for the third time. `WallsChanged` reaches the DM alone, who
-    /// is the one doing this, so the gate there is merely honest.
+    /// Both halves are gated on being non-empty. An unconditional
+    /// `ShapesChanged` on every map load tells the table something happened to
+    /// a board that had nothing on it (the same gate the initiative panel
+    /// uses). `WallsChanged` reaches only the DM, who is the one doing this, so
+    /// the gate there just keeps the frames accurate.
     ///
-    /// **The outgoing map's URL is passed in rather than read off `self.map`,
-    /// and that is not a style choice.** The two call sites order the map
-    /// assignment opposite ways round — a `SetMap` assigns and then sweeps,
-    /// while a promote sweeps and then assigns — so `self.map.url` in here is
-    /// the *incoming* map on one path and the outgoing one on the other. Filing
-    /// a dungeon's masonry under the name of the map that replaced it puts the
-    /// walls back on the wrong image, and nothing about it looks wrong until
-    /// the DM loads away and back.
+    /// **The outgoing map's URL is passed in, not read off `self.map`.** The two
+    /// call sites order the map assignment opposite ways round (a `SetMap`
+    /// assigns and then sweeps, a promote sweeps and then assigns), so
+    /// `self.map.url` in here is the *incoming* map on one path and the
+    /// outgoing one on the other. Filing a dungeon's walls under the name of
+    /// the map that replaced it puts them back on the wrong image, and nothing
+    /// looks wrong until the DM loads away and back.
     fn sweep_board(&mut self, outgoing: &str) -> Vec<Event> {
-        // Onto the shelf before any of it is cleared. What follows is the same
-        // destruction it always was; what changed in milestone 31 is that the
-        // map keeps a copy of what was on it, so loading away is no longer
-        // half an hour of tracing gone.
+        // Onto the shelf before any of it is cleared, so the map keeps a copy
+        // of what was on it and loading away doesn't lose half an hour of
+        // tracing.
         self.shelve(
             outgoing,
             self.walls.clone(),
@@ -4659,29 +4631,27 @@ impl RoomState {
             self.shapes.clear();
             events.push(Event::ShapesChanged);
         }
-        // Half an hour of tracing, gone with one map load and no undo. That is
-        // the same bargain the drawings make and the roadmap asks for — walls
-        // are grid- and art-specific, and a wall traced on the last dungeon is
-        // a line across the middle of this one.
+        // Cleared from the board like the drawings (the shelf above keeps the
+        // copy). Walls are specific to the art, and a wall traced on the last
+        // dungeon is a line across the middle of this one.
         if !self.walls.is_empty() {
             self.walls.clear();
             events.push(Event::WallsChanged { staged: false });
         }
-        // And the explored terrain, which is where the fog differs from the walls
-        // it was just cleared beside. A wall survives a recalibration because it
-        // is in image pixels and still traces the same painted line; these are
-        // cells, so the lattice moving underneath them is enough to invalidate
-        // them and a new image certainly is.
+        // The explored terrain goes too. A wall survives a recalibration
+        // because it is in image pixels and still traces the same painted line;
+        // these are cells, so the lattice moving underneath them is enough to
+        // invalidate them, and a new image certainly is.
         //
         // No event of its own: `refresh_fog` runs after this on the way out of
-        // `handle`, and it compares against a reading taken before any of it, so
-        // the clear is already in the difference it reports. Emitting one here
-        // would be the same news twice.
+        // `handle`, comparing against a reading taken before any of it, so the
+        // clear is already in the difference it reports. Emitting one here
+        // would send it twice.
         self.forget_fog();
         // The DM's overrides go with them, and this one *does* need its own
-        // event: it is authoring data rather than a derived set, so nothing
-        // recomputes it and the DM's own panel would go on drawing cells the room
-        // no longer holds. Gated like the two above, for the reason those are.
+        // event: it is the DM's data, not a derived set, so nothing recomputes
+        // it and the DM's own panel would go on drawing cells the room no longer
+        // holds. Gated like the two above, for the same reason.
         if !self.overrides.is_empty() {
             self.overrides.clear();
             events.push(Event::OverridesChanged { staged: false });
@@ -4692,18 +4662,18 @@ impl RoomState {
     /// Takes a token out of the room, and its initiative row with it.
     ///
     /// Shared by `DeleteToken` and by the sweep that throws away a staged map,
-    /// which deletes the tokens that only existed on it. The order would
-    /// otherwise keep a row pointing at a token that no longer exists — which
-    /// the panel renders as a bare id, and which `next_turn` would hand the turn
-    /// to. A staged-only token cannot be in the order, so that half is dead code
-    /// on one of the two paths; sharing one function is still worth more than
-    /// two that could come to disagree about what deleting means.
+    /// which deletes the tokens that only existed on it. Otherwise the order
+    /// would keep a row pointing at a token that no longer exists, which the
+    /// panel renders as a bare id and `next_turn` would hand the turn to. A
+    /// staged-only token can't be in the order, so that half does nothing on
+    /// one of the two paths; one shared function is still better than two that
+    /// could come to disagree about what deleting means.
     fn delete_token(&mut self, id: &TokenId) -> Vec<Event> {
-        // Before the removal, and through `unseen_by_table` rather than
-        // `Token::unseen`: whether the table is owed the news depends on whether
-        // they could see it, and a monster standing in the dark is one they were
-        // never told about. Once it is out of the room neither question can be
-        // asked at all.
+        // Before the removal, and through `unseen_by_table`, not
+        // `Token::unseen`: whether the table is told depends on whether they
+        // could see it, and a monster standing in the dark is one they were
+        // never told about. Once it is out of the room the question can't be
+        // asked.
         let was_unseen = self.tokens.get(id).is_some_and(|t| self.unseen_by_table(t));
 
         if self.tokens.remove(id).is_none() {
@@ -4718,10 +4688,9 @@ impl RoomState {
             self.initiative.remove(id);
             events.push(Event::InitiativeChanged);
         }
-        // Anything anchored to it goes the same way, and for the same reason the
-        // initiative row does: a shape following a token that no longer exists
-        // has no position to be drawn at. The roadmap called this one in
-        // advance, and it is the second thing deleting a token now reaches into.
+        // Anything anchored to it goes too, for the same reason as the
+        // initiative row: a shape following a token that no longer exists has
+        // no position to be drawn at.
         if self.anchors_a_shape(id) {
             self.shapes.retain(|s| s.anchor() != Some(id));
             events.push(Event::ShapesChanged);
@@ -4733,9 +4702,9 @@ impl RoomState {
     /// cleared and every token that only existed on that map is deleted.
     ///
     /// Without this the next map inherits monsters placed on a map nobody will
-    /// ever see again — and, worse, staged-only tokens that no board shows,
-    /// since the live one does not draw them and the map they were built on is
-    /// gone. Reached from `ClearStaged` and from a *load* into the staged slot.
+    /// ever see again, and staged-only tokens that no board shows, since the
+    /// live one doesn't draw them and the map they were built on is gone.
+    /// Reached from `ClearStaged` and from a *load* into the staged slot.
     ///
     /// Every event it produces reaches the DM alone: a deleted staged-only token
     /// was never announced, and a cleared plan is a field no player holds.
@@ -4751,7 +4720,7 @@ impl RoomState {
         }
         // `HashMap` order varies per process, and these ids decide the order of
         // the frames the DM's other tabs receive. Sorted for the same reason
-        // `snapshot_for` sorts: two clients must not be handed one burst in two
+        // `snapshot_for` sorts: two clients must not be sent one burst in two
         // different orders.
         doomed.sort();
         planned.sort();
@@ -4785,9 +4754,9 @@ impl RoomState {
         ids.sort(); // stable frame order, as above
 
         // Read for every token before any of them is touched, and through
-        // `unseen_by_table`: a promote sweeps the board's fog, so by the time the
-        // loop below runs the question would be being asked of a lattice that has
-        // already been thrown away.
+        // `unseen_by_table`: a promote sweeps the board's fog, so by the time
+        // the loop below runs the question would be asked of fog that has
+        // already been cleared.
         let was_unseen: HashMap<TokenId, bool> = ids
             .iter()
             .filter_map(|id| self.tokens.get(id))
@@ -4803,8 +4772,8 @@ impl RoomState {
                 let moved = match token.staged_pos.take() {
                     // Already snapped when the plan was set, and to the same
                     // lattice: a position is a position whichever board it was
-                    // chosen on, which is the whole reason this is one field
-                    // rather than a second world.
+                    // chosen on, which is why the plan is one field and not a
+                    // second copy of the token.
                     Some(at) => {
                         let moved = (token.x, token.y) != (at.x, at.y);
                         token.x = at.x;
@@ -4843,11 +4812,11 @@ impl RoomState {
             // Dropping the sender ends that connection's send task, which
             // closes its socket. Better than stalling the room on one bad peer.
             //
-            // Through `remove_client` and not a bare `clients.remove`, which is
-            // what this was. The socket closing does raise `Disconnected`, but
-            // that arm is guarded on the entry still being there — so removing
-            // it here used to mean the guard was false when the news arrived and
-            // every departure step was skipped in silence.
+            // Through `remove_client`, not a bare `clients.remove`. The socket
+            // closing does raise `Disconnected`, but that arm is guarded on the
+            // entry still being there, so a bare remove here would make the
+            // guard false when the news arrived and every departure step would
+            // be skipped without a trace.
             warn!(?client, "outbound mailbox full, dropping client");
             self.remove_client(client);
         }
@@ -4855,13 +4824,10 @@ impl RoomState {
 
     /// The one way a client leaves, whether it hung up or wedged.
     ///
-    /// **Two callers and they used to disagree.** `Disconnected` did all of this;
-    /// `dispatch` dropped a wedged client with a bare `clients.remove` and left
-    /// the room believing they were still here — the presence strip still named
-    /// them, their roster slot still read as taken to anyone sitting on the
-    /// picker, and a sketch they were part way through stayed on every other
-    /// screen. Not a leak, but three things the table can see and nothing to
-    /// explain them.
+    /// Both `Disconnected` and `dispatch` must come through here. A bare
+    /// `clients.remove` skips the departure steps: the presence strip keeps
+    /// naming them, their roster slot stays taken on the picker, and a sketch
+    /// in progress stays on every other screen.
     ///
     /// Re-entrant by way of `dispatch`, and bounded because every call removes at
     /// least one entry before dispatching: a client wedged by the frames sent
@@ -4877,14 +4843,14 @@ impl RoomState {
         self.refresh_pickers();
         // A client that vanishes mid-sweep sends no release, and its line would
         // sit on five other screens until somebody reloaded. Sent
-        // unconditionally, because "was that client sketching" is state the room
-        // would have to keep to answer and an id nobody is drawing is a no-op on
-        // arrival.
+        // unconditionally, because "was that client sketching" is state the
+        // room would have to keep to answer, and an id nobody is drawing is a
+        // no-op on arrival.
         //
-        // This is what a movement ruler cannot have: nothing tells the room a
-        // drag stopped, so that one guesses with a timeout. Here the socket
-        // closing *is* the news. The socket is already out of `clients`, so
-        // neither of these reaches it and `here` no longer counts it.
+        // A movement ruler can't do this: nothing tells the room a drag
+        // stopped, so that one guesses with a timeout. Here the socket closing
+        // *is* the news. The socket is already out of `clients`, so neither of
+        // these reaches it and `here` no longer counts it.
         self.dispatch(
             client,
             &[Event::SketchEnded { by: client }, Event::PresenceChanged],
@@ -4892,7 +4858,7 @@ impl RoomState {
     }
 
     /// The visibility filter. One `Event` in, at most one `ServerMsg` out, per
-    /// recipient. Fog of war grows here — it is the reason `Event` and
+    /// recipient. Fog of war is enforced here, and is the reason `Event` and
     /// `ServerMsg` are separate types.
     fn message_for(
         &self,
@@ -4917,10 +4883,10 @@ impl RoomState {
                     return None;
                 }
                 if !self.is_dm(recipient) {
-                    // A plan is a cell on a map the table has not been shown, so
-                    // the frame carrying one exists for the DM alone — the same
-                    // arm `StagedChanged` is, reaching one token instead of the
-                    // whole board.
+                    // A plan is a cell on a map the table hasn't been shown, so
+                    // the frame carrying one is for the DM alone, like
+                    // `StagedChanged` but for one token instead of the whole
+                    // board.
                     if *staged {
                         return None;
                     }
@@ -4941,13 +4907,13 @@ impl RoomState {
                 })
             }
 
-            // Read off `&self` per recipient rather than carried on the event,
-            // which is what lets one event leave here as three different things.
-            // The DM gets the token; a player gets a redacted copy if they may
-            // see it, the news that it is gone if it has just been hidden, and
-            // nothing at all if it was already hidden — that last case matters,
-            // because a `TokenRemoved` naming an id they never held would tell
-            // them a token exists, which is the whole thing being withheld.
+            // Read off `&self` per recipient, not carried on the event, so one
+            // event can leave here as three different things. The DM gets the
+            // token. A player gets a redacted copy if they may see it, the news
+            // that it is gone if it has just been hidden, and nothing at all if
+            // it was already hidden. That last case matters: a `TokenRemoved`
+            // naming an id they never held would tell them a token exists,
+            // which is what is being withheld.
             Event::TokenChanged { id, was_unseen } => {
                 let token = self.tokens.get(id)?;
                 let is_dm = self.is_dm(recipient);
@@ -4970,11 +4936,11 @@ impl RoomState {
                 Some(ServerMsg::TokenRemoved { id: id.clone() })
             }
 
-            // The `StagedChanged` shape at token scale: dropped for who the
-            // recipient is, not for anything they did. A player's copy of this
-            // token is identical either side of the change, so the only thing a
-            // frame could carry them is the news that the DM just discarded a
-            // plan — which is news.
+            // Like `StagedChanged`, for one token: dropped for who the recipient
+            // is, not for anything they did. A player's copy of this token is
+            // the same either side of the change, so the only thing a frame
+            // could tell them is that the DM just discarded a plan, which they
+            // shouldn't learn.
             Event::TokenPlanChanged { id } => {
                 let token = self.tokens.get(id)?;
                 self.is_dm(recipient).then(|| ServerMsg::TokenChanged {
@@ -4982,13 +4948,12 @@ impl RoomState {
                 })
             }
 
-            // The three shapes, all at once. The DM needs a whole token: their
-            // client holds `staged_pos` and `staged_only`, which have just been
+            // All three cases at once. The DM needs a whole token: their client
+            // holds `staged_pos` and `staged_only`, which have just been
             // emptied, and no `TokenMoved` could tell them so. A player meeting
-            // the token for the first time needs a whole one too, for the
-            // ordinary reason — they have never held it. A player who has been
-            // watching it all along needs only where it went, and one that has
-            // not moved needs nothing at all.
+            // the token for the first time needs a whole one too, because they
+            // have never held it. A player who has been watching it all along
+            // needs only where it went, and one that hasn't moved needs nothing.
             Event::Promoted {
                 id,
                 was_unseen,
@@ -5000,12 +4965,12 @@ impl RoomState {
                         token: token.view_for(true),
                     });
                 }
-                // Still out of the table's reach — the DM also took this one off
-                // the board, or its plan landed it somewhere they have no line of
-                // sight on. The second of those is new with fog and is why this
-                // is not simply `None`: a token they were watching a moment ago
-                // has to be taken off their board rather than left standing at
-                // the cell it used to be in, on a map that is no longer there.
+                // Still out of the table's reach: the DM also took this one off
+                // the board, or its plan landed it somewhere they have no line
+                // of sight on. The second case is why this isn't simply `None`.
+                // A token they were watching a moment ago has to be taken off
+                // their board, not left standing at its old cell on a map that
+                // is no longer there.
                 if self.unseen_by_table(token) {
                     return (!*was_unseen).then(|| ServerMsg::TokenRemoved { id: id.clone() });
                 }
@@ -5025,8 +4990,8 @@ impl RoomState {
                 })
             }
 
-            // Built per recipient rather than carried on the event, which is
-            // what lets the table's panel be a shorter list than the DM's.
+            // Built per recipient, not carried on the event, so the table's
+            // panel can be a shorter list than the DM's.
             Event::InitiativeChanged => Some(ServerMsg::InitiativeChanged {
                 initiative: self.initiative_for(self.is_dm(recipient)),
             }),
@@ -5038,72 +5003,65 @@ impl RoomState {
                 map: self.map.clone(),
             }),
 
-            // Everyone, unfiltered, and echoed to the DM for the reason above —
-            // their checkbox settles on this frame rather than on their click.
-            // The DM decides it and the table is told, which is `FogChanged`'s
-            // shape: the switch is theirs, the labelling is the board's.
+            // Everyone, unfiltered, and echoed to the DM for the same reason:
+            // their checkbox settles on this frame, not on their click. The DM
+            // decides it and the table is told, as with `FogChanged`: the switch
+            // is the DM's, the labelling is the board's.
             Event::NamesChanged => Some(ServerMsg::NamesChanged {
                 show: self.show_names,
             }),
 
-            // The same again, and the sharpest example of the rule: the server
-            // never counts a diagonal, so the only thing it is authoritative
-            // over here is that everybody counts them the same way.
+            // The same. The server never counts a diagonal, so all it is
+            // authoritative over here is that everybody counts them the same
+            // way.
             Event::DiagonalsChanged => Some(ServerMsg::DiagonalsChanged {
                 diagonals: self.diagonals,
             }),
 
-            // And a third time. This is the one of the three whose frame changes
-            // what the recipient *sends* rather than only what it draws, which
-            // is why nobody may be left out of it: a client still holding `true`
-            // after the switch went off would go on shipping its pointer into a
-            // room that drops every frame.
+            // The same, and this frame changes what the recipient *sends*, not
+            // only what it draws, so nobody may be left out of it: a client
+            // still holding `true` after the switch went off would go on sending
+            // its pointer into a room that drops every frame.
             Event::CursorsChanged => Some(ServerMsg::CursorsChanged {
                 show: self.show_cursors,
             }),
 
-            // And the same again for the narrow half of it. `CursorsChanged`
-            // sits above because it is a switch the room reads in this filter;
-            // this one is read in `cursor_seen` instead, which is one layer
-            // further down and makes no difference to what a client is sent
-            // here.
+            // The same. `CursorsChanged` is read in this filter; this one is
+            // read in `cursor_seen` instead, which makes no difference to what
+            // a client is sent here.
             Event::DmCursorChanged => Some(ServerMsg::DmCursorChanged {
                 show: self.show_dm_cursor,
             }),
 
-            // And a fourth time, unfiltered like the three above it. What makes
-            // this one worth its own note is what is *not* beside it: covering
-            // the board changes no map, no wall, no shape and no cell of fog, so
-            // this frame travels alone and every recipient still holds the board
-            // it had.
+            // Unfiltered like the settings above. No other event goes with it:
+            // covering the board changes no map, no wall, no shape and no cell
+            // of fog, so this frame travels alone and every recipient still
+            // holds the board it had.
             Event::BackdropChanged => Some(ServerMsg::BackdropChanged {
                 url: self.backdrop.clone(),
             }),
 
-            // And a fifth time, unfiltered like the four above it, with the
-            // arm above's argument word for word: the music changes no map, no
-            // wall, no shape and no cell of fog, so this frame travels alone.
+            // Unfiltered, and alone for the same reason as `BackdropChanged`:
+            // the music changes no map, no wall, no shape and no cell of fog.
             Event::AudioChanged => Some(ServerMsg::AudioChanged {
                 url: self.audio.clone(),
             }),
 
-            // The filter doing its actual job. Every arm above drops a message
-            // for something the recipient *did*; this one drops it for who the
-            // recipient is, which is the shape hidden tokens and fog need. A
-            // player is not sent a staged map and told not to draw it — the
-            // frame does not exist for them at all.
+            // Dropped for who the recipient is, not for anything they did. A
+            // player is not sent a staged map and told not to draw it: the
+            // frame doesn't exist for them at all.
             //
-            // It carries the whole staged board rather than only its map, which
-            // is what lets a staged load sweeping its walls and a staged
-            // recalibration dropping its paint need no frames of their own.
+            // It carries the whole staged board, not only its map, so a staged
+            // load sweeping its walls and a staged recalibration dropping its
+            // paint need no frames of their own.
             Event::StagedChanged => self.is_dm(recipient).then(|| ServerMsg::StagedChanged {
                 board: self.staged.as_ref().map(StagedBoard::view),
             }),
 
-            // Keyed on `by` rather than on `origin`, which are the same client
-            // for a live sweep and are not on a disconnect — the frame that ends
-            // a stranded sketch is dispatched with the departed client as both,
-            // and it is the recipients who are still here that matter.
+            // Keyed on `by`, not `origin`. They are the same client for a live
+            // sweep but not on a disconnect: the frame that ends a stranded
+            // sketch is dispatched with the departed client as both, and it is
+            // the recipients who are still here that matter.
             //
             // The sweeper is skipped for `TokenMoved`'s reason: they are drawing
             // it from their own pointer already, and an echo arriving a round
@@ -5126,42 +5084,37 @@ impl RoomState {
                 (recipient != *by).then_some(ServerMsg::SketchEnded { by: *by })
             }
 
-            // The sketch rule for the third time — the pinger is drawing their
-            // own ring already — and then it stops resembling anything else in
-            // this function. **Every other arm here either builds something per
-            // recipient or drops the message for somebody**; this one does
-            // neither past the echo. There is no `is_dm`, no `unseen_by_table`,
-            // no `in_sight`, and that is the decision rather than an omission: a
-            // ping is relayed wherever it lands, including onto ground the party
-            // has never explored.
+            // The pinger is skipped, as for a sketch: they are drawing their own
+            // ring already. Past that echo, **nothing here filters a ping**.
+            // There is no `is_dm`, no `unseen_by_table`, no `in_sight`, and that
+            // is a decision, not an omission: a ping is relayed wherever it
+            // lands, including onto ground the party has never explored.
             //
             // It is safe because there is nothing in it to read. A ring over
             // black says the DM is gesturing in a direction, not what is
-            // standing there — and the DM can see their own fog while they hold
+            // standing there, and the DM can see their own fog while they hold
             // the button, so they know what they are pointing over. The
-            // alternative is a deliberate 400ms gesture that sometimes silently
-            // does nothing, which is worse than useless: a gesture you cannot
-            // tell has failed is one you stop trusting.
+            // alternative is a 400ms gesture that sometimes does nothing with no
+            // sign it failed, and a gesture you can't tell has failed is one you
+            // stop trusting. See `docs/drawings.md`.
             Event::Pinged { by, owner, at } => (recipient != *by).then(|| ServerMsg::Pinged {
                 by: owner.clone(),
                 at: *at,
             }),
 
-            // **The arm above with the paragraph above reversed**, and the two
-            // are worth reading together because the difference between them is
-            // the whole design of both. A ping is a deliberate 400ms gesture and
-            // a ring over black says only that somebody is pointing in a
-            // direction; a cursor is nobody's decision, and the DM's drifts
-            // wherever the DM is working. So this one asks `cursor_seen`, which
-            // is no filter at all for three of its four cases and the fog for
-            // the fourth.
+            // Unlike `Pinged`, this one is filtered by the fog. Read the two
+            // together. A ping is a chosen 400ms gesture, and a ring over black
+            // says only that somebody is pointing in a direction; a cursor is
+            // nobody's decision, and the DM's drifts wherever the DM is working.
+            // So this one asks `cursor_seen`, which is no filter at all for
+            // three of its four cases and the fog for the fourth.
             //
-            // The room's switch is read here rather than in `check`, which is
-            // what makes it a dial on the traffic rather than a preference: with
-            // it off, not one of these leaves the room. The mover is skipped for
-            // `Pinged`'s reason — their own pointer is drawn by their own
-            // operating system, and drawing a second one a round trip behind it
-            // is the rubber-band a token drag already refuses.
+            // The room's switch is read here, not in `check`, so it controls the
+            // traffic and not only the display: with it off, not one of these
+            // leaves the room. The mover is skipped for `Pinged`'s reason. Their
+            // own pointer is drawn by their own operating system, and drawing a
+            // second one a round trip behind it is the rubber-banding a token
+            // drag already avoids.
             Event::CursorMoved { by, owner, at } => (recipient != *by
                 && self.show_cursors
                 && self.cursor_seen(owner, *at, self.is_dm(recipient)))
@@ -5170,13 +5123,13 @@ impl RoomState {
                 at: *at,
             }),
 
-            // **The first frame in this function withheld from one player and
-            // sent to another.** Every filtered arm above draws its line between
-            // the DM and the table; this one draws it between two people at the
-            // same table, and the question it asks is not `is_dm` at all.
+            // Withheld from one player and sent to another. The filtered
+            // arms above draw their line between the DM and the table; this one
+            // draws it between two people at the same table, and the question
+            // it asks is not `is_dm` at all. See `docs/chat.md`.
             //
             // The sender is sent their own, which no other relayed frame here
-            // does — see `ServerMsg::Said`. Nothing about a line of text is
+            // does (see `ServerMsg::Said`). Nothing about a line of text is
             // predicted on the client, because where it lands in the log is the
             // room's to decide.
             Event::Said { line } => {
@@ -5184,17 +5137,15 @@ impl RoomState {
                 party_to(identity, line).then(|| ServerMsg::Said { line: line.clone() })
             }
 
-            // **The narrowest audience in this function, and the first the DM
-            // is not automatically in.** One person is party to a scratchpad —
-            // its author — so this asks whose it is and stops. The `is_dm` that
-            // every filter above eventually reaches for would, here, be the
-            // thing that broke it.
+            // **The DM is not automatically in this audience.** One person is
+            // party to a scratchpad (its author), so this asks whose it is and
+            // stops. An `is_dm` check here, as the filters above have, would
+            // break it.
             //
-            // Minus the socket that typed it, which is `Pinged`'s exclusion
-            // rather than `Said`'s: the text is already in that box, and writing
-            // it back a round trip later moves the caret mid-sentence. The
-            // author's *second tab* is what is left, and is the whole audience
-            // this event has.
+            // Minus the socket that typed it, as with `Pinged` and unlike
+            // `Said`: the text is already in that box, and writing it back a
+            // round trip later moves the caret mid-sentence. So the author's
+            // *second tab* is the only recipient this event ever has.
             Event::NotesChanged { by, owner, text } => {
                 let identity = &self.clients.get(&recipient)?.identity;
                 (recipient != *by && is_owner(identity, owner))
@@ -5202,22 +5153,21 @@ impl RoomState {
             }
 
             // Built per recipient, like the initiative panel and for the same
-            // reason: the DM's board and the table's genuinely differ, and this
-            // is the seam an aura on a hidden monster is dropped at.
+            // reason: the DM's board and the table's differ, and this is where
+            // an aura on a hidden monster is dropped.
             Event::ShapesChanged => Some(ServerMsg::ShapesChanged {
                 shapes: self.shapes_for(self.is_dm(recipient)),
             }),
 
-            // `StagedChanged`'s arm again, and the least ambiguous case of it:
-            // there is no filtered version of a wall for a player to receive.
-            // Not an empty list either — a frame carrying nothing still says the
-            // DM just did something, and by the time fog exists it would say
-            // *when* a door opened, on the one board they cannot see through.
+            // DM-only, like `StagedChanged`: there is no filtered version of a
+            // wall for a player to receive. Not an empty list either. A frame
+            // carrying nothing still says the DM just did something, and with
+            // fog on it would say *when* a door opened, on a board they can't
+            // see through.
             //
-            // Staging changed nothing here, which is the reason this was the
-            // cheapest subsystem in the project to stage: there was no filter to
-            // widen because there was never a filtered form. A staged wall is
-            // withheld by the line that already withheld a live one.
+            // Staging needs nothing extra here: there is no filtered form to
+            // widen, so a staged wall is withheld by the same line as a live
+            // one.
             Event::WallsChanged { staged } => {
                 self.is_dm(recipient).then(|| ServerMsg::WallsChanged {
                     walls: self.walls_in(*staged).to_vec(),
@@ -5225,17 +5175,16 @@ impl RoomState {
                 })
             }
 
-            // The one arm here that builds the same thing for everybody. Fog is
-            // party-shared, so there is one answer and no filtering left to do —
-            // this is the frame the walls above are withheld *in favour of*.
+            // The same for everybody. Fog is party-shared, so there is one
+            // answer and no filtering left to do. The table gets this frame
+            // instead of the walls above.
             Event::FogChanged => Some(ServerMsg::FogChanged {
                 fog: self.fog_for(),
             }),
 
-            // And straight back to the walls' rule, one line below the one arm
-            // that does not filter. The pair is the whole design in two lines:
-            // what the DM decided reaches the DM, and the difference it made
-            // reaches the table.
+            // DM-only, like the walls. With `FogChanged` above, this is the
+            // rule: what the DM decided reaches the DM, and the difference it
+            // made reaches the table.
             Event::OverridesChanged { staged } => {
                 self.is_dm(recipient).then(|| ServerMsg::OverridesChanged {
                     overrides: self.overrides_for(*staged),
@@ -5243,17 +5192,15 @@ impl RoomState {
                 })
             }
 
-            // **Everyone, and through `snapshot_for`** — which is invariant 3
-            // doing exactly its job on the second message that hands over the
-            // whole world. Filtering every delta correctly and then sending an
-            // unfiltered snapshot is the most common way this project could
-            // leak, and an undo is a snapshot; routing it through the same
-            // function a join uses is what means there is no second filter to
-            // keep in step.
+            // **Everyone, and through `snapshot_for`** (invariant 3). Filtering
+            // every delta correctly and then sending an unfiltered snapshot is
+            // the most common way this project could leak, and an undo is a
+            // snapshot. Routing it through the function a join uses means there
+            // is no second filter to keep in step.
             //
             // A player is sent one too, and has to be: the room they are looking
-            // at just changed underneath them, and the DM's walls and staged map
-            // leave through the same door here as on any join.
+            // at just changed underneath them. The DM's walls and staged map are
+            // withheld from it as on any join.
             Event::Restored => {
                 let identity = self.clients.get(&recipient)?.identity.clone();
                 Some(ServerMsg::Restored {
@@ -5261,19 +5208,17 @@ impl RoomState {
                 })
             }
 
-            // The walls' rule for the fourth time, and the mildest instance of
-            // it: what is withheld is not a secret but a label for a button a
-            // player does not have.
+            // DM-only, like the walls, though what is withheld here is not a
+            // secret, only a label for a button a player doesn't have.
             Event::UndoChanged => self.is_dm(recipient).then(|| ServerMsg::UndoChanged {
                 label: self.undo_label(),
             }),
 
-            // And the two arms with no rule in them at all, which is the shape
-            // `NamesChanged` and `FogChanged` already have: one list, read off
-            // `&self`, identical for every recipient including whoever caused
-            // it. There is nothing here to filter — a table that cannot tell
-            // whether the DM is still connected is the problem the first one
-            // exists to solve, and a colour nobody else can see is not a colour.
+            // Unfiltered, like `NamesChanged` and `FogChanged`: one list, read
+            // off `&self`, identical for every recipient including whoever
+            // caused it. There is nothing here to filter. Presence exists so the
+            // table can tell whether the DM is still connected, and a colour
+            // nobody else can see is no use.
             Event::PresenceChanged => Some(ServerMsg::Presence { here: self.here() }),
             Event::ColoursChanged => Some(ServerMsg::ColoursChanged {
                 colours: self.colours.clone(),
@@ -5281,7 +5226,7 @@ impl RoomState {
         }
     }
 
-    /// Reaches identified and pending connections alike — a client that has not
+    /// Reaches identified and pending connections alike: a client that has not
     /// joined still needs to be told why its command was refused.
     fn send_to(&self, client: ClientId, msg: ServerMsg) {
         if let Some(target) = self.clients.get(&client) {
@@ -5296,14 +5241,14 @@ impl RoomState {
 ///
 /// A token is a square `size` cells across, centred on the position stored for
 /// it, so where it can settle depends on how wide it is. An odd width has a
-/// middle cell and settles on that cell's centre — a 1×1 in cell (0,0) is at
+/// middle cell and settles on that cell's centre: a 1×1 in cell (0,0) is at
 /// (0.5, 0.5). An even width has no middle cell and settles on the corner four
 /// cells meet at, so a 2×2 covering cells (0,0) to (1,1) is at (1.0, 1.0).
-/// Either way its edges land on grid lines, which is the point.
+/// Either way its edges land on grid lines.
 ///
-/// Anything smaller than a cell settles like a single-cell token rather than on
-/// a lattice of its own: a druid who is currently a rat belongs in the middle
-/// of a square, next to the party, not tucked into one quarter of one.
+/// Anything smaller than a cell settles like a single-cell token, not on a
+/// lattice of its own: a druid who is currently a rat belongs in the middle of
+/// a square, next to the party, not tucked into one quarter of one.
 ///
 /// This rule lives only here. The client never snaps; it learns the settled
 /// position from the echoed drop frame.
@@ -5311,9 +5256,9 @@ fn snap_to_cell(x: f32, y: f32, size: f32) -> (f32, f32) {
     let cells = size.max(1.0) as u32;
     let centre = if cells.is_multiple_of(2) { 0.0 } else { 0.5 };
     // Not `floor`: the lattice moves with `centre`, and rounding to the nearest
-    // point on it is the same sentence for both cases. `round` also does the
-    // right thing below zero, where a token dragged off the top-left of the map
-    // must land in cell -1 rather than folding back onto the board.
+    // point on it works the same for both cases. `round` also does the right
+    // thing below zero, where a token dragged off the top-left of the map must
+    // land in cell -1, not fold back onto the board.
     ((x - centre).round() + centre, (y - centre).round() + centre)
 }
 
