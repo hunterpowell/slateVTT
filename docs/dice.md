@@ -102,7 +102,7 @@ values get discarded.
 
 `every_face_is_in_range_and_every_face_is_reachable` checks both. The reachability half matters
 more, since a function that always returns 1 passes a range check. The OS RNG can't be seeded, so
-the test uses a large margin instead: 4,000 throws of each die type.
+the test uses a large margin instead: 4,000 throws per face.
 
 ## Client
 

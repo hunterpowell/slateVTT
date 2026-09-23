@@ -1,142 +1,143 @@
 # The frontend shell
 
-The camera, the left rail, and the right-hand column. Milestones 1, 20 and 24 between them.
+The camera, the left rail, the bottom-right corner and the right-hand column. Milestones 1, 20
+and 24 between them.
 
-`.claude/CLAUDE.md` is loaded into every session; this file is not. **Read it before touching
-`coords.ts`, `rail.ts`, `dock.ts`, or the order of the right-hand column** — the rail and the dock
-look like the same widget and are deliberately not, and the two places a plausible generalisation
-breaks something are both below.
+Read this before touching `coords.ts`, `rail.ts`, `dock.ts`, `Stage.fit`/`fitToRect`, `#corner`,
+or the order of the right-hand column. The rail and the dock look like the same widget and are
+separate on purpose, and the two places where a plausible generalisation breaks something are both
+below.
 
 ## The camera
 
-Camera is `{ x, y, zoom }`. Two functions, `screenToWorld` and `worldToScreen`, are the only places
-coordinate math lives. Render by setting the canvas transform once
-(`ctx.setTransform(zoom, 0, 0, zoom, -cam.x * zoom, -cam.y * zoom)`) and draw everything in world
-coordinates; hit-test in world coordinates too.
+Camera is `{ x, y, zoom }`. `screenToWorld` and `worldToScreen` are the only places coordinate math
+lives. Render by setting the canvas transform once and draw everything in world coordinates;
+hit-test in world coordinates too. The transform is
+`ctx.setTransform(s, 0, 0, s, -cam.x * s, -cam.y * s)` with `s = cam.zoom * view.dpr`, in
+`render.ts`, which is the only place device pixel ratio enters the chain.
 
-Getting this layer right is the hardest part of the client, which is why it was built and verified
-standalone against a hardcoded map with no networking, before any WebSocket code existed. It is also
-why the two functions are a file of their own with a unit test beside them: everything downstream
-trusts them, and a sign error in either is visible only as "the board feels wrong".
+This layer is the hardest part of the client to get right. That's why it was built and verified on
+its own against a hardcoded map, before any WebSocket code existed, and why the two functions have
+their own file with a unit test beside it. Everything downstream relies on them, and a sign error in
+either shows up only as "the board feels wrong".
 
-**The camera is a local in `start()` and nothing outside the board holds one.** Anything that wants
-to move it asks through `Stage` — `lookAt` for a creature, `fit` for the whole board — which is what
-`createRail` returning `void` is at rail scale: the rule is in the shape rather than in a comment.
-`fit` frames the **play area** where the DM has drawn one and the whole image otherwise, and that is
-deliberately not what a map load does. A load frames the image because the next thing that happens
-to a new map is being calibrated and the margin is part of what the DM is looking at; the control is
-asked for mid-fight by somebody who has lost the board, and the board is the part ruled into cells.
+**The camera is a local in `start()`, and nothing outside the board holds one.** Anything that wants
+to move it goes through `Stage`: `lookAt` for a creature, `fit` for the whole board. It's the same
+rule `createRail` returning `void` enforces for the rail (below): the shape of the API allows only
+one owner.
 
-`fitToRect` puts a floor of one pixel on each side, which is not defensive tidiness: `playRect` clips
-to the image and returns a zero-width rectangle for a saved play area that no longer overlaps one —
-a map replaced with a smaller image — and dividing by that gives an infinite zoom and a camera at
-`NaN`, which is a board that does not come back without a refresh.
+`fit` frames the play area if the DM has drawn one, and the whole image otherwise. A map load
+doesn't do that: it frames the whole image, because the next thing that happens to a new map is
+calibration, and the margin is part of what the DM needs to see. The fit control is used mid-fight
+by someone who has lost the board, and the board is the part ruled into cells.
+
+`fitToRect` puts a floor of one pixel on each side. `playRect` clips to the image and returns a
+zero-width rectangle for a saved play area that no longer overlaps it (after a map is replaced with a
+smaller image). Dividing by that zero gives an infinite zoom and a camera at `NaN`, and the board
+doesn't come back without a refresh.
 
 ## The left rail: one panel at a time
 
-**The rail shows one of the DM's editing panels at a time, behind a tab strip.** A new panel is an
-entry in `RailTab` and an entry in the array `main.ts` passes to `createRail`. It is never another
-`<aside>` stacked on the others — that is how the rail ran out of vertical room at four panels, and
-the strip is what replaced stacking rather than what decorated it.
+The rail shows one of the DM's editing panels at a time, behind a tab strip. A new panel is an entry
+in `RailTab` and in the array `main.ts` passes to `createRail`. It's never another `<aside>` stacked
+on the others. Stacking is how the rail ran out of vertical room at four panels, and the strip
+replaced it.
 
-**Which panel a control belongs on is decided by where its field lives**: `MapInfo` is the map tab,
-`Token` is the token tab, and room-wide `RoomState` is the table tab.
+Which panel a control belongs on depends on where its field lives: `MapInfo` is the map tab, `Token`
+is the token tab, and room-wide `RoomState` is the table tab.
 
-That rule was extracted rather than designed. `show_names` and `diagonals` sat under the token
-panel's form for four milestones, separated from the token fields by a divider and two comments
-explaining that they were not really token fields. The comments were the smell: a control that needs
-a paragraph saying which panel it is *not* on is on the wrong panel. Moving them to a table tab
-deleted the divider, both comments, and the question.
+That rule came from a mistake. `show_names` and `diagonals` sat under the token panel's form for
+four milestones, separated from the token fields by a divider and two comments explaining that they
+weren't token fields. A control that needs a paragraph explaining which panel it isn't on is on the
+wrong panel. Moving them to a table tab removed the divider, both comments and the question.
 
 Four rules come with the strip:
 
 1. **A new panel is a `RailTab` entry, not an `<aside>`.** See above.
 2. **Closing a tab must put down whatever that panel armed**, via the panel's `stop`. The
    calibration box and the wall editor both take the left mouse button, and a tool still holding it
-   under a hidden panel is a click doing something with nothing on screen saying why.
-3. **A panel that goes inert in some state must make its tab inert too.** A way in to a panel that
-   can do nothing is the same lie as the panel sitting there looking armed.
-4. **Only a click on a tab changes which tab is open.** Nothing on the board, and nothing on the
-   wire, moves the rail.
+   under a hidden panel makes a click do something with nothing on screen to explain it.
+3. **A panel that goes inert in some state makes its tab inert too.** A tab leading to a panel that
+   can do nothing misleads in the same way as a panel that looks armed and isn't.
+4. **Only a click on a tab changes which tab is open.** Nothing on the board and nothing on the wire
+   moves the rail.
 
-Rule 4 was learned rather than designed, and it cost `createRail` its return value. Selecting a
-token used to open the token tab, on the argument that picking a creature up off the board is the
-request to edit it. What that missed is which thing is scarce: the rail is *where the DM is
-working*, and swapping the panel out from under a half-traced wall to show a form nobody asked for
-costs more than the click it saved. The selection was never the thing at risk — it is a ring on the
-board, which is exactly what the token panel's `stop` already relies on. With that one caller gone
-there was no second hand on the strip at all, so `createRail` now returns `void`: the rule is in the
-type rather than in a comment asking future callers to respect it.
+Rule 4 came from experience and cost `createRail` its return value. Selecting a token used to open
+the token tab, on the argument that picking a creature up off the board means you want to edit it.
+That missed which thing is scarce. The rail is where the DM is working, and swapping the panel out
+from under a half-traced wall to show a form nobody asked for costs more than the click it saves.
+The selection was never at risk, since it's a ring on the board, and the token panel's `stop`
+already relies on that. With that one caller gone nothing else changed the strip, so `createRail`
+now returns `void` and the rule is enforced by the type rather than a comment.
 
-The rail's memory is the other half of the same rule. The open tab is in `localStorage` —
-`slate.rail.open`, validated against the panels actually built rather than cast — which is the line
-`panel.ts` draws for the initiative fold, and drawn for the same reason: how much of a panel
-somebody wants on their own screen is nobody else's business, so it is a preference and not a
-`RoomState` field like `diagonals`. The rail used to open nothing on connect, on the argument that
-the change was about giving the board back. That argument forgot `docs/presence.md`: **a dropped
-socket reloads the page**, so "on connect" is not only the start of an evening, and a rail that
-empties itself mid-fight is the reconnect making itself felt.
+The open tab is remembered in `localStorage` as `slate.rail.open`, validated against the panels
+actually built rather than cast. It's the same line `panel.ts` draws for the initiative fold: how
+much of a panel someone wants on their own screen is a per-person preference, not a `RoomState`
+field like `diagonals`. The rail used to open nothing on connect, on the argument that the board
+should come first. That forgot `docs/presence.md`: **a dropped socket reloads the page**, so "on
+connect" also happens mid-evening, and a rail that emptied itself mid-fight made every reconnect
+visible.
 
-Rule 3 cuts both ways, and the staged board is the proof. When the staged map grew walls and a fog
-mask of its own, the wall and fog panels stopped being inert over a preview — and what got deleted
-was the CSS that greyed their tabs. The rule is not "grey the tab", it is "the tab and the panel
-agree"; a tab wrongly greyed is the same defect as a tab wrongly live.
+Rule 3 applies in both directions, as the staged board showed. When the staged map got its own
+walls and fog mask, the wall and fog panels stopped being inert over a preview, and the fix was to
+delete the CSS that greyed their tabs. The rule is that the tab and the panel agree. A tab wrongly
+greyed out is the same bug as one wrongly active.
 
-**The draw tool is deliberately not on the strip.** It is the one panel everybody has and it is used
-in the middle of a fight, so it stays pinned to the bottom of the rail. Same reasoning as a door
-swinging with no tool in hand: a thing used mid-combat does not get put behind a mode.
+The draw tool isn't on the strip. It's the one panel everybody has and it's used in the middle of a
+fight, so it stays pinned to the bottom of the rail. It's the same reason a door opens with no tool
+armed: something used mid-combat shouldn't be behind a mode.
 
-## The bottom-right corner: the third place a control can live
+## The bottom-right corner
 
-`#corner` is a right-anchored row holding the gesture hint and the `/spells/` link, and since the
-fit control it holds three things. **What they have in common is the argument for being out here at
-all**: each arms nothing, so none of them owes the rail a `stop`, and none carries an unread count,
-so none of them wants a dock tab. That is written on the spells link in the markup and it is the
-whole test — a control that fits it belongs in the corner rather than in either strip.
+`#corner` is a right-anchored row holding the gesture hint, the fit control and the `/spells/`
+link. They share the reason for being here: none of them arms anything, so none owes the rail a
+`stop`, and none carries an unread count, so none needs a dock tab. That test is written on the
+spells link in the markup, and a control that passes it belongs in the corner rather than in either
+strip.
 
 Two rules come with the row. **Only `#hint` grows**, so everything to its right keeps its position
-and everything to its left would slide; that is why the link is last and why the fit control went
-*before* it rather than after. And **anything here that describes the board hides with the board**:
-`body.covered` takes the zoom readout, the hint and the fit control together, because a zoom
-percentage over a campfire and an offer to frame a board nobody is looking at are the same lie.
+and everything to its left would slide. That's why the link is last, and why the fit control went
+before it rather than after. And anything here that describes the board hides with the board:
+`body.covered` hides the zoom readout, the hint and the fit control together, because a zoom
+percentage over a backdrop and an offer to frame a board nobody can see are both wrong.
 
-The fit control is also **everybody's**, unlike almost everything else with a button — a player who
-has zoomed into a corner is exactly as lost as the DM — so it is built outside the `identity.isDm`
-half of `onWelcome`. `tools/drive-fit.mjs` opens two browsers for that one reason.
+The fit control is also for everyone, unlike most buttons. A player who has zoomed into a corner is
+as lost as the DM would be, so it's built outside the `identity.isDm` half of `onWelcome`.
+`tools/drive-fit.mjs` opens two browsers for that reason.
 
 ## The right-hand column: three things, in this order
 
-Presence strip pinned at the top, initiative panel, dock at the bottom. **The order is not a layout
-choice.** The presence strip is at the top because that is the one edge of the column that never
-moves — the initiative panel folds and the dock grows upward, so anything placed between them shifts
-when either changes size. Chips that jump around while you are trying to read who is connected are
+Presence strip pinned at the top, then the initiative panel, then the dock at the bottom. The order
+matters. The presence strip is at the top because that's the one edge of the column that never
+moves: the initiative panel folds and the dock grows upward, so anything placed between them shifts
+when either changes size. Chips that jump around while you're trying to read who's connected are
 worse than no chips.
 
 The initiative panel and the dock share a flex column for the same reason the left rail is one: the
-panel's height is however many creatures are in the fight, so nothing below it can be pinned at a
-fixed offset.
+panel's height depends on how many creatures are in the fight, so nothing below it can be pinned at
+a fixed offset.
 
 ## The dock is not the rail generalised
 
-`dock.ts` is a second tab strip and a separate file. Four things differ, and each of them is a
-branch that a shared implementation would have to carry:
+`dock.ts` is a second tab strip in a separate file. Four things differ, and a shared implementation
+would need a branch for each:
 
-- **Both its tabs are built on every connection.** Rail panels are built once per socket by
-  `onWelcome`; the dock's are not conditional on being the DM.
-- **Nothing behind it arms the canvas, so there is no `stop`.** Rail rule 2 has no analogue here.
-- **A tab here can carry an unread count.** No rail tab has ever wanted one.
+- **Every tab is built on every connection.** Rail panels are built once per socket by `onWelcome`,
+  and only for the DM. The dock's tabs (`chat`, `notes`, `sound`) are everybody's.
+- **Nothing behind it arms the canvas, so there's no `stop`.** Rail rule 2 has no counterpart here.
+- **A tab here can carry an unread count.** No rail tab has needed one.
 - **Its panels stack.**
 
-That last one is the real difference. One rail panel is open at a time because rail panels are
-editing **modes**, and a second armed mode is a bug. Nothing in the dock is a mode — a log and a
+The last one is the real difference. One rail panel is open at a time because rail panels are
+editing modes, and a second armed mode is a bug. Nothing in the dock is a mode. A log and a
 scratchpad are both things you read while something else is going on, so opening one must not close
-the other.
+another.
 
-**It grows upward from the bottom**, so opening a panel never moves the initiative panel above it.
-And **its strip is its last child** rather than its first: the edge that grows is the top one, so a
-strip placed first would slide down the screen every time you toggled a panel. That is the rail's
-own argument — a tab that moves when you toggle its neighbour is a tab you cannot aim at — pointed
-at the other end of the column.
+The dock grows upward from the bottom, so opening a panel never moves the initiative panel above it.
+Its strip is its last child rather than its first: the edge that grows is the top one, so a strip
+placed first would slide down the screen every time a panel was toggled. It's the rail's argument (a
+tab that moves when you toggle its neighbour is hard to click) applied at the other end of the
+column.
 
-See `docs/chat.md` and `docs/notes.md` for what lives in it, and `docs/presence.md` for the strip
-above it.
+See `docs/chat.md`, `docs/notes.md` and `docs/sound.md` for what lives in it, and
+`docs/presence.md` for the strip above it.

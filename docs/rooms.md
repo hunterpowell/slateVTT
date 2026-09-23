@@ -2,142 +2,139 @@
 
 More than one campaign on one server, and the screen that picks between them. Milestone 33.
 
-`.claude/CLAUDE.md` is loaded into every session; this file is not. **Read it before touching
-`ROOMS`, `RoomDef`, `roster_from`, `RoomState::blank`, `room::spawn`, `save_path`, `room_listing`
-or `ws_handler` on the server, or `rooms.ts`, `chooseRoom` in `main.ts`, the storage keys in
-`identity.ts`, or the room in `connect`.**
+Read this before touching `ROOMS`, `RoomDef`, `roster_from`, `RoomState::blank`, `room::spawn`,
+`save_path`, `room_listing` or `ws_handler` on the server, or `rooms.ts`, `chooseRoom` in
+`main.ts`, the storage keys in `identity.ts`, or the room in `connect`.
 
 ## What asked for it
 
-A Halloween one-shot, and not wanting to clear the campaign's board to run it — tokens deleted,
-the map swapped, the traced walls and the explored fog gone, and all of it to be rebuilt
-afterwards. That is the whole motivating case and it is worth keeping in view, because it decides
-which half of the feature is load-bearing: **a second board, not a second cast.**
+A Halloween one-shot, run without clearing the campaign's board: no deleting tokens, swapping the
+map, and losing the traced walls and explored fog, all to be rebuilt afterwards. That's the whole
+motivating case, and it decides which half of the feature matters most: **a second board, not a
+second cast.**
 
-A second roster on one room was proposed first and is the smaller change, so it was considered
-properly. It does not work. The roster is the cast list; swapping it leaves `tokens`, `map`,
+A second roster on one room was proposed first. It's the smaller change, so it was considered
+properly, and it doesn't work. The roster is the cast list. Swapping it leaves `tokens`, `map`,
 `staged`, `initiative`, `walls`, `revealed`, `overrides` and `shapes` exactly where they were, and
 those are the fields the one-shot would have had to clear. `ROADMAP.md` had guessed the other way
-— *"the roster becoming per-room is the actual point"* — and that line is now wrong in this one
-respect: the roster is what makes a second room *pleasant*, and a second board is what makes it
-work at all.
+(*"the roster becoming per-room is the actual point"*), and that line is wrong in this one respect:
+the roster is what makes a second room *pleasant*, and a second board is what makes it work at all.
 
 ## Not the scene system
 
-`.claude/CLAUDE.md` refuses a scene system by name, and it is worth saying exactly why this is not
-one, because on paper they are both "more than one map".
+`.claude/CLAUDE.md` rules out a scene system by name. It's worth saying exactly why this isn't one,
+because on paper both are "more than one map".
 
-A scene shares the room with the other scenes. Switching between them mid-session is the point of
-having them, so every `staged` flag becomes a scene id, token positions fork per scene, and
-`snapshot_for` multiplies. **Rooms share nothing.** Two rooms have no field, no channel and no lock
-in common — a room is a `tokio` task that exclusively owns its `RoomState`, and there are simply
-two of them. Nothing switches during play: you pick a room on arrival, and the way to the other one
-is a page reload.
+Scenes share a room. Switching between them mid-session is why you'd have them, so every `staged`
+flag becomes a scene id, token positions fork per scene, and `snapshot_for` multiplies. **Rooms
+share nothing.** Two rooms have no field, channel or lock in common: a room is a `tokio` task that
+exclusively owns its `RoomState`, and there are simply two of them. Nothing switches during play.
+You pick a room on arrival, and getting to the other one takes a page reload.
 
-That is also why there is no leak to test for between rooms. A visibility filter can be written
-wrongly; a reference that does not exist cannot. `server/src/room/tests/rooms.rs` says so at the
-top and tests the one thing that *can* go wrong instead — an identity from one room being accepted
-by another.
+That's also why there's no leak between rooms to test for. A visibility filter can be written
+wrongly; a reference that doesn't exist can't. `server/src/room/tests/rooms.rs` says so at the top
+and tests the one thing that *can* go wrong instead: an identity from one room being accepted by
+another.
 
-## Fixed at boot, so there is no registry
+## Fixed at boot, so there's no registry
 
 `.claude/CLAUDE.md` had already designed this half:
 
 > A second room would add a `RwLock<HashMap<RoomId, RoomHandle>>` touched on connect and disconnect
 > only — never on a token move.
 
-It came in cheaper than that. **`ROOMS` is a const**, so every room exists before the first socket
-opens, and `AppState.rooms` is an `Arc<HashMap<String, RoomHandle>>` that is built once in `main`
-and only ever read. A lock guards a table that changes; nothing changes this one.
+It turned out cheaper than that. **`ROOMS` is a const**, so every room exists before the first
+socket opens, and `AppState.rooms` is an `Arc<HashMap<String, RoomHandle>>` built once in `main`
+and only ever read. A lock guards a table that changes, and nothing changes this one.
 
-The `RwLock` is what a room the DM could *create at runtime* would need. That is not built, is not
-wanted, and would be the point at which this file's design changes rather than grows. Until then a
-lock here would be a lock with nothing to protect.
+The `RwLock` is what a room the DM could *create at runtime* would need. That isn't built or
+wanted, and it would be the point where this design changes rather than grows. Until then, a lock
+here would have nothing to protect.
 
-Everything else the architecture promised held: a socket resolves its room once in `ws_handler` and
-then talks to that actor's `mpsc` directly, exactly as it did when there was one handle on
-`AppState`. Nothing on the hot path learned that rooms are plural.
+Everything else the architecture promised held. A socket resolves its room once in `ws_handler`
+and then talks to that actor's `mpsc` directly, exactly as it did when there was one handle on
+`AppState`. Nothing on the hot path knows that rooms are plural.
 
-Adding a campaign is an edit to `ROOMS` and a redeploy, which is deliberately the same act as
-editing a roster. A config file was the alternative and was declined: it buys editing a room in on
-the Pi without a cross-compile, and costs a schema, boot-time validation, and a failure mode where
-a typo means no rooms at all.
+Adding a campaign is an edit to `ROOMS` and a redeploy, the same as editing a roster. A config file
+was the alternative and was declined. It would allow editing a room on the Pi without a
+cross-compile, but it costs a schema, boot-time validation, and a failure mode where a typo means
+no rooms at all.
 
-## The id is the load-bearing field
+## The id is the dangerous field
 
-A `RoomDef` has three fields and only one of them is dangerous. **The id names the save file, the
-`localStorage` key a claimed slot is remembered under, and the `?room=` in a link** — so changing
-one after a room has been played in orphans all three at once. `name` is free text and renaming a
-campaign is safe at any point.
+A `RoomDef` has three fields, and only one is dangerous. **The id names the save file, the
+`localStorage` key a claimed slot is remembered under, and the `?room=` in a link**, so changing it
+after a room has been played in orphans all three at once. `name` is free text, and renaming a
+campaign is safe at any time.
 
-Two tests in `room/tests/rooms.rs` guard the id: it is a slug, because it is joined onto a
-directory to make a path and put in a URL; and ids are unique, because `main.rs` builds a `HashMap`
-off them and a duplicate would silently be one room fewer with the wrong roster on the other's save
-file.
+Two tests in `room/tests/rooms.rs` guard the id. `every_room_id_is_a_slug`, because it's joined
+onto a directory to make a path and put in a URL. And `room_ids_are_unique`, because `main.rs`
+builds a `HashMap` from them, and a duplicate would silently leave one room fewer, with the wrong
+roster on the other's save file.
 
 ## The first entry is the primary room
 
-Exactly two things hang off being first, and both are answers to the same question — *which room
-did the single-room server become?*
+Exactly two things depend on being first, and both answer the same question: *which room did the
+single-room server become?*
 
-- **Its save file is `SLATE_STATE` verbatim.** Every other room's is a sibling named `<id>.json`.
+- **Its save file is `SLATE_STATE` as given.** Every other room's is a sibling named `<id>.json`.
 - **A missing save file boots it from `hardcoded`** rather than an empty board.
 
-Neither generalises to a third room and neither should. `exactly_one_room_is_primary` exists so
-that the pair cannot quietly become zero or two.
+Neither extends to a third room, and neither should. `exactly_one_room_is_primary` makes sure the
+pair can't become zero or two without anyone noticing.
 
 ### Why the save path is a sibling rule and not a directory
 
-`SLATE_STATE` naming a *directory* was the obvious design and is what `ROADMAP.md` proposed. The
-sibling rule was chosen instead for one reason: **it needs no migration.** The Pi's env file is
-unchanged, the live `/var/lib/slate/slate-state.json` goes on being the campaign, and the backup
-script that greps the tar for that filename keeps passing. `store.rs` did not change at all —
-`Store::new` already took a path.
+`SLATE_STATE` naming a *directory* was the obvious design, and it's what `ROADMAP.md` proposed. The
+sibling rule was chosen for one reason: **it needs no migration.** The Pi's env file is unchanged,
+the live `/var/lib/slate/slate-state.json` is still the campaign, and the backup script that greps
+the tar for that filename keeps passing. `store.rs` didn't change at all, since `Store::new` already
+took a path.
 
-The cost is that the rule is a sentence rather than a shape, which is why `save_path` carries it
-and two tests in `main.rs` pin both halves. If there are ever enough rooms that a directory would
-be tidier, that is a migration to do on purpose, not a thing to drift into.
+The cost is that the rule is a sentence rather than a directory layout, which is why `save_path`
+implements it and two tests in `main.rs` pin both halves
+(`the_primary_rooms_save_file_is_slate_state_itself`,
+`every_other_rooms_save_file_sits_beside_it`). If there are ever enough rooms that a directory
+would be tidier, that's a migration to do on purpose, not something to drift into.
 
 ### `blank`, and the map it keeps
 
-`RoomState::blank` is `restored` with nothing to adopt, and it is a third constructor rather than a
-flag on one of the other two because it answers a different question. `hardcoded` is what a **fresh
-checkout** looks like, so that a new clone has something on the screen. `blank` is what a **new
-room** looks like — and seeding a Halloween one-shot with six tokens called Cleodara and Saelyn is
-worse than seeding it with nothing.
+`RoomState::blank` is `restored` with nothing to adopt. It's a third constructor rather than a flag
+on one of the other two because it answers a different question. `hardcoded` is what a **fresh
+checkout** looks like, so a new clone has something on screen. `blank` is what a **new room** looks
+like, and seeding a Halloween one-shot with six tokens called Cleodara and Saelyn is worse than
+seeding it with nothing.
 
-It keeps one thing `MapInfo::default` does not have: **the built-in map's URL.** A default `MapInfo`
-has no URL at all, and a client handed one loads no image, never builds its stage, and draws
-nothing — a new room would open as a black page with a working rail on it. That was found by
-`drive-rooms.mjs` failing on *the board is drawing*, which is the sort of thing only a browser
-notices. `BUILT_IN_MAP` is a placeholder the DM's first `SetMap` replaces, exactly as it is in the
-room that predates all of this; everything that would need clearing is still empty.
+It keeps one thing `MapInfo::default` doesn't have: **the built-in map's URL.** A default `MapInfo`
+has no URL, and a client given one loads no image, never builds its stage, and draws nothing. A new
+room would open as a black page with a working rail. `drive-rooms.mjs` found this by failing on
+*the board is drawing*, which only a browser would notice. `BUILT_IN_MAP` is a placeholder the DM's
+first `SetMap` replaces, exactly as in the room that predates all this. Everything that would need
+clearing is still empty.
 
-## The room rides in the URL, not on the wire
+## The room is in the URL, not on the wire
 
 **No `ClientMsg` or `ServerMsg` variant was added.** `protocol-tags.json` is untouched and
-`docs/net.md` did not move. That is worth stating plainly because it is the single decision the
-rest of the feature's smallness comes from.
+`docs/net.md` didn't change. This is the one decision the rest of the feature's small size comes
+from.
 
-The room is named in the WebSocket URL — `/ws?room=<id>` — and resolved in `ws_handler` before the
+The room is named in the WebSocket URL (`/ws?room=<id>`) and resolved in `ws_handler` before the
 upgrade, so a socket only ever exists attached to one room. The alternative was a `room` field on
-`Hello`, and it does not work: `RoomCmd::Connected` goes into a *particular* room's mailbox, so a
-socket that had not chosen yet would need a holding area outside every actor, which means moving
-the handshake out of the room and inventing a second `pending` table for it. The room actor owning
-its own handshake is the thing that would have paid for.
+`Hello`, and it doesn't work. `RoomCmd::Connected` goes into a *particular* room's mailbox, so a
+socket that hadn't chosen yet would need a holding area outside every actor. That means moving the
+handshake out of the room and inventing a second `pending` table for it, giving up the room actor
+owning its own handshake.
 
-An unknown room is a **404 rather than an upgrade**. A socket that opened and then said "no such
-room" is indistinguishable to `net.ts` from the server having restarted, and it would reconnect
-against it forever.
+An unknown room gets a **404 rather than an upgrade**. To `net.ts`, a socket that opened and then
+said "no such room" looks the same as a restarted server, and it would keep reconnecting forever.
 
 ### `/api/rooms` is the one route under `/api` without the secret
 
-The picker cannot be drawn without the list and it comes before the socket, so the list has to
-arrive over HTTP — and a player has no credential to offer. What it discloses is the room *names*.
-That is a much smaller thing than the map library's contents, which are DM-only because a player
-reading off every dungeon the DM has prepared is next week's session in devtools; a name on a
-picker is not that. The unguessable subdomain is the access control here as it is everywhere else
-in this project.
+The picker can't be drawn without the list, and it comes before the socket, so the list has to
+arrive over HTTP, and a player has no credential to offer. What it discloses is the room *names*.
+That's much less than the map library's contents, which are DM-only because a player reading every
+dungeon the DM has prepared would see next week's session in devtools. A name on a picker isn't
+that. The unguessable subdomain is the access control here, as everywhere else in this project.
 
 Two things keep it from becoming a library: static segments outrank `{library}` in axum's router,
 and `Library::named("rooms")` is `None` regardless. `rooms_is_not_a_library` pins the second.
@@ -145,152 +142,146 @@ and `Library::named("rooms")` is `None` regardless. `rooms_is_not_a_library` pin
 ## The client: one function in front of the old one
 
 `chooseRoom` fetches `/api/rooms`, settles which room this browser is opening, and calls `boot`.
-**Everything after it is unchanged by multi-room** — `boot` takes the room as an argument and never
-asks again, so all fourteen `net.send` sites and the `const net = connect(…)` shape stayed exactly
-as they were. That was the point of splitting there rather than threading a nullable `Net` through
-the file.
+**Nothing after it changed for multi-room.** `boot` takes the room as an argument and never asks
+again, so all fourteen `net.send` sites and the `const net = connect(…)` shape stayed as they were.
+That's why the split is there, rather than threading a nullable `Net` through the file.
 
-Three ways to arrive, in order: a `?room=` in the link, the room this browser was last in, then the
-picker. The first two are **checked against the fetched list rather than trusted**, so a stale
-bookmark or a renamed room falls back to the picker instead of a socket the server 404s.
+There are three ways to arrive, in order: a `?room=` in the link, the room this browser was last
+in, then the picker. The first two are **checked against the fetched list rather than trusted**, so
+a stale bookmark or a renamed room falls back to the picker instead of a socket the server 404s.
 
-### `?room=` is not stripped, and `?dm=` is
+### `?dm=` is stripped from the address bar and `?room=` isn't
 
-`takeRoomFromUrl` deliberately leaves the address bar alone, one function above
-`takeDmSecret` which deliberately does not. A DM secret is a credential and the DM
-screen-shares; a room id is checked against a const and knowing a room exists gets you no further
-than the picker already does. What keeping it buys is a link the DM can send the table that opens
-straight into the one-shot — and the drivers skipping the picker, which is the same property used
-for a different reason.
+`takeRoomFromUrl` leaves the address bar alone. `takeDmSecret`, one function below it, strips its
+parameter. A DM secret is a credential, and the DM screen-shares. A room id is checked against a
+const, and knowing a room exists gets you no further than the picker does. Keeping it gives the DM
+a link they can send the table that opens straight into the one-shot, and it lets the drivers skip
+the picker for the same reason.
 
-### `rooms.ts` is `picker.ts`'s neighbour, not its generalisation
+### `rooms.ts` is separate from `picker.ts`, not a generalisation of it
 
-The same call `dock.ts` makes against `rail.ts` in `docs/frontend.md`, and for the same kind of
-reason: the two overlays share their CSS and nothing else. A room is not a slot — nothing can
-*claim* one, so there is no `claimed` to dim, and a picker serving both would carry a flag saying
-which of the two it is being today.
+This is the same call `dock.ts` makes against `rail.ts` in `docs/frontend.md`, for the same kind of
+reason: the two overlays share their CSS and nothing else. A room isn't a roster slot. Nothing can
+*claim* one, so there's no `claimed` to dim, and a picker serving both would need a flag saying
+which one it was being.
 
 ### The player id is keyed by room
 
-`slate.player_id.<roomId>`, where it used to be one key. A player in two campaigns is two slugs —
-the same person is `cleodara` in one room and somebody else in the other — so one key could only
-ever hold the wrong answer for whichever room they opened second. Nothing would have leaked: the
-server refuses a `player_id` that names no slot in the room being joined, which is
-`a_slug_from_another_rooms_roster_is_not_an_identity`. It would just have sent them to the picker
+The key is `slate.player_id.<roomId>`; it used to be a single key. A player in two campaigns has two
+slugs (the same person is `cleodara` in one room and someone else in the other), so one key would
+always hold the wrong answer for whichever room they opened second. Nothing would have leaked: the
+server refuses a `player_id` that names no slot in the room being joined
+(`a_slug_from_another_rooms_roster_is_not_an_identity`). It would just have sent them to the picker
 every time they switched.
 
-`slate.room` is a single value beside it, because you are in one room at a time.
+`slate.room` is a single value beside it, because you're in one room at a time.
 
-**The unscoped key is still read as a fallback.** `slate.player_id` is what this was called when
-there was one room, and reading it once means six people do not each have to find themselves again
-on the first evening after this lands — invariant 2's argument applied to the browser's own state
-rather than the save file's. It is only ever read; the first `Welcome` writes the scoped key, and
-from then on the old one is dead weight nothing consults. It is safe against the wrong room because
-the server decides: a campaign slug offered to the one-shot names no slot in that roster, so `hello`
-answers with the picker, which is what a player with no stored id gets anyway. `forgetPlayerId`
-clears it too, or *switch* would hand the picker's choice straight back on the next load.
+**The unscoped key is still read as a fallback.** `slate.player_id` is what the key was called when
+there was one room, and reading it once means six people don't each have to pick their character
+again on the first evening after this shipped. It's invariant 2's argument applied to the browser's
+state rather than the save file. It's only ever read: the first `Welcome` writes the scoped key, and
+after that nothing consults the old one. It's safe against the wrong room because the server
+decides. A campaign slug offered to the one-shot names no slot in that roster, so `hello` answers
+with the picker, which is what a player with no stored id gets anyway. `forgetPlayerId` clears the
+old key too, or *switch* would hand the picker's choice straight back on the next load.
 
 ### The switch button
 
-It forgets the room **and** the player id, and deletes `?room=` from the URL on the way out —
-otherwise the link puts you straight back where you were. All three are one act: the room decides
-which slots exist, so being asked which character you are without being asked which room you are in
-offers a cast you may not want.
+It forgets the room **and** the player id, and deletes `?room=` from the URL on the way out, or the
+link would put you straight back where you were. All three go together: the room decides which
+slots exist, so asking which character you are without asking which room you're in offers a cast
+you may not want.
 
-**The DM has one too, and for them it is the room alone.** It was hidden on the argument that they
-have no character to switch to — which is true, and was never the whole of the button: the other
-half is the *room*, and the chip beside it has said which room they are in since the day this
-feature landed. Two things that arrived to fix something else closed the door behind them. The room
-is remembered in `localStorage`, so a bare link reopens the last one; the secret is remembered
-beside it, so the DM's own link no longer has to carry `?dm=` and in practice stops being opened by
-hand at all. What was left was a DM who wanted the other campaign and had no way to the picker but
-typing `?room=<id>` onto the URL with an id **nothing on the screen tells them** — `/api/rooms`
-reports it and the picker spends it, and neither ever puts it in front of the DM.
+**The DM has one too, and for them it forgets only the room.** It used to be hidden on the argument
+that the DM has no character to switch to. That's true, but the button was always also about the
+*room*, and the chip beside it has shown which room they're in since this feature landed. Two later
+changes, made to fix other things, left the DM with no way back to the picker. The room is
+remembered in `localStorage`, so a bare link reopens the last one. The secret is remembered beside
+it, so the DM's own link no longer needs `?dm=` and in practice stops being opened by hand. A DM who
+wanted the other campaign had to type `?room=<id>` onto the URL, with an id **nothing on the screen
+shows them**: `/api/rooms` reports it and the picker uses it, and neither ever displays it to the
+DM.
 
-So it shows for everybody and the label carries the difference: `switch room` for the DM, `switch`
-for a player. The click is the same act minus the half they do not have — `forgetPlayerId` is
-skipped, because the DM holds no slot and there is nothing to be asked afterwards.
+So it shows for everyone, and the label carries the difference: `switch room` for the DM, `switch`
+for a player. The click does the same thing minus the half the DM doesn't have: `forgetPlayerId` is
+skipped, because the DM holds no slot and there's nothing to ask afterwards.
 
-**The secret is untouched, deliberately.** This is *switch campaign*, not *leave the DM seat*: the
-reload goes back through `takeDmSecret`, the DM comes back as the DM in whichever room they pick,
-and the character picker never appears. A *leave the DM seat* would be one more line here and is
-still not wanted; see the paragraph below on what remembering the secret costs.
+**The secret is kept.** This is *switch campaign*, not *leave the DM seat*. The reload goes back
+through `takeDmSecret`, the DM comes back as the DM in whichever room they pick, and the character
+picker never appears. A *leave the DM seat* would be one more line here and still isn't wanted; see
+the cost paragraph in the next section.
 
-That the reload survives at all is the reason showing this is safe now, and it is why the order
-matters: the second argument for hiding the button — that a reloaded DM came back anonymous — had
-to be a fixed bug before the first one could be re-examined.
+Showing the button is only safe because the DM's reload now keeps the DM's identity, and the order
+mattered. The second argument for hiding the button (that a reloaded DM came back anonymous) had to
+be fixed as a bug before the first could be reconsidered.
 
-The second reason is gone, and it is worth recording that it was a real bug rather than a design.
-This section used to say that a reload is how the button works and *the DM's secret does not survive
-one* — the secret was stripped from the address bar on boot and lived in a closure from then on, so
-a reloaded DM came back anonymous and landed on the character picker. **That was never only about
-this button.** `net.ts` reconnects a dropped socket by calling `location.reload()`, so the DM's own
-page demoted itself mid-session, which is the worst possible moment for it. This file carried it as
-a known bug and deferred the call as security-relevant.
+That second argument was a real bug, not a design choice. This section used to say that the button
+works by reloading and that *the DM's secret does not survive one*: the secret was stripped from the
+address bar on boot and kept only in a closure, so a reloaded DM came back anonymous and landed on
+the character picker. **That was never only about this button.** `net.ts` reconnects a dropped
+socket by calling `location.reload()`, so the DM's page demoted itself mid-session, the worst
+possible moment. This file carried it as a known bug and deferred the fix as security-relevant.
 
 ### The secret is remembered in the browser
 
 `takeDmSecret` writes it to `localStorage` under `slate.dm_secret` and reads it back when the URL
-carries none. Four things about that, and each is the decision rather than a detail:
+has none. Four points, each of them a decision:
 
-- **`localStorage`, and it was `sessionStorage` first.** Per-tab is the tidier answer and it was the
-  wrong one. It survives `location.reload()` — the reconnect — and nothing else, so a DM who
-  reaches for their bookmark or a new tab when the board goes stale lands on the character picker
-  exactly as they did before any of this. **That is what happened on the Pi**, and it is why the
-  narrower version is recorded here as a mistake rather than as a trade: "how do I get back" is not
-  a habit anybody has to have consistently, and a fix that only works for one of the two ways is a
-  fix that reads as broken.
-- **The strip is untouched, and that was always the real guard.** The risk is the address bar during
-  a screen-share; storage is not on screen, so remembering it there costs that argument nothing. The
-  two risks were never the same risk, which is why widening the storage leaves the stripping exactly
-  where it was.
-- **A URL beats what is stored**, so a DM opening a fresh link is never handed a stale secret by a
+- **`localStorage`, after `sessionStorage` was tried first.** Per-tab storage looked tidier and was
+  wrong. It survives `location.reload()` (the reconnect) and nothing else, so a DM who reaches for a
+  bookmark or a new tab when the board goes stale lands on the character picker just as before.
+  **That's what happened on the Pi**, and it's why the narrower version is recorded as a mistake
+  rather than a trade-off. Nobody consistently uses one way of getting back, and a fix that works
+  for only one of the two looks broken.
+- **The stripping is unchanged, and it was always the real guard.** The risk is the address bar
+  during a screen-share. Storage isn't on screen, so keeping the secret there doesn't weaken that
+  argument. They were always two different risks, which is why widening the storage leaves the
+  stripping where it was.
+- **A URL beats what's stored**, so a DM opening a fresh link never gets a stale secret from a
   browser that held an old one.
-- Both accessors are wrapped, like every other storage read in `identity.ts`. A private-browsing tab
-  that throws loses the reconnect path and nothing else.
+- Both accessors are wrapped in try/catch, like every other storage read in `identity.ts`. In a
+  private-browsing tab that throws, only the reconnect path is lost.
 
-**What it costs, stated rather than argued away.** The secret now sits in the DM's browser until
-site data is cleared, so anybody with that browser profile opens the room as the DM. That is
-proportionate here and would not be anywhere else: `.claude/CLAUDE.md` says this is a private game
-among friends and not to build real authentication, and the unguessable subdomain is the access
-control the whole deployment already rests on. A DM sharing a profile with a player wants a second
-profile, not a login. If that ever stops being true, the switch button below is where a *leave the
-DM seat* would go — it already forgets the room and the player id, and forgetting the secret beside
-them is one line.
+**The cost.** The secret now stays in the DM's browser until site data is cleared, so anyone with
+that browser profile opens the room as the DM. That's proportionate here and wouldn't be anywhere
+else: `.claude/CLAUDE.md` says this is a private game among friends and not to build real
+authentication, and the unguessable subdomain is the access control the whole deployment already
+relies on. A DM sharing a profile with a player needs a second profile, not a login. If that stops
+being true, the switch button (above) is where a *leave the DM seat* would go. It already forgets
+the room and the player id, and forgetting the secret too is one line.
 
-**The switch button was left hidden at the time**, on the ground that fixing the secret removed the
-second argument for hiding it and not the first, and that widening a reconnect fix into a UI change
-was scope that milestone did not need. The first argument turned out not to survive contact with the
-Pi either — see *The switch button* above, where it is now shown to the DM as well.
+**The switch button was left hidden from the DM when this fix landed.** Fixing the secret removed
+the second argument for hiding it but not the first, and widening a reconnect fix into a UI change
+was scope that milestone didn't need. The first argument then failed on the Pi too; see *The switch
+button* above, where it's now shown to the DM as well.
 
-## What the drivers cost
+## What it cost the drivers
 
-Every `tools/drive-*.mjs` appends `?room=campaign` to the URL it opens, because a page that names
-no room shows the picker and there is no board behind it to click. That is the whole of what
-multi-room cost them — the room is in the URL rather than on the wire, so nothing else about them
-changed.
+Every `tools/drive-*.mjs` appends `?room=campaign` to the URL it opens, because a page that names no
+room shows the picker, with no board behind it to click. That's all multi-room cost them: the room
+is in the URL rather than on the wire, so nothing else about them changed.
 
-Two other things moved with it. The whoami chip now reads `Saelyn · Campaign`, so the twelve
-assertions on it read the half in front of the separator — which also leaves them alone if the room
-is ever renamed. And `audit-uploads.mjs` now reads **every** room's save: the libraries and the
-uploads directory are shared while the boards are not, so a portrait on a one-shot token is
-referenced by a file the campaign's save has never heard of, and reading one room alone would print
-an `rm` for every other room's art. That was the one way that tool could have done damage.
+Two other things changed with it. The whoami chip now reads `Saelyn · Campaign`, so the twelve
+assertions on it read the part before the separator, which also keeps them working if the room is
+renamed. And `audit-uploads.mjs` now reads **every** room's save. The libraries and the uploads
+directory are shared while the boards aren't, so a portrait on a one-shot token is referenced by a
+file the campaign's save knows nothing about, and reading one room alone would print an `rm` for
+every other room's art. That was the one way that tool could have done damage.
 
-`drive-rooms.mjs` is the new one, and it opens two browsers because what it has to show is a
-difference between two connections. It reads the isolation off the **presence strip**, which is the
-cheapest thing on the page computed per room actor: the DM sitting in the campaign is drawn as away
-on a screen looking at the one-shot, and the one-shot's player is absent from the campaign's strip
-entirely, holding no slot in that room's roster.
+`drive-rooms.mjs` is new, and it opens two browsers because what it has to show is a difference
+between two connections. It checks isolation using the **presence strip**, the cheapest thing on
+the page that's computed per room actor. The DM sitting in the campaign is drawn as away on a screen
+showing the one-shot, and the one-shot's player is missing from the campaign's strip entirely,
+holding no slot in that room's roster.
 
-## What is deliberately not here
+## Not built
 
-- **Creating or deleting a room from the UI.** This is the `RwLock` the architecture was shaped to
-  allow. Do not build it before there is a reason.
-- **A DM secret per room.** `ROADMAP.md` argued for one and its case is a DM running campaigns for
-  different groups. This is one DM, one group, one tunnel, and two links to keep straight is worse
-  than one. `the_dm_secret_opens_a_room_whatever_its_cast_is` records the decision.
+- **Creating or deleting a room from the UI.** That's what the `RwLock` would be for. Don't build it
+  before there's a reason.
+- **A DM secret per room.** `ROADMAP.md` argued for one, for a DM running campaigns for different
+  groups. This is one DM, one group, one tunnel, and two links to keep straight is worse than one.
+  `the_dm_secret_opens_a_room_whatever_its_cast_is` records the decision.
 - **Per-room libraries.** Same DM, same art. Splitting `maps/`, `portraits/`, `backdrops/` or
-  `uploads/` buys nothing and costs a copy of every goblin.
+  `uploads/` gains nothing and costs a copy of every goblin.
 - **Moving anything between rooms.** A token, a map's calibration, a scratchpad. Each would be a
-  reference across two actors that share none, which is the property everything above rests on.
+  reference across two actors that share none, and everything above depends on them sharing none.
