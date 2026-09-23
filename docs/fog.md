@@ -356,9 +356,9 @@ A shut door still seals a room (both halves stop at it), which is why doors matt
 
 Considered and not built: a separate `WallKind::Archway`. It would bound the flood and nothing else,
 which is what an open door already does, and a third variant in a closed set costs the editor's mode
-strip, the renderer, `AddWalls`, and the client's two-state `Wall.door`. `ROADMAP.md` asked whether
-an archway needed its own kind; the answer is no. If a permanent opening ever needs to be one nobody
-can close, the option is still there.
+strip, the renderer, `AddWalls`, and the client's two-state `Wall.door`. The roadmap asked whether
+an archway needed its own kind (milestone 21 in `docs/history.md`); the answer is no. If a permanent
+opening ever needs to be one nobody can close, the option is still there.
 
 **It is bounded by the radius as well as by the walls**, Euclidean from the source like the
 raycast. A pure fill ignores corners (walk into a winding corridor and the whole of it lights to the
@@ -394,9 +394,9 @@ buttons in the panel and the sentence under them. (The DM's sight check reuses `
 
 How `Dynamic` works, which is what every map did before there were two modes.
 
-`ROADMAP.md` specified symmetric shadowcasting. It doesn't fit: **shadowcasting needs opacity to be
-a property of a cell, and a wall here is an arbitrary segment in image pixels.** The DM traces
-freely, Alt places off the lattice, and a cave wall is a diagonal.
+The original fog design (in `docs/history.md`) specified symmetric shadowcasting. It doesn't fit:
+**shadowcasting needs opacity to be a property of a cell, and a wall here is an arbitrary segment in
+image pixels.** The DM traces freely, Alt places off the lattice, and a cave wall is a diagonal.
 
 Rasterising a segment into blocking cells doesn't approximate the map; it produces a different one.
 A wall traced *along* a cell boundary (the common case, because `snapToCorner` puts it there) would
@@ -731,8 +731,8 @@ commit an unapplied grid preview.
 
 **`lighting` defaults to `Dynamic`** for the same reason `fog` defaults to off: it's what every map
 did before the field existed, so a save that predates it describes the same dungeon after loading.
-That's invariant 2 working in the one direction it can; see milestone 20's note in `ROADMAP.md` that
-it protects a field being *added* and does nothing for one changing shape.
+That's invariant 2 working in the one direction it can; see milestone 20 in `docs/history.md`, which
+notes that it protects a field being *added* and does nothing for one changing shape.
 
 **`fog` defaults to off**, which answers the roadmap's warning about a radius defaulting to zero and
 every restored room going pitch black. A switch that defaults to off can't cause that, whatever
@@ -1129,9 +1129,20 @@ working in the other direction: a required field is a question the type system m
 
 ## What milestone 16 did not do
 
-- **Walls block sight and never movement.** Decided, not deferred. See `ROADMAP.md` for the four
-  reasons, the first being that a refused move reveals the floor plan to anyone who drags a token
-  around and watches which moves stick.
+- **Walls block sight and never movement.** Decided, not deferred; don't add collision. A token may
+  be dragged through a shut door or off the play area, and the DM says "there's a wall there" as
+  they would at a table. Four reasons, and the first makes it a rule rather than a preference:
+  - A refused move is information. Players are never sent walls, so a server that rejected a
+    `MoveToken` for hitting one would give the floor plan to anyone who drags a token around and
+    watches which moves stick. It's the same trap as the uniform refusals in `docs/drawings.md`,
+    where trying every shape id would map out the DM's monsters, with the whole dungeon as the
+    prize.
+  - Squeezing, climbing, flying, misty step, and a wall traced two pixels off each turn into "the
+    VTT won't let me move" in the middle of a fight. The DM ruling on it costs one sentence and is
+    never wrong.
+  - A half-traced map would block inconsistently, which is worse than not blocking.
+  - Fog already does the practical work: a player who can't see into a room doesn't drag a token
+    into it.
 - No light sources, no per-token vision, no darkvision; one radius per map. **Milestone 39 added the
   first of those, and the second came with it** (see *Light sources*). The third is still refused,
   and *Three fields on the map* says why a light isn't darkvision.

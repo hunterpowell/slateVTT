@@ -301,10 +301,10 @@ pointing at where it went.
 ### The wall hint
 
 **A drag that passes through a wall or a shut door draws the DM's ruler and trail in amber.** This
-is the idea `ROADMAP.md` filed under fog of war and never built, and it's a *hint*: nothing is
-blocked, no command is refused, and the DM says "there's a wall there" as they would at a table. A
-server that rejected the move would reveal the floor plan to anyone who dragged a token around and
-watched which moves stuck.
+is the idea the original fog design (in `docs/history.md`) proposed and never scheduled, and it's a
+*hint*: nothing is blocked, no command is refused, and the DM says "there's a wall there" as they
+would at a table. A server that rejected the move would reveal the floor plan to anyone who dragged
+a token around and watched which moves stuck.
 
 It can't leak, and not because anything checks who is asking: a player's scene has no walls, so
 `crossesWall` finds nothing to cross and their trail is blue. The driver asserts exactly that

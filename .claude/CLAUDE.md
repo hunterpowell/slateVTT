@@ -12,7 +12,8 @@ feature. It is loaded into every session. Two things are kept out of it so they 
   `chat`, `dice`, `notes`, `sound`, `presence`, `rooms`, `frontend`, `net`), explaining why each
   built feature works the way it does. Each feature section below ends with a pointer to its file
   and the code it covers. **The summaries here are enough to use a feature, not to redesign one.**
-  The mechanism, failure modes and reasoning are in `docs/`.
+  The mechanism, failure modes and reasoning are in `docs/`. `docs/history.md` is the record of
+  each milestone as it was built.
 
 These are written in backticks rather than as `@` paths because an `@` path is an import, and
 would load the file into every session.
@@ -690,8 +691,8 @@ can't assume which map it was written against. The README lists them.
 - When a requirement is ambiguous, ask before implementing. A wrong guess costs more than a question.
 - State uncertainty plainly. Don't present a guess about a crate's API or behaviour as fact;
   check it or say you're unsure.
-- Read `ROADMAP.md` before starting a milestone, and update it when one lands. Nothing loads it
-  for you.
+- Read `ROADMAP.md` before starting a milestone. When one lands, mark it done there and move its
+  entry to `docs/history.md`. Nothing loads either file for you.
 - **Read the `docs/` file for a subsystem before changing how that subsystem works**, and update
   it when the behaviour changes. The summaries above are enough to use a feature, not to
   redesign one. The reasoning that would stop you deleting something important is in those

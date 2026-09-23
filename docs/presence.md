@@ -370,10 +370,10 @@ difference between the two follows from that.
   can't see. That's the one thing in this frame worth reading.
 
 **This departs from what was originally written down**, and the change is recorded because the
-argument matters. `ROADMAP.md`'s *Cursors* section proposed gating on `known` for **everyone**; what
-shipped gates only the DM. The gate only protects against a hand that knows something, and the only
-hand at the table that does is the DM's. Gating a player's pointer gains nothing and loses the
-feature on exactly the ground the party is fighting over.
+argument matters. The *Cursors* design in `docs/history.md` proposed gating on `known` for
+**everyone**; what shipped gates only the DM. The gate only protects against a hand that knows
+something, and the only hand at the table that does is the DM's. Gating a player's pointer gains
+nothing and loses the feature on exactly the ground the party is fighting over.
 
 `drive-ping.mjs` and `drive-cursors.mjs` assert *opposite outcomes about the same kind of square*,
 on purpose. That's not an inconsistency to tidy up later; it's the distinction between the two

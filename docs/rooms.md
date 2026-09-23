@@ -16,9 +16,10 @@ second cast.**
 A second roster on one room was proposed first. It's the smaller change, so it was considered
 properly, and it doesn't work. The roster is the cast list. Swapping it leaves `tokens`, `map`,
 `staged`, `initiative`, `walls`, `revealed`, `overrides` and `shapes` exactly where they were, and
-those are the fields the one-shot would have had to clear. `ROADMAP.md` had guessed the other way
-(*"the roster becoming per-room is the actual point"*), and that line is wrong in this one respect:
-the roster is what makes a second room *pleasant*, and a second board is what makes it work at all.
+those are the fields the one-shot would have had to clear. The multi-room design in
+`docs/history.md` had guessed the other way (*"the roster becoming per-room is the actual point"*),
+and that line is wrong in this one respect: the roster is what makes a second room *pleasant*, and a
+second board is what makes it work at all.
 
 ## Not the scene system
 
@@ -85,11 +86,11 @@ pair can't become zero or two without anyone noticing.
 
 ### Why the save path is a sibling rule and not a directory
 
-`SLATE_STATE` naming a *directory* was the obvious design, and it's what `ROADMAP.md` proposed. The
-sibling rule was chosen for one reason: **it needs no migration.** The Pi's env file is unchanged,
-the live `/var/lib/slate/slate-state.json` is still the campaign, and the backup script that greps
-the tar for that filename keeps passing. `store.rs` didn't change at all, since `Store::new` already
-took a path.
+`SLATE_STATE` naming a *directory* was the obvious design, and it's what the design in
+`docs/history.md` proposed. The sibling rule was chosen for one reason: **it needs no migration.**
+The Pi's env file is unchanged, the live `/var/lib/slate/slate-state.json` is still the campaign,
+and the backup script that greps the tar for that filename keeps passing. `store.rs` didn't change
+at all, since `Store::new` already took a path.
 
 The cost is that the rule is a sentence rather than a directory layout, which is why `save_path`
 implements it and two tests in `main.rs` pin both halves
@@ -278,9 +279,10 @@ holding no slot in that room's roster.
 
 - **Creating or deleting a room from the UI.** That's what the `RwLock` would be for. Don't build it
   before there's a reason.
-- **A DM secret per room.** `ROADMAP.md` argued for one, for a DM running campaigns for different
-  groups. This is one DM, one group, one tunnel, and two links to keep straight is worse than one.
-  `the_dm_secret_opens_a_room_whatever_its_cast_is` records the decision.
+- **A DM secret per room.** The design in `docs/history.md` argued for one, for a DM running
+  campaigns for different groups. This is one DM, one group, one tunnel, and two links to keep
+  straight is worse than one. `the_dm_secret_opens_a_room_whatever_its_cast_is` records the
+  decision.
 - **Per-room libraries.** Same DM, same art. Splitting `maps/`, `portraits/`, `backdrops/` or
   `uploads/` gains nothing and costs a copy of every goblin.
 - **Moving anything between rooms.** A token, a map's calibration, a scratchpad. Each would be a

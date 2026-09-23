@@ -9,15 +9,15 @@ Read this before touching `RoomState::audio`, `SetAudio`/`AudioChanged` on the s
 The boundary is in `.claude/CLAUDE.md` and it is the specification. Its test: **is this still one
 track?** A second channel, crossfade, queue, playlist or per-map ambience each turns it into a mixer.
 
-Three songs in the folder is not a mixer. The collection is `tracks/`, the same way `ROADMAP.md`'s
-backdrop entry decided that "a few presets" meant the `backdrops/` folder rather than a list in the
-state model. The room holds which track is playing and nothing else.
+Three songs in the folder is not a mixer. The collection is `tracks/`, the same way the backdrop
+entry in `docs/history.md` decided that "a few presets" meant the `backdrops/` folder rather than a
+list in the state model. The room holds which track is playing and nothing else.
 
 ## Why it exists
 
 Audio was a non-goal in `.claude/CLAUDE.md`, and unlike voice and video it was listed with no
 argument attached. `docs/chat.md` was the only place the project said anything more: *"No sound. Not
-argued against, just not built, and worth an argument before it is."* Nothing in `ROADMAP.md` had
+argued against, just not built, and worth an argument before it is."* Nothing in the roadmap had
 ever costed it. So this didn't overturn a refusal. It settled a question the project had written
 down and left open.
 

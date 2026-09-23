@@ -172,10 +172,10 @@ tool, the map, token, wall and fog tools, the rail and the board, once, on the a
 is exactly one `Welcome` per connection. `start()` then captures `room.scene` by reference and draws
 from that object every frame.
 
-So `ROADMAP.md`'s plan ("restoring re-sends `Welcome` to everyone") was true of the server and false
-of the client. A second `Welcome` would build a second copy of everything, register another `window`
-keydown listener for every tool, and give the DM a fresh camera just as they're looking at what they
-undid.
+So the roadmap's plan, "restoring re-sends `Welcome` to everyone" (milestone 22 in
+`docs/history.md`), was true of the server and false of the client. A second `Welcome` would build a
+second copy of everything, register another `window` keydown listener for every tool, and give the
+DM a fresh camera just as they're looking at what they undid.
 
 Two things follow:
 
