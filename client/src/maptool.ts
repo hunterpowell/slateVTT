@@ -1,23 +1,23 @@
 // The DM's map panel: upload an image, calibrate the grid to it, and set how
 // the overlay is drawn.
 //
-// The panel has two modes, and the toggle at the top of it decides which map
-// everything below is about: the board the table is looking at, or the one being
-// prepared for later. Nothing else in the panel changes between them — an upload
-// is an upload and a calibration is a calibration either way — which is why it is
-// one toggle rather than a second copy of the whole panel.
+// The panel has two modes, and the toggle at the top decides which map
+// everything below is about: the board the table is looking at, or the one
+// being prepared for later. Nothing else in the panel changes between them (an
+// upload and a calibration work the same either way), so it is one toggle
+// instead of a second copy of the panel.
 //
 // Switching to "next map" while something is staged is also preview mode: the
 // board on screen becomes the staged image so it can be calibrated, because
 // calibrating a map means looking at it. The table sees none of this.
 //
-// Calibration is a two-step: dragging a box only *proposes* a grid, which is
+// Calibration has two steps. Dragging a box only proposes a grid, which is
 // previewed locally so the count can be corrected against it, and nothing
-// reaches the table or the save file until the DM applies. That local preview
-// is ordinary client-side prediction — the same thing a token drag does — so it
-// works by writing straight to `scene.grid` and keeping the confirmed value to
-// roll back to. Everything that reads the grid, including the cell readout in
-// the HUD, then agrees with what is on screen.
+// reaches the table or the save file until the DM applies. The preview is
+// ordinary client-side prediction, as in a token drag: it writes straight to
+// `scene.grid` and keeps the confirmed value to roll back to. Everything that
+// reads the grid, including the cell readout in the HUD, then agrees with what
+// is on screen.
 //
 // Players never see this. It is only created for a DM connection, and the
 // server re-checks every set_map regardless.
@@ -60,8 +60,8 @@ export interface MapToolUi {
   cells: HTMLInputElement;
   cellsDown: HTMLButtonElement;
   cellsUp: HTMLButtonElement;
-  /** The square path's alone: it proposes the image's own bounds as the
-   *  reference box, and an edge gesture has no region in it to propose. */
+  /** Square grids only: it proposes the image's own bounds as the reference
+   *  box, and an edge gesture has no region in it to propose. */
   wholeMap: HTMLButtonElement;
   hint: HTMLElement;
   applyRow: HTMLElement;
@@ -84,25 +84,24 @@ export interface MapTool extends Calibration {
    * Calibrating takes the left mouse button, so leaving it armed under a hidden
    * panel would leave a drag on the canvas drawing a reference box with nothing
    * on screen saying why. The library list closes with it so the tab reopens on
-   * the panel rather than mid-browse.
+   * the panel, not mid-browse.
    *
-   * Preview mode deliberately survives: staging a map and then dragging tokens
-   * into position on it is one job done in two places, and `#preview-tag` says
-   * which board is on screen without this panel being open.
+   * Preview mode survives: staging a map and then dragging tokens into position
+   * on it is one job done in two places, and `#preview-tag` says which board is
+   * on screen without this panel being open.
    */
   stop(): void;
   /**
    * The fog panel's three fields, sent as part of a whole `set_map`.
    *
-   * It goes through here rather than the fog panel building its own frame,
-   * because this is where the *confirmed* calibration lives — the same reason
-   * the grid colour is sent from `sendColor` rather than read off the board. A
-   * fiddle with the fog must not commit an unapplied grid preview.
+   * It goes through here, instead of the fog panel building its own frame,
+   * because this is where the *confirmed* calibration lives. `sendColor` sends
+   * the confirmed grid for the same reason: changing the fog must not commit an
+   * unapplied grid preview.
    *
-   * Whichever slot the panel is on, which is whichever board is on screen. A
-   * staged map carries `fog`, `vision_ft` and `lighting` like any other — they
-   * have ridden on `MapInfo` since fog shipped — so the next dungeon's lights
-   * are set before the table is ever shown it.
+   * Sent for whichever slot the panel is on, which is the board on screen. A
+   * staged map carries `fog`, `vision_ft` and `lighting` in its `MapInfo` like
+   * any other, so the next map's lights are set before the table is shown it.
    */
   setFog(on: boolean, visionFt: number, lighting: Lighting): void;
 }
@@ -111,17 +110,16 @@ const DEFAULT_ALPHA_PCT = 32;
 /** Only reached before any board has loaded; the server has the same number. */
 const DEFAULT_VISION_FT = 60;
 const DRAG_HINT = 'Drag a box across that many whole squares.';
-/** The isometric gesture, which is a run of cell edges rather than a box. */
+/** The isometric gesture, which is a run of cell edges, not a box. */
 const EDGE_HINT = 'Drag along that many diamond edges, corner to corner.';
-/** The same gesture with the proportions already decided, so the hint says which
- *  half of it still matters. */
+/** The same gesture with the proportions already fixed, so the hint says only
+ *  the size is being set. */
 const FIXED_HINT = `Drag along that many diamond edges — they stay ${STANDARD_RATIO}:1.`;
 /** Where the count starts for a box drawn by hand, as opposed to the image. */
 const HAND_DRAWN_CELLS = 4;
-/** Where it starts for an edge, which is the gesture as it was before the count
- *  reached it: one drag, one diamond. Tracing a whole room and dividing it is
- *  the thing being made *possible*, and aiming one tile is still the thing the
- *  hint asks for, so a DM who wants that must not have to correct a 4 first. */
+/** Where it starts for an edge: one drag, one diamond. Tracing a whole room and
+ *  dividing it is possible, but the hint asks for one tile, so a DM doing that
+ *  mustn't have to correct a 4 first. */
 const HAND_DRAWN_EDGES = 1;
 
 /** The select's value, which is a DOM string like any other. */
@@ -131,13 +129,12 @@ function readShape(value: string): CalShape {
 
 /**
  * Which entry a board already on screen opens on, so re-opening the panel on an
- * isometric map opens on isometric rather than offering to square it — and on a
- * 2:1 one opens on the fixed entry rather than on the gesture that entry exists
- * to spare the DM.
+ * isometric map opens on isometric instead of offering to square it, and a 2:1
+ * one opens on the fixed entry.
  *
- * A tolerance rather than an equality. The ratio has been through an `f32` on
- * the wire and back, and a board a hair off 2:1 is one somebody meant to be
- * 2:1; anything further out was aimed by hand and stays free.
+ * A tolerance, not an equality. The ratio has been through an `f32` on the wire
+ * and back, and a board a hair off 2:1 was meant to be 2:1; anything further
+ * out was set by hand and stays free.
  */
 function shapeFor(grid: GridSpec): CalShape {
   const of = shapeOf(grid);
@@ -166,9 +163,9 @@ export function createMapTool(
 
   /**
    * The board being edited: the staged one in "next map" mode, and null there
-   * until a map has actually been staged. Everything below reads through this
-   * rather than through `scene.live`, which is what stops a staged preview from
-   * ever being written into the map the table is looking at.
+   * until a map has been staged. Everything below reads through this instead of
+   * `scene.live`, which stops a staged preview from being written into the map
+   * the table is looking at.
    */
   const target = (): Board | null =>
     scene === null ? null : mode === 'staged' ? scene.staged : scene.live;
@@ -181,8 +178,8 @@ export function createMapTool(
   /** The pending box is the whole image, so the play area should be too. */
   let pendingWholeImage = false;
   /**
-   * The count in the box was worked out for the whole image rather than chosen
-   * for a hand-drawn one, so the next hand-drawn box must not inherit it.
+   * The count in the box was worked out for the whole image, not chosen for a
+   * hand-drawn one, so the next hand-drawn box must not inherit it.
    */
   let countFromWholeImage = false;
 
@@ -190,11 +187,11 @@ export function createMapTool(
    * Which lattice the DM is calibrating. Read off the board by `refresh`, so
    * re-opening the panel on an isometric map opens on isometric.
    *
-   * The gesture is the same drag either way — `input.ts` hands over a box and
+   * The gesture is the same drag either way: `input.ts` hands over a box and
    * this decides whether to read it as a rectangle of squares or as one
-   * diamond's edge — which is why nothing on the canvas side knows about this.
-   * The two isometric entries are one gesture twice over: they differ only in
-   * whether the drag decides the diamond's proportions or only its size.
+   * diamond's edge, so nothing on the canvas side knows about this. The two
+   * isometric entries differ only in whether the drag sets the diamond's
+   * proportions or only its size.
    */
   let shape: CalShape = 'square';
 
@@ -204,8 +201,8 @@ export function createMapTool(
       ? gridFromBox(box, cellsAcross())
       : gridFromEdge(box, shape, cellsAcross());
 
-  /** Why a drag was refused, which differs by shape because the gesture does —
-   *  and a fixed diamond cannot be lopsided, so it is not offered that reason. */
+  /** Why a drag was refused, which differs by shape because the gesture does.
+   *  A fixed diamond can't be lopsided, so that reason isn't given for it. */
   const dragRefusal = (): string => {
     if (shape === 'square') {
       return `that box is too small — each square must come out at ${MIN_GRID_PX} px or more`;
@@ -233,8 +230,7 @@ export function createMapTool(
   };
 
   // Dragging the slider repaints locally on every step; only letting go sends.
-  // Same split as a token drag, and for the same reason — the table does not
-  // need to watch someone hunt for a shade.
+  // The table doesn't need to watch someone hunt for a shade.
   const previewColor = (): void => {
     const board = target();
     if (board === null) return;
@@ -243,8 +239,8 @@ export function createMapTool(
   };
 
   const sendColor = (): void => {
-    // Deliberately the *confirmed* state, not what is on screen: an unapplied
-    // calibration preview must not be committed by a fiddle with the colour.
+    // The *confirmed* state, not what is on screen: changing the colour must
+    // not commit an unapplied calibration preview.
     if (confirmed !== null) sendMap(confirmed.grid, composeColor(), confirmed.area);
   };
 
@@ -262,13 +258,12 @@ export function createMapTool(
   };
 
   /**
-   * `url` is explicit for the upload case only. The map URL is deliberately not
-   * predicted locally the way the grid is — main.ts reloads the image by
-   * noticing that the incoming URL differs from the one on the scene, and a
-   * prediction here would hide the change from it.
+   * `url` is explicit for a new image only. **Don't predict the map URL locally**
+   * as the grid is: main.ts reloads the image when the incoming URL differs
+   * from the one on the scene, and a prediction here would hide the change.
    *
-   * `staged` says which slot, and is simply which mode the panel is in. An empty
-   * staged slot has no URL of its own, so only an explicit one can fill it.
+   * `staged` says which slot, and is the mode the panel is in. An empty staged
+   * slot has no URL of its own, so only an explicit one can fill it.
    */
   const sendMap = (
     grid: GridSpec,
@@ -276,7 +271,7 @@ export function createMapTool(
     area: Rect | null,
     url?: string,
     /** The fog panel's three fields. Carried through unchanged otherwise, so
-     *  calibrating a map never quietly turns its lights on or off. */
+     *  calibrating a map never turns its lights on or off. */
     fog?: { on: boolean; visionFt: number; lighting: Lighting },
   ): void => {
     const board = target();
@@ -289,9 +284,9 @@ export function createMapTool(
       offset_x: grid.offsetX,
       offset_y: grid.offsetY,
       grid_color: color,
-      // Derived from the basis rather than read off the panel, so an unapplied
-      // shape change cannot be committed by a fiddle with the colour — which is
-      // the reason `sendColor` sends the *confirmed* grid in the first place.
+      // Derived from the basis, not read off the panel, so changing the colour
+      // can't commit an unapplied shape change. `sendColor` sends the confirmed
+      // grid for the same reason.
       grid_shape: shapeOf(grid),
       play_area: area,
       fog: fog?.on ?? board?.fog ?? false,
@@ -313,15 +308,14 @@ export function createMapTool(
     }
     board.grid = grid;
     // **An isometric drag has no play area in it.** The square gesture drags a
-    // box *across* part of the board, so the box is a region and reading a play
+    // box across part of the board, so the box is a region and reading a play
     // area off it is right. The isometric gesture is two points along one cell
-    // edge — a direction and a length, nothing more — so deriving a region from
-    // it collapses the board to a sliver the size of one diamond, which is what
-    // it did until it was noticed on a real map. The playable region is simply
-    // not what choosing a cell shape is about, so it is left as it was found.
+    // edge (a direction and a length), so deriving a region from it collapses
+    // the board to a sliver the size of one diamond. The play area is left as
+    // it was.
     //
-    // The whole image is stored as null rather than its own measurements, so it
-    // stays true if the same URL is ever served a different-sized image.
+    // The whole image is stored as null, not its own measurements, so it stays
+    // true if the same URL is ever served a different-sized image.
     if (shape === 'square') {
       board.playArea = pendingWholeImage ? null : playAreaFromBox(pending, grid);
     }
@@ -331,11 +325,10 @@ export function createMapTool(
   /**
    * The half of the calibration panel that belongs to the square path.
    *
-   * **Only the whole-image shortcut is that half now.** It proposes a *region*
-   * — the image's own bounds as the reference box — and an edge gesture has no
-   * region in it, so it goes rather than sitting there inert: the rail's rule
-   * about a tab that can do nothing, one level down. The count stayed, because
-   * "how many cells did that drag cross" is a question both gestures ask.
+   * That is only the whole-image shortcut. It proposes a region (the image's
+   * own bounds as the reference box), and an edge gesture has no region in it,
+   * so the button is hidden instead of left inert. The count stays, because
+   * both gestures ask how many cells the drag crossed.
    */
   const showShape = (): void => {
     ui.shape.value = shape;
@@ -361,11 +354,10 @@ export function createMapTool(
   };
 
   // Changing the shape abandons whatever was being tuned: a box read as four
-  // squares and the same box read as one diamond's edge are different claims
-  // about the map, and carrying the drag across would silently make the second
-  // one for the DM. That holds between the two isometric entries as well —
-  // "these are the proportions" and "the proportions are 2:1" are two claims,
-  // not one drag under two readings.
+  // squares and the same box read as one diamond's edge describe different
+  // grids, and carrying the drag across would apply the second one without the
+  // DM choosing it. The same holds between the two isometric entries: "these
+  // are the proportions" and "the proportions are 2:1" are different grids.
   ui.shape.addEventListener('change', () => {
     const next = readShape(ui.shape.value);
     if (next === shape) return;
@@ -373,16 +365,15 @@ export function createMapTool(
     pending = null;
     pendingWholeImage = false;
     ui.applyRow.hidden = true;
-    // The count means the same *kind* of thing under both gestures and not the
+    // The count means the same kind of thing under both gestures but not the
     // same number: a hand-drawn box is a few squares across, while an edge is
     // one diamond unless the DM says otherwise. Carrying 26 across from a
     // whole-image square calibration would divide the next traced edge into
-    // slivers, which is the mistake `release` already refuses to make with a
-    // hand-drawn box.
+    // slivers, which `release` also prevents for a hand-drawn box.
     ui.cells.value = String(shape === 'square' ? HAND_DRAWN_CELLS : HAND_DRAWN_EDGES);
     countFromWholeImage = false;
-    // Back to what the server confirmed, which is what a cancelled preview
-    // already does — the shape switch is one.
+    // Back to what the server confirmed, as a cancelled preview does. A shape
+    // switch is one.
     const board = target();
     if (board !== null && confirmed !== null) {
       board.grid = confirmed.grid;
@@ -396,28 +387,27 @@ export function createMapTool(
    * Offers the whole image as the reference box, which reduces calibration to a
    * single question: how many squares across is this map?
    *
-   * An image's dimensions cannot say how big a square is — 4000 px is twenty
-   * 200 px squares or eighty 50 px ones, and only the DM knows which. But the
-   * count and the width together do, and "the whole image" is just a box like
-   * any other, so the preview and apply flow carries it unchanged. Right for
-   * the many maps that are exported edge-to-edge along grid lines.
+   * An image's dimensions can't say how big a square is: 4000 px is twenty
+   * 200 px squares or eighty 50 px ones, and only the DM knows which. The count
+   * and the width together do, and the whole image is a box like any other, so
+   * the preview and apply flow handles it unchanged. Suits the many maps that
+   * are exported edge-to-edge along grid lines.
    */
   function proposeWholeMap(): void {
     const size = mapSize();
     if (target() === null || confirmed === null || size === null) return;
-    // The same rule that hides the button under an isometric shape, applied to
-    // the one caller that is not the button: `main.ts` offers this on a freshly
-    // loaded image, and a remembered isometric calibration is a map where that
-    // offer means nothing. It always meant nothing there; before the count
-    // reached the edge gesture it merely meant nothing quietly.
+    // The same rule that hides the button under an isometric shape, for the
+    // one caller that isn't the button: `main.ts` offers this on a freshly
+    // loaded image, and on a map with a remembered isometric calibration the
+    // offer means nothing.
     if (shape !== 'square') return;
 
     // The map is drawn from the world origin, so the image *is* this box.
     const box: Box = { x0: 0, y0: 0, x1: size.width, y1: size.height };
 
-    // Opening on the count the current cell size implies, rather than some
-    // fixed number, puts the first preview in the right region for a map that
-    // came from the same source as the last one.
+    // Opening on the count the current cell size implies, instead of a fixed
+    // number, puts the first preview close for a map that came from the same
+    // source as the last one.
     const ceiling = Math.max(1, Math.min(MAX_CELLS, Math.floor(size.width / MIN_GRID_PX)));
     const guess = Math.round(size.width / confirmed.grid.px);
     ui.cells.value = String(Math.min(Math.max(guess, 1), ceiling));
@@ -451,7 +441,7 @@ export function createMapTool(
   ui.apply.addEventListener('click', () => {
     const board = target();
     if (board === null || pending === null) return;
-    // The board holds the preview, which is exactly what is on screen.
+    // The board holds the preview, which is what is on screen.
     sendMap(board.grid, board.gridColor, board.playArea);
     pending = null;
     setActive(false);
@@ -469,8 +459,8 @@ export function createMapTool(
     repreview();
   });
 
-  // Without this, leaving the mode means finding the button again — and while it
-  // is on, dragging does not move tokens, which reads as a broken board.
+  // Without this, leaving the mode means finding the button again, and while it
+  // is on, dragging doesn't move tokens, which looks like a broken board.
   window.addEventListener('keydown', (e) => {
     if (!active) return;
     if (e.key === 'Escape') discard();
@@ -505,7 +495,7 @@ export function createMapTool(
     const board = target();
     confirmed = board === null ? null : { grid: { ...board.grid }, area: board.playArea };
     // The board's own shape, so re-opening the panel on a map opens on the way
-    // it was calibrated rather than offering to change it.
+    // it was calibrated instead of offering to change it.
     if (board !== null) shape = shapeFor(board.grid);
     // Whatever the server just said, or whichever slot is now selected,
     // supersedes anything being tried out here.
@@ -523,8 +513,8 @@ export function createMapTool(
     discard();
     mode = next;
 
-    // Switching to a slot that holds a map is what preview mode *is*. There is
-    // no separate toggle, because calibrating a map means looking at it.
+    // Switching to a slot that holds a map turns preview mode on. There is no
+    // separate toggle, because calibrating a map means looking at it.
     const previewing = mode === 'staged' && scene.staged !== null;
     if (previewing !== scene.previewing) {
       scene.previewing = previewing;
@@ -550,25 +540,24 @@ export function createMapTool(
 
   /**
    * Both ways of getting a map end here, because from this side they are the
-   * same thing: some bytes are now served at `url` and the slot this panel is
-   * pointed at should show them.
+   * same: some bytes are now served at `url` and the slot this panel is on
+   * should show them.
    */
   const showNewMap = (url: string): void => {
     if (scene === null) return;
 
     discard(); // a half-tuned grid means nothing on an image being replaced
-    // Falls back to the live board when the staged slot is still empty: there is
-    // nothing staged to carry anything over from, and one DM's maps tend to come
-    // out of one tool at one resolution either way.
+    // Falls back to the live board when the staged slot is still empty: there
+    // is nothing staged to carry anything over from, and one DM's maps tend to
+    // come out of one tool at one resolution anyway.
     const from = target() ?? scene.live;
-    // The cell size carries over, but the offsets cannot: they describe where
-    // the grid began on an image this one has just replaced. Nor can the play
-    // area, so a new map is playable end to end until the DM says otherwise.
+    // The cell size carries over, but the offsets can't: they describe where
+    // the grid began on the image this one replaced. Nor can the play area, so
+    // a new map is playable end to end until the DM says otherwise.
     //
-    // For a map picked out of the library this is only an opening bid. The
-    // server keys what it remembers on the URL, so a map calibrated in an
-    // earlier session comes back the way it was left and the frame that lands
-    // here overrides all of it.
+    // For a map picked from the library this is only a default. The server
+    // keys what it remembers on the URL, so a map calibrated in an earlier
+    // session comes back as it was left, and the reply overrides all of this.
     sendMap(squareGrid(from.grid.px, 0, 0), from.gridColor, null, url);
   };
 
@@ -577,13 +566,12 @@ export function createMapTool(
   // --- the library ----------------------------------------------------------
 
   // `showNewMap` guards on the scene being there, so a pick landing before the
-  // first frame does nothing rather than half a load.
+  // first frame does nothing instead of half a load.
   //
-  // **The upload button is the library's now.** It used to POST to `/api/map`,
-  // which wrote the bytes into `uploads/` under a fresh UUID — a map that could
-  // not be found again next session, and whose calibration a second upload of
-  // the same file would not match. Handing the input to the widget makes an
-  // uploaded map a library map, and there is one code path instead of two.
+  // The upload button belongs to the library widget, so an uploaded map is a
+  // library map. Don't upload to `uploads/` under a fresh UUID instead: that
+  // map can't be found again next session, and a second upload of the same
+  // file won't match its calibration.
   const library = createLibraryList(
     {
       root: ui.root,
@@ -610,8 +598,8 @@ export function createMapTool(
     const { px, offsetX, offsetY } = board.grid;
     const prefix = pending === null ? '' : 'preview · ';
     const of = shapeOf(board.grid);
-    // The ratio is the whole of what an isometric readout adds: `px/cell` is the
-    // diamond's height either way, and its width is the number beside it.
+    // An isometric readout adds only the ratio: `px/cell` is the diamond's
+    // height either way, and its width is the number beside it.
     const kind = of.kind === 'iso' ? ` · iso ${round(of.ratio)}:1` : '';
     ui.readout.textContent = `${prefix}${round(px)} px/cell${kind} · offset ${round(offsetX)}, ${round(offsetY)}`;
     ui.readout.classList.toggle('is-preview', pending !== null);
@@ -638,7 +626,7 @@ export function createMapTool(
     release(box) {
       dragBox = null;
 
-      // A count worked out for the whole image — often dozens — says nothing
+      // A count worked out for the whole image (often dozens) says nothing
       // about a box drawn by hand over a handful of squares. Inheriting it
       // divides a small selection into slivers.
       if (countFromWholeImage) {
@@ -651,8 +639,8 @@ export function createMapTool(
         return;
       }
 
-      // Kept rather than committed: the count is usually the thing that is
-      // wrong, and it is far easier to judge against a box already drawn.
+      // Kept, not committed: the count is usually what is wrong, and it is far
+      // easier to judge against a box already drawn.
       pending = box;
       pendingWholeImage = false;
       ui.applyRow.hidden = false;
@@ -671,14 +659,12 @@ export function createMapTool(
     },
 
     setFog(on, visionFt, lighting) {
-      // `confirmed` rather than what is on screen: an unapplied grid preview
-      // must not be committed by a fiddle with the fog.
+      // `confirmed`, not what is on screen: changing the fog must not commit an
+      // unapplied grid preview.
       //
-      // `target()` rather than `scene.live`, which is what milestone 20 changed
-      // here — the fog panel edits the board on screen now, and the map panel's
-      // own mode is exactly what decides which board that is. The two cannot
-      // disagree because there is only one answer, which is the argument for
-      // routing this through here in the first place.
+      // `target()`, not `scene.live`: the fog panel edits the board on screen,
+      // and the map panel's mode decides which board that is. Routing through
+      // here means the two panels can't disagree about it.
       const board = target();
       if (board === null || confirmed === null) return;
       sendMap(confirmed.grid, board.gridColor, confirmed.area, undefined, {
@@ -691,8 +677,8 @@ export function createMapTool(
     update(next) {
       scene = next;
 
-      // A slot that has emptied — promoted or discarded — has nothing left to
-      // edit, so the panel goes back to the board rather than sitting in a mode
+      // A slot that has emptied (promoted or discarded) has nothing left to
+      // edit, so the panel goes back to the board instead of sitting in a mode
       // with no map in it.
       if (mode === 'staged' && next.staged === null) mode = 'live';
 

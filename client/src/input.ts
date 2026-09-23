@@ -24,19 +24,16 @@ const LINE_HEIGHT_PX = 16;
 /** ~25 Hz. Smooth enough to watch, far below what the room needs to absorb. */
 const DRAG_SEND_INTERVAL_MS = 40;
 /**
- * How often our own pointer goes out, in milliseconds — ~30Hz.
+ * How often our own pointer goes out, in milliseconds (~30Hz).
  *
- * **Faster than a drag frame**, which is the opposite of what this file assumed
- * when the feature landed at half the rate. The argument for slower was that a
- * pointer is ambient and the busiest message in the protocol has no business
- * being the smoothest thing on screen; play answered it. A cursor is the one
- * mark on the board with no inertia of its own — a token drag is a heavy object
- * everybody is watching land, and a hand is *quick*, so the frame rate that
- * reads as fine on a token reads as a stutter here.
+ * Faster than a drag frame. Don't slow it to match on the grounds that a
+ * pointer is ambient and the busiest message in the protocol: at half this
+ * rate it stuttered in play. A token drag is a slow object everybody watches
+ * land, while a hand moves quickly, so a rate that looks fine on a token looks
+ * jerky on a cursor.
  *
- * It is affordable for the reason it always was: seven clients is nothing at
- * this scale. If it ever stops being, the room's switch is the dial and this
- * number is the fine one beside it.
+ * Seven clients make this affordable. If it ever isn't, the room's
+ * `show_cursors` switch is the coarse control and this number the fine one.
  */
 const CURSOR_SEND_INTERVAL_MS = 33;
 /** How far the pointer may wander during a click on a shape before it counts as
@@ -45,18 +42,17 @@ const DRAW_CLICK_SLOP_PX = 4;
 /**
  * How far a press may wander and still be a hold that pings.
  *
- * Deliberately *the same number* as the slop above rather than a value of its
- * own, and the equality is load-bearing rather than tidy. A press with a shape
- * tool in hand is being measured against both at once: past this it is a hold no
- * longer, and past that it is a sweep that has started sending frames. Were this
- * the larger of the two, a press could cross into sweeping and then still fire —
- * killing a sketch that five other screens had already been shown, with no
- * release frame to take it back off them. Equal, and checked first on every
- * move, means a ping can never fire after a sketch frame has gone out.
+ * **Must equal the slop above.** A press with a shape tool in hand is measured
+ * against both at once: past this it is no longer a hold, and past that it is a
+ * sweep that has started sending frames. If this were larger, a press could
+ * start sweeping and then still fire, killing a sketch that five other screens
+ * had already been shown, with no release frame to remove it from them. Equal,
+ * and checked first on every move, means a ping can never fire after a sketch
+ * frame has gone out.
  */
 const HOLD_SLOP_PX = DRAW_CLICK_SLOP_PX;
-/** How near a wall a click has to land to be about it, in *screen* pixels — so
- *  a segment stays as easy to hit zoomed out as zoomed in. */
+/** How near a wall a click has to land to hit it, in *screen* pixels, so a
+ *  segment stays as easy to hit zoomed out as zoomed in. */
 const WALL_HIT_PX = 8;
 
 type Drag =
@@ -67,28 +63,26 @@ type Drag =
       /**
        * Every token this drag moves, each with its own offset from the pointer.
        *
-       * Usually one. A group selected with shift-click moves as a rigid body,
-       * which is the whole of what those offsets are for: they are captured once
-       * at pointerdown, so the formation on the board is the formation that
-       * lands however far the pointer travels.
+       * Usually one. A group selected with shift-click moves as a rigid body:
+       * the offsets are captured once at pointerdown, so the group keeps its
+       * formation however far the pointer travels.
        *
-       * Each token still lands on its *own* cell, though — the offsets are held
-       * in grid units and the server snaps every token separately, so a group of
-       * mixed sizes can settle half a cell off the spacing it started with.
-       * `snap_to_cell` depends on how wide a token is and is the server's only
-       * copy of that rule; a group snap here would be a second one.
+       * Each token still lands on its own cell. The offsets are in grid units
+       * and the server snaps every token separately, so a group of mixed sizes
+       * can settle half a cell off the spacing it started with. Don't snap the
+       * group here: `snap_to_cell` depends on token width and is the only copy
+       * of that rule.
        */
       tokens: readonly Grabbed[];
       /**
-       * The one the pointer actually went down on. It is the only member with a
-       * ruler — see `rulers.begin` at the grab — and it is what the panel's
-       * selection follows.
+       * The one the pointer went down on. It is the only member with a ruler
+       * (see `rulers.begin` at the grab), and the panel's selection follows it.
        */
       anchorId: string;
       /**
-       * This drag writes the tokens' plans for the staged map rather than their
-       * positions. Fixed when they are picked up rather than read per frame, so
-       * a drag cannot change which of the two it is halfway through.
+       * This drag writes the tokens' plans for the staged map, not their
+       * positions. Fixed at pickup instead of read per frame, so a drag can't
+       * switch between the two halfway through.
        */
       staged: boolean;
     }
@@ -96,11 +90,11 @@ type Drag =
   /**
    * The DM painting cells of the fog override by hand.
    *
-   * The simplest of the five: there is nothing to predict, nothing to throttle,
-   * and no frame goes out until the button is released — the stroke accumulates
-   * on the tool and is sent as one command, because a frame per cell would be a
-   * hundred of them across one drag. A fill is not this; a fill is a click, and
-   * clicks are handled without a drag at all.
+   * The simplest of the five: nothing to predict, nothing to throttle, and no
+   * frame goes out until the button is released. The stroke accumulates on the
+   * tool and is sent as one command, because a frame per cell would be a
+   * hundred of them across one drag. A fill is a click, and is handled without
+   * a drag.
    */
   | { kind: 'fog'; pointerId: number }
   | {
@@ -109,11 +103,11 @@ type Drag =
       /**
        * What is being swept, and whether letting go keeps it.
        *
-       * Held on the drag rather than read off the tool per frame, for the reason
-       * a token drag holds its `staged` flag: a sweep cannot change into another
-       * shape halfway through. It also has to survive the tool being *put away*
-       * mid-sweep — Escape sets the tool to null, and a release frame that never
-       * went out leaves a line stranded on five other screens.
+       * Held on the drag instead of read off the tool per frame, like a token
+       * drag's `staged` flag, so a sweep can't change shape halfway through. It
+       * also has to survive the tool being put away mid-sweep: Escape sets the
+       * tool to null, and a release frame that never went out leaves a line
+       * stranded on five other screens.
        */
       tool: ShapeKind;
       keeps: boolean;
@@ -121,28 +115,28 @@ type Drag =
       /** Where the sweep began, in grid units: the centre of the cell it
        *  started in, or the anchor token's own position. */
       at: Vec2;
-      /** Where the pointer went down, in screen pixels. What separates a sweep
-       *  from a click — see `moved`. */
+      /** Where the pointer went down, in screen pixels. Separates a sweep from
+       *  a click (see `moved`). */
       fromX: number;
       fromY: number;
-      /** How far it has been swept, as an offset from `at` — the same offset
-       *  the shape is stored as. Kept on the drag rather than passed around so
-       *  a throttled trailing frame carries where the sweep is *now*, which is
-       *  the same reason a token drag reads its position back off the token. */
+      /** How far it has been swept, as an offset from `at` (the same offset the
+       *  shape is stored as). Kept on the drag so a throttled trailing frame
+       *  carries where the sweep is now, as a token drag reads its position
+       *  back off the token. */
       to: Vec2;
-      /** The token it will anchor to when kept, or null. Fixed at pointerdown
-       *  rather than read per frame, so a sweep that happens to pass over a
-       *  creature does not adopt it halfway through. */
+      /** The token it will anchor to when kept, or null. Fixed at pointerdown,
+       *  so a sweep that passes over a creature doesn't adopt it halfway
+       *  through. */
       anchor: string | null;
       /**
-       * Whether the pointer has actually gone anywhere. A sweep that never
-       * moves is a click, and a click is how a shape gets erased.
+       * Whether the pointer has gone anywhere. A sweep that never moves is a
+       * click, and a click erases a shape.
        *
-       * Measured in screen pixels against where the button went down, and not —
-       * as it was before the origin snapped — by asking whether the offset is
-       * still zero. Snapping the origin to a cell centre means the offset is up
-       * to half a cell the moment the pointer twitches, so that test would turn
-       * every erase into a small kept circle.
+       * Measured in screen pixels against where the button went down. Don't
+       * test whether the offset is still zero: the origin snaps to a cell
+       * centre, so the offset is up to half a cell the moment the pointer
+       * twitches, and that test would turn every erase into a small kept
+       * circle.
        */
       moved: boolean;
     };
@@ -155,23 +149,21 @@ interface Grabbed {
 }
 
 export interface InputState {
-  /** Every token currently being dragged. Drives the drag highlight — a set
-   *  rather than an id because a shift-click group moves together. Empty when
-   *  nothing is being dragged. */
+  /** Every token currently being dragged. Drives the drag highlight. A set
+   *  because a shift-click group moves together. Empty when nothing is being
+   *  dragged. */
   readonly draggingIds: ReadonlySet<string>;
   /**
    * The tokens shift-click has gathered into a group, which a drag on any one
    * of them moves together.
    *
    * Empty is the ordinary case and means "no group": a plain click drags
-   * whatever it landed on and nothing else, exactly as it did before this
-   * existed. Only shift-clicking puts anything in here, so every gesture that
-   * does not use the modifier behaves as it always has.
+   * whatever it landed on and nothing else. Only shift-clicking puts anything
+   * in here, so no gesture without the modifier is affected.
    *
-   * It can only ever hold tokens this client may move, and that needs no rule of
-   * its own — membership comes from `tokenAt`, which is already blind to
-   * everybody else's tokens. The permission question answers itself, and a
-   * player gathering their own two summons is `can_move` doing its usual job.
+   * It can only hold tokens this client may move, with no rule of its own:
+   * membership comes from `tokenAt`, which already ignores everybody else's
+   * tokens. A player grouping their own two summons is ordinary `can_move`.
    */
   readonly selection: ReadonlySet<string>;
   /** Pointer position in grid units, or null when the pointer is off-canvas. */
@@ -182,8 +174,8 @@ export interface InputState {
 
 /**
  * Wires pointer and wheel handling onto the canvas. `cam` is mutated in place,
- * as are the dragged token's coordinates — the client predicts locally rather
- * than waiting for the round trip.
+ * as are the dragged token's coordinates: the client predicts locally instead
+ * of waiting for the round trip.
  *
  *   left-drag on a token you own   move it
  *   left-drag on anything else     pan
@@ -193,32 +185,31 @@ export interface InputState {
  * While the DM has calibrate mode on, left-drag draws a grid reference box
  * instead. Middle-drag still pans, so the map can be moved without leaving it.
  *
- * While the DM is previewing a staged map, tokens drag exactly as they do on
- * the board — everything you do in preview happens on promote. What changes is
- * only which position the drag writes: the plan, not the token. Routing it is
- * one flag on the command and one branch here.
+ * While the DM is previewing a staged map, tokens drag as they do on the
+ * board, and everything done in preview takes effect on promote. The only
+ * difference is which position the drag writes: the plan, not the token. That
+ * is one flag on the command and one branch here.
  *
  * Tokens that are not yours are transparent to the pointer, so dragging across
- * one pans the map instead of feeling broken. The server re-checks regardless;
+ * one pans the map instead of doing nothing. The server re-checks regardless;
  * this is an affordance, not the permission boundary.
  *
- * While a shape tool is in hand the left button is taken over the same way
- * calibrate takes it: left-drag sweeps a shape and left-click erases one, so
- * nothing can be grabbed or panned by accident. Middle-drag still pans, which is
- * what makes drawing across a map larger than the window bearable.
+ * While a shape tool is in hand it takes the left button as calibrate does:
+ * left-drag sweeps a shape and left-click erases one, so nothing can be
+ * grabbed or panned by accident. Middle-drag still pans, so a shape can be
+ * drawn across a map larger than the window.
  *
  * The wall editor is the fourth thing that can hold the left button, and the
- * only one that wants no drag at all: a click places a corner and a double-click
- * ends the run. Nothing is captured, so nothing has to be released — which is
- * also why a browser that closes mid-trace leaves nothing behind on anyone
- * else's screen, unlike a sketch or a drag.
+ * only one with no drag: a click places a corner and a double-click ends the
+ * run. Nothing is captured, so nothing has to be released, and a browser that
+ * closes mid-trace leaves nothing on anyone else's screen (unlike a sketch or
+ * a drag).
  *
- * The fog brush is the fifth, and it is two gestures rather than one: a fill is
- * a click that commits the region already being previewed, and a paint stroke is
- * a drag whose cells accumulate on the tool and go out as a single command when
- * the button comes up. Nothing is predicted and nothing is throttled — there is
- * no round trip anybody can feel, because the preview has already shown the
- * answer.
+ * The fog brush is the fifth, with two gestures: a fill is a click that commits
+ * the region already being previewed, and a paint stroke is a drag whose cells
+ * accumulate on the tool and go out as one command when the button comes up.
+ * Nothing is predicted or throttled, because the preview has already shown the
+ * result and there is no round trip to hide.
  *
  * Only one of the five can be armed at a time. Calibrate wins over the wall
  * editor, the wall editor over the fog brush, and the fog brush over a shape
@@ -239,9 +230,9 @@ export function attachInput(
    */
   onSelect: ((id: string | null) => void) | null,
   /**
-   * Movement rulers. This is where our own drag's origin is captured — nothing
-   * on the wire says where a drag began, and by the time the first frame is sent
-   * the token has already moved.
+   * Movement rulers. Our own drag's origin is captured here: nothing on the
+   * wire says where a drag began, and by the time the first frame is sent the
+   * token has already moved.
    */
   rulers: Rulers,
   /** The shape tool, and where our own in-progress sweep is kept so the
@@ -254,8 +245,8 @@ export function attachInput(
   /** The DM's fog brush. Null for players, who have no such panel and no
    *  overrides in their scene for one to edit. */
   fogTool: FogTool | null,
-  /** The rings. Everybody has these — where our own hold is timed, previewed
-   *  and fired from. */
+  /** The rings. Everybody has these. Our own hold is timed, previewed and
+   *  fired from here. */
   pings: Pings,
 ): InputState {
   let drag: Drag | null = null;
@@ -280,21 +271,18 @@ export function attachInput(
   /**
    * Whether the left button belongs to a shape tool right now.
    *
-   * Never over a staged map. Shapes belong to the board, and the map being
-   * prepared has none — so rather than sweep one that would land somewhere
-   * nobody is looking, the pointer goes back to being a pointer and preview
-   * behaves exactly as it did before this milestone.
+   * Never over a staged map. Shapes belong to the board and the map being
+   * prepared has none, so over it the pointer behaves as it would with no tool
+   * armed, instead of sweeping a shape somewhere nobody is looking.
    */
   const sweeping = (): boolean => drawTool.kind !== null && !previewing();
 
   /**
    * Whether the left button belongs to the wall editor right now.
    *
-   * **Armed over either board**, unlike the sweep above it, and that is
-   * milestone 20 in one line: the staged map has walls of its own now, so
-   * tracing one there lands somewhere real rather than nowhere. The rule that
-   * remains is a shape's — a sweep still belongs to the board alone, because
-   * there are still no staged shapes.
+   * Armed over either board, unlike `sweeping`: the staged map has walls of
+   * its own, so tracing one there is real. A sweep belongs to the board alone
+   * because there are no staged shapes.
    */
   const tracing = (): boolean => wallTool !== null && wallTool.mode !== null;
 
@@ -302,9 +290,9 @@ export function attachInput(
    * Whether the left button belongs to the fog brush right now.
    *
    * Armed over either board, like the wall editor and for the same reason: the
-   * staged map has a mask of its own. What it does *not* have is fog, so what
-   * the DM is painting there is what the party will be handed rather than a
-   * preview of what they will see.
+   * staged map has a mask of its own. It has no fog, so what the DM paints
+   * there is the mask the party will be given, not a preview of what they will
+   * see.
    */
   const painting = (): boolean => fogTool !== null && fogTool.brush !== null;
 
@@ -312,34 +300,32 @@ export function attachInput(
   const wallSlack = (): number => WALL_HIT_PX / cam.zoom;
 
   /** The wall under a world point, or null. Walls are in image pixels, which is
-   *  world space, so there is no conversion here at all.
+   *  world space, so there is no conversion.
    *
-   *  Through `shownWalls`, so a click hit-tests the masonry of the board it
-   *  landed on rather than the board the room happens to call live. */
+   *  Through `shownWalls`, so a click hit-tests the walls of the board on
+   *  screen, which may be the staged one. */
   const wallUnder = (w: Vec2) => wallAt(shownWalls(scene), w, wallSlack());
 
   /**
    * A door the DM could swing right now, with no tool in hand at all.
    *
-   * Opening a door is not editing the map — it is a thing that happens in the
-   * middle of a fight, several times an evening, while the DM is dragging
-   * monsters around. Making them arm the wall editor first would put a modal
-   * tool between them and the board every time the party opens a door, which is
-   * how a feature ends up unused.
+   * Opening a door happens mid-fight, several times an evening, while the DM
+   * is dragging monsters around. Requiring the wall editor to be armed first
+   * would put a modal tool in the way every time the party opens a door.
    *
-   * So this asks nothing about the wall editor's mode: it is available whenever
-   * nothing *else* has claimed the left button. The three that can claim it —
-   * calibrating, a shape tool, the wall editor — each mean something specific by
-   * a click, and none of them should quietly also mean "and swing that door".
+   * So this ignores the wall editor's mode and is available whenever nothing
+   * else has claimed the left button. Calibrating, a shape tool and the wall
+   * editor each give a click its own meaning, and none of them should also
+   * swing a door.
    *
-   * Only the DM, and only doors: masonry is not interactive, and `shownWalls`
-   * is empty on a player's client anyway, so this is an affordance rather than
-   * the permission boundary. The server refuses it from anyone else regardless.
+   * Only the DM, and only doors: solid walls aren't interactive, and
+   * `shownWalls` is empty on a player's client anyway, so this is an
+   * affordance, not the permission boundary. The server refuses it from anyone
+   * else regardless.
    *
-   * **Available over the staged board too**, where the same gesture means
-   * something different: on the board a swing is play, and there it is
-   * authoring — the DM deciding which doors the party finds open. Same click,
-   * because a door being clickable is what makes it a door.
+   * Also available over the staged board. There a swing sets which doors the
+   * party finds open, instead of being play. The click is the same because a
+   * door should always be clickable.
    */
   const swingableDoorUnder = (w: Vec2) => {
     if (!identity.isDm) return null;
@@ -350,19 +336,18 @@ export function attachInput(
   };
 
   /**
-   * Where a corner would land: the nearest grid corner, or exactly where the
-   * pointer is when Alt is down.
+   * Where a corner would land: the nearest grid corner, or where the pointer
+   * is when Alt is down.
    *
-   * The free-placement modifier is the roadmap's, and it is what makes a
-   * diagonal cave wall traceable on a square lattice. Alt means the same thing
-   * it means to the draw tool — ignore what this would otherwise attach itself
-   * to — which is why it is that key and not another.
+   * Free placement is what makes a diagonal cave wall traceable on a square
+   * grid. Alt means what it means to the draw tool: don't snap to what this
+   * would otherwise attach to.
    */
   const cornerAt = (w: Vec2, free: boolean): Vec2 =>
     free ? w : snapToCorner(shownBoard(scene).grid, w);
 
-  /** Moves every held token, or its plan, to where the pointer now puts it —
-   *  the local prediction half. Each keeps the offset it was grabbed at. */
+  /** Moves every held token, or its plan, to where the pointer now puts it:
+   *  the local prediction. Each keeps the offset it was grabbed at. */
   const predict = (drag: Extract<Drag, { kind: 'token' }>, g: Vec2): void => {
     for (const held of drag.tokens) {
       const x = g.x + held.grabDX;
@@ -377,24 +362,22 @@ export function attachInput(
   };
 
   /**
-   * One `move_token` per held token. A group is N ordinary commands rather than
-   * a batched one, which is what makes this feature cost the room nothing: the
-   * server has always taken these one at a time, checks `can_move` on each, and
-   * snaps each to its own cell.
+   * One `move_token` per held token. A group is N ordinary commands, not a
+   * batched one, so the room needs nothing new: it takes these one at a time,
+   * checks `can_move` on each, and snaps each to its own cell.
    *
-   * The throttle above is per *drag*, not per token, so a group of six sends six
-   * frames on a tick rather than six independent streams — the rate the room
-   * sees is the rate one token has always produced, multiplied by the size of
-   * the group and not by anything else.
+   * The throttle is per drag, not per token, so a group of six sends six frames
+   * on each tick instead of six independent streams. The room sees one token's
+   * rate multiplied by the size of the group.
    */
   const sendMove = (drag: Extract<Drag, { kind: 'token' }>, dragging: boolean): void => {
     for (const held of drag.tokens) {
-      // Read back off the token rather than passed in, so the trailing frame
-      // below sends where the token is *now* rather than where it was queued.
+      // Read back off the token instead of passed in, so the trailing frame
+      // below sends where the token is now, not where it was when queued.
       const at = drag.staged ? held.token.stagedPos : held.token;
-      // Null is a token in preview that has not actually been dragged anywhere:
-      // clicking one to edit it in the panel must not plan a move it did not
-      // make. There is no command to un-plan, so an accidental plan would stay.
+      // Null is a token in preview that hasn't been dragged anywhere: clicking
+      // one to edit it in the panel must not plan a move it didn't make. There
+      // is no command to un-plan, so an accidental plan would stay.
       if (at === null) continue;
       send({
         type: 'move_token',
@@ -439,18 +422,18 @@ export function attachInput(
   };
 
   /**
-   * A sweep frame, throttled exactly as a token drag is and for the same
-   * reason: it lands on five other screens, and `pointermove` fires far faster
-   * than anybody needs to watch a circle grow.
+   * A sweep frame, throttled as a token drag is and for the same reason: it
+   * lands on five other screens, and `pointermove` fires far faster than
+   * anybody needs to watch a circle grow.
    *
-   * The trailing edge matters more here than it does for a token, because a
-   * sweep usually *ends* by stopping: let go a frame after the last interval
-   * boundary and every watcher is left holding a circle a cell short of the one
-   * that got kept.
+   * The trailing edge matters more here than for a token, because a sweep
+   * usually ends by stopping. Without it, letting go a frame after the last
+   * interval boundary leaves every watcher with a circle a cell short of the
+   * one that was kept.
    */
   const sendSketchFrame = (d: Extract<Drag, { kind: 'draw' }>): void => {
-    // Read off the drag rather than passed in, so a trailing frame carries
-    // where the sweep is *now* rather than where it was when it was queued.
+    // Read off the drag instead of passed in, so a trailing frame carries
+    // where the sweep is now, not where it was when queued.
     const emit = (): void => {
       send({ type: 'sketch', kind: d.tool, at: d.at, to: d.to, color: d.color, drawing: true });
     };
@@ -474,22 +457,20 @@ export function attachInput(
   /**
    * Where our pointer is, for everybody else's board.
    *
-   * **Leading edge only, and no trailing send** — which is the one place this
-   * differs from the two throttles above it, deliberately. Their trailing edge
-   * exists because a drag or a sweep *ends* by stopping and leaves something
-   * behind that has to be right; a pointer leaves nothing behind at all. What a
-   * missing trailing frame costs here is that a hand which stops just after an
-   * interval boundary sits up to 33ms stale on other screens for the couple of
-   * seconds it takes to fade, which nobody can see and no later frame has to
-   * correct.
+   * Leading edge only, with no trailing send, unlike the two throttles above.
+   * Theirs exists because a drag or a sweep ends by stopping and leaves
+   * something behind that has to be right; a pointer leaves nothing behind.
+   * Without a trailing frame, a hand that stops just after an interval boundary
+   * sits up to 33ms stale on other screens until it fades, which nobody can
+   * see and no later frame needs to correct.
    *
-   * Two guards, and both are about not paying for something nobody can see. The
-   * room's switch is read here as well as in `message_for`: the server would
-   * drop every one of these, and a client that kept sending would be shipping
-   * 30Hz into a void. And nothing goes out while the DM is previewing the staged
-   * map, because a position on that board is in a different dungeon's grid units
-   * — the table would be shown a pointer wandering across cells nobody is
-   * pointing at, which is the same reason preview draws no pings and no shapes.
+   * Two guards, both to avoid sending what nobody would see. The room's switch
+   * is read here as well as in `message_for`: the server would drop every one
+   * of these, so sending would waste 30Hz of frames. And nothing goes out while
+   * the DM is previewing the staged map, because a position on that board is
+   * in a different map's grid units: the table would see a pointer moving over
+   * cells nobody is pointing at. Preview draws no pings or shapes for the same
+   * reason.
    */
   const sendCursor = (g: Vec2): void => {
     if (!scene.showCursors || previewing()) return;
@@ -499,8 +480,8 @@ export function attachInput(
     send({ type: 'move_cursor', at: { x: g.x, y: g.y } });
   };
 
-  /** Our own copy of the sweep, so it draws under the cursor without waiting
-   *  for a round trip the server would not send us anyway. */
+  /** Our own copy of the sweep, so it draws under the cursor. The server
+   *  doesn't echo sketches to their sender. */
   const showOwnSketch = (d: Extract<Drag, { kind: 'draw' }>): void => {
     sketches.own({ kind: d.tool, at: d.at, to: d.to, color: d.color });
   };
@@ -508,17 +489,16 @@ export function attachInput(
   /**
    * A press being timed to see whether it is a ping.
    *
-   * Deliberately not a sixth `Drag`. Every variant of that enum is a thing the
-   * left button is *doing*; this is a question about the button that has not
-   * been answered yet, and it runs *alongside* whichever of them the press also
-   * started. That is the whole trick: ping separates from what the button
-   * already does by **duration rather than by target**, so it never had to be
-   * given a target of its own and doors still swing.
+   * Not a sixth `Drag`. Each `Drag` variant is something the left button is
+   * doing; this is an open question about the button, and it runs alongside
+   * whichever drag the press also started. A ping is told apart from other
+   * presses by **duration, not target**, so it needs no target of its own and
+   * doors still swing.
    */
   let hold: {
     pointerId: number;
-    /** Where the button went down, in screen pixels — what the slop is
-     *  measured against, exactly as a sweep measures its own. */
+    /** Where the button went down, in screen pixels. The slop is measured
+     *  against it, as a sweep measures its own. */
     fromX: number;
     fromY: number;
     timer: number;
@@ -529,14 +509,13 @@ export function attachInput(
    *
    * Firing consumes the gesture: the button is still down at that moment, and
    * the `pointerup` that follows must not also drop a token, erase a shape, or
-   * swing a door. This is how it is told to do nothing — a flag rather than
-   * simply nulling `drag`, because the release still has to release the pointer
-   * capture and put the cursor back.
+   * swing a door. A flag, not just nulling `drag`, because the release still
+   * has to release the pointer capture and restore the cursor.
    */
   let consumed: number | null = null;
 
-  /** Puts a press being timed back down without firing it. Whether anything is
-   *  being timed at all is this function's business and no caller's. */
+  /** Cancels a press being timed without firing it. Safe to call when nothing
+   *  is being timed. */
   const cancelHold = (): void => {
     if (hold === null) return;
     window.clearTimeout(hold.timer);
@@ -547,16 +526,16 @@ export function attachInput(
   /**
    * The press lasted. Ping, and take back whatever else the press had started.
    *
-   * The taking-back is the part worth reading. A press on a token has already
-   * called `rulers.begin`, and leaving that would put a zero-length ruler on the
-   * board measuring a move nobody made; a press with a shape tool in hand has a
-   * `draw` drag open, which has sent nothing (`moved` is false, or the hold
-   * would have been cancelled — see `HOLD_SLOP_PX`) and so needs no release
-   * frame, only its local preview cleared. A pan has nothing to take back.
+   * A press on a token has already called `rulers.begin`, and leaving it would
+   * put a zero-length ruler on the board for a move nobody made. A press with a
+   * shape tool in hand has a `draw` drag open, which has sent nothing (`moved`
+   * is false, or the hold would have been cancelled; see `HOLD_SLOP_PX`), so it
+   * needs no release frame, only its local preview cleared. A pan has nothing
+   * to take back.
    *
-   * The DM's *selection* is deliberately left alone. It happened on the way
-   * down, it is visible on the board, and un-selecting a creature somebody just
-   * pointed at is the opposite of what they meant.
+   * The DM's selection is left alone. It happened on the way down, it is
+   * visible on the board, and un-selecting a creature somebody just pointed at
+   * is the opposite of what they meant.
    */
   const firePing = (): void => {
     if (hold === null) return;
@@ -577,13 +556,12 @@ export function attachInput(
   /**
    * Start timing a press, if a press here could be a ping at all.
    *
-   * Nothing while previewing, for the reason a sweep and a trace are nothing
-   * there: the staged map is not the board anyone else is looking at, and a
-   * position in its grid units lands somewhere arbitrary on theirs. The three
-   * modal tools do not reach here — they return out of `pointerdown` above —
-   * and the draw tool deliberately does: it is the one panel everybody has, it
-   * is used in the middle of a fight, and a player who leaves it armed between
-   * uses must not silently lose the gesture this milestone is for.
+   * Nothing while previewing, as with a sweep: the staged map is not the board
+   * anyone else is looking at, and a position in its grid units lands somewhere
+   * arbitrary on theirs. The three modal tools don't reach here (they return
+   * out of `pointerdown` first), but the draw tool does: everybody has it, it
+   * is used mid-fight, and a player who leaves it armed between uses must
+   * still be able to ping.
    */
   const beginHold = (e: PointerEvent, p: Vec2, at: Vec2): void => {
     if (e.button !== 0 || previewing()) return;
@@ -603,8 +581,8 @@ export function attachInput(
     if (tracing()) return wallTool?.hovered !== null ? 'pointer' : 'crosshair';
     if (sweeping()) return state.hoveredShapeId !== null ? 'pointer' : 'crosshair';
     if (tokenAt(scene, identity, w.x, w.y) !== null) return 'pointer';
-    // Asked after the token, because a token standing in a doorway is the thing
-    // being grabbed — the door is behind it and the swing is still a mode away.
+    // Asked after the token, because a token standing in a doorway is what
+    // gets grabbed. The door is behind it.
     return swingableDoorUnder(w) !== null ? 'pointer' : 'grab';
   };
 
@@ -629,22 +607,22 @@ export function attachInput(
       return;
     }
 
-    // The wall editor takes it too, and unlike the two around it there is no
-    // drag here at all: a click is the whole gesture, which is what the run
-    // being a polyline buys. Nothing is captured, so nothing has to be released.
+    // The wall editor takes it too, with no drag: a run is a polyline, so a
+    // click is the whole gesture. Nothing is captured, so nothing has to be
+    // released.
     if (wallTool !== null && tracing() && e.button === 0) {
       const mode = wallTool.mode;
       const hit = mode === 'wall' ? null : wallUnder(w);
 
-      // A click on a door you have already hung swings it, rather than starting
-      // a trace on top of it. Only with no run open: mid-trace every click is a
-      // corner, so a run can be carried straight over a doorway.
+      // A click on an existing door swings it instead of starting a trace on
+      // top of it. Only with no run open: mid-trace every click is a corner,
+      // so a run can be carried straight over a doorway.
       const swinging =
         mode === 'door' && wallTool.run.length === 0 && hit !== null && hit.door !== null;
 
       // Both name the slot the editor is on, which is the slot `wallUnder` just
-      // hit-tested. Taking it off the tool rather than asking `previewing()`
-      // again is what keeps the hit test and the command from ever disagreeing.
+      // hit-tested. Reading it off the tool instead of asking `previewing()`
+      // again keeps the hit test and the command from disagreeing.
       const staged = wallTool.staged;
       if (mode === 'erase') {
         if (hit !== null) send({ type: 'remove_wall', id: hit.id, staged });
@@ -657,27 +635,26 @@ export function attachInput(
       return;
     }
 
-    // Solo sight, armed from the same panel and above the brush because arming
-    // either puts the other down — so at most one of these two blocks can fire.
+    // Solo sight, armed from the same panel as the brush. Arming either puts
+    // the other down, so at most one of these two blocks can fire.
     //
-    // `anchorTokenAt` rather than `tokenAt`: the question is what a creature can
-    // see, and the interesting one is nearly always a player's. `tokenAt` is
-    // blind to tokens you cannot *move*, which is the wrong boundary here and
-    // would leave the DM able to check their own monsters and nobody else's.
-    // There is no permission to lose by widening it: this reads walls the DM
-    // already holds and sends nothing.
+    // `anchorTokenAt`, not `tokenAt`: the question is what a creature can see,
+    // and the interesting one is nearly always a player's. `tokenAt` ignores
+    // tokens you can't move, which would let the DM check only their own
+    // monsters. Widening it grants nothing: this reads walls the DM already
+    // holds and sends nothing.
     if (fogTool !== null && fogTool.checking && e.button === 0) {
       fogTool.check(anchorTokenAt(scene, w.x, w.y));
       canvas.style.cursor = 'crosshair';
       return;
     }
 
-    // The fog brush is the fourth, and it takes the button the same way — a
-    // room to black out is usually a room with creatures standing in it, so
-    // nothing under the pointer may be grabbable while it is in hand.
+    // The fog brush takes the button the same way. A room to black out usually
+    // has creatures standing in it, so nothing under the pointer may be
+    // grabbable while the brush is in hand.
     //
-    // A fill is a click and commits what the preview is already showing; a paint
-    // stroke is a drag, which is the one of the two that needs capturing.
+    // A fill is a click and commits what the preview is already showing; a
+    // paint stroke is a drag, and only it needs capturing.
     if (fogTool !== null && painting() && e.button === 0) {
       const g = gridUnder(w);
       if (fogTool.gesture === 'fill') {
@@ -694,16 +671,15 @@ export function attachInput(
 
     // Shift-click gathers a token into the group, or drops it back out of one.
     //
-    // Above the hold rather than below it because it is not a press that can
-    // become anything else: it commits on the way down, has no drag, and must
-    // not ping — a modifier held deliberately is not somebody pointing at the
-    // board. It is below the three modal tools for the opposite reason, and
-    // `sweeping()` keeps it below the fourth: an armed tool takes the button
-    // first, and ping is the one exception this project has decided to have.
+    // Above the hold because it can't become anything else: it commits on the
+    // way down, has no drag, and must not ping (holding a modifier isn't
+    // pointing at the board). It is below the three modal tools, and
+    // `sweeping()` keeps it below the shape tool, because an armed tool takes
+    // the button first. Ping is the only exception to that.
     //
     // Nothing here calls `onSelect`. The panel edits one token and this gesture
-    // is about several, so building a group leaves the form showing whatever was
-    // last plain-clicked rather than swapping it out from under an edit.
+    // is about several, so building a group leaves the form showing whatever
+    // was last plain-clicked instead of swapping it out mid-edit.
     if (e.button === 0 && e.shiftKey && !sweeping()) {
       const hit = tokenAt(scene, identity, w.x, w.y);
       if (hit !== null) {
@@ -713,19 +689,19 @@ export function attachInput(
     }
 
     // Past the three modal tools, so anything below this line is a press that
-    // could still turn out to be a ping. Started *before* the branches rather
-    // than repeated inside each of them: a hold on a token, on a shape tool, and
-    // on empty map are the same gesture, and the whole point of separating by
-    // duration is that none of them had to learn about it.
+    // could still turn out to be a ping. Started before the branches instead
+    // of inside each: a hold on a token, with a shape tool, or on empty map is
+    // the same gesture, and separating by duration means none of the branches
+    // needs to know about it.
     beginHold(e, p, gridUnder(w));
 
-    // And so does a shape tool, for the same reason: a circle has to be able to
-    // start on top of a creature, which is exactly where most of them start.
+    // A shape tool takes the button too: a circle has to be able to start on
+    // top of a creature, which is where most of them start.
     const tool = drawTool.kind;
     if (tool !== null && sweeping() && e.button === 0) {
-      // Starting on a token anchors to it, so an aura follows whoever it
-      // belongs to. Alt sweeps straight through, for the circle that happens to
-      // be centred on somebody without being about them.
+      // Starting on a token anchors to it, so an aura follows its creature.
+      // Alt skips the anchor, for a circle centred on somebody without being
+      // about them.
       const on = e.altKey ? null : anchorTokenAt(scene, w.x, w.y);
       drag = {
         kind: 'draw',
@@ -733,14 +709,13 @@ export function attachInput(
         tool,
         keeps: drawTool.keeps,
         color: drawTool.color,
-        // A free-placed sweep starts on the nearest point of the half-cell
-        // lattice — a centre, a corner or the middle of an edge — so a circle
-        // is centred on a square or an intersection rather than on wherever in
-        // the cell the pointer happened to land. Alt is not offered a way past
-        // it: it already means "do not anchor" on this event, and the origin is
-        // the one end of a sweep nobody has ever wanted off the grid. An
-        // anchored sweep starts at the token's own position instead — an aura
-        // is centred on the creature, including a wide one whose centre is a
+        // An unanchored sweep starts on the nearest point of the half-cell
+        // lattice (a centre, a corner or the middle of an edge), so a circle
+        // is centred on a square or an intersection, not wherever in the cell
+        // the pointer landed. Alt doesn't skip this: on this event it already
+        // means "don't anchor", and nobody wants the origin off the grid. An
+        // anchored sweep starts at the token's position instead, so an aura is
+        // centred on the creature, including a wide one whose centre is a
         // corner where four cells meet.
         at: on === null ? snapOrigin(gridUnder(w)) : { x: on.x, y: on.y },
         anchor: on?.id ?? null,
@@ -749,9 +724,9 @@ export function attachInput(
         fromY: p.y,
         moved: false,
       };
-      // Nothing is drawn yet. Until the pointer has actually gone somewhere
-      // this may still be a click on a shape, and a zero-size sweep under the
-      // cursor is a dot and a "0 ft" that flash on every erase.
+      // Nothing is drawn yet. Until the pointer has gone somewhere this may
+      // still be a click on a shape, and a zero-size sweep under the cursor
+      // would flash a dot and a "0 ft" on every erase.
       cancelTrailingSend();
       lastDragSentAt = 0; // let the first frame through immediately
       canvas.setPointerCapture(e.pointerId);
@@ -766,18 +741,17 @@ export function attachInput(
       const staged = previewing();
 
       // Grabbing a member of the group takes the whole group; grabbing anything
-      // else puts the group down first. That second half is what keeps a plain
-      // click on a plain token exactly the gesture it has always been — the
-      // group is a thing you have to have deliberately built to be holding.
+      // else clears the group first, so a plain click on a token outside the
+      // group drags only that token.
       const held = state.selection.has(hit.id)
         ? scene.tokens.filter((t) => state.selection.has(t.id))
         : [hit];
       if (!state.selection.has(hit.id)) state.selection.clear();
 
-      // Grab offsets keep the tokens from snapping their centres to the cursor,
-      // and are measured from wherever each token is *on this board* — its plan
-      // while previewing, its own cell otherwise. A member with no position on
-      // this board is not on it to be dragged.
+      // Grab offsets keep the tokens from snapping their centres to the cursor.
+      // Each is measured from where the token is on this board: its plan while
+      // previewing, its own cell otherwise. A member with no position on this
+      // board isn't on it to be dragged.
       const grabbed: Grabbed[] = [];
       for (const token of held) {
         const at = shownPos(scene, token);
@@ -793,17 +767,17 @@ export function attachInput(
         anchorId: hit.id,
         staged,
       };
-      // The anchor's alone, and the same settled position its grab offset is
-      // measured from — the last moment it is knowable, since the next
+      // The anchor's alone, from the same settled position its grab offset is
+      // measured from. This is the last moment it is known, since the next
       // pointermove overwrites it.
       //
-      // One ruler for a group of six, not six: the reading is a single
-      // creature's question and six lines with six labels is a board nobody can
-      // read. It is the dragger's screen that this decides, and only that. Every
-      // other client builds its rulers from the `TokenMoved` frames it receives
-      // and nothing on the wire says which token was grabbed, so the table sees
-      // one ruler per moving token. Marking the anchor on the wire for a hint
-      // that refuses a command and persists nothing is the trade this declines.
+      // One ruler for a group of six, not six: six lines with six labels is
+      // unreadable, and the question is about one creature. This decides only
+      // the dragger's screen. Every other client builds its rulers from the
+      // `TokenMoved` frames it receives, and nothing on the wire says which
+      // token was grabbed, so the table sees one ruler per moving token. Don't
+      // add the anchor to the wire for this: it would be a field for a display
+      // hint that no command checks and nothing saves.
       rulers.begin(hit.id, from, staged);
       for (const one of grabbed) state.draggingIds.add(one.token.id);
       onSelect?.(hit.id);
@@ -821,17 +795,15 @@ export function attachInput(
     const p = localPoint(e);
     const w = screenToWorld(cam, p.x, p.y);
     state.cursorGrid = gridUnder(w);
-    // Ahead of every branch below and outside all of them: where a hand is does
-    // not depend on what it is holding. A pointer goes out while a token is
-    // being dragged, while a wall is being traced and while nothing at all is
-    // happening, which is what makes this ambient rather than another gesture.
+    // Before and outside every branch below: where a hand is doesn't depend on
+    // what it is holding. A pointer goes out while a token is being dragged,
+    // while a wall is being traced and while nothing is happening.
     sendCursor(state.cursorGrid);
 
-    // Before every branch below, which is the ordering `HOLD_SLOP_PX` depends
-    // on: a press that has wandered far enough to be a sweep has already
-    // wandered far enough to stop being a hold, and this is where that is
-    // decided — one move earlier than the branch that would send the first
-    // sketch frame. A few pixels of drift means the hand was on its way
+    // Before every branch below, because `HOLD_SLOP_PX` depends on this order:
+    // a press that has wandered far enough to be a sweep has also stopped being
+    // a hold, and that is decided here, before the branch that would send the
+    // first sketch frame. A few pixels of drift means the hand was going
     // somewhere, which is a pan or a drag and never a ping.
     if (hold !== null && hold.pointerId === e.pointerId) {
       if (Math.hypot(p.x - hold.fromX, p.y - hold.fromY) > HOLD_SLOP_PX) cancelHold();
@@ -839,14 +811,14 @@ export function attachInput(
 
     if (drag === null && tracing() && wallTool !== null) {
       // The rubber band from the last corner, and what a click would erase or
-      // swing. Both are asked on every move because both are drawn: the DM has
-      // to see where the next corner lands *before* committing to it, which is
-      // the whole reason the snap is on this side of the wire.
+      // swing. Both are updated on every move because both are drawn: the DM
+      // has to see where the next corner lands before committing to it, which
+      // is why the snap happens on the client.
       wallTool.point(cornerAt(w, e.altKey));
       const hit = wallTool.mode === 'wall' ? null : wallUnder(w);
       wallTool.hover(
-        // In door mode only a door is clickable — masonry under the pointer is
-        // something a corner can be placed on top of, not something to light up.
+        // In door mode only a door is clickable. A solid wall under the pointer
+        // is somewhere a corner can be placed, not something to highlight.
         hit === null || (wallTool.mode === 'door' && hit.door === null) ? null : hit.id,
       );
       canvas.style.cursor = restingCursor(w);
@@ -854,9 +826,9 @@ export function attachInput(
     }
 
     if (drag === null && painting() && fogTool !== null) {
-      // What a fill would take, which the renderer draws in the colour it would
-      // land in. The tool itself only re-floods when this crosses into a
-      // different cell, which is what makes a few thousand cells affordable on a
+      // What a fill would cover, which the renderer draws in the colour it
+      // would land in. The tool only re-floods when this crosses into a
+      // different cell, which makes a few thousand cells affordable on a
       // pointer move.
       fogTool.point(gridUnder(w));
       canvas.style.cursor = 'crosshair';
@@ -865,17 +837,16 @@ export function attachInput(
 
     if (drag === null) {
       // What a click would erase, which the renderer draws brighter and the
-      // cursor turns into a pointer over. Only asked while a tool is in hand:
-      // clicking a shape means nothing otherwise, and hit-testing every shape
-      // on every mouse move to light up something unclickable is work spent to
-      // mislead.
+      // cursor turns into a pointer over. Only while a tool is in hand:
+      // clicking a shape does nothing otherwise, and highlighting it would
+      // suggest it does.
       state.hoveredShapeId = !sweeping()
         ? null
         : (erasableAt(scene, identity.isDm, identity.playerId, gridUnder(w))?.id ?? null);
-      // A door the DM could swing lights up with no tool in hand, by the same
-      // argument: a click that means something has to say so first. It goes
-      // through the wall editor's own `hovered`, which is where the renderer
-      // reads it — the tool being put away does not stop it holding a highlight.
+      // A door the DM could swing lights up with no tool in hand, for the same
+      // reason: a click that does something should show it first. It goes
+      // through the wall editor's `hovered`, which is where the renderer reads
+      // it. The tool can hold a highlight while put away.
       wallTool?.hover(swingableDoorUnder(w)?.id ?? null);
       canvas.style.cursor = restingCursor(w);
       return;
@@ -890,16 +861,15 @@ export function attachInput(
     if (drag.kind === 'draw') {
       const g = gridUnder(w);
       const reach = { x: g.x - drag.at.x, y: g.y - drag.at.y };
-      // Snapped to whole cells, so what is drawn is what the label reads. Alt
-      // sweeps free, which is the wall tool's key for the wall tool's reason —
-      // and it is read *here*, on the move, rather than latched at pointerdown
-      // beside the tool and the colour. That is what keeps it from colliding
-      // with the other thing Alt means on the way down: holding it to sweep
-      // straight through a creature must not also throw away the snap.
+      // Snapped to whole cells, so what is drawn matches the label. Alt sweeps
+      // free, as it places a wall corner freely. It is read here on each move,
+      // not latched at pointerdown with the tool and colour, so it doesn't
+      // collide with what Alt means at pointerdown: holding it to skip the
+      // anchor doesn't also commit the whole sweep to being unsnapped.
       drag.to = clampExtent(e.altKey ? reach : snapExtent(drag.tool, reach));
       // A pointer that has barely left where it went down is still a click, and
-      // a click erases. Nothing is sent until it is a sweep, so an erase costs
-      // the room no frames at all.
+      // a click erases. Nothing is sent until it is a sweep, so an erase sends
+      // the room no frames.
       if (Math.hypot(p.x - drag.fromX, p.y - drag.fromY) > DRAW_CLICK_SLOP_PX) drag.moved = true;
       if (drag.moved) {
         showOwnSketch(drag);
@@ -917,7 +887,7 @@ export function attachInput(
     }
 
     if (drag.kind === 'pan') {
-      // Panning is purely local — the camera is not shared state.
+      // Panning is purely local: the camera is not shared state.
       cam.x -= (p.x - drag.lastX) / cam.zoom;
       cam.y -= (p.y - drag.lastY) / cam.zoom;
       if (p.x !== drag.lastX || p.y !== drag.lastY) drag.moved = true;
@@ -933,13 +903,13 @@ export function attachInput(
   /**
    * Letting go of a sweep. Three things can have happened.
    *
-   * A sweep that never moved is a click, and a click on a shape erases it —
-   * which is why the coverage rule and the hit test are one function.
+   * A sweep that never moved is a click, and a click on a shape erases it,
+   * using the same function as the coverage rule.
    *
    * A sweep that moved always ends with a release frame, so the line comes off
    * everyone else's screen at the same moment it comes off ours. Whether an
-   * `add_shape` follows is the only place in this project that knows a measuring
-   * line is not a spell area.
+   * `add_shape` follows is the only place in the project that distinguishes a
+   * measuring line from a spell area.
    */
   const endSweep = (d: Extract<Drag, { kind: 'draw' }>, at: Vec2): void => {
     sketches.own(null);
@@ -951,18 +921,17 @@ export function attachInput(
       return;
     }
 
-    // Order matters, exactly as it does on a token drop: a queued trailing frame
-    // landing after the release would leave a line on five screens with nothing
-    // left to end it.
+    // Order matters, as on a token drop: a queued trailing frame landing after
+    // the release would leave a line on five screens with nothing to end it.
     cancelTrailingSend();
     send({ type: 'sketch', kind: d.tool, at: d.at, to: d.to, color: d.color, drawing: false });
 
     // A sweep that snapped to nothing keeps nothing. The release above still
-    // goes out — five other screens were shown this — but committing a shape
-    // with no extent leaves something on the board that cannot be seen and can
-    // only be erased by clicking the square it is hiding in. `hasExtent` is
-    // where "nothing" is decided, because a rectangle can reach it on one axis
-    // alone and the shape that leaves is unclickable rather than invisible.
+    // goes out, because five other screens were shown the sketch, but a shape
+    // with no extent can't be seen and can only be erased by clicking the
+    // square it is hiding in. `hasExtent` decides what counts as nothing,
+    // because a rectangle can be zero on one axis alone, and that shape is
+    // unclickable though still visible.
     if (!d.keeps || !hasExtent(d.tool, d.to)) return;
     const from: WireOrigin =
       d.anchor === null ? { kind: 'point', at: d.at } : { kind: 'token', at: d.anchor };
@@ -973,15 +942,15 @@ export function attachInput(
     const p = localPoint(e);
     const w = screenToWorld(cam, p.x, p.y);
 
-    // An early release is what makes this gesture cost nothing: the hold is
-    // abandoned and the click underneath it runs exactly as it always did, so a
-    // door still swings, a shape still erases, and a token still drops.
+    // An early release abandons the hold and the click underneath it runs as
+    // normal, so a door still swings, a shape still erases, and a token still
+    // drops.
     if (hold !== null && hold.pointerId === e.pointerId) cancelHold();
 
-    // Unless it already fired, in which case the release means nothing and the
-    // only thing left to do is let the pointer go and put the cursor back.
-    // `drag` was emptied when it fired, so every branch below would be skipped
-    // regardless — this is here to release the capture, which they would not.
+    // If the ping already fired, the release does nothing except let the
+    // pointer go and restore the cursor. `drag` was emptied when it fired, so
+    // every branch below would be skipped anyway; this is here to release the
+    // capture, which they would not.
     if (consumed === e.pointerId) {
       consumed = null;
       if (canvas.hasPointerCapture(e.pointerId)) canvas.releasePointerCapture(e.pointerId);
@@ -992,20 +961,20 @@ export function attachInput(
     if (drag === null || drag.pointerId !== e.pointerId) return;
 
     if (drag.kind === 'token') {
-      // Order matters: a pending trailing frame would otherwise land *after*
-      // the drop and put the token back at an unsnapped position.
+      // Order matters: a pending trailing frame would otherwise land after the
+      // drop and put the token back at an unsnapped position.
       cancelTrailingSend();
-      // Always sent, never throttled: these frames carry the final positions and
-      // are what the server snaps to the grid and echoes back. One per held
-      // token, so a group of six drops as six snaps and six sight recomputes —
-      // `moves_sight` is per command and a drop is the one that fires it.
+      // Always sent, never throttled: these frames carry the final positions,
+      // which the server snaps to the grid and echoes back. One per held token,
+      // so a group of six drops as six snaps and six sight recomputes
+      // (`moves_sight` is per command, and a drop is what triggers it).
       sendMove(drag, false);
-      // The measuring is over the moment the tokens are let go, and the line
-      // fades from here rather than vanishing. Everyone else starts theirs
-      // fading on the drop frames this just sent.
+      // The measuring ends when the tokens are let go, and the line fades from
+      // here instead of vanishing. Everyone else starts theirs fading on the
+      // drop frames just sent.
       rulers.end(drag.anchorId, performance.now());
     } else if (drag.kind === 'calibrate') {
-      // Not a commit — the tool keeps the box so the cell count can be tuned
+      // Not a commit. The tool keeps the box so the cell count can be tuned
       // against it, and stays in calibrate mode until the DM applies.
       calibration?.release({ x0: drag.x0, y0: drag.y0, x1: w.x, y1: w.y });
     } else if (drag.kind === 'draw') {
@@ -1017,22 +986,21 @@ export function attachInput(
       // A click on empty map, as opposed to a pan. Panning is constant, so
       // losing the selection every time the board moves would be maddening.
       //
-      // A door under that click swings instead. It reads off the *pan* drag
-      // rather than starting a drag of its own, which is what keeps both
-      // gestures: click a door to open it, drag from a door to move the map. A
-      // token on top of one wins, because it was grabbed at pointerdown and
-      // this branch is never reached.
+      // A door under that click swings instead. It reads off the pan drag
+      // instead of starting a drag of its own, which keeps both gestures:
+      // click a door to open it, drag from a door to move the map. A token on
+      // top of one wins, because it was grabbed at pointerdown and this branch
+      // is never reached.
       const door = swingableDoorUnder(w);
       if (door !== null) {
         // The board it was found on, which is the board on screen. On the live
         // one this is the party opening a door; over a preview it is the DM
-        // deciding they will find it open.
+        // setting it to be found open.
         send({ type: 'toggle_door', id: door.id, staged: previewing() });
       } else {
         onSelect?.(null);
-        // And the group goes with it. A click on empty map is how you put
-        // everything down — the same gesture that clears the panel, since both
-        // are "never mind this token".
+        // The group is cleared too. A click on empty map puts everything down,
+        // as it clears the panel.
         state.selection.clear();
       }
     }
@@ -1046,9 +1014,9 @@ export function attachInput(
   canvas.addEventListener('pointerup', endDrag);
   canvas.addEventListener('pointercancel', endDrag);
 
-  // How a run ends without reaching for the keyboard. The second click of the
-  // pair has already landed on the corner the first one placed, and the tool
-  // drops it — two clicks in one corner are one corner, whoever meant what.
+  // Ends a run without the keyboard. The second click of the pair has already
+  // landed on the corner the first one placed, and the tool drops it: two
+  // clicks in one corner are one corner.
   canvas.addEventListener('dblclick', (e) => {
     if (!tracing()) return;
     e.preventDefault();
@@ -1082,16 +1050,12 @@ export function attachInput(
     { passive: false },
   );
 
-  // Escape puts the group down, which is what Escape means to every tool in the
-  // rail — a group is a thing being held, and the way out of anything being held
-  // here is the same key. Clicking empty map does it too; this is the way that
-  // does not need somewhere empty to click, on a board where there may not be
-  // one.
+  // Escape clears the group, as it puts away every tool in the rail. Clicking
+  // empty map does it too; this works on a board with no empty space to click.
   //
-  // A drag already under way is deliberately unaffected: it captured its
-  // members at pointerdown and is a rigid body from then on, so there is nothing
-  // left for this to take out of it. Escaping mid-drag and letting go still
-  // lands the move — the same as it has always been for one token.
+  // A drag already under way is unaffected: it captured its members at
+  // pointerdown and moves as one from then on. Escaping mid-drag and letting go
+  // still lands the move, as it does for one token.
   window.addEventListener('keydown', (e) => {
     if (e.key !== 'Escape' || state.selection.size === 0) return;
     state.selection.clear();
@@ -1102,13 +1066,12 @@ export function attachInput(
 
 /**
  * Topmost *grabbable* token under a world point, or null. Iterates in reverse
- * draw order. Tokens you cannot move are skipped rather than returned-and-
- * rejected, so a token sitting on top of yours never blocks you from grabbing
- * your own.
+ * draw order. Tokens you can't move are skipped, not returned and rejected, so
+ * a token sitting on top of yours never blocks you from grabbing your own.
  *
- * Hit-testing runs against `shownPos`, exactly as drawing does — the pointer has
- * to agree with the picture, and a token absent from this board is not under the
- * cursor whatever its other position happens to be.
+ * Hit-tests against `shownPos`, as drawing does, so the pointer agrees with
+ * the picture. A token absent from this board is not under the cursor,
+ * whatever its other position is.
  */
 function tokenAt(scene: Scene, identity: Identity, wx: number, wy: number): Token | null {
   const board = shownBoard(scene);
@@ -1129,12 +1092,11 @@ function tokenAt(scene: Scene, identity: Identity, wx: number, wy: number): Toke
 /**
  * The topmost token a shape could anchor to under a world point, or null.
  *
- * Deliberately not `tokenAt`: anchoring is not moving, so a player may hang an
- * aura on the paladin they do not own, or on the ogre. Any token they can see is
- * a token they can draw on — the server checks visibility, not ownership.
+ * Not `tokenAt`: anchoring is not moving, so a player may hang an aura on a
+ * paladin they don't own, or on the ogre. Any token they can see is a token
+ * they can draw on; the server checks visibility, not ownership.
  *
- * Staged-only tokens are skipped because they have no live position to follow,
- * which is the same reason they are not on the live board at all.
+ * Staged-only tokens are skipped because they have no live position to follow.
  */
 function anchorTokenAt(scene: Scene, wx: number, wy: number): Token | null {
   const board = shownBoard(scene);

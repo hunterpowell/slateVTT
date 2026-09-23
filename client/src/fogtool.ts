@@ -1,46 +1,41 @@
 /**
- * The DM's fog panel: a switch, a mode, a radius, and — since 16b — a brush.
+ * The DM's fog panel: a switch, a mode, a radius, and a brush.
  *
  * The first three are the map's and go out as part of a `set_map` through the
- * map tool, which owns the confirmed calibration. There is no `set_fog`, for the
- * reason there is no `set_hp`: it would be a second way to write one record, and
- * two writers for one record is how they come to disagree.
+ * map tool, which owns the confirmed calibration. There is no `set_fog`, as
+ * there is no `set_hp`: two commands writing one record can come to disagree.
  *
- * The mode is milestone 21 and is a third field on that one command rather than
- * anything of its own. **Nothing on this side computes with it** — what arrives
- * is a packed rectangle either way — so the whole of the client's half of room
- * lighting is these two buttons and the sentence under them.
+ * The mode is a third field on that command. Nothing on the client computes
+ * with it (what arrives is a packed rectangle either way), so the client's
+ * part of room lighting is these two buttons and the hint under them.
  *
- * That sentence carries more than it looks like it does. Under `room` a wall the
- * DM did not trace is a room that lights into the next one, and the board cannot
- * say so: the fog just arrives wider than they meant. So the hint names the rule
- * rather than the effect — every wall and door bounds a room, and an archway is a
- * door left open, which is the same thing the reveal fill has always done.
+ * The hint matters. Under `room`, a wall the DM didn't trace lets a room light
+ * into the next one, and the board can't say so: the fog just arrives wider
+ * than they meant. So the hint names the rule, not the effect: every wall and
+ * door bounds a room, and an archway is a door left open, as for the fill.
  *
- * The brush is not the map's. It says something about particular cells, it is
- * sent as its own command, and it is what turned this panel into a tool — which
- * means it is also what gave the panel its first `stop()`. Until 16b this was the
- * one tab on the rail with nothing to put down; a tool holding the left mouse
- * button under a hidden panel is a click doing something with nothing on screen
- * saying why, and that rule now applies here like everywhere else.
+ * The brush is not the map's. It applies to particular cells, is sent as its
+ * own command, and is why this panel has a `stop()`: a tool holding the left
+ * mouse button under a hidden panel makes a click do something with nothing on
+ * screen saying why.
  *
- * Four states and two gestures, which is the whole of it:
+ * Four states and two gestures:
  *
  * - **ground** hands the terrain over and leaves the creatures standing on it
  *   alone; **lit** hands over both; **dark** takes both away, memory included;
  *   **clear** hands the cells back to line of sight.
- * - **fill** floods from the cell under the pointer, bounded by every segment the
- *   DM traced — doors included, open or shut, which is the one place a door's
- *   state is not read — and previews before it commits. **paint** applies the
- *   state to the cells the pointer is dragged across.
+ * - **fill** floods from the cell under the pointer, bounded by every segment
+ *   the DM traced (doors included, open or shut: the one place a door's state
+ *   isn't read), and previews before it commits. **paint** applies the state to
+ *   the cells the pointer is dragged across.
  *
- * The preview is not decoration. One gap in a traced room reveals the whole
- * dungeon in a single click and there is no undo, so the fill is shown before it
- * lands and the DM's own eyes are the check on the geometry.
+ * The preview is necessary. One gap in a traced room reveals the whole dungeon
+ * in a single click, so the fill is shown before it lands and the DM checks
+ * the geometry by eye.
  *
- * Where a click landed and what was under it is input.ts's, exactly as it is for
- * the wall editor and the draw tool. What lives here is what the brush is loaded
- * with, what a fill would take, and the panel around both.
+ * Where a click landed and what was under it is input.ts's job, as for the
+ * wall editor and the draw tool. This file holds what the brush is loaded
+ * with, what a fill would cover, and the panel around both.
  *
  * Read `docs/fog.md` before changing what this sends.
  */
@@ -55,44 +50,41 @@ import { shownBoard, shownWalls, showingStaged } from './scene.js';
 /** Matches `MIN_VISION_FT` and `MAX_VISION_FT` on the server, which re-checks. */
 const MIN_VISION_FT = 5;
 const MAX_VISION_FT = 500;
-/** The step the buttons move by: one cell, which is the unit that matters. */
+/** The step the buttons move by: one cell. */
 const STEP_FT = 5;
 
 /** Matches `MAX_OVERRIDE_CELLS` on the server, which refuses anything past it.
- *  A fill that reaches this has escaped through a gap, and stopping is how the
- *  DM sees that rather than getting a refusal they have to interpret.
+ *  A fill that reaches this has escaped through a gap, and stopping shows the
+ *  DM that directly instead of giving them a refusal to interpret.
  *
- *  **Both numbers are bounded by the frame, not by taste.** `set_fog_override`
- *  carries one `[x,y]` pair per cell, so the command has to fit inside
- *  `MAX_WS_MESSAGE_BYTES`; the server's test asserts the largest legal one does.
- *  This was 50,000 against a 16 KiB frame, which meant a whole-room fill killed
- *  the socket and reloaded the page instead of being refused — see `docs/net.md`. */
+ *  **Both numbers are bounded by the frame size.** `set_fog_override` carries
+ *  one `[x,y]` pair per cell, so the command has to fit inside
+ *  `MAX_WS_MESSAGE_BYTES`; the server's test asserts the largest legal one
+ *  does. Past that, a whole-room fill kills the socket and reloads the page
+ *  instead of being refused. See `docs/net.md`. */
 const MAX_FILL_CELLS = 8_000;
 
 /**
  * Whether the solo sight check is offered at all.
  *
- * **Off since milestone 34, and this const is the whole of the suspension.**
- * Player view answers the question a DM was actually using the sight check for —
- * what is on the table's board — and answers it for the whole party at once, so
- * asking one creature became a narrower version of a question with a better
- * button next to it. `solo.ts`, its tests and the whole render path are
- * untouched and still correct; what is switched off is the way in.
+ * Off, and this const is the only thing switching it off. Player view answers
+ * the question the DM was using the sight check for (what is on the table's
+ * board) for the whole party at once, which made the one-creature check
+ * redundant. `solo.ts`, its tests and the render path are unchanged and still
+ * correct; only the button is gone.
  *
- * **What brings it back is milestone 29.** The day `visible` becomes per-player
- * there is no single table's board to mirror, player view has to name somebody,
- * and "what can *this* creature see" stops being the narrow version of anything.
- * Flip this to `true` then — and see *Solo sight* in `docs/fog.md`, which is
- * still the design.
+ * Milestone 29 brings it back. Once `visible` is per-player there is no single
+ * table's board to mirror, player view has to name somebody, and "what can
+ * this creature see" becomes the useful question. Flip this to `true` then,
+ * and see *Solo sight* in `docs/fog.md`, which is still the design.
  *
- * Hidden rather than greyed on purpose: this panel greys a control to say "not
- * on this board, and here is why", which is a sentence with a way out of it. A
- * button that can never be pressed is not that sentence.
+ * Hidden, not greyed: this panel greys a control to mean "not on this board",
+ * which the DM can change. A button that can never be pressed isn't that.
  */
 const SOLO_SIGHT = false;
 
-/** What the brush is loaded with. `clear` is the absence of an override rather
- *  than a fourth kind of one, which is why it goes on the wire as null. */
+/** What the brush is loaded with. `clear` is the absence of an override, not a
+ *  fourth kind of one, so it goes on the wire as null. */
 export type FogBrush = FogPaint | 'clear';
 /** Flood from a cell, or apply to the cells the pointer crosses. */
 export type FogGesture = 'fill' | 'paint';
@@ -100,15 +92,15 @@ export type FogGesture = 'fill' | 'paint';
 export interface FogToolUi {
   root: HTMLElement;
   on: HTMLInputElement;
-  /** The two mode buttons are built here rather than in the document, like the
-   *  brushes below and for the same reason: the list lives in one place. */
+  /** The two mode buttons are built here instead of in the document, like the
+   *  brushes below, so the list lives in one place. */
   lighting: HTMLElement;
   vision: HTMLInputElement;
   visionDown: HTMLButtonElement;
   visionUp: HTMLButtonElement;
   hint: HTMLElement;
-  /** The four state buttons are built here rather than in the document, the way
-   *  the wall tool's modes are, so the list lives in one place. */
+  /** The four state buttons are built here instead of in the document, as the
+   *  wall tool's modes are, so the list lives in one place. */
   brushes: HTMLElement;
   gesture: HTMLButtonElement;
   clear: HTMLButtonElement;
@@ -123,7 +115,7 @@ export interface FogTool {
    *  pointer goes back to panning and dragging tokens. */
   readonly brush: FogBrush | null;
   readonly gesture: FogGesture;
-  /** The cells a fill would take, as flat pairs — empty in paint mode and
+  /** The cells a fill would cover, as flat pairs. Empty in paint mode and
    *  whenever the pointer is off the board. */
   readonly preview: readonly number[];
 
@@ -133,9 +125,9 @@ export interface FogTool {
    * on the same button and arming either puts the other down.
    */
   readonly checking: boolean;
-  /** The creature whose sight is on the DM's board, or null. Outlives `checking`
-   *  deliberately: having picked one, the DM puts the tool down and goes on
-   *  looking at the answer. */
+  /** The creature whose sight is on the DM's board, or null. Outlives
+   *  `checking`: having picked one, the DM puts the tool down and keeps looking
+   *  at the answer. */
   readonly sightId: string | null;
   /** From a click on the board while `checking`. Null clears the answer. */
   check(token: Token | null): void;
@@ -145,8 +137,8 @@ export interface FogTool {
    *
    * Read by the frame loop, which narrows the scene through `asTable` before
    * handing it to the renderer. It arms nothing and refuses nothing: the DM can
-   * still drag, click and edit through the mirror, exactly as they can through
-   * one creature's sight. See `mirror.ts`.
+   * still drag, click and edit through the mirror, as through one creature's
+   * sight. See `mirror.ts`.
    */
   readonly playerView: boolean;
 
@@ -156,7 +148,7 @@ export interface FogTool {
   /** The gesture the pointer just made: a click in fill mode, or one cell of a
    *  drag in paint mode. */
   apply(at: Vec2): void;
-  /** A paint stroke ended — sends what it covered as one command. */
+  /** A paint stroke ended. Sends what it covered as one command. */
   endStroke(): void;
   /** Called on Welcome, on every map or wall change, and when a preview starts
    *  or ends. */
@@ -212,15 +204,15 @@ export function createFogTool(
    *  screen. */
   setFog: (on: boolean, visionFt: number, lighting: Lighting) => void,
   send: (msg: ClientMsg) => void,
-  /** The map image's size, for a board with no play area — the same lazy read
-   *  the map tool makes, because the image changes under this. */
+  /** The map image's size, for a board with no play area. Read lazily, as the
+   *  map tool does, because the image can change. */
   mapSize: () => { w: number; h: number } | null,
   /** Called when the brush is picked up, so the other tools let go of the left
-   *  button. Two tools armed at once is not a state input.ts could resolve. */
+   *  button. input.ts can't resolve two tools armed at once. */
   onArm: () => void = () => {},
   /** Called when player view is turned on or off. The board is redrawn every
-   *  frame and reads the flag for itself; the initiative panel is not, and it
-   *  mirrors too — see `tableInitiative`. */
+   *  frame and reads the flag itself; the initiative panel isn't, and it
+   *  mirrors too (see `tableInitiative`). */
   onView: () => void = () => {},
 ): FogTool {
   let scene: Scene | null = null;
@@ -228,33 +220,32 @@ export function createFogTool(
   let gesture: FogGesture = 'fill';
   let preview: number[] = [];
   /** The cell the preview was computed for, so a pointer moving within one cell
-   *  does not re-flood a dungeon sixty times a second. */
+   *  doesn't re-flood a dungeon sixty times a second. */
   let previewCell: string | null = null;
   /** The cells a paint stroke has covered so far, sent as one command on
-   *  release — a command per cell would be a hundred frames across one drag. */
+   *  release. A command per cell would be a hundred frames across one drag. */
   let stroke: number[] = [];
   let painted: Set<string> = new Set();
   /** Solo sight: whether the next click picks a creature, and which one it
-   *  picked. Two variables rather than one because putting the tool down must
-   *  not take the answer off the board. */
+   *  picked. Two variables because putting the tool down must not take the
+   *  answer off the board. */
   let checking = false;
   let sightId: string | null = null;
-  /** Player view: the whole board as the table has it. A third thing that can be
-   *  on the board instead of the DM's own, and it excludes the other two by
-   *  hand — see the button's handler. */
+  /** Player view: the whole board as the table has it. A third thing that can
+   *  replace the DM's own board, and it excludes the other two by hand (see
+   *  the button's handler). */
   let playerView = false;
 
   const buttons = new Map<FogBrush, HTMLButtonElement>();
   const modes = new Map<Lighting, HTMLButtonElement>();
 
-  /** Which board this panel is editing — the one on screen, like everything
+  /** Which board this panel is editing: the one on screen, like everything
    *  else that draws or hit-tests. */
   const staged = (): boolean => (scene === null ? false : showingStaged(scene));
   /** The board on screen, or null before the first Welcome. */
   const editing = (): Board | null => (scene === null ? null : shownBoard(scene));
-  /** Whether the brush can do anything at all, which is one question now rather
-   *  than two: is the board on screen fogged. It used to also ask "and are we
-   *  not previewing", because there was no mask on a staged map to paint. */
+  /** Whether the brush can do anything: is the board on screen fogged. This
+   *  includes a staged board, which has a mask of its own to paint. */
   const usable = (): boolean => editing()?.fog ?? false;
 
   const clamp = (ft: number): number => {
@@ -262,8 +253,8 @@ export function createFogTool(
     return Math.min(Math.max(Math.round(ft), MIN_VISION_FT), MAX_VISION_FT);
   };
 
-  /** The playable region in image pixels, which is what a fill is clipped to —
-   *  the same bound the server checks every cell against. */
+  /** The playable region in image pixels, which a fill is clipped to. The
+   *  server checks every cell against the same bound. */
   const board = (): Rect | null => {
     const on = editing();
     const size = mapSize();
@@ -276,9 +267,9 @@ export function createFogTool(
     previewCell = null;
   };
 
-  /** Puts the mirror down, if it is up, and tells main.ts so the panels that do
-   *  not redraw themselves every frame catch up. A no-op otherwise, so every
-   *  caller can say it unconditionally. */
+  /** Puts the mirror down, if it is up, and tells main.ts so the panels that
+   *  don't redraw every frame catch up. A no-op otherwise, so callers can call
+   *  it unconditionally. */
   const leaveView = (): void => {
     if (!playerView) return;
     playerView = false;
@@ -289,56 +280,51 @@ export function createFogTool(
     const on = editing();
     const previewing = staged();
 
-    // The board on screen, not the live one — the switch and the radius are
-    // fields of `MapInfo` and have always staged with it, so the next dungeon's
-    // lights are the DM's to set before the table is shown it.
+    // The board on screen, not the live one: the switch and the radius are
+    // fields of `MapInfo` and stage with it, so the DM sets the next map's
+    // lights before the table is shown it.
     ui.on.checked = on?.fog ?? false;
     ui.on.disabled = on === null;
     ui.vision.value = String(on?.visionFt ?? 60);
-    // Read-only rather than hidden when fog is off: the radius is still the
-    // map's, and hiding it would make turning fog on look like it had also
-    // invented a number. The brushes go the same way for the same reason.
+    // Read-only, not hidden, when fog is off: the radius is still the map's,
+    // and hiding it would make turning fog on look like it had also picked a
+    // number. The brushes do the same for the same reason.
     const locked = !usable();
     for (const control of [ui.vision, ui.visionDown, ui.visionUp, ui.gesture]) {
       control.disabled = locked;
     }
     // The mode is the map's like the switch above it, so the buttons read off
-    // the board rather than holding a state of their own — which is what makes
-    // switching to the staged slot show that map's answer and not this one's.
+    // the board instead of holding a state of their own. Switching to the
+    // staged slot then shows that map's mode.
     const lighting = on?.lighting ?? 'dynamic';
     for (const [m, button] of modes) {
       button.disabled = locked;
       button.classList.toggle('is-on', m === lighting);
       button.setAttribute('aria-pressed', String(m === lighting));
     }
-    // Reset is the one control that stays live-only, and the reason is that
-    // half of it is not the DM's: it forgets everywhere the *party* has
-    // explored, and no ray has ever been cast on a map they have not been
-    // shown. What it would mean over a preview is "clear the paint", which is
-    // the `clear` brush with a bigger blast radius and no undo.
+    // Reset stays live-only because half of it isn't the DM's: it forgets
+    // everywhere the party has explored, and no ray has been cast on a map
+    // they haven't been shown. Over a preview it would only clear the paint,
+    // which is the `clear` brush over the whole map.
     ui.clear.disabled = locked || previewing;
-    // Live-only for the reason reset is, and it is the same reason twice:
-    // nothing has cast a ray on a board nobody has been shown, so there is no
-    // sight on it to check. Unfogged is not a bar — an unfogged map is one
-    // where everyone sees everything, and answering that is still an answer —
-    // but a board with no grid is, which `usable()` already covers for the rest
-    // of the panel.
-    // Everything below about this button is what paints it when it is offered,
-    // which it is not — see `SOLO_SIGHT`. Left running against a hidden element
-    // rather than branched around, so bringing it back is one const and not a
-    // reconstruction.
+    // Live-only, like reset: nothing has cast a ray on a board nobody has been
+    // shown, so there is no sight on it to check. Unfogged doesn't disable it
+    // (everyone seeing everything is still an answer), but a board with no
+    // grid does, which `usable()` already covers for the rest of the panel.
+    // The rest of this block styles the button when it is offered, which it
+    // isn't (see `SOLO_SIGHT`). It runs against a hidden element instead of
+    // being branched around, so bringing it back is one const.
     ui.sight.hidden = !SOLO_SIGHT;
     ui.sight.disabled = on === null || previewing;
     ui.sight.classList.toggle('is-on', checking);
     ui.sight.setAttribute('aria-pressed', String(checking));
     // The name is the readout: having picked a creature the DM puts the tool
-    // down, and the button is what says whose eyes the board is showing.
+    // down, and the button says whose eyes the board is showing.
     const watched = sightId === null ? null : (scene?.tokens.find((t) => t.id === sightId) ?? null);
     ui.sight.textContent = watched === null ? 'sight check' : `seeing as ${watched.name}`;
-    // Live board only, for the reason reset and sight check are: the table is
-    // not looking at the map being prepared, so there is nothing here for a
-    // mirror of their board to answer. Unlike those two it is not greyed by an
-    // unfogged map — the fog is the loudest thing it hides and not the only one,
+    // Live board only, like reset and sight check: the table isn't looking at
+    // the map being prepared, so there is nothing to mirror. Unlike those two
+    // it isn't greyed by an unfogged map: fog is not the only thing it hides,
     // and a monster the DM staged out of sight is hidden on a lit board too.
     ui.view.disabled = on === null || previewing;
     ui.view.classList.toggle('is-on', playerView);
@@ -349,25 +335,23 @@ export function createFogTool(
       button.setAttribute('aria-pressed', String(b === brush));
     }
     ui.gesture.textContent = gesture;
-    // The body class is what tells the rest of the page the left button is spoken
-    // for, exactly as the wall editor's `tracing` does.
+    // The body class tells the rest of the page the left button is taken, as
+    // the wall editor's `tracing` does.
     document.body.classList.toggle('painting-fog', brush !== null);
     document.body.classList.toggle('checking-sight', checking);
-    // The same treatment the staged map's border gets, and for the same reason:
-    // the DM is looking at something nobody else is, and mistaking it for the
-    // board is the one way this goes wrong.
+    // The same treatment the staged map's border gets, for the same reason:
+    // the DM is looking at something nobody else is, and could mistake it for
+    // the board.
     document.body.classList.toggle('solo-sight', sightId !== null);
     // The third board-level treatment, beside preview's amber and solo sight's
-    // blue, and it is owed one for their reason exactly: the DM is looking at
-    // something that is not their own board, and mistaking it for one is the
-    // single way any of the three goes wrong.
+    // blue, for the same reason: the DM is looking at something that isn't
+    // their own board, and could mistake it for one.
     document.body.classList.toggle('player-view', playerView);
 
     ui.hint.textContent = playerView
-      ? // Says what is missing rather than what is there, because what is there
-        // looks exactly like an ordinary board — which is the whole point of it
-        // and also the whole risk. A DM who forgets they are in here will go
-        // looking for a monster that is on the board and not on this one.
+      ? // Says what is missing, not what is there, because what is there looks
+        // like an ordinary board. A DM who forgets they are in here will go
+        // looking for a monster that is on their board and not on this one.
         'Showing the board as the table sees it — their fog, and nothing they are not sent. Your walls, painted squares, hit points and hidden creatures are still there behind it.'
       : checking
       ? 'Click a creature to see the board as it does. Geometry only — your painted squares are not applied.'
@@ -379,16 +363,16 @@ export function createFogTool(
           : 'The table sees the whole board.'
         : brush === null
           ? previewing
-            ? // Says what it is rather than what it looks like, because what it
-              // looks like is nothing: there is no wash under the tint on a map
-              // nobody has cast a ray on. Without this line the DM is painting
-              // a dungeon that appears to be fully lit.
+            ? // Says what this is, because nothing on screen shows it: there is
+              // no wash under the tint on a map nobody has cast a ray on.
+              // Without this line the DM is painting a dungeon that appears to
+              // be fully lit.
               'Painting the map being prepared. This is what the party gets when it lands.'
             : lighting === 'room'
-              ? // Names the boundary rather than the door, because that is the
-                // rule a DM has to hold to trace a dungeon that lights the way
-                // they meant: a room that lit further than expected is a wall
-                // with a gap in it, and the fix is a segment across the gap.
+              ? // Names the boundary, not the door, because that is the rule the
+                // DM needs to trace a dungeon that lights as they meant: a room
+                // that lit further than expected has a gap in its wall, and the
+                // fix is a segment across the gap.
                 `Player tokens light the room they are in, out to ${ui.vision.value} ft, and see through open doors. Every wall and door you trace bounds a room.`
               : `Player tokens light ${ui.vision.value} ft, and walls and shut doors stop it.`
           : gesture === 'fill'
@@ -396,9 +380,9 @@ export function createFogTool(
             : 'Drag over the squares to paint them.';
   };
 
-  /** The cells a fill from here would take. Recomputed only when the pointer
-   *  crosses into a different cell, which is what makes a flood of a few
-   *  thousand affordable on a pointer move. */
+  /** The cells a fill from here would cover. Recomputed only when the pointer
+   *  crosses into a different cell, which makes a flood of a few thousand
+   *  affordable on a pointer move. */
   const fillAt = (cell: Vec2): void => {
     const id = `${cell.x},${cell.y}`;
     if (id === previewCell) return;
@@ -406,9 +390,8 @@ export function createFogTool(
 
     const on = editing();
     const area = board();
-    // The walls of the board being painted, which is what makes a fill on the
-    // staged map bound itself with the dungeon traced on it rather than with
-    // the one the table is standing in.
+    // The walls of the board being painted, so a fill on the staged map is
+    // bounded by the walls traced on it, not by the live map's.
     preview =
       on === null || area === null
         ? []
@@ -424,7 +407,7 @@ export function createFogTool(
     send({
       type: 'set_fog_override',
       cells: pairs,
-      // `clear` is an absence rather than a state, on the wire as in the room.
+      // `clear` is an absence, not a state, on the wire as in the room.
       state: state === 'clear' ? null : state,
       staged: staged(),
     });
@@ -433,22 +416,21 @@ export function createFogTool(
   for (const entry of BRUSHES) {
     const button = document.createElement('button');
     button.type = 'button';
-    // Borrows `.draw-tool` the way the wall editor's modes mean to: it is the
-    // same control saying the same thing, and the blue `.is-on` state means
-    // exactly what it means there — the left mouse button is spoken for.
+    // Borrows `.draw-tool`, as the wall editor's modes do: it is the same kind
+    // of control, and the blue `.is-on` state means the same thing there: the
+    // left mouse button is taken.
     button.className = 'draw-tool fog-brush';
     button.dataset['brush'] = entry.brush;
     button.textContent = entry.label;
     button.title = entry.title;
     button.addEventListener('click', () => {
-      // Clicking the brush you are holding puts it down, which is the gesture
-      // every other tool here uses and the fastest way back to the board.
+      // Clicking the brush you are holding puts it down, as with every other
+      // tool here.
       brush = brush === entry.brush ? null : entry.brush;
       clearPreview();
-      // Painting through the mirror would be painting squares that are not on
-      // it: the tint is the DM's own hand, and the mirror is what their hand is
-      // absent from. Picking a brush up is therefore a way out of it, which is
-      // the same trade the sight check makes below.
+      // The mirror doesn't show the DM's painted squares, so painting through
+      // it would paint cells the DM can't see. Picking a brush up leaves the
+      // mirror, as the sight check does below.
       if (brush !== null) {
         leaveView();
         onArm();
@@ -460,29 +442,27 @@ export function createFogTool(
   }
 
   // Arming solo sight puts the brush down and vice versa: they are two gestures
-  // competing for the same button, and two tools armed at once is not a state
-  // input.ts could resolve. `onArm` says the same thing to the draw and wall
-  // tools outside this panel.
+  // on the same button, and input.ts can't resolve two tools armed at once.
+  // `onArm` tells the draw and wall tools outside this panel the same thing.
   // Registered only while the check is offered, so `checking` and `sightId`
-  // cannot be reached at all rather than merely being hard to click. A hidden
-  // button is still a button a script can press, and the two states behind this
-  // one put the DM's board somewhere nothing on screen would account for.
+  // can't be reached at all. A hidden button can still be pressed by a script,
+  // and the two states behind it change the DM's board with nothing on screen
+  // to explain it.
   if (SOLO_SIGHT) ui.sight.addEventListener('click', () => {
-    // Three states behind one button, and the order of these two branches is the
-    // whole of it: **anything on the board comes off first.** With an answer up,
-    // the button is the way back to the table's board, which is what the hint
-    // under it promises — and re-arming there instead would leave the DM holding
-    // one creature's sight with no control on screen that takes it away.
+    // Three states behind one button, and **anything on the board comes off
+    // first.** With an answer up, the button is the way back to the table's
+    // board, as the hint under it says. Re-arming there instead would leave
+    // the DM with one creature's sight and no control on screen to remove it.
     if (checking || sightId !== null) {
       checking = false;
       sightId = null;
     } else {
       checking = true;
       brush = null;
-      // Three things can stand in for the DM's board and only one of them can be
-      // standing there: the whole table's answer and one creature's are two
-      // different questions, and a board showing both would be answering
-      // neither. Preview is the fourth and excludes itself — see `update`.
+      // Only one thing can replace the DM's board at a time: the whole table's
+      // sight and one creature's are different questions, and a board showing
+      // both answers neither. Preview is the third and excludes itself (see
+      // `update`).
       leaveView();
       clearPreview();
       onArm();
@@ -490,21 +470,20 @@ export function createFogTool(
     paint();
   });
 
-  // The mirror. Its own button rather than a fifth brush or a second state on
-  // the one above, because it is neither a gesture nor a question about a
-  // creature — it is which board is on screen, which is what preview is too.
+  // The mirror. Its own button, not a fifth brush or a second state on the one
+  // above, because it is neither a gesture nor a question about a creature: it
+  // decides which board is on screen, as preview does.
   //
   // It takes no mouse button, so nothing outside this panel has to let go of
-  // one: the draw tool stays armed through it deliberately, since a shape swept
-  // while looking at the table's board is a shape aimed at what they can see.
+  // one. The draw tool stays armed through it, since a shape swept while
+  // looking at the table's board is aimed at what they can see.
   ui.view.addEventListener('click', () => {
     if (playerView) {
       leaveView();
     } else {
       playerView = true;
-      // Whatever else was standing in for the board comes off, which is the
-      // order the sight button already established: anything on the board goes
-      // first, and what is left is the thing that was just asked for.
+      // Whatever else was replacing the board comes off first, as with the
+      // sight button, leaving only what was just asked for.
       checking = false;
       sightId = null;
       brush = null;
@@ -521,8 +500,8 @@ export function createFogTool(
   });
 
   // Both halves in one prompt, because the reset is one gesture and the half
-  // that surprises is the one the old wording did not mention: the party's
-  // exploring goes too. There is no undo, so the prompt says what is lost.
+  // that surprises is that the party's exploring goes too. The prompt says
+  // what is lost; undo can bring it back, but only while it is in the ring.
   ui.clear.addEventListener('click', () => {
     const ok = window.confirm(
       'Take the whole map back to dark?\n\n' +
@@ -535,7 +514,7 @@ export function createFogTool(
 
   const sendMap = (lighting?: Lighting): void => {
     // The map tool owns which slot this lands in, and it is the same slot this
-    // panel is showing — both are "the board on screen".
+    // panel is showing: both use the board on screen.
     const on = editing();
     if (on === null) return;
     setFog(ui.on.checked, clamp(Number(ui.vision.value)), lighting ?? on.lighting);
@@ -544,26 +523,25 @@ export function createFogTool(
   for (const entry of MODES) {
     const button = document.createElement('button');
     button.type = 'button';
-    // The brushes' control, narrower: `.is-on` means the same thing on both,
-    // which is "this is what the panel is set to" rather than anything about
-    // the mouse — a mode arms nothing.
+    // The brushes' control, narrower. Here `.is-on` means "this is what the
+    // map is set to", not anything about the mouse: a mode arms nothing.
     button.className = 'draw-tool fog-mode';
     button.textContent = entry.label;
     button.title = entry.title;
-    // Straight out as a `set_map` rather than through a local variable. There
-    // is nothing to confirm and nothing to preview: the room recomputes and the
-    // board that comes back is the answer.
+    // Sent straight out as a `set_map`, with no local state. There is nothing
+    // to confirm or preview: the room recomputes and the board that comes back
+    // is the answer.
     button.addEventListener('click', () => sendMap(entry.mode));
     modes.set(entry.mode, button);
     ui.lighting.append(button);
   }
 
-  // Wrapped, because `sendMap` takes an argument now and an event listener
-  // would hand it the event.
+  // Wrapped, because `sendMap` takes an argument and an event listener would
+  // pass it the event.
   ui.on.addEventListener('change', () => sendMap());
-  // `change` rather than `input`: typing 1 on the way to 100 would otherwise
-  // send a radius nobody asked for and recompute the whole board for it. Same
-  // split the grid colour slider makes, and for the same reason.
+  // `change`, not `input`: typing 1 on the way to 100 would otherwise send a
+  // radius nobody asked for and recompute the whole board for it. The grid
+  // colour slider does the same.
   ui.vision.addEventListener('change', () => sendMap());
 
   const nudge = (by: number): void => {
@@ -602,10 +580,10 @@ export function createFogTool(
     check(token) {
       if (!checking) return;
       sightId = token?.id ?? null;
-      // The tool disarms itself on a hit: picking a creature is a one-shot
-      // gesture, and leaving the button armed would mean the next click on the
-      // board re-picks instead of doing what it normally does. A miss leaves it
-      // armed, because a miss is usually an aim that was slightly off.
+      // The tool disarms itself on a hit: picking a creature is one gesture,
+      // and leaving the button armed would make the next click on the board
+      // re-pick instead of doing what it normally does. A miss leaves it armed,
+      // because a miss is usually slightly off aim.
       if (sightId !== null) checking = false;
       paint();
     },
@@ -623,9 +601,9 @@ export function createFogTool(
       const cell = { x: Math.floor(at.x), y: Math.floor(at.y) };
 
       if (gesture === 'fill') {
-        // What was previewed is what is sent — the same array, not a second run
-        // of the same algorithm. That is what makes the preview a promise, and
-        // it is why the fill lives on this side of the wire at all.
+        // What was previewed is what is sent: the same array, not a second run
+        // of the algorithm. That guarantees the preview matches the result,
+        // and is why the fill runs on the client.
         fillAt(cell);
         sendCells(preview, brush);
         clearPreview();
@@ -647,22 +625,21 @@ export function createFogTool(
     update(next) {
       const wasStaged = staged();
       scene = next;
-      // A brush left in hand over a map that has just lost its fog is a tool
-      // that can do nothing — the same argument the tab itself goes inert on.
-      // Previewing is no longer one of those cases: the staged board has a mask
-      // of its own to paint now.
+      // A brush left in hand over a map that has just lost its fog can do
+      // nothing, which is also why the tab goes inert. Previewing isn't one of
+      // those cases: the staged board has a mask of its own to paint.
       if (brush !== null && !usable()) brush = null;
       // A stroke half-drawn when the board changed slot under it is a set of
-      // cells about the other map. Dropped rather than sent, which is the same
-      // call the wall editor makes about a half-traced run.
+      // cells on the other map. Dropped, not sent, as the wall editor drops a
+      // half-traced run.
       if (staged() !== wasStaged) {
         stroke = [];
         painted = new Set();
       }
-      // A preview starting under the mirror is the one way the two could be on
-      // at once, and it is the way this feature would lie: `asTable` answers
-      // about the live board, so the DM would be looking at the board the table
-      // has while believing they were looking at the next dungeon.
+      // A preview starting under the mirror is the only way the two could be
+      // on at once, and the mirror would then be wrong: `asTable` works on the
+      // live board, so the DM would see the table's board while thinking they
+      // were looking at the next map.
       if (staged()) leaveView();
       clearPreview();
       paint();
@@ -673,16 +650,14 @@ export function createFogTool(
       stroke = [];
       painted = new Set();
       // Solo sight goes with it, answer included. The rail's rule is that
-      // closing a tab puts down whatever the panel armed, and here what it armed
-      // is also the only thing on screen explaining why the DM's board is
-      // showing one creature's line of sight instead of the table's fog — a
-      // wash nobody can account for is worse than a click nobody can account
-      // for.
+      // closing a tab puts down whatever the panel armed, and this panel's
+      // button is the only thing on screen explaining why the DM's board shows
+      // one creature's line of sight instead of the table's fog.
       checking = false;
       sightId = null;
-      // And the mirror with them, for the same sentence: the button is the only
-      // thing on screen accounting for a board that is missing the DM's own
-      // walls and half their monsters, and it goes with the tab.
+      // The mirror goes too, for the same reason: the button is the only thing
+      // on screen explaining a board that is missing the DM's own walls and
+      // half their monsters, and it goes with the tab.
       leaveView();
       clearPreview();
       paint();
