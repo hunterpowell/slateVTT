@@ -92,6 +92,9 @@ const DISK_FULL_PCT: f64 = 90.0;
 #[derive(Clone)]
 struct AppState {
     rooms: Arc<HashMap<String, RoomHandle>>,
+    /// Which rooms this process serves: `SLATE_SITE`, or `room::DEFAULT_SITE`.
+    /// The picker and the status page list this site's rooms and no other's.
+    site: Arc<str>,
     /// The room holds its own copy for the WebSocket handshake. This one exists
     /// because an HTTP upload never reaches the room actor to be checked there.
     dm_secret: Arc<str>,
@@ -334,6 +337,17 @@ async fn main() {
 
     let state_path = std::env::var("SLATE_STATE").unwrap_or_else(|_| "slate-state.json".to_owned());
 
+    // A second site is a second process with its own secret and its own data,
+    // for a DM who mustn't reach this one's rooms. See `RoomDef::site`. Refusing
+    // to boot on a name with no rooms is the safe answer: a typo would
+    // otherwise start a server with an empty picker, or, if the fallback were
+    // the default site, serve somebody else's rooms under this process's secret.
+    let site = std::env::var("SLATE_SITE").unwrap_or_else(|_| room::DEFAULT_SITE.to_owned());
+    if room::rooms(&site).next().is_none() {
+        panic!("SLATE_SITE={site} names no rooms; see `ROOMS` in server/src/room.rs");
+    }
+    info!(%site, "serving this site's rooms");
+
     let uploads_dir = std::env::var("SLATE_UPLOADS").unwrap_or_else(|_| "uploads".to_owned());
     std::fs::create_dir_all(&uploads_dir)
         .unwrap_or_else(|err| panic!("could not create {uploads_dir}: {err}"));
@@ -407,7 +421,7 @@ async fn main() {
     };
 
     let mut rooms = HashMap::new();
-    for (id, name) in room::rooms() {
+    for (id, name) in room::rooms(&site) {
         let path = save_path(&state_path, id);
         let store = store::Store::new(path.clone());
 
@@ -422,7 +436,7 @@ async fn main() {
             .await
             .unwrap_or_else(|err| panic!("could not load {}: {err}", path.display()));
 
-        let demo = room::is_primary(id);
+        let demo = room::boots_demo(id);
         match (&saved, demo) {
             (Some(_), _) => info!(%id, path = %path.display(), "restored a room from disk"),
             (None, true) => info!(%id, "no save found; starting from the built-in room"),
@@ -443,6 +457,7 @@ async fn main() {
 
     let state = AppState {
         rooms: rooms.clone(),
+        site: site.into(),
         dm_secret: dm_secret.into(),
         uploads: Path::new(&uploads_dir).into(),
         maps: Path::new(&maps_dir).into(),
@@ -581,9 +596,9 @@ struct RoomEntry {
 /// hasn't chosen a room yet, and every connection belongs to one room actor
 /// from the moment it is registered. Keeping the choice in the URL leaves the
 /// wire protocol untouched. See `docs/rooms.md`.
-async fn room_listing() -> Json<Vec<RoomEntry>> {
+async fn room_listing(State(state): State<AppState>) -> Json<Vec<RoomEntry>> {
     Json(
-        room::rooms()
+        room::rooms(&state.site)
             .map(|(id, name)| RoomEntry { id, name })
             .collect(),
     )
@@ -635,10 +650,10 @@ async fn status(
     }
 
     // Every room at once, so a slow room costs the page its own timeout and
-    // not the sum of them. In `room::rooms()` order (the picker's order),
+    // not the sum of them. In `room::rooms` order (the picker's order),
     // because a wall display is read at a glance and rows that moved between
     // refreshes would make that impossible.
-    let rooms = futures_util::future::join_all(room::rooms().map(|(id, name)| {
+    let rooms = futures_util::future::join_all(room::rooms(&state.site).map(|(id, name)| {
         let handle = state.rooms.get(id).cloned();
         async move {
             let reported = match handle {
@@ -1219,7 +1234,7 @@ mod tests {
         // Why `SLATE_STATE` isn't a directory. Change this and the Pi's env
         // file, the live campaign save and the backup that greps the tar for
         // this filename all need a migration.
-        let primary = room::rooms()
+        let primary = room::rooms(room::DEFAULT_SITE)
             .map(|(id, _)| id)
             .find(|id| room::is_primary(id))
             .expect("a primary room");
@@ -1227,11 +1242,20 @@ mod tests {
             save_path("/var/lib/slate/slate-state.json", primary),
             Path::new("/var/lib/slate/slate-state.json")
         );
+        // Every site's first room follows the same rule, in its own process's
+        // directory: `sword-legend`'s save is its own `SLATE_STATE`, not a sibling.
+        assert_eq!(
+            save_path(
+                "/var/lib/slate-sword-legend/slate-state.json",
+                "sword-legend"
+            ),
+            Path::new("/var/lib/slate-sword-legend/slate-state.json")
+        );
     }
 
     #[test]
     fn every_other_rooms_save_file_sits_beside_it() {
-        for (id, _) in room::rooms().filter(|(id, _)| !room::is_primary(id)) {
+        for (id, _) in room::rooms(room::DEFAULT_SITE).filter(|(id, _)| !room::is_primary(id)) {
             assert_eq!(
                 save_path("/var/lib/slate/slate-state.json", id),
                 Path::new("/var/lib/slate").join(format!("{id}.json"))
@@ -1265,6 +1289,7 @@ mod tests {
     fn app_state(status_key: Option<&str>) -> AppState {
         AppState {
             rooms: Arc::new(HashMap::new()),
+            site: room::DEFAULT_SITE.into(),
             dm_secret: "the-dm-secret".into(),
             uploads: Path::new("uploads").into(),
             maps: Path::new("maps").into(),

@@ -3,3 +3,8 @@
 # number. Deploy-Slate.ps1 strips them again on the way out; this keeps them
 # from arriving in the first place.
 *.sh text eol=lf
+
+# The same for what systemd reads on the Pi. A CR in an env file ends up inside
+# the value, so SLATE_SITE=sword-legend<CR> names no site and the process won't boot.
+deploy/pi/*.service text eol=lf
+deploy/pi/*.env text eol=lf

@@ -211,9 +211,11 @@ check('an ordinary click sends no ping at all', afterClick < RING_SHARE, true);
 
 // --- a drag is not a ping either ---------------------------------------------
 //
-// The other half of "a few pixels of movement cancels it". A pan that happens to
-// take three quarters of a second must not fire, or panning around a large map
-// would spray rings across the table's screens.
+// The other half of "a few pixels of movement cancels it". A left-drag on bare
+// board draws a selection box, and one that takes three quarters of a second
+// must not fire, or boxing a few goblins would spray rings across the table's
+// screens. A box leaves the camera where it was, so every coordinate below
+// still holds.
 
 await remember(player, ...boxAt(playerSpot.x, playerSpot.y));
 await press(dm, spot.x, spot.y);
@@ -225,14 +227,34 @@ await dm.wait(600);
 await release(dm, spot.x + 60, spot.y + 40);
 await dm.wait(400);
 
-const afterPan = await movedSince(player, ...boxAt(playerSpot.x, playerSpot.y));
-note(`a slow pan moved the player's box by ${(afterPan * 100).toFixed(2)}%`);
-check('a slow pan is a pan and not a ping', afterPan < RING_SHARE, true);
+const afterBox = await movedSince(player, ...boxAt(playerSpot.x, playerSpot.y));
+note(`a slow box moved the player's box by ${(afterBox * 100).toFixed(2)}%`);
+check('a slow box is a box and not a ping', afterBox < RING_SHARE, true);
 
-// The DM's own board did move — it was panned — so put it back where every
-// coordinate below was measured from.
-await dm.drag(spot.x + 60, spot.y + 40, spot.x, spot.y);
-await dm.wait(300);
+// --- nor is a shift-press that waits -----------------------------------------
+//
+// Shift on bare board starts a shift+box, and a hand that pauses before moving
+// holds the button past `HOLD_MS` without leaving the slop. The modifier is held
+// on purpose, so it is not pointing at the board, and it must never reach the
+// hold timer. Held with no movement at all, which is the case where nothing but
+// that rule stands between it and a ring.
+
+/** CDP's modifier bitfield. */
+const SHIFT = 8;
+
+await remember(player, ...boxAt(playerSpot.x, playerSpot.y));
+await dm.send('Input.dispatchMouseEvent', {
+  type: 'mousePressed', x: spot.x, y: spot.y, button: 'left', buttons: 1, clickCount: 1, modifiers: SHIFT,
+});
+await dm.wait(700);
+await dm.send('Input.dispatchMouseEvent', {
+  type: 'mouseReleased', x: spot.x, y: spot.y, button: 'left', buttons: 0, clickCount: 1, modifiers: SHIFT,
+});
+await dm.wait(400);
+
+const afterShift = await movedSince(player, ...boxAt(playerSpot.x, playerSpot.y));
+note(`a held shift-press moved the player's box by ${(afterShift * 100).toFixed(2)}%`);
+check('a shift-press held on bare board sends no ping', afterShift < RING_SHARE, true);
 
 // --- a hold on a token pings rather than dragging it --------------------------
 //

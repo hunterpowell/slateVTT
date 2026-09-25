@@ -234,16 +234,22 @@ export async function open(
       await wait(60);
     },
 
-    /** Press, move, release — a drag, which is how the map is panned. */
-    async drag(fromX, fromY, toX, toY) {
+    /**
+     * Press, move, release. With the left button that moves a token, sweeps a
+     * shape, or on bare board draws a selection box; `button: 'right'` is how
+     * the map is panned. `buttons` is CDP's held-button bitfield, which it
+     * doesn't derive from `button`.
+     */
+    async drag(fromX, fromY, toX, toY, { button = 'left', modifiers = 0 } = {}) {
+      const buttons = { left: 1, right: 2, middle: 4 }[button];
       await send('Input.dispatchMouseEvent', {
-        type: 'mousePressed', x: fromX, y: fromY, button: 'left', buttons: 1, clickCount: 1,
+        type: 'mousePressed', x: fromX, y: fromY, button, buttons, clickCount: 1, modifiers,
       });
       await send('Input.dispatchMouseEvent', {
-        type: 'mouseMoved', x: toX, y: toY, button: 'left', buttons: 1,
+        type: 'mouseMoved', x: toX, y: toY, button, buttons, modifiers,
       });
       await send('Input.dispatchMouseEvent', {
-        type: 'mouseReleased', x: toX, y: toY, button: 'left', buttons: 0, clickCount: 1,
+        type: 'mouseReleased', x: toX, y: toY, button, buttons: 0, clickCount: 1, modifiers,
       });
       await wait(250);
     },

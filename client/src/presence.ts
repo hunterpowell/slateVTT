@@ -13,9 +13,9 @@
  * whether the DM is still there is no use if it moves every time you look.
  *
  * Absent people dim, not disappear. Every roster slot is drawn from page load
- * and never removed, so the row has one layout for the whole session. A chip
- * that vanished would move its neighbours under the pointer, and would make
- * "not here" and "no such person" look the same.
+ * and stays until the DM edits the cast, so the row keeps its layout while
+ * people come and go. A chip that vanished would move its neighbours under the
+ * pointer, and would make "not here" and "no such person" look the same.
  *
  * The colour control is your own chip, because that is where your colour
  * already shows. It isn't a dock tab: the dock is for things you read while
@@ -55,6 +55,9 @@ export interface Presence {
   here(list: readonly Owner[]): void;
   /** Somebody picked a colour. */
   picked(colours: Colours): void;
+  /** The DM edited the cast. The roster passed in at creation is the same
+   *  array, already changed in place; this rebuilds the chips from it. */
+  recast(): void;
 }
 
 /** A key for one person that a `Set` or a `Map` can hold. `Owner` is an object,
@@ -89,13 +92,14 @@ export function createPresence(
   send: (msg: ClientMsg) => void,
 ): Presence {
   const me = ownerOf(identity);
-  // Everyone who could be here, in one order that never changes: the DM, then
-  // the roster's order. The strip is built from this once and never rebuilt, so
-  // the row doesn't reflow as people come and go.
-  const everyone: Owner[] = [
+  // Everyone who could be here: the DM, then the roster's order. Rebuilt only
+  // when the DM edits the cast, never as people come and go, so the row doesn't
+  // reflow under the pointer.
+  const cast = (): Owner[] => [
     { kind: 'dm' },
     ...roster.map((slot): Owner => ({ kind: 'player', id: slot.id })),
   ];
+  let everyone = cast();
 
   let here = new Set(initialHere.map(keyOf));
   let colours: Colours = initialColours;
@@ -129,31 +133,34 @@ export function createPresence(
     ui.swatches.hidden = true;
   };
 
-  for (const owner of everyone) {
-    const key = keyOf(owner);
-    const chip = document.createElement('span');
-    chip.className = 'presence-chip';
+  const buildChips = (): void => {
+    chips.clear();
+    dots.clear();
+    ui.chips.replaceChildren();
+    for (const owner of everyone) {
+      const key = keyOf(owner);
+      const chip = document.createElement('span');
+      chip.className = 'presence-chip';
 
-    const dot = document.createElement('span');
-    dot.className = 'presence-dot';
+      const dot = document.createElement('span');
+      dot.className = 'presence-dot';
 
-    const label = document.createElement('span');
-    label.className = 'presence-name';
-    // The slug, not the display name, as on the chat chips: it fits, and it is
-    // what the DM already calls each character. The full name is on the
-    // chip's tooltip.
-    label.textContent = owner.kind === 'dm' ? 'DM' : owner.id;
+      const label = document.createElement('span');
+      label.className = 'presence-name';
+      // The slug, not the display name, as on the chat chips: it fits, and it
+      // is what the DM already calls each character. The full name is on the
+      // chip's tooltip.
+      label.textContent = owner.kind === 'dm' ? 'DM' : owner.id;
 
-    chip.append(dot, label);
-    chips.set(key, chip);
-    dots.set(key, dot);
-    ui.chips.append(chip);
-  }
+      chip.append(dot, label);
+      chips.set(key, chip);
+      dots.set(key, dot);
+      ui.chips.append(chip);
+    }
 
-  // The colour control, only for a player. It hangs off our own chip, where our
-  // colour is already shown.
-  if (me.kind === 'player') {
-    const own = chips.get(keyOf(me));
+    // The colour control, only for a player. It hangs off our own chip, where
+    // our colour is already shown.
+    const own = me.kind === 'player' ? chips.get(keyOf(me)) : undefined;
     if (own !== undefined) {
       own.classList.add('is-mine');
       own.setAttribute('role', 'button');
@@ -169,7 +176,10 @@ export function createPresence(
         }
       });
     }
+  };
+  buildChips();
 
+  if (me.kind === 'player') {
     PLAYER_HUES.forEach((hue, at) => {
       const swatch = document.createElement('button');
       swatch.type = 'button';
@@ -207,6 +217,11 @@ export function createPresence(
     },
     picked(next) {
       colours = next;
+      paint();
+    },
+    recast() {
+      everyone = cast();
+      buildChips();
       paint();
     },
   };

@@ -182,18 +182,36 @@ note(`door column with no tool: ${before} -> ${after}`);
 check('clicking a door with no tool in hand swings it', after !== before, true);
 check('and does not add or remove a wall', await readout(), '1 wall · 1 door');
 
-// Dragging from that same pixel must still pan, or the map becomes ungrabbable
-// wherever a door happens to be.
+// A left-drag from that same pixel draws a selection box. It must not swing the
+// door on the way, and it leaves the camera alone. The HUD is read with the
+// pointer parked in one place, because it names the cell under the pointer and
+// would change with the pointer alone.
+const door = idleDoor ?? 588;
 const camera = await hud();
-await drag(idleDoor ?? 588, 340, (idleDoor ?? 588) + 60, 400);
-check('dragging from a door pans the map instead of swinging it', camera !== (await hud()), true);
+await drag(door, 340, door + 60, 400);
+await move(950, 600);
+check('a left-drag from a door leaves the map where it was', await hud(), camera);
+check('and does not swing the door', await doorPixels(door), after);
+
+// A right-drag pans from anywhere, a door included, or the map becomes
+// ungrabbable wherever a door happens to be.
+await drag(door, 340, door + 200, 400, { button: 'right' });
+await move(950, 600);
+check('a right-drag from a door pans the map', camera !== (await hud()), true);
 
 // Panned back, so the door is where it was and the counts are comparable. Had
-// either drag swung it, this would be the dashed number.
-await drag((idleDoor ?? 588) + 60, 400, idleDoor ?? 588, 340);
+// any drag swung it, this would be the dashed number.
+await drag(door + 200, 400, door, 340, { button: 'right' });
 await move(950, 600);
 check('the pan came back', await hud(), camera);
-check('and the door was left alone by both drags', await doorPixels(idleDoor ?? 588), after);
+check('and the door was left alone by every drag', await doorPixels(door), after);
+
+// A right-click that goes nowhere is a pan that didn't move, and a pan's release
+// never clicks. Were it to, a reflexive right-click on a door would open it on
+// every screen at the table.
+await drag(door, 340, door, 340, { button: 'right' });
+await move(950, 600);
+check('a right-click on a door does not swing it', await doorPixels(door), after);
 
 // --- escape is the way out that needs no panel ------------------------------
 

@@ -81,6 +81,13 @@ export interface Chat {
    * colours would attribute half a conversation to the wrong person.
    */
   repaint(): void;
+  /**
+   * The DM edited the cast. The roster passed in at creation is the same
+   * array, already changed in place, so this rebuilds the DM's whisper chips
+   * from it and redraws the log under the new names. A destination whose slot
+   * went falls back to the table rather than pointing nowhere.
+   */
+  recast(): void;
 }
 
 /** What a destination is called in a sentence. */
@@ -229,25 +236,32 @@ export function createChat(
     ui.text.placeholder = whisper ? `whisper ${toName(to, roster)}…` : 'shout to the table…';
   };
 
-  for (const dest of destinations(identity, roster)) {
-    const chip = document.createElement('button');
-    chip.type = 'button';
-    chip.className = 'chat-chip';
-    // The slug, not the display name: it is what the DM already calls each
-    // character, it fits, and it matches the rail's lowercase tab labels. The
-    // full name is on the tooltip.
-    chip.textContent = dest.kind === 'player' ? dest.id : dest.kind === 'dm' ? 'DM' : 'table';
-    chip.title = `Send to ${toName(dest, roster)}.`;
-    chip.addEventListener('click', () => {
-      to = dest;
-      showDestination();
-      // Picking a destination is the first step of saying something, so focus
-      // moves to the text box.
-      ui.text.focus();
-    });
-    chips.set(dest, chip);
-    ui.destinations.append(chip);
-  }
+  // Built again by `recast`, so the DM's chips follow the roster when it's
+  // edited. A player's are the table and the DM whatever the cast is.
+  const buildChips = (): void => {
+    chips.clear();
+    ui.destinations.replaceChildren();
+    for (const dest of destinations(identity, roster)) {
+      const chip = document.createElement('button');
+      chip.type = 'button';
+      chip.className = 'chat-chip';
+      // The slug, not the display name: it is what the DM already calls each
+      // character, it fits, and it matches the rail's lowercase tab labels. The
+      // full name is on the tooltip.
+      chip.textContent = dest.kind === 'player' ? dest.id : dest.kind === 'dm' ? 'DM' : 'table';
+      chip.title = `Send to ${toName(dest, roster)}.`;
+      chip.addEventListener('click', () => {
+        to = dest;
+        showDestination();
+        // Picking a destination is the first step of saying something, so focus
+        // moves to the text box.
+        ui.text.focus();
+      });
+      chips.set(dest, chip);
+      ui.destinations.append(chip);
+    }
+  };
+  buildChips();
   showDestination();
 
   // --- the loaner die -------------------------------------------------------
@@ -381,6 +395,15 @@ export function createChat(
       const wasAt = ui.log.scrollTop;
       ui.log.replaceChildren(...lines.map(draw));
       ui.log.scrollTop = wasAt;
+    },
+    recast() {
+      buildChips();
+      // Sticky unless the person is gone. The table is the one destination
+      // that always exists.
+      if (!destinations(identity, roster).some((dest) => sameTo(dest, to))) {
+        to = { kind: 'table' };
+      }
+      this.repaint();
     },
   };
 }

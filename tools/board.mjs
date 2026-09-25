@@ -12,7 +12,7 @@
 // out from the middle, which is the middle only when the middle happened to be
 // free; and the middle of that cell is not the middle of the view, so at the
 // zoom a whole dungeon is framed at the click lands on the token's edge and
-// reads as a pan. Three drivers had that bug and it stayed invisible until
+// reads as a click on bare board. Three drivers had that bug and it stayed invisible until
 // `drive-staged.mjs`, which promotes a different map onto the board, ran first.
 //
 // The same rule has a second half that lives in the drivers rather than here,

@@ -188,11 +188,16 @@ also swing a door. Two more things take priority over it:
   directly.
 - **Mid-trace, every click is a corner**, so a run can be carried straight over a doorway.
 
-The gesture has to coexist with panning, since the map can be dragged from anywhere. It does this
-by reading the *pan* drag rather than starting its own: a click that never moved swings the door,
-and a click that moved was a pan. It's the same `moved` flag that already decides whether releasing
-the map clears the token selection, and a swing takes precedence over clearing it, because a DM
-opening a door didn't ask to deselect anything.
+The gesture has to coexist with the drag that starts on bare board, which is a selection box for a
+mouse and a pan for a finger. It does this by reading that drag rather than starting its own: a
+click that never moved swings the door, and a click that moved was a box or a pan. It's the same
+release that already decides whether a click clears the token selection (`clickEmpty` in
+`input.ts`), and a swing takes precedence over clearing it, because a DM opening a door didn't ask
+to deselect anything.
+
+**A right or middle click never swings a door.** Those buttons pan, and a pan's release does
+nothing. Before milestone 45 the swing ran for any pan that didn't move, which with right-drag
+panning would have opened a door on every screen whenever the DM right-clicked one by reflex.
 
 `Escape` backs out of one thing at a time: the run first, then the tool. Escaping both at once
 would lose a forty-corner trace to a keypress meant to end the last segment. `Backspace` drops the

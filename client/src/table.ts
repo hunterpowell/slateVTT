@@ -21,6 +21,9 @@
 // browse. `LibraryList.close` calls that tidiness, not a rule, and the map and
 // token panels do the same.
 //
+// The cast is here for the same reason: `roster` is a `RoomState` field. Its
+// editor is in `roster.ts`, which says what it sends and why.
+//
 // The backdrop is on this panel and not the map one because a backdrop isn't a
 // map. It has no grid, nothing stands on it, and the board it covers keeps its
 // walls and fog, which is why putting one up costs the encounter nothing.
@@ -29,7 +32,8 @@
 // server re-checks every command regardless.
 
 import { createLibraryList, type LibraryUi } from './library.js';
-import type { ClientMsg, Diagonals } from './protocol.js';
+import type { ClientMsg, Diagonals, RosterEntry } from './protocol.js';
+import { createRosterEditor, type RosterEditorUi } from './roster.js';
 import type { Scene } from './scene.js';
 
 export interface TableToolUi {
@@ -53,6 +57,8 @@ export interface TableToolUi {
   track: Pick<LibraryUi, 'button' | 'list' | 'file' | 'fileText'>;
   /** Stops the music. Hidden when there is none, like `backdropClear`. */
   trackClear: HTMLButtonElement;
+  /** Who can join. See `roster.ts`. */
+  roster: RosterEditorUi;
 }
 
 export interface TableTool {
@@ -62,14 +68,20 @@ export interface TableTool {
   /** Closes the library lists, so the tab reopens on the panel and not
    *  mid-browse. Nothing on the canvas is armed; see the note at the top. */
   stop(): void;
+  /** The DM edited the cast, on this tab or another. The roster passed in at
+   *  creation is the same array, already changed in place. */
+  recast(): void;
 }
 
 export function createTableTool(
   ui: TableToolUi,
   dmSecret: string,
+  roster: readonly RosterEntry[],
   send: (msg: ClientMsg) => void,
   report: (message: string) => void,
 ): TableTool {
+  const cast = createRosterEditor(ui.roster, roster, send, (message) => window.confirm(message));
+
   // Sent, not applied, as in every other panel in this rail: what is on screen
   // changes when the server says so. The control is set by `update` below, not
   // by the click, so a refused command leaves it showing what the room holds.
@@ -185,6 +197,9 @@ export function createTableTool(
     stop() {
       library.close();
       tracks.close();
+    },
+    recast() {
+      cast.recast();
     },
   };
 }

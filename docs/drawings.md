@@ -354,8 +354,9 @@ else.
 ### It's told apart by duration, not by target
 
 Everything else follows from this. On `pointerdown` with nothing modal armed, a ~400ms timer starts
-*alongside* whatever the press also began. A few pixels of movement cancels it (that was a pan or a
-drag). An early release cancels it, and the click underneath runs exactly as before, **so doors
+*alongside* whatever the press also began. A few pixels of movement cancels it (that was a box, a
+sweep or a drag). A shift-press that misses every token never starts it, since that's a shift+box
+(`docs/tokens.md`, *The box*). An early release cancels it, and the click underneath runs exactly as before, **so doors
 still swing**. When the timer fires it consumes the gesture, so the following `pointerup` does
 nothing.
 

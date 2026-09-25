@@ -78,9 +78,9 @@ The server logs the URL it's listening on and a one-time DM link:
 DM link: http://127.0.0.1:3000/?dm=<secret>
 ```
 
-Open that link as the DM. Give players the plain link (`http://127.0.0.1:3000/`). They pick a room,
-then claim a name from that room's roster on their first visit. The claimed identity is remembered
-in `localStorage`, so a refresh doesn't orphan a token.
+Open that link as the DM. Give players the plain link (`http://127.0.0.1:3000/`). They pick a room
+(skipped when the server has only one), then claim a name from that room's roster on their first
+visit. The claimed identity is remembered in `localStorage`, so a refresh doesn't orphan a token.
 
 ## Configuration
 
@@ -90,6 +90,7 @@ defaults for local use:
 | Variable          | Default          | Purpose                                       |
 | ----------------- | ---------------- | ---------------------------------------------- |
 | `SLATE_ADDR`       | `127.0.0.1:3000` | Address to bind                               |
+| `SLATE_SITE`       | `home`           | Which rooms this process serves. A second site is a second process with its own secret and data, for a DM who mustn't reach the first site's rooms. A name with no rooms stops the server booting |
 | `SLATE_CLIENT_DIR` | `../client`      | Static files served for everything but `/ws` and `/api/*` |
 | `SLATE_DM_SECRET`  | random per boot  | Set this to keep the DM link stable across restarts |
 | `SLATE_STATE`      | `slate-state.json` | Path to the first room's saved snapshot. Every other room's save sits beside it as `<room id>.json` |
@@ -102,12 +103,15 @@ defaults for local use:
 | `SLATE_HOST_STATUS` | unset           | A JSON file some *other* process writes with the host's vitals, passed through unchanged by `/api/status` |
 | `SLATE_BUILD_INFO` | unset            | A JSON file the deploy writes naming the running build, read once at boot |
 
-The rooms and their rosters are the `ROOMS` constant in [server/src/room.rs](server/src/room.rs),
-not runtime config; edit them there for a different group. There are two: the campaign (Cleodara,
-Saelyn, Torrin, Captain Bronzebeard, Thornwhistle Fernbark and Ignacio) and a Halloween one-shot
-with its own cast. Each roster slot has a short id beside its name. The id is what `localStorage`
-remembers and what a token's owner is recorded as, so renaming a character changes only the name,
-and their tokens follow them.
+The rooms are the `ROOMS` constant in [server/src/room.rs](server/src/room.rs), not runtime config;
+edit them there for a different group. Each names the site that serves it. The home site has two:
+the campaign and a Halloween one-shot. A second site has one room of its own.
+
+The DM edits each room's roster (its players) on the table tab, and it's saved with the room. The
+casts in `ROOMS` only seed a room that has never saved one. Each roster slot has a short id beside
+its name, made from the name when the player is added. The id is what `localStorage` remembers and
+what a token's owner is recorded as, so renaming a character changes only the name, and their tokens
+follow them.
 
 ## Project layout
 
@@ -184,7 +188,7 @@ which token is standing on a given square.
 | `drive-names.mjs`  | The names-under-tokens switch, on both boards at once              | both     |
 | `drive-ruler.mjs`  | The movement trail, the diagonal switch, the initiative panel      | both     |
 | `drive-ping.mjs`   | The hold that pings, and the ring reaching an unexplored corner    | both     |
-| `drive-select.mjs` | Shift-click selection, the group drag that moves them together, and Delete removing them | both     |
+| `drive-select.mjs` | Shift-click and box selection, the group drag that moves them together, and Delete removing them | both     |
 | `drive-staged.mjs` | Tracing and painting the next dungeon, and the table not being told | both     |
 | `drive-undo.mjs`   | The DM's undo reaching the table, and not rebuilding their page    | both     |
 | `drive-panels.mjs` | The initiative panel folding, `n` advancing the turn, the damage box, token markers, and the sight check no longer being offered | both     |
@@ -195,6 +199,7 @@ which token is standing on a given square.
 | `drive-backdrop.mjs` | A picture in front of the table, and the board being unchanged when it comes down | both     |
 | `drive-library.mjs` | Adding an image to a library and removing it again; the one driver that tests the disk | DM       |
 | `drive-rooms.mjs`  | Two rooms on one server: the picker, and one board's tokens being absent from the other | both     |
+| `drive-roster.mjs` | The DM adding, renaming and removing a player, seen on that player's screen; on a one-room site, no room picker | both     |
 | `drive-status.mjs` | The status page: its three states, that it fits an 800×480 panel, and that a join shows up on it | both     |
 | `drive-mirror.mjs` | Player view: the DM's own board redrawn as the table's, and switched off again | DM       |
 | `drive-isometric.mjs` | Calibrating a map to diamonds, and the table getting the same grid | both     |

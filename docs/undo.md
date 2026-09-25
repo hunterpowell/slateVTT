@@ -27,8 +27,8 @@ undoing are the same operation against the same definition: `RoomState::restored
 field added to `Saved` and read in only one of them loads correctly and undoes to a stale value, or
 the reverse, and neither shows up as an error.
 
-`adopt` leaves alone whatever a `Saved` doesn't contain: `dm_secret`, `roster`, `clients`,
-`pending`, and the ring itself. The ring matters most. Restoring it would make the second undo walk
+`adopt` leaves alone whatever a `Saved` doesn't contain: `dm_secret`, `clients`, `pending`, and the
+ring itself. The ring matters most. Restoring it would make the second undo walk
 back into a history the first one had already rewound.
 
 ## Each entry is the state after a change
@@ -119,6 +119,11 @@ described above. Boot wants them back and a restore doesn't. Saying so once, at 
 needs it, keeps `adopt` the single definition of "what is a saved room". See `docs/notes.md` and
 `docs/presence.md`.
 
+The roster (milestone 46) is the third, excluded by the same two lines, and the first the DM wrote.
+It's excluded because **a restore can't change who somebody is**: `Restored` carries no roster (see
+below), and an undo that took back an added slot would leave that player connected as nobody. See
+`docs/rooms.md`.
+
 `SetAudio` is also in `undid`'s `None` arm, but needs no second half: music isn't on `Saved`, so a
 restore can't reach it. See `docs/sound.md`.
 
@@ -180,7 +185,7 @@ DM a fresh camera just as they're looking at what they undid.
 Two things follow:
 
 - **`Restored` is its own message**, carrying state and nothing else. No `your_id`, no `is_dm`, no
-  roster: identity is settled by the socket and can't change under it, and an undo can't edit the
+  roster: identity is settled by the socket and can't change under it, and an undo doesn't edit the
   cast list.
 - **`adoptView` changes the scene in place.** Assigning a new object to `room.scene` would leave the
   renderer drawing the old one forever. It shares its field list with `sceneFromView` through

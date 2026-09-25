@@ -91,7 +91,8 @@ Deployment: self-hosted on a Raspberry Pi 3B in the room, behind a Cloudflare Tu
 cross-compiled binary under `systemd`. No cloud and no recurring cost; that's a requirement, not
 a phase. It's always on so the DM can prepare the next dungeon midweek, which is what the staged
 map and wall editor are for. Scale is seven clients on a 1GB board. Procedure and backups are in
-`deploy/pi/README.md`; `deploy/windows/` is for hosting a game away from home.
+`deploy/pi/README.md`; `deploy/windows/` is for hosting a game away from home. A second site (see
+below) is a second process on the same Pi, with its own user, port and hostname.
 
 `/status/` reports on the host and is not part of Slate. It's a static page plus one read-only
 `/api/status` route behind `SLATE_STATUS_KEY` (a second credential, not the DM secret; if unset,
@@ -108,21 +109,31 @@ Each room is a single `tokio` task that exclusively owns its `RoomState`. There 
 room state and no `Arc<Mutex<RoomState>>` anywhere. Clients send commands into the room over an
 `mpsc` channel; the room replies to each client over that client's own `mpsc` sender.
 
-There are several rooms, fixed at boot. `ROOMS` is a const (an id, display name and roster
-each), so `AppState` holds an `Arc<HashMap<String, RoomHandle>>` built once in `main` and only
-read after that. Still no lock, since that table never changes after boot. Rooms share no
+There are several rooms, fixed at boot. `ROOMS` is a const (an id, display name, seed roster and
+site each), so `AppState` holds an `Arc<HashMap<String, RoomHandle>>` built once in `main` and
+only read after that. Still no lock, since that table never changes after boot. Rooms share no
 field, channel or lock, which is why this isn't the scene system and why there's no cross-room
 leak to filter.
-The room is named in the WebSocket URL, not in any message: no `ClientMsg`/`ServerMsg` variant,
-and `protocol-tags.json` is unchanged. `/api/rooms` is the only `/api` route without the DM
-secret, because the room picker comes before the socket. The first entry is the primary room:
-its save file is `SLATE_STATE` as given, and every other room's is a sibling `<id>.json`.
-**A room id names a save file, a `localStorage` key and a `?room=` link, so changing one after
-play orphans all three.**
+The room is named in the WebSocket URL, not in any message: no `ClientMsg`/`ServerMsg` variant.
+`/api/rooms` is the only `/api` route without the DM secret, because the room picker comes before
+the socket, and a server with one room skips the picker. The first room of each site is its
+primary room: its save file is `SLATE_STATE` as given, and every other room's is a sibling
+`<id>.json`. **A room id names a save file, a `localStorage` key and a `?room=` link, so changing
+one after play orphans all three.**
+
+**A site is one process and the rooms it serves** (`SLATE_SITE`, default `home`). Rooms in one
+process share the DM secret, the room list, the libraries and `uploads/`, so a DM who mustn't
+reach this site's rooms gets a second site: a second process with its own secret and data, not a
+third room. An unknown site refuses to boot rather than fall back.
+
+The roster is room state: saved, edited by the DM on the table tab (`SetRoster`), and seeded
+from `ROOMS` only when the save has none. Removing a slot is refused while that player owns a
+token, and deletes their colour and scratchpad and closes their connection.
 
 → `docs/rooms.md` before touching `ROOMS`/`RoomDef`, `roster_from`, `RoomState::blank`,
-`room::spawn`, `save_path`, `room_listing` or `ws_handler` on the server, or `rooms.ts`,
-`chooseRoom` in `main.ts`, the storage keys in `identity.ts`, or the room in `connect`.
+`room::spawn`, `save_path`, `room_listing` or `ws_handler` on the server, `SLATE_SITE`,
+`SetRoster`/`RosterChanged`/`roster_allowed`, or `rooms.ts`, `roster.ts`, `chooseRoom` in
+`main.ts`, the storage keys in `identity.ts`, or the room in `connect`.
 
 Per WebSocket connection, split the socket and spawn two tasks:
 - recv task: reads the WS stream, deserializes, pushes `(ClientId, ClientMsg)` into the room's `mpsc::Sender`
@@ -155,6 +166,8 @@ Field comments name the rule and the doc file; the reasoning is in the file.
 ```rust
 struct RoomState {
     dm_secret: String,
+    /// The cast. Saved, DM-edited, excluded from undo by hand; `ROOMS` only
+    /// seeds it. `docs/rooms.md`.
     roster: Vec<RosterEntry>,
     map: MapInfo,
     /// The map the DM is preparing, with its walls and fog overrides. One bundle,
@@ -313,14 +326,15 @@ never on a role:
   a key it could use to name someone else's.** The DM is refused `SetColour` outright.
 - **Undo is DM-only, and it's the one command that reverts other people's work**, because a
   restore replaces the whole room. Only kinds of state the DM could have written go on the ring.
-  The scratchpads and player colours are excluded, each by two lines (`undid` returns `None` for
-  it, and the `Undo` arm puts it back around `adopt`), and both lines are needed. See
+  The scratchpads, player colours and roster are excluded, each by two lines (`undid` returns
+  `None` for it, and the `Undo` arm puts it back around `adopt`), and both lines are needed. The
+  roster is the DM's, and excluded because a restore can't change who somebody is. See
   `docs/undo.md`.
 
 Walls and fog overrides are the other extreme: DM-only with no per-item rule, and a player is
 never sent one or told one changed. Token creation, deletion, editing, ownership, planning
-(`staged_pos`), map changes, initiative edits, and every room-wide setting (`show_names`,
-`diagonals`, `show_cursors`, `show_dm_cursor`, `backdrop`, `audio`) are DM-only.
+(`staged_pos`), map changes, initiative edits, the roster, and every room-wide setting
+(`show_names`, `diagonals`, `show_cursors`, `show_dm_cursor`, `backdrop`, `audio`) are DM-only.
 
 The DM owns every library: listing, picking, adding, removing. Every route under `/api` except
 `/api/rooms` requires the DM secret. Players have no credential, and giving them one would be
@@ -352,7 +366,7 @@ fails safe: a secret added to `Token` and forgotten here is simply missing from 
 shows up as the DM's own client lacking a field.
 
 Unfiltered messages (identical for every recipient): `fog` (party-shared, nothing to build per
-client), every room-wide setting, `here` and `colours`. Who may set those is a permission
+client), every room-wide setting, `here`, `colours` and `roster`. Who may set those is a permission
 question; their values aren't secret. Everything else is filtered. Two fields have different
 content per recipient, rather than the room's copy with rows removed: `chat` and `notes`.
 
@@ -427,15 +441,17 @@ nothing new on the wire. The HP bar has no permission check because a player's c
 has no `hp`. Damage is typed on the row as a change (`-12`, `+7`; a bare `35` sets it) and sends
 an ordinary `UpdateToken`. The panel is rebuilt on every delta, so the input box must be given
 focus back afterwards. It collapses to the current row; that setting is in `localStorage`, not
-the room. Shift-click groups tokens, and a group drag is N ordinary `MoveToken`s; the server
-doesn't know groups exist.
+the room. Shift-click or a left-drag box on bare board groups tokens, and a group drag is N
+ordinary `MoveToken`s; the server doesn't know groups exist. **Every ringed token is in the
+group**, the panel's included. Pan is the right and middle buttons (touch still pans on a
+left-drag), and only a left click on bare board swings a door or clears the selection.
 
 `show_names` is on the room, not `MapInfo` or the token, because it belongs to neither the image
 nor any one creature. That's why it's on the table tab.
 
 → `docs/tokens.md` before touching `tokens.ts`, `panel.ts`, `markers.ts`, `library.ts`,
-`snap_to_cell`, `Token`/`TokenView`/`Marker`, the `selection` set in `input.ts`, or any
-`message_for` arm.
+`snap_to_cell`, `Token`/`TokenView`/`Marker`, the `selection` set or the marquee in `input.ts`,
+`marquee.ts`, or any `message_for` arm.
 
 ## Drawings and distance
 
@@ -538,14 +554,15 @@ the wire. The open tab is kept in `localStorage`. The draw tool is pinned below 
 than on it, because everyone has it and it's used mid-fight.
 
 `#corner`, bottom right, holds the gesture hint, fit (`Stage.fit`, for everyone, `Home`) and the
-`/spells/` link. None of them arms a tool or shows a count. The right-hand column is: presence
+`/spells/` link. None of them arms a tool or shows a count. The hint is also the per-person
+mouse/trackpad switch (`gestures.ts`, `localStorage`); off by default, so a mouse wheel zooms. The right-hand column is: presence
 strip (pinned at the top, the edge that never moves), initiative panel, then the dock. The dock
 is a second tab strip, for everyone, in `dock.ts` rather than a generalised rail: nothing in it
 arms the canvas, its tabs show unread counts, and its panels stack. It grows upward, with the
 strip last.
 
 → `docs/frontend.md` before touching `coords.ts`, `rail.ts`, `dock.ts`, `Stage.fit`/`fitToRect`,
-`#corner`, or the order of the right-hand column.
+`#corner`, `gestures.ts`, the wheel handler in `input.ts`, or the order of the right-hand column.
 
 ## Maps
 

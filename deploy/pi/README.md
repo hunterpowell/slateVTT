@@ -175,7 +175,8 @@ Some of those need explaining:
   `halloween.json` next to `slate-state.json`. There's nothing to migrate and nothing here to edit
   when a room is added; `docs/rooms.md` explains why it's a naming rule rather than a directory.
 - **`SLATE_DM_SECRET` is one secret for the whole server** and opens whichever room is picked. There's
-  no per-room secret and the DM link names no room, so the same link reaches both.
+  no per-room secret and the DM link names no room, so the same link reaches both. A DM who mustn't
+  reach these rooms gets a separate process with its own secret; see *A second site* below.
 - **`SLATE_ADDR` is loopback.** `cloudflared` runs on this same box and connects locally, so Slate
   never listens on the LAN. To see it in a browser, forward the port rather than rebinding it (see
   *Seeing it in a browser* below).
@@ -826,6 +827,130 @@ Two limits the proxy imposes that loopback didn't:
   doesn't want one; the unguessable hostname is the alternative chosen instead. If it's ever added,
   set the session duration long: an Access session expiring mid-game drops the WebSocket, and Slate's
   reconnect is a fresh join that would land on a login page.
+
+---
+
+# A second site
+
+A second Slate process on the same box, for a different DM and table: at the moment, *The Legend of the Swords on the Heights*.
+It serves his room and nothing else. **It has its own DM secret, save file, libraries, uploads, port,
+hostname and Linux user**, so neither DM's link opens the other's rooms, and neither process can
+read the other's files. `RoomDef::site` in `server/src/room.rs` is what chooses the rooms, and
+`docs/rooms.md` says why this is a second process and not a third room.
+
+It runs the same binary and client as `slate.service`, so a deploy updates both. `install.sh`
+restarts it after the home site passes its health check, and warns (without rolling back) if it
+doesn't come back. It has no status key, no Kindle and no backups; `Backup-Slate.ps1` copies
+`/var/lib/slate` and nothing else.
+
+```text
+/var/lib/slate-sword-legend/        slate-sword-legend-owned, like /var/lib/slate
+  slate-state.json                  his room
+  uploads/ maps/ portraits/ backdrops/ tracks/
+/etc/slate-sword-legend/slate.env   root-only, holds his DM secret
+```
+
+Every step below is one line, because a multi-line paste into this SSH session runs the first line
+and corrupts the rest.
+
+## Installing it
+
+From the Windows machine, in the repo:
+
+```powershell
+scp deploy\pi\slate-sword-legend.service deploy\pi\slate-sword-legend.env hunter@slate.local:~
+```
+
+Then on the Pi, one line at a time:
+
+```bash
+sudo adduser --system --group --no-create-home --home /var/lib/slate-sword-legend --shell /usr/sbin/nologin slate-sword-legend
+sudo mkdir -p /var/lib/slate-sword-legend/uploads /var/lib/slate-sword-legend/maps /var/lib/slate-sword-legend/portraits /var/lib/slate-sword-legend/backdrops /var/lib/slate-sword-legend/tracks
+sudo chown -R slate-sword-legend:slate-sword-legend /var/lib/slate-sword-legend
+sudo chmod 750 /var/lib/slate-sword-legend
+sudo install -D -m 600 -o root -g root ~/slate-sword-legend.env /etc/slate-sword-legend/slate.env
+echo "SLATE_DM_SECRET=$(openssl rand -hex 16)" | sudo tee -a /etc/slate-sword-legend/slate.env >/dev/null
+sudo tail -n 3 /etc/slate-sword-legend/slate.env
+sudo install -m 644 ~/slate-sword-legend.service /etc/systemd/system/
+sudo systemctl daemon-reload
+sudo systemctl enable --now slate-sword-legend
+journalctl -u slate-sword-legend -n 5 --no-pager
+```
+
+The log should say `serving this site's rooms site=sword-legend` and `room ready id=sword-legend ... slots=0`.
+No slots is right: the DM needs none, and he adds his players from the table tab. Check the
+isolation from the Pi before anything reaches the internet:
+
+```bash
+curl -s http://127.0.0.1:3002/api/rooms
+```
+
+That should list `sword-legend` and nothing else.
+
+## His hostname
+
+A new label on the same tunnel, chosen the way *Choosing the hostname* above says: one label deep,
+random, and written down nowhere in this repo.
+
+```bash
+SWORD_HOST=$(openssl rand -hex 6).<domain>
+echo $SWORD_HOST
+sudo cp /etc/cloudflared/config.yml /etc/cloudflared/config.yml.bak
+sudo sed -i "s|^  - service: http_status:404|  - hostname: $SWORD_HOST\n    service: http://127.0.0.1:3002\n  - service: http_status:404|" /etc/cloudflared/config.yml
+sudo cat -A /etc/cloudflared/config.yml
+```
+
+The new rule has to come **before** the catch-all, which is why it's inserted in front of it rather
+than appended. `cat -A` should show two hostname rules with the same indentation (two spaces, a
+dash, a space), then the 404. Then ask cloudflared which rule each host lands on:
+
+```bash
+sudo cloudflared --config /etc/cloudflared/config.yml tunnel ingress rule https://$SWORD_HOST
+cloudflared tunnel route dns slate $SWORD_HOST
+sudo systemctl restart cloudflared
+```
+
+The first should name `http://127.0.0.1:3002`. If it names 3000, the rule went in the wrong place:
+restore the `.bak` and try again.
+
+## His links
+
+His players get `https://<his label>.<domain>/`. With one room on the server there's no room picker,
+so it opens on the character picker (empty until he adds players on the table tab).
+
+His DM link is that plus `?dm=<secret>`. Read the secret back with:
+
+```bash
+sudo grep SLATE_DM_SECRET /etc/slate-sword-legend/slate.env
+```
+
+The browser keeps it after the first visit and strips it from the address bar, as on the home site.
+
+## Seeding his libraries
+
+They start empty. Adding maps and art from the panels works as it does on the home site. To copy
+files in from the Windows machine instead, stage them and copy as his user:
+
+```powershell
+scp -r my-starter-maps hunter@slate.local:stage-sword-legend
+```
+
+```bash
+sudo -u slate-sword-legend cp -rn ~/stage-sword-legend/. /var/lib/slate-sword-legend/maps/
+```
+
+If `slate-sword-legend` can't read the stage directory, copy as root and fix the owner:
+`sudo cp -rn ~/stage-sword-legend/. /var/lib/slate-sword-legend/maps/` then
+`sudo chown -R slate-sword-legend:slate-sword-legend /var/lib/slate-sword-legend/maps`.
+
+## Taking it down
+
+```bash
+sudo systemctl disable --now slate-sword-legend
+```
+
+That stops it and keeps his room on disk. Remove his rule from `config.yml` and restart
+`cloudflared` to take the hostname off the internet too.
 
 ---
 

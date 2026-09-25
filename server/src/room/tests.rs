@@ -587,6 +587,7 @@ mod notes;
 mod persistence;
 mod presence;
 mod rooms;
+mod roster;
 mod sound;
 mod status;
 mod tokens;

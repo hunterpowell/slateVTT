@@ -101,6 +101,31 @@ before it rather than after. And anything here that describes the board hides wi
 `body.covered` hides the zoom readout, the hint and the fit control together, because a zoom
 percentage over a backdrop and an offer to frame a board nobody can see are both wrong.
 
+### The hint is the mouse/trackpad switch
+
+`#hint` is a button (milestone 45). Clicking it swaps between mouse and trackpad gestures, and its
+text, written by `gestures.ts`, starts with the active mode and lists the gestures that mode has.
+It passes the corner's test: it arms no tool and carries no count. It's the only thing in the
+corner with `pointer-events` back on besides the fit control and the link.
+
+- **Mouse** (the default): every wheel event zooms, exactly as before the switch existed.
+- **Trackpad**: a wheel event with `ctrlKey` zooms at `PINCH_SENSITIVITY` (a pinch, or ctrl+wheel
+  on a mouse, which is then fast), and a plain one pans by `deltaX`/`deltaY`. Browsers report both
+  trackpad gestures as `wheel` events; Safari's pinch wasn't checked.
+
+It's a switch because no browser API says which device sent a wheel event. Guessing from step size
+was rejected: it depends on OS scroll settings and display scaling, and a wrong guess makes a mouse
+wheel pan. Keeping mouse zoom unchanged matters more than trackpad convenience, so it's off by
+default.
+
+The switch is the hint line because that's where someone stuck without a pan looks. With it off, a
+trackpad can't pan at all: a click-drag is a selection box (`docs/tokens.md`, *The box*), a
+two-finger slide zooms, and most touchpads have no right-drag. It's in `localStorage`, like the
+initiative fold and the volume, and never on `RoomState`.
+
+`PINCH_SENSITIVITY` is a starting value. Nobody had a trackpad to tune it on when it shipped, and
+no suite can see it, so it's tuned on the first report from someone who uses one.
+
 The fit control is also for everyone, unlike most buttons. A player who has zoomed into a corner is
 as lost as the DM would be, so it's built outside the `identity.isDm` half of `onWelcome`.
 `tools/drive-fit.mjs` opens two browsers for that reason.

@@ -1,0 +1,45 @@
+# The second site: a second Slate process on this box, serving his room and no
+# other. Installed once, by hand -- see "A second site" in deploy/pi/README.md.
+#
+# The same binary and client tree as slate.service, so a deploy updates both
+# and install.sh restarts this one if it is installed. Everything that makes it
+# a separate site is in its env file (SLATE_SITE, its own DM secret, its own
+# port) and in this file (its own user and data directory). The rooms, the
+# secret, the libraries and the uploads it serves are none of slate.service's,
+# and slate.service's are none of its.
+
+[Unit]
+Description=Slate virtual tabletop (sword-legend site)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=exec
+# Its own account, which can't read /var/lib/slate (mode 750, owned by slate).
+User=slate-sword-legend
+Group=slate-sword-legend
+EnvironmentFile=/etc/slate-sword-legend/slate.env
+WorkingDirectory=/var/lib/slate-sword-legend
+ExecStart=/opt/slate/bin/slate-server
+Restart=always
+RestartSec=5
+
+NoNewPrivileges=true
+ProtectSystem=strict
+ReadWritePaths=/var/lib/slate-sword-legend
+# A second wall behind the file permissions: the home site's data and env file
+# aren't in this process's view of the filesystem at all. The leading "-" lets
+# the unit start on a box that doesn't have one of them.
+InaccessiblePaths=-/var/lib/slate -/etc/slate
+ProtectHome=true
+PrivateTmp=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictNamespaces=true
+RestrictRealtime=true
+LockPersonality=true
+MemoryDenyWriteExecute=true
+
+[Install]
+WantedBy=multi-user.target

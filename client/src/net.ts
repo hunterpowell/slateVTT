@@ -4,6 +4,7 @@ import type {
   Diagonals,
   Initiative,
   Owner,
+  RosterEntry,
   RosterSlot,
   ServerMsg,
   TokenMoved,
@@ -64,6 +65,8 @@ export interface Handlers {
   /** A player picked their colour. The whole table, on every connection,
    *  including the client that picked, which is how its own swatch updates. */
   onColoursChanged(colours: Colours): void;
+  /** The DM edited the cast. The whole list, on every connection. */
+  onRosterChanged(roster: RosterEntry[]): void;
   /** Somebody else's sweep, keyed by their connection. Never our own. */
   onSketch(sketch: Extract<ServerMsg, { type: 'sketch' }>): void;
   onSketchEnded(by: number): void;
@@ -251,6 +254,9 @@ export function connect(roomId: string, on: Handlers): Net {
         break;
       case 'colours_changed':
         on.onColoursChanged(msg.colours);
+        break;
+      case 'roster_changed':
+        on.onRosterChanged(msg.roster);
         break;
       case 'sketch':
         on.onSketch(msg);

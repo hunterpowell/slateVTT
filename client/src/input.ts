@@ -3,8 +3,10 @@ import type { Camera, Vec2 } from './coords.js';
 import { gridToWorld, screenToWorld, worldToGrid } from './coords.js';
 import type { DrawTool } from './drawtool.js';
 import type { FogTool } from './fogtool.js';
+import type { Gestures } from './gestures.js';
 import type { Identity } from './identity.js';
 import { canMove } from './identity.js';
+import { inMarquee } from './marquee.js';
 import type { Pings } from './pings.js';
 import { HOLD_MS } from './pings.js';
 import type { ClientMsg, ShapeKind, WireOrigin } from './protocol.js';
@@ -19,6 +21,12 @@ import { snapToCorner, wallAt } from './walls.js';
 const MIN_ZOOM = 0.1;
 const MAX_ZOOM = 4;
 const ZOOM_SENSITIVITY = 0.0015;
+/**
+ * The same, for a pinch in trackpad mode. A pinch arrives as a stream of small
+ * ctrl+wheel deltas, far smaller than a wheel notch, so the mouse's rate makes
+ * it crawl. A starting value, untuned: nobody has tried it on a trackpad yet.
+ */
+const PINCH_SENSITIVITY = 0.01;
 /** Firefox reports wheel deltas in lines; treat one line as this many pixels. */
 const LINE_HEIGHT_PX = 16;
 /** ~25 Hz. Smooth enough to watch, far below what the room needs to absorb. */
@@ -56,16 +64,50 @@ const HOLD_SLOP_PX = DRAW_CLICK_SLOP_PX;
 const WALL_HIT_PX = 8;
 
 type Drag =
-  | { kind: 'pan'; pointerId: number; lastX: number; lastY: number; moved: boolean }
+  | {
+      kind: 'pan';
+      pointerId: number;
+      lastX: number;
+      lastY: number;
+      moved: boolean;
+      /**
+       * Whether a release that never moved is a click on empty ground: it swings
+       * a door, or else puts everything down. True only for a touch or pen press,
+       * whose drag on empty ground is still a pan. A right or middle press is
+       * never a click, so a reflexive right-click on a door doesn't open it on
+       * every screen.
+       */
+      clicks: boolean;
+    }
+  /**
+   * A mouse's left button on empty ground: a box, gathering on release every
+   * token inside it that this client may move. Local and silent, like a
+   * shift-click: it sends nothing, and the group is computed once, on release.
+   */
+  | {
+      kind: 'marquee';
+      pointerId: number;
+      /** Where the button went down, in screen pixels, for the click slop. */
+      fromX: number;
+      fromY: number;
+      /** The box's corners in world coordinates, so a wheel zoom mid-drag
+       *  keeps it on the map rather than on the glass. */
+      from: Vec2;
+      to: Vec2;
+      /** Past the click slop. A box that never got there is a click. */
+      moved: boolean;
+      /** Shift was down: add to the group rather than replace it. */
+      add: boolean;
+    }
   | {
       kind: 'token';
       pointerId: number;
       /**
        * Every token this drag moves, each with its own offset from the pointer.
        *
-       * Usually one. A group selected with shift-click moves as a rigid body:
-       * the offsets are captured once at pointerdown, so the group keeps its
-       * formation however far the pointer travels.
+       * Usually one. A group moves as a rigid body: the offsets are captured
+       * once at pointerdown, so the group keeps its formation however far the
+       * pointer travels.
        *
        * Each token still lands on its own cell. The offsets are in grid units
        * and the server snaps every token separately, so a group of mixed sizes
@@ -150,22 +192,30 @@ interface Grabbed {
 
 export interface InputState {
   /** Every token currently being dragged. Drives the drag highlight. A set
-   *  because a shift-click group moves together. Empty when nothing is being
-   *  dragged. */
+   *  because a group moves together. Empty when nothing is being dragged. */
   readonly draggingIds: ReadonlySet<string>;
   /**
-   * The tokens shift-click has gathered into a group, which a drag on any one
-   * of them moves together.
+   * The tokens gathered into a group, by shift-click or a box, which a drag on
+   * any one of them moves together.
    *
    * Empty is the ordinary case and means "no group": a plain click drags
-   * whatever it landed on and nothing else. Only shift-clicking puts anything
-   * in here, so no gesture without the modifier is affected.
+   * whatever it landed on and nothing else.
+   *
+   * **Every ringed token is in here once a group is built.** The ring also
+   * covers the panel's token, so a gesture that adds to the group adds the
+   * panel's token with it. Otherwise it would be ringed, counted by Delete, and
+   * left behind by a drag. With the group empty, the panel's token alone is a
+   * group of one, which drags the same way.
    *
    * It can only hold tokens this client may move, with no rule of its own:
-   * membership comes from `tokenAt`, which already ignores everybody else's
-   * tokens. A player grouping their own two summons is ordinary `can_move`.
+   * membership comes from `tokenAt` and `inMarquee`, which ignore everybody
+   * else's tokens. A player grouping their own two summons is ordinary
+   * `can_move`.
    */
   readonly selection: ReadonlySet<string>;
+  /** The box being dragged, in world coordinates, or null. Null until it has
+   *  moved past the click slop, so a click on empty ground draws nothing. */
+  readonly marquee: { from: Vec2; to: Vec2 } | null;
   /** Pointer position in grid units, or null when the pointer is off-canvas. */
   readonly cursorGrid: Vec2 | null;
   /** The shape a click would erase, while the draw tool is in hand. */
@@ -178,12 +228,19 @@ export interface InputState {
  * of waiting for the round trip.
  *
  *   left-drag on a token you own   move it
- *   left-drag on anything else     pan
- *   middle-drag                    pan
- *   wheel                          zoom, anchored on the cursor
+ *   left-drag on anything else     box: gather what you can move (a mouse)
+ *                                  pan (a finger or a pen)
+ *   right- or middle-drag          pan
+ *   wheel                          zoom, anchored on the cursor, or in
+ *                                  trackpad mode, pan (see `gestures.ts`)
+ *   pinch, ctrl+wheel              zoom, in trackpad mode
+ *
+ * The box is a mouse's alone. A finger has no right button to pan with, so a
+ * touch or pen drag on empty ground still pans.
  *
  * While the DM has calibrate mode on, left-drag draws a grid reference box
- * instead. Middle-drag still pans, so the map can be moved without leaving it.
+ * instead. Right- and middle-drag still pan, so the map can be moved without
+ * leaving it.
  *
  * While the DM is previewing a staged map, tokens drag as they do on the
  * board, and everything done in preview takes effect on promote. The only
@@ -191,13 +248,13 @@ export interface InputState {
  * is one flag on the command and one branch here.
  *
  * Tokens that are not yours are transparent to the pointer, so dragging across
- * one pans the map instead of doing nothing. The server re-checks regardless;
+ * one boxes (or pans) instead of doing nothing. The server re-checks regardless;
  * this is an affordance, not the permission boundary.
  *
  * While a shape tool is in hand it takes the left button as calibrate does:
  * left-drag sweeps a shape and left-click erases one, so nothing can be
- * grabbed or panned by accident. Middle-drag still pans, so a shape can be
- * drawn across a map larger than the window.
+ * grabbed or panned by accident. Right- and middle-drag still pan, so a shape
+ * can be drawn across a map larger than the window.
  *
  * The wall editor is the fourth thing that can hold the left button, and the
  * only one with no drag: a click places a corner and a double-click ends the
@@ -230,6 +287,11 @@ export function attachInput(
    */
   onSelect: ((id: string | null) => void) | null,
   /**
+   * The token the DM's panel is editing, or null. Read so that a gesture adding
+   * to the group can add it too (see `selection`). Null for players.
+   */
+  selected: (() => string | null) | null,
+  /**
    * Movement rulers. Our own drag's origin is captured here: nothing on the
    * wire says where a drag began, and by the time the first frame is sent the
    * token has already moved.
@@ -248,6 +310,8 @@ export function attachInput(
   /** The rings. Everybody has these. Our own hold is timed, previewed and
    *  fired from here. */
   pings: Pings,
+  /** Whether the wheel is a mouse's or a trackpad's. This person's setting. */
+  gestures: Gestures,
 ): InputState {
   let drag: Drag | null = null;
   let lastDragSentAt = 0;
@@ -258,6 +322,7 @@ export function attachInput(
     selection: new Set<string>(),
     cursorGrid: null as Vec2 | null,
     hoveredShapeId: null as string | null,
+    marquee: null as { from: Vec2; to: Vec2 } | null,
   };
 
   const localPoint = (e: PointerEvent | WheelEvent): Vec2 => {
@@ -531,7 +596,8 @@ export function attachInput(
    * shape tool in hand has a `draw` drag open, which has sent nothing (`moved`
    * is false, or the hold would have been cancelled; see `HOLD_SLOP_PX`), so it
    * needs no release frame, only its local preview cleared. A pan has nothing
-   * to take back.
+   * to take back, and neither has a box: it isn't drawn until it has moved past
+   * the same slop that cancels the hold.
    *
    * The DM's selection is left alone. It happened on the way down, it is
    * visible on the board, and un-selecting a creature somebody just pointed at
@@ -582,16 +648,89 @@ export function attachInput(
     if (sweeping()) return state.hoveredShapeId !== null ? 'pointer' : 'crosshair';
     if (tokenAt(scene, identity, w.x, w.y) !== null) return 'pointer';
     // Asked after the token, because a token standing in a doorway is what
-    // gets grabbed. The door is behind it.
-    return swingableDoorUnder(w) !== null ? 'pointer' : 'grab';
+    // gets grabbed. The door is behind it. Not `grab` over bare ground: a
+    // mouse's left-drag there draws a box.
+    return swingableDoorUnder(w) !== null ? 'pointer' : 'default';
   };
 
   /** Grid units under a screen point, on whichever board is being shown. */
   const gridUnder = (w: Vec2): Vec2 => worldToGrid(shownBoard(scene).grid, w.x, w.y);
 
+  /** Adds to the group, and the panel's token with it (see `selection`). */
+  const gather = (ids: Iterable<string>): void => {
+    const panel = selected?.() ?? null;
+    if (panel !== null) state.selection.add(panel);
+    for (const id of ids) state.selection.add(id);
+  };
+
+  /**
+   * A shift-click on a token: out of the group if it has a ring, into it if not.
+   *
+   * The panel's token has a ring whether or not it is in `selection`, so a
+   * shift-click on it clears the panel too. Taking it out of `selection` alone
+   * would leave it ringed through the panel and outside the group.
+   */
+  const toggle = (id: string): void => {
+    if (id === (selected?.() ?? null)) {
+      state.selection.delete(id);
+      onSelect?.(null);
+    } else if (!state.selection.delete(id)) {
+      gather([id]);
+    }
+  };
+
+  /**
+   * A click on empty ground, as opposed to a pan or a box: the left button's
+   * release, or a finger's, that never moved. A right or middle click never
+   * gets here (see `clicks` on the pan).
+   *
+   * A door under it swings. That keeps both gestures on one press: click a
+   * door to open it, drag from a door to box or pan. A token on top of a door
+   * wins, because it was grabbed at pointerdown and this is never reached.
+   *
+   * Otherwise it puts everything down: the panel and the group. A pan doesn't,
+   * because panning is constant and losing the selection every time the board
+   * moved would be maddening.
+   */
+  const clickEmpty = (w: Vec2): void => {
+    const door = swingableDoorUnder(w);
+    if (door !== null) {
+      // The board it was found on, which is the board on screen. On the live
+      // one this is the party opening a door; over a preview it is the DM
+      // setting it to be found open.
+      send({ type: 'toggle_door', id: door.id, staged: previewing() });
+      return;
+    }
+    onSelect?.(null);
+    state.selection.clear();
+  };
+
+  /**
+   * Letting go of a box. One that moved gathers what it covers: a plain box
+   * replaces the group and clears the panel, as a click on empty ground does,
+   * and a shift+box adds to it. Clearing the panel loads nothing into the
+   * form, so the form still never follows the group.
+   *
+   * One that never moved is a click. A shift-click on empty ground does
+   * nothing at all: shift only ever adds, and an empty box adds nothing.
+   */
+  const endMarquee = (d: Extract<Drag, { kind: 'marquee' }>, w: Vec2): void => {
+    state.marquee = null;
+    if (!d.moved) {
+      if (!d.add) clickEmpty(w);
+      return;
+    }
+    const ids = inMarquee(scene, identity, d.from, d.to);
+    if (!d.add) {
+      state.selection.clear();
+      onSelect?.(null);
+    }
+    gather(ids);
+  };
+
   canvas.addEventListener('pointerdown', (e) => {
     if (drag !== null) return;
-    if (e.button !== 0 && e.button !== 1) return;
+    if (e.button !== 0 && e.button !== 1 && e.button !== 2) return;
     e.preventDefault(); // middle button would otherwise start autoscroll
 
     const p = localPoint(e);
@@ -677,13 +816,15 @@ export function attachInput(
     // `sweeping()` keeps it below the shape tool, because an armed tool takes
     // the button first. Ping is the only exception to that.
     //
-    // Nothing here calls `onSelect`. The panel edits one token and this gesture
-    // is about several, so building a group leaves the form showing whatever
-    // was last plain-clicked instead of swapping it out mid-edit.
-    if (e.button === 0 && e.shiftKey && !sweeping()) {
+    // Nothing here puts a token in the panel. The panel edits one token and
+    // this gesture is about several, so building a group leaves the form
+    // showing whatever was last plain-clicked instead of swapping it out
+    // mid-edit. Taking the panel's own token out of the group clears it.
+    const gathering = e.button === 0 && e.shiftKey && !sweeping();
+    if (gathering) {
       const hit = tokenAt(scene, identity, w.x, w.y);
       if (hit !== null) {
-        if (!state.selection.delete(hit.id)) state.selection.add(hit.id);
+        toggle(hit.id);
         return;
       }
     }
@@ -693,7 +834,11 @@ export function attachInput(
     // of inside each: a hold on a token, with a shape tool, or on empty map is
     // the same gesture, and separating by duration means none of the branches
     // needs to know about it.
-    beginHold(e, p, gridUnder(w));
+    //
+    // Except a shift-press that missed every token. It is a shift+box, the
+    // modifier is held for the reason above, and a box that paused before
+    // moving would otherwise ping every screen.
+    if (!gathering) beginHold(e, p, gridUnder(w));
 
     // A shape tool takes the button too: a circle has to be able to start on
     // top of a creature, which is where most of them start.
@@ -783,13 +928,39 @@ export function attachInput(
       onSelect?.(hit.id);
       cancelTrailingSend();
       lastDragSentAt = 0; // let the first move through immediately
+    } else if (e.button === 0 && e.pointerType === 'mouse') {
+      drag = {
+        kind: 'marquee',
+        pointerId: e.pointerId,
+        fromX: p.x,
+        fromY: p.y,
+        from: w,
+        to: w,
+        moved: false,
+        add: e.shiftKey,
+      };
+      canvas.setPointerCapture(e.pointerId);
+      canvas.style.cursor = 'default';
+      return;
     } else {
-      drag = { kind: 'pan', pointerId: e.pointerId, lastX: p.x, lastY: p.y, moved: false };
+      // A right or middle press anywhere, or a finger or pen on empty ground.
+      drag = {
+        kind: 'pan',
+        pointerId: e.pointerId,
+        lastX: p.x,
+        lastY: p.y,
+        moved: false,
+        clicks: e.button === 0,
+      };
     }
 
     canvas.setPointerCapture(e.pointerId);
     canvas.style.cursor = 'grabbing';
   });
+
+  // The browser's menu would open on every right-drag. The canvas only: the
+  // rail, the dock and the chat keep theirs.
+  canvas.addEventListener('contextmenu', (e) => e.preventDefault());
 
   canvas.addEventListener('pointermove', (e) => {
     const p = localPoint(e);
@@ -883,6 +1054,15 @@ export function attachInput(
       // Every cell the pointer crosses, and the tool drops the repeats. Nothing
       // is sent until the button comes up.
       fogTool?.apply(gridUnder(w));
+      return;
+    }
+
+    if (drag.kind === 'marquee') {
+      drag.to = w;
+      // A click slop, as a sweep has, rather than a pan's "any pixel", so a
+      // hand that twitches clicking a door still swings it.
+      if (Math.hypot(p.x - drag.fromX, p.y - drag.fromY) > DRAW_CLICK_SLOP_PX) drag.moved = true;
+      if (drag.moved) state.marquee = { from: drag.from, to: drag.to };
       return;
     }
 
@@ -982,27 +1162,10 @@ export function attachInput(
     } else if (drag.kind === 'fog') {
       // One command for the whole stroke, however many cells it crossed.
       fogTool?.endStroke();
-    } else if (!drag.moved) {
-      // A click on empty map, as opposed to a pan. Panning is constant, so
-      // losing the selection every time the board moves would be maddening.
-      //
-      // A door under that click swings instead. It reads off the pan drag
-      // instead of starting a drag of its own, which keeps both gestures:
-      // click a door to open it, drag from a door to move the map. A token on
-      // top of one wins, because it was grabbed at pointerdown and this branch
-      // is never reached.
-      const door = swingableDoorUnder(w);
-      if (door !== null) {
-        // The board it was found on, which is the board on screen. On the live
-        // one this is the party opening a door; over a preview it is the DM
-        // setting it to be found open.
-        send({ type: 'toggle_door', id: door.id, staged: previewing() });
-      } else {
-        onSelect?.(null);
-        // The group is cleared too. A click on empty map puts everything down,
-        // as it clears the panel.
-        state.selection.clear();
-      }
+    } else if (drag.kind === 'marquee') {
+      endMarquee(drag, w);
+    } else if (drag.clicks && !drag.moved) {
+      clickEmpty(w);
     }
 
     drag = null;
@@ -1039,11 +1202,26 @@ export function attachInput(
     (e) => {
       e.preventDefault();
       const p = localPoint(e);
-      const delta = e.deltaMode === WheelEvent.DOM_DELTA_LINE ? e.deltaY * LINE_HEIGHT_PX : e.deltaY;
+      const unit = e.deltaMode === WheelEvent.DOM_DELTA_LINE ? LINE_HEIGHT_PX : 1;
+
+      // In trackpad mode a plain wheel event is two fingers sliding, and the
+      // board moves as far as they did. Only a pinch, which arrives with
+      // `ctrlKey`, zooms.
+      if (gestures.trackpad && !e.ctrlKey) {
+        cam.x += (e.deltaX * unit) / cam.zoom;
+        cam.y += (e.deltaY * unit) / cam.zoom;
+        return;
+      }
+
+      // A mouse's ctrl+wheel in trackpad mode is read as a pinch, so it zooms
+      // faster than a plain wheel does in mouse mode. Nothing on the event
+      // tells the two apart.
+      const rate = gestures.trackpad ? PINCH_SENSITIVITY : ZOOM_SENSITIVITY;
+      const delta = e.deltaY * unit;
 
       // Anchor the zoom: whatever world point is under the cursor stays there.
       const anchor = screenToWorld(cam, p.x, p.y);
-      cam.zoom = clamp(cam.zoom * Math.exp(-delta * ZOOM_SENSITIVITY), MIN_ZOOM, MAX_ZOOM);
+      cam.zoom = clamp(cam.zoom * Math.exp(-delta * rate), MIN_ZOOM, MAX_ZOOM);
       cam.x = anchor.x - p.x / cam.zoom;
       cam.y = anchor.y - p.y / cam.zoom;
     },

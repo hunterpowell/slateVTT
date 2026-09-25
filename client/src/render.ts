@@ -90,6 +90,9 @@ const DEAD_X_W = 3.5;
 const CAL_FILL = 'rgba(120, 190, 255, 0.10)';
 const CAL_EDGE = 'rgba(120, 190, 255, 0.95)';
 const CAL_DIVISION = 'rgba(120, 190, 255, 0.55)';
+/** A box being dragged to gather tokens. The selection ring's colour and dash,
+ *  because what it gathers gets that ring. */
+const MARQUEE_FILL = 'rgba(120, 190, 255, 0.08)';
 /**
  * How solidly a token the table cannot see draws on the DM's board. Faded and
  * dashed together, because faded alone is what a slow-loading portrait looks
@@ -287,16 +290,19 @@ export interface Frame {
   now: number;
   /** Token art, keyed by image URL. See `loadArt` in main.ts. */
   tokenImages: Map<string, HTMLImageElement>;
-  /** Every token being dragged right now. More than one is a shift-click group
-   *  moving together. */
+  /** Every token being dragged right now. More than one is a group moving
+   *  together. */
   draggingIds: ReadonlySet<string>;
   /** Movement rulers by token id, ours and everyone else's alike. */
   rulers: ReadonlyMap<string, Ruler>;
   /** The token the DM has selected for editing. Null for everyone else. */
   selectedId: string | null;
-  /** The tokens shift-click has gathered, which drag together. Empty unless a
-   *  group has been built. See `selection` in input.ts. */
+  /** The tokens gathered by shift-click or a box, which drag together. Empty
+   *  unless a group has been built. See `selection` in input.ts. */
   selection: ReadonlySet<string>;
+  /** Our own box being dragged, in world coordinates, or null. Nobody else's:
+   *  a box is local and sends nothing. */
+  marquee: { from: Vec2; to: Vec2 } | null;
   /** Every sweep in progress, ours and everyone else's. */
   sketches: readonly Sketch[];
   /** The shape the pointer is over and could erase, or null. Only ever set
@@ -478,6 +484,7 @@ export function render(ctx: CanvasRenderingContext2D, view: Viewport, frame: Fra
   drawWalls(ctx, frame);
 
   if (frame.calibration !== null) drawCalibration(ctx, cam, frame.calibration);
+  if (frame.marquee !== null) drawMarquee(ctx, cam, frame.marquee);
 
   ctx.setTransform(1, 0, 0, 1, 0, 0);
   ctx.scale(view.dpr, view.dpr);
@@ -1048,14 +1055,14 @@ function drawTokens(ctx: CanvasRenderingContext2D, frame: Frame, board: Board): 
     }
 
     // Further out again, and dashed. Two things land on this ring: the token the
-    // DM is editing, and every member of a shift-click group. One ring for both
-    // because they answer one question (which tokens is this gesture about),
-    // and on a token that is both, two rings at the same radius would be one
-    // ring drawn twice.
+    // DM is editing, and every member of a group. One ring for both because
+    // they answer one question (which tokens is this gesture about), and on a
+    // token that is both, two rings at the same radius would be one ring drawn
+    // twice. A group, once built, includes the panel's token (see `selection`
+    // in input.ts), so every ringed token moves with a drag.
     //
     // The group is empty until somebody builds one, so a client that never
-    // shift-clicks sees only the DM's edit ring, and for a player no ring at
-    // all.
+    // gathers sees only the DM's edit ring, and for a player no ring at all.
     if (token.id === selectedId || frame.selection.has(token.id)) {
       ctx.beginPath();
       ctx.arc(centre.x, centre.y, radius + 10 / cam.zoom, 0, TAU);
@@ -1185,6 +1192,25 @@ function drawWallRun(
  * it. Those divisions are the real feedback: when the cell count is right they
  * land on the map's own printed lines, and the DM can see it before releasing.
  */
+function drawMarquee(
+  ctx: CanvasRenderingContext2D,
+  cam: Camera,
+  { from, to }: { from: Vec2; to: Vec2 },
+): void {
+  const left = Math.min(from.x, to.x);
+  const top = Math.min(from.y, to.y);
+  const width = Math.abs(to.x - from.x);
+  const height = Math.abs(to.y - from.y);
+
+  ctx.fillStyle = MARQUEE_FILL;
+  ctx.fillRect(left, top, width, height);
+  ctx.lineWidth = 1.5 / cam.zoom;
+  ctx.strokeStyle = SELECTED_RING;
+  ctx.setLineDash([5 / cam.zoom, 4 / cam.zoom]);
+  ctx.strokeRect(left, top, width, height);
+  ctx.setLineDash([]);
+}
+
 function drawCalibration(
   ctx: CanvasRenderingContext2D,
   cam: Camera,

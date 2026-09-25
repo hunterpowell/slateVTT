@@ -73,7 +73,7 @@ const zoomIn = async (page, notches) => {
 const panAway = async (page) => {
   const at = await middle(page);
   for (let i = 0; i < 4; i++) {
-    await page.drag(at.x + 200, at.y + 200, at.x - 250, at.y - 250);
+    await page.drag(at.x + 200, at.y + 200, at.x - 250, at.y - 250, { button: 'right' });
     await page.wait(120);
   }
   await page.wait(400);

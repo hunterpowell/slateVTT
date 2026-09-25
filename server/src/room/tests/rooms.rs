@@ -13,18 +13,24 @@ use super::*;
 
 // --- the room table -----------------------------------------------------
 
+/// Every site `ROOMS` names, in the order they first appear.
+fn sites() -> Vec<&'static str> {
+    let mut sites = Vec::new();
+    for def in &ROOMS {
+        if !sites.contains(&def.site) {
+            sites.push(def.site);
+        }
+    }
+    sites
+}
+
 #[test]
 fn every_room_id_is_a_slug() {
     // An id is joined onto a directory to make a save file, put in a URL as
     // `?room=`, and used as a `localStorage` key. A slash or a dot in one is a
     // path; a space in one is a link that needs escaping.
-    for (id, _) in rooms() {
-        assert!(!id.is_empty(), "a room id must be something");
-        assert!(
-            id.chars()
-                .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-'),
-            "{id} is not a slug"
-        );
+    for def in &ROOMS {
+        assert!(is_slug(def.id), "{} is not a slug", def.id);
     }
 }
 
@@ -32,51 +38,69 @@ fn every_room_id_is_a_slug() {
 fn room_ids_are_unique() {
     // `main.rs` builds a `HashMap` off these, so a duplicate would not be an
     // error: it would silently be one room fewer, with the second definition's
-    // roster on the first one's save file.
+    // roster on the first one's save file. Unique across sites, not only
+    // within one, so a room id alone says which room is meant.
     let mut seen = Vec::new();
-    for (id, _) in rooms() {
-        assert!(!seen.contains(&id), "{id} is defined twice");
-        seen.push(id);
+    for def in &ROOMS {
+        assert!(!seen.contains(&def.id), "{} is defined twice", def.id);
+        seen.push(def.id);
     }
 }
 
 #[test]
-fn exactly_one_room_is_primary() {
-    // Two things hang off this and both are answers to "which room did the
-    // single-room server become": whose save file is `SLATE_STATE` verbatim,
-    // and who boots the built-in board. Two primaries would fight over the
-    // first; none would leave the campaign's save file unread.
-    assert_eq!(rooms().filter(|(id, _)| is_primary(id)).count(), 1);
-}
-
-#[test]
-fn every_room_has_a_cast() {
-    // `main.rs` panics rather than spawning a room with no roster, which would
-    // be a room no player could ever join.
-    for (id, _) in rooms() {
-        let roster = roster_of(id).unwrap_or_else(|| panic!("{id} has no roster"));
-        assert!(!roster.is_empty(), "{id} has an empty roster");
+fn every_site_has_exactly_one_primary_room() {
+    // Whose save file is `SLATE_STATE` verbatim, in each process. Two
+    // primaries on one site would fight over that file; none would leave it
+    // unread.
+    for site in sites() {
+        assert_eq!(
+            rooms(site).filter(|(id, _)| is_primary(id)).count(),
+            1,
+            "{site}"
+        );
     }
 }
 
 #[test]
-fn every_roster_id_is_a_slug() {
-    // The same rule as `every_room_id_is_a_slug` above, one level down, and
-    // the rule `.claude/CLAUDE.md` states about a roster slot: the id is what
-    // `localStorage` remembers, what a token's `owner` is written as, and what
-    // keys this player's colour and their scratchpad. So renaming one after a
-    // room has been played in orphans four things at once, and a slot id with
-    // a space in it is a name used as an id. The display name beside it is
-    // free text and isn't checked.
-    for (id, _) in rooms() {
-        let roster = roster_of(id).unwrap_or_else(|| panic!("{id} has no roster"));
+fn only_the_campaign_boots_into_the_built_in_board() {
+    // Its tokens are the campaign's party. Another site's first room seeded
+    // with them would open on somebody else's characters.
+    let demos: Vec<&str> = ROOMS
+        .iter()
+        .map(|def| def.id)
+        .filter(|id| boots_demo(id))
+        .collect();
+    assert_eq!(demos, vec!["campaign"]);
+}
+
+#[test]
+fn a_site_serves_its_own_rooms_and_nobody_elses() {
+    // The whole reason for a site: the second site's process must not list, spawn or
+    // accept a socket for the campaign or the one-shot, and the Pi's first
+    // process has no reason to hold his room.
+    let home: Vec<&str> = rooms(DEFAULT_SITE).map(|(id, _)| id).collect();
+    assert_eq!(home, vec!["campaign", "halloween"]);
+    let second: Vec<&str> = rooms("sword-legend").map(|(id, _)| id).collect();
+    assert_eq!(second, vec!["sword-legend"]);
+    // A mistyped `SLATE_SITE`, which `main.rs` refuses to boot.
+    assert_eq!(rooms("sword-legnd").count(), 0);
+}
+
+#[test]
+fn every_seed_roster_id_is_a_slug() {
+    // The rule `roster_allowed` holds the DM's edits to, applied to what the
+    // code seeds a room with: the id is what `localStorage` remembers, what a
+    // token's `owner` is written as, and what keys this player's colour and
+    // their scratchpad. The display name beside it is free text.
+    for def in &ROOMS {
+        let roster = roster_of(def.id).unwrap_or_else(|| panic!("{} has no roster", def.id));
+        assert!(roster.len() <= MAX_ROSTER, "{}", def.id);
         for entry in roster {
             let slug = &entry.id.0;
-            assert!(!slug.is_empty(), "a roster id in {id} must be something");
             assert!(
-                slug.chars()
-                    .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-'),
-                "{slug} in {id} is not a slug"
+                is_slug(slug) && slug.len() <= MAX_PLAYER_ID_LEN,
+                "{slug} in {} is not a slug",
+                def.id
             );
         }
     }

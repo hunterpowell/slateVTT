@@ -10,6 +10,7 @@ import type { Fog } from './fog.js';
 import { fogFromWire } from './fog.js';
 import type { FogTool } from './fogtool.js';
 import { createFogTool } from './fogtool.js';
+import { createGestures } from './gestures.js';
 import type { Identity } from './identity.js';
 import {
   ANONYMOUS,
@@ -91,6 +92,8 @@ interface Ui {
   /** In the bottom-right corner, for everyone: the camera is per client, so
    *  this is too. */
   fitBoard: HTMLButtonElement;
+  /** The gesture hint beside it, which is also the mouse/trackpad switch. */
+  gestureHint: HTMLButtonElement;
   banner: HTMLElement;
   picker: HTMLElement;
   roomPicker: HTMLElement;
@@ -250,6 +253,11 @@ interface Ui {
       fileText: HTMLElement;
     };
     trackClear: HTMLButtonElement;
+    roster: {
+      list: HTMLElement;
+      name: HTMLInputElement;
+      add: HTMLButtonElement;
+    };
   };
 }
 
@@ -270,6 +278,7 @@ function findUi(): Ui {
     ctx,
     hud: need('#hud'),
     fitBoard: need<HTMLButtonElement>('#fit-board'),
+    gestureHint: need<HTMLButtonElement>('#hint'),
     banner: need('#banner'),
     picker: need('#picker'),
     roomPicker: need('#room-picker'),
@@ -429,6 +438,11 @@ function findUi(): Ui {
         fileText: need('#table-track-upload-text'),
       },
       trackClear: need<HTMLButtonElement>('#table-track-clear'),
+      roster: {
+        list: need('#table-roster'),
+        name: need<HTMLInputElement>('#table-roster-name'),
+        add: need<HTMLButtonElement>('#table-roster-add'),
+      },
     },
   };
 }
@@ -470,12 +484,16 @@ async function chooseRoom(): Promise<void> {
   const known = (id: string | null): RoomChoice | undefined =>
     id === null ? undefined : rooms.find((candidate) => candidate.id === id);
 
-  const chosen = known(takeRoomFromUrl()) ?? known(readStoredRoom());
+  // A server with one room has nothing to pick between, so it is picked. A
+  // second site is usually one room (see `RoomDef::site`), and a one-button
+  // picker in front of every first visit would only be a click to get past.
+  const alone = rooms.length === 1 ? rooms[0] : undefined;
+  const chosen = known(takeRoomFromUrl()) ?? known(readStoredRoom()) ?? alone;
   if (chosen !== undefined) {
     // A link that named a room replaces the remembered one; a remembered one
     // is written back unchanged, which is harmless.
     storeRoom(chosen.id);
-    boot(ui, chosen);
+    boot(ui, chosen, alone !== undefined);
     return;
   }
 
@@ -484,12 +502,16 @@ async function chooseRoom(): Promise<void> {
     if (picked === undefined) return; // not offered; nothing to do
     storeRoom(picked.id);
     roomPicker.hide();
-    boot(ui, picked);
+    boot(ui, picked, false);
   });
   roomPicker.show(rooms);
 }
 
-function boot(ui: Ui, choice: RoomChoice): void {
+/**
+ * `alone` is whether this is the server's only room, which hides the DM's
+ * switch button: with nothing to switch to, it would reload into the same room.
+ */
+function boot(ui: Ui, choice: RoomChoice, alone: boolean): void {
   // Read and strip the DM secret before anything else can screenshot the URL.
   // A reload comes back through this with no `?dm=` and reads the secret from
   // `localStorage`, so the DM comes back as the DM after a dropped socket.
@@ -520,6 +542,12 @@ function boot(ui: Ui, choice: RoomChoice): void {
   // ring, so the server sends them no label.
   let undo: Undo | null = null;
   let identity: Identity = ANONYMOUS;
+  // The cast, from `Welcome`. **One array, changed in place** by
+  // `roster_changed`, because the presence strip, the chat, the draw tool, the
+  // token panel, the table tab and the renderer each captured it when they were
+  // built. Replacing it would leave all six reading the old one, which is
+  // `adoptView`'s reason for changing the scene in place.
+  let roster: RosterEntry[] | null = null;
   // Outlives any one drag and is fed from both sides: our own pointer in
   // input.ts, and everyone else's drag frames below.
   const rulers = createRulers();
@@ -616,7 +644,8 @@ function boot(ui: Ui, choice: RoomChoice): void {
       picker.hide();
       identity = { isDm: welcome.is_dm, playerId: welcome.player_id };
       if (welcome.player_id !== null) storePlayerId(choice.id, welcome.player_id);
-      showWhoami(ui, identity, choice, welcome.state.tokens);
+      roster = welcome.roster;
+      showWhoami(ui, identity, choice, welcome.state.tokens, alone);
 
       // Built here and not beside the rulers, because it needs to know who we
       // are: every ring it holds is attributed, ours included.
@@ -845,6 +874,7 @@ function boot(ui: Ui, choice: RoomChoice): void {
         tableTool = createTableTool(
           ui.tabletool,
           dmSecret,
+          welcome.roster,
           (msg) => net.send(msg),
           (message) => flash(ui.banner, message),
         );
@@ -1094,6 +1124,19 @@ function boot(ui: Ui, choice: RoomChoice): void {
       chat?.repaint();
     },
 
+    // The DM edited the cast. Everything that holds the array reads the new
+    // one on its next draw; these four also built DOM from it, so they rebuild.
+    // Our own slot can't have gone: the room closes that connection instead of
+    // sending this, and the reload lands on the character picker.
+    onRosterChanged: (next) => {
+      if (roster === null) return;
+      roster.splice(0, roster.length, ...next);
+      presence?.recast();
+      chat?.recast();
+      tokenTool?.recast();
+      tableTool?.recast();
+    },
+
     // Somebody else's sweep. Never our own: the server does not echo it, for
     // the same reason it does not echo our drag frames.
     onSketch: (frame) => {
@@ -1291,7 +1334,13 @@ function boot(ui: Ui, choice: RoomChoice): void {
   });
 }
 
-function showWhoami(ui: Ui, identity: Identity, choice: RoomChoice, tokens: WireToken[]): void {
+function showWhoami(
+  ui: Ui,
+  identity: Identity,
+  choice: RoomChoice,
+  tokens: WireToken[],
+  alone: boolean,
+): void {
   if (identity.isDm) {
     ui.whoamiName.textContent = `DM · ${choice.name}`;
   } else {
@@ -1304,8 +1353,11 @@ function showWhoami(ui: Ui, identity: Identity, choice: RoomChoice, tokens: Wire
   // with the room and the secret both remembered, it is the DM's only way back
   // to the room picker short of hand-editing `?room=`. It is safe because the
   // reload comes back as the DM via `takeDmSecret`.
+  //
+  // Except on a server with one room, where the DM has nowhere to switch to.
+  // A player keeps theirs there, since it is also how they change character.
   ui.whoamiSwitch.textContent = identity.isDm ? 'switch room' : 'switch';
-  ui.whoamiSwitch.hidden = false;
+  ui.whoamiSwitch.hidden = identity.isDm && alone;
   ui.whoami.hidden = false;
 }
 
@@ -1450,16 +1502,18 @@ async function start(
           // relies on.
           tokenTool.select(id);
         },
+    tokenTool === null ? null : () => tokenTool.selectedId,
     rulers,
     drawTool,
     sketches,
     wallTool,
     fogTool,
     pings,
+    createGestures(ui.gestureHint),
   );
 
-  // Delete removes every token with a selection ring: the shift-click group,
-  // the token the panel is editing, or both. The renderer draws them as one
+  // Delete removes every token with a selection ring: the group, the token the
+  // panel is editing, or both. The renderer draws them as one
   // selection and this deletes them as one. Backspace too, because that is the
   // key a Mac labels "delete". Bound only for the DM, since only the DM holds a
   // token tool and only the DM may delete; a player's Delete does nothing
@@ -1680,6 +1734,7 @@ async function start(
       hoveredShapeId: input.hoveredShapeId,
       selectedId: tokenTool?.selectedId ?? null,
       selection: input.selection,
+      marquee: input.marquee,
       currentTurn: room.initiative.current,
       calibration:
         mapTool !== null && mapTool.box !== null

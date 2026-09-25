@@ -32,7 +32,7 @@ Everything from 8 on was planned after the original seven: 17 and 18 after 16 la
 existed, and all three were written to overturn something the roadmap already said (each entry names
 what). 28 also overturned part of its own design.
 
-**Everything through 44 is built except 29.** 25, 26, 34 and 38 were never planned and were built out
+**Everything through 46 is built except 29.** 25, 26, 34 and 38 were never planned and were built out
 of order; their entries in `docs/history.md` say why. 33 is multi-room, which was unscheduled until a
 Halloween one-shot became the second room it was waiting for.
 
@@ -78,6 +78,9 @@ Halloween one-shot became the second room it was waiting for.
 42. Duplicate and fit board. 2026-09-09. `docs/tokens.md`, `docs/frontend.md`.
 43. Token markers. 2026-09-09, revised 2026-09-10. `docs/tokens.md`.
 44. The keyboard pass. 2026-09-17. `docs/tokens.md`.
+45. Marquee select, right-drag pan, and trackpad gestures. 2026-09-23. `docs/tokens.md`,
+    `docs/frontend.md`.
+46. A second site, and the roster the DM edits. 2026-09-24. `docs/rooms.md`.
 
 ## 29. Party sight and split sight
 
@@ -200,14 +203,13 @@ Smaller things the record leaves open. Each is explained in its milestone's entr
 
 - The "your turn" notice fires for the DM on every monster's turn. If play says that's noise, a
   `localStorage` off switch is the cheap follow-up (27b).
-- Marquee select. The selection set exists and only the gesture would be new, but a drag on empty
-  ground is already pan (25).
 - A fog preview on the staged map. If it's ever wanted it's client-only; don't put it in the room
   (20).
 - `tools/audit-uploads.mjs` always lists `track-` copies as unreferenced, because `audio` isn't
   saved. Fixing it means reading live room state, which the audit exists to avoid (41).
-- `SLATE_STATE` as a directory, if there are ever enough rooms to want one, and a DM secret per room,
-  if a link ever goes to someone who shouldn't reach the other campaign (33).
+- `SLATE_STATE` as a directory, if there are ever enough rooms to want one (33). A DM secret per room
+  was the other half of this line; a link for somebody who mustn't reach the campaign now gets a
+  second site instead (46).
 
 ## Lessons from building
 

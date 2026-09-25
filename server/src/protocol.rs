@@ -1294,6 +1294,22 @@ pub enum ClientMsg {
         url: Option<String>,
     },
 
+    /// The room's cast, whole, in order. DM-only.
+    ///
+    /// The whole list rather than add, rename and remove, because the room can
+    /// then compare two lists: a slot that is missing was removed, and one that
+    /// is new was added. The client makes a new slot's id from its name; the
+    /// room checks it is a slug and unique. **An id never changes once made**,
+    /// since it is what tokens, colours, scratchpads and `localStorage` are
+    /// keyed on. A rename changes only `name`.
+    ///
+    /// Removing a slot that still owns a token is refused: hand the token to
+    /// somebody else first. Removing one deletes its colour and scratchpad and
+    /// closes the connections using it. See `docs/rooms.md`.
+    SetRoster {
+        roster: Vec<RosterEntry>,
+    },
+
     /// The map image and its grid, in one command. DM-only.
     ///
     /// Uploading a new map and calibrating the grid on the current one are the
@@ -1761,6 +1777,16 @@ pub enum ServerMsg {
     ColoursChanged {
         colours: Colours,
     },
+    /// The DM edited the cast. The whole list, identical for every recipient
+    /// and unfiltered: the roster already goes to everyone in `Welcome`.
+    ///
+    /// Everything a client built from the roster at join (the presence strip,
+    /// the chat chips, the token panel's owners) is rebuilt from this. A client
+    /// whose own slot was removed never receives it: the room closes that
+    /// connection first, and the reload lands on the character picker.
+    RosterChanged {
+        roster: Vec<RosterEntry>,
+    },
     /// The staged board (its map, its walls and its paint), or `None` once
     /// there isn't one. Reaches the DM and nobody else: it exists for one
     /// identity rather than for one action.
@@ -1997,6 +2023,7 @@ mod tests {
             ClientMsg::SetShowDmCursor { .. } => "set_show_dm_cursor",
             ClientMsg::SetBackdrop { .. } => "set_backdrop",
             ClientMsg::SetAudio { .. } => "set_audio",
+            ClientMsg::SetRoster { .. } => "set_roster",
             ClientMsg::SetMap { .. } => "set_map",
             ClientMsg::PromoteStaged => "promote_staged",
             ClientMsg::ClearStaged => "clear_staged",
@@ -2041,6 +2068,7 @@ mod tests {
             ServerMsg::DmCursorChanged { .. } => "dm_cursor_changed",
             ServerMsg::Presence { .. } => "presence",
             ServerMsg::ColoursChanged { .. } => "colours_changed",
+            ServerMsg::RosterChanged { .. } => "roster_changed",
             ServerMsg::StagedChanged { .. } => "staged_changed",
             ServerMsg::InitiativeChanged { .. } => "initiative_changed",
             ServerMsg::Sketch { .. } => "sketch",
@@ -2143,6 +2171,7 @@ mod tests {
         "set_initiative",
         "set_map",
         "set_notes",
+        "set_roster",
         "set_show_cursors",
         "set_show_dm_cursor",
         "set_show_names",
@@ -2170,6 +2199,7 @@ mod tests {
         "pinged",
         "presence",
         "restored",
+        "roster_changed",
         "said",
         "shapes_changed",
         "sketch",

@@ -2022,6 +2022,64 @@ question is about the click. And the field the negative test types into has to b
 stop propagation. The chat box does, so a letter typed there passes even with `typingIn` deleted, and
 the check would have been testing the wrong guard. The token panel's name box listens only for Enter.
 
+## 45. Marquee select, right-drag pan, and trackpad gestures
+
+Done 2026-09-23. A mouse's left-drag on bare board draws a box that gathers what you can move, pan
+moved to the right and middle buttons, every ringed token is now in the group, and the hint line is
+a mouse/trackpad switch. Client only. See *Moving several at once* in `docs/tokens.md` and *The
+bottom-right corner* in `docs/frontend.md`.
+
+It reverses two things milestone 25 kept. The marquee wasn't built then because a left-drag on bare
+board was already pan. And the panel's token was kept out of the group; that was about the form, and
+the form still doesn't follow the group, but a drag now moves every token with a ring.
+
+Three decisions were made before building, beyond the design. A shift+box that never moved does
+nothing, rather than acting as a click on bare board, because shift only ever adds. Shift-clicking
+the plain-clicked token with nothing else gathered un-rings it, since it has a ring. And the
+trackpad sensitivity shipped untuned: nobody had a trackpad to try it on.
+
+The one-group rule broke `drive-select.mjs` before it broke anything in the client. The driver finds
+a token by plain-clicking cells, which left the panel on B, so its first shift-click on A gathered B
+too, and its later shift-click on B took B back out. It now clicks bare board first. The same driver's
+"a box sends nothing" check read 0.06% of the player's screen against a 0.1% limit; that was the DM's
+pointer crossing the player's board during the drag, and it read 0.00% with pointers off, so the
+driver turns them off as `drive-ping.mjs` does. Both new negative checks were confirmed by breaking
+the code they guard: a right-click that counts as a click swings the door in `drive-ui.mjs`, and a
+shift-press that reaches `beginHold` pings in `drive-ping.mjs`.
+
+## 46. A second site, and the roster the DM edits
+
+Done 2026-09-24. A second server process on the same Pi for a different DM running his own
+table, with its own secret, data, port, hostname and Linux user; and the roster moved out of the
+code into the room, edited from the table tab. See *Sites* and *The roster is the DM's* in
+`docs/rooms.md`, and *A second site* in `deploy/pi/README.md`.
+
+The request was a second campaign whose DM and players mustn't see the home site's two rooms. A third
+room was the obvious reading and was checked first: it would have given his DM link the campaign too
+(one secret per process), listed both home rooms on his players' picker (`/api/rooms` is public),
+and shown him the map library. Fixing each inside one process reverses three decisions in
+`docs/rooms.md`, so it's a second process, and the code change is a `site` on `RoomDef` and a
+`SLATE_SITE` that picks it.
+
+The roster moved because the second DM couldn't otherwise add a friend without a cross-compile. It
+was the change `roster_from`'s own comment had predicted. Decided before building: editing applies to
+every room, not only the new site; removing a slot is refused while it owns a token; removal deletes
+the slot's colour and scratchpad; roster edits aren't undoable. The last one is a third instance of
+the two-line undo exemption, and the first for state the DM wrote, for a different reason from the
+other two: `Restored` carries no roster, so a restore can't change who somebody is.
+
+`Saved::roster` is an `Option` because an empty list is a real roster for the new site, and loading
+the campaign's pre-46 save as empty would have locked six people out on the first boot after the
+upgrade. A server with one room now skips the room picker, and the DM's switch button hides there.
+
+Found while building: the Kindle renderer already listens on 3001, so the second site is on 3002;
+and `systemctl try-restart` succeeds on a stopped unit, so `install.sh` checks `is-active` before
+restarting the second site rather than warning about one nobody had started. The two server tests
+that assert what a client wasn't left holding were confirmed by breaking the code they guard (the
+scratchpad deletion and the undo exemption). `drive-roster.mjs` was run against both a home site and
+a `SLATE_SITE=sword-legend` process; `drive-rooms`, `drive-presence`, `drive-chat` and `drive-player` were
+re-run against the home site.
+
 ## Designs written before building
 
 These were written in advance and kept as written after they were built, so a reader can compare
@@ -2262,3 +2320,134 @@ The rest held as written:
 Two things the design didn't foresee, both covered under milestone 16: the fill runs on the *client*
 and the command carries cells rather than a seed, and the override travels like the walls rather than
 like the fog. Those two turned out to be what the feature is about.
+
+### 45: marquee, right-drag pan, trackpads
+
+Built in milestone 45, the day it was written. Notes in italics mark where the build differed.
+
+
+Not built. With a mouse, a left-drag on empty ground draws a box and selects every token in it that
+you could move, and panning moves to the right button. A trackpad user can turn on a switch so that a
+two-finger slide pans and a pinch zooms.
+
+This reverses milestone 25, which kept the marquee unbuilt because a left-drag on empty ground was
+already pan. The trackpad half is in the same milestone because the swap causes it: a trackpad
+reports as a mouse, so click-drag becomes a marquee, and it has no middle button to fall back on.
+
+It also makes every ringed token part of the group (*One group*, below). The marquee makes the
+existing gap between the panel's token and the group easy to hit, so it's fixed here.
+
+### The gesture
+
+- **Mouse only.** Gate on `pointerType === 'mouse'`. A touch or pen drag on empty ground still
+  pans: CLAUDE.md says not to break touch, and a finger has no right button.
+- Right and middle buttons pan. Suppress `contextmenu` on the canvas only; the rail, dock and chat
+  keep the browser menu. Right-drag also pans with a modal tool armed, which today only the middle
+  button can do.
+- A marquee replaces `pan` as the left button's empty-ground drag. The ping hold starts as before
+  and is cancelled by the same slop. Use a click slop (as `DRAW_CLICK_SLOP_PX` does for sweeps)
+  rather than pan's "any pixel", so a jittery click on a door still swings it.
+- **`endDrag`'s door-swing and clear-selection branch belongs to the left button's empty-ground
+  press, not to `pan`.** Today it runs for any pan that didn't move, so a middle-click on a door
+  swings it. With right-drag panning, a reflexive right-click on a door would open it on every
+  screen. The branch runs for a marquee that never moved, and for a touch or pen pan that never
+  moved (a tap still swings a door on a touchscreen). A right or middle pan's release does nothing.
+- Membership is `canMove` and `shownPos`, as in `tokenAt`. A token is in if its centre is inside
+  the box. That needs no new permission rule: a player's box can only gather their own tokens, for
+  milestone 25's reason. Previewing works the same way, since `shownPos` is the staged plan.
+- A plain box replaces the group and clears the panel (`onSelect(null)`), as a click on empty
+  ground does. Otherwise the panel's token would keep its ring outside the group (*One group*).
+  Clearing the panel isn't the swap milestone 25 ruled out: nothing is loaded into the form.
+  Shift+box adds to the group, as a shift-click does. A shift+box that never moved does nothing:
+  no door swing and no clear, because shift only ever adds.
+- **A shift-press on empty ground skips `beginHold`.** Today it misses the shift-click branch and
+  starts the ping timer, so a shift+box that paused before moving would ping every screen.
+  `docs/tokens.md` already says a modifier held on purpose must not reach the hold.
+- Local and silent, like shift-click. It sends nothing. The group is computed on release. Only the
+  box is drawn during the drag, in world coordinates, from a field on the input state that
+  `render.ts` reads. *(Held. It's `InputState.marquee`, and `inMarquee` in `marquee.ts` is
+  the pure half.)*
+- Armed tools keep the left button first: calibrate, walls, the fog brush and sight check, and the
+  shape tool. The order in `pointerdown` is unchanged.
+- The resting cursor over empty ground becomes `default` instead of `grab`.
+
+### One group
+
+**A token with a ring is in the group.** Today the ring and the Delete key cover the panel's token
+as well as the group (`selectedId` in `render.ts` and `main.ts`), but a drag moves only the group.
+Plain-click the fighter, shift-click two goblins, drag a goblin: three rings, the goblins move, the
+fighter stays, and Delete asks about all three.
+
+- A shift-click or shift+box adds the panel's token to the group along with what it gathers. From
+  then on the ring set and `selection` are the same set, so drag, Delete and anything added later
+  read one thing. A plain-clicked token with nothing shift-added is a group of one, which already
+  behaves.
+- A shift-click on the panel's token drops it from the group and clears the panel. Dropping it
+  alone would leave it ringed through the panel and outside the group again. That includes a
+  group of one: shift-clicking the plain-clicked token with nothing else gathered un-rings it.
+- Escape is unchanged. It empties the group and leaves the panel's token ringed, a group of one.
+- `input.ts` needs to read the panel's token; today it can only set it through `onSelect`. Pass a
+  getter beside `onSelect`. The panel's token is set in one place, a plain click on the board, and
+  every other path only clears it (empty ground, preview toggle, deletion), so nothing else needs to
+  know. Only the DM has a panel, so nothing changes for a player.
+
+This reverses part of milestone 25, which kept the panel's token out of the group. Its reason was
+that the form shouldn't follow the group, and it still doesn't: it shows the token last
+plain-clicked. Only which tokens a drag moves changes.
+
+### Trackpads
+
+Browsers report trackpad gestures as `wheel` events. A two-finger slide sets `deltaX`/`deltaY`, and
+a pinch sets `deltaY` with `ctrlKey` true (Chromium and Firefox; Safari uses its own gesture events,
+not checked). The handler today zooms on every wheel event, so pinch already zooms and a two-finger
+slide zooms too. The slide is the part to fix.
+
+**Two-finger pan is an opt-in switch, per person, in `localStorage`. It's off by default, so a mouse
+wheel zooms exactly as it does now.** Keeping mouse zoom unchanged matters more than trackpad
+convenience.
+
+- Switch off (the default): every wheel event zooms, as now.
+- Switch on: `ctrlKey` zooms, anchored under the cursor (pinch, and ctrl+wheel on a mouse), and a
+  plain wheel event pans by `deltaX`/`deltaY`. Pinch deltas are small, so pinch may need its own
+  sensitivity. Tuned by hand on a real trackpad, since no suite can see it. Nobody has one to
+  tune on yet, so it ships with a starting value and a named constant, and is tuned on the first
+  report from someone who uses it. *(`PINCH_SENSITIVITY = 0.01`. A mouse's ctrl+wheel in trackpad mode is
+  read at the same rate and zooms fast; nothing on the event tells the two apart.)*
+- Rejected: guessing the device from the deltas. No browser API says whether a mouse or a trackpad
+  sent a wheel event. A guess based on step size (whole-number steps against small fractional ones)
+  depends on OS scroll settings and display scaling, and a wrong guess makes a mouse wheel pan.
+- The switch is `#hint`. Clicking it swaps between mouse and trackpad, and its text describes the
+  gestures that are active. With the switch off, a trackpad user can't pan: a click-drag is a
+  marquee, a two-finger slide zooms, and a right-drag is awkward on a Mac and unavailable on most
+  Windows touchpads. So the switch has to be where someone stuck without a pan looks, and the line
+  that says how to pan is that place. It's a per-person preference like the initiative fold and the
+  volume, so it's `localStorage` and never `RoomState`. `#hint` and `#corner` are
+  `pointer-events: none` today, so the hint needs them back. It fits `#corner`'s rule (it arms no
+  tool and shows no count), and `docs/frontend.md` needs a line saying so.
+- The line starts with the active mode, underlined like `fit board` so it reads as clickable, and
+  the whole line is the button, with a `title` naming the other mode:
+  `mouse: drag token to move · drag map to select · right-drag to pan · wheel to zoom`, and
+  `trackpad: drag token to move · drag map to select · two-finger slide to pan · pinch to zoom`.
+
+Keep box membership a pure function so `npm test` can cover it.
+
+### What else changes
+
+- **The server doesn't change.** No message, field or filter. A marquee fills the same `selection`
+  set shift-click does, and a group drag is still N `MoveToken`s.
+- `#hint` in `index.html` says "drag map or middle-drag to pan".
+- `docs/tokens.md`, *Moving several at once*: "Only shift-click adds anything to a group" and "A pan
+  doesn't [drop the group]" both change, and "The group does not feed the token panel" needs the
+  one-group rule beside it. Also `docs/drawings.md` (ping on empty ground) and
+  `docs/walls.md` (a door click against a pan). *(Also `docs/frontend.md`, which got the switch.)*
+- Drivers: the drag helper in `cdp.mjs` is left-button only and needs a `button` option.
+  `drive-ui.mjs` ("dragging from that same pixel must still pan"), `drive-ping.mjs` (the slow pan)
+  and `drive-fit.mjs` (`panAway`) pan with a left-drag today. `board.mjs` doesn't pan, but its
+  header comment describes a missed click as reading as a pan. `drive-ruler.mjs` has one raw press
+  that looks like a token drag; confirm before changing it. `drive-select.mjs` gets the marquee,
+  including the second-connection check that a box changes nothing on the table's screen, and a
+  right-click on a door that must not swing it. It also gets the one-group case: plain-click A,
+  shift-click B, drag B, and A moves too on both screens. *(The right-click on a door went in `drive-ui.mjs`
+  instead, which already traces a door and reads its dash pattern; `drive-select.mjs` has no walls.
+  `drive-ping.mjs` got the held shift-press. `drive-ruler.mjs`'s raw press was on its token and only
+  needed a comment.)*

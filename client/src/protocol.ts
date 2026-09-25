@@ -522,6 +522,10 @@ export type ServerMsg =
    *  to move and nothing was drawn locally, so this frame is what updates the
    *  chosen swatch on the client that chose it. */
   | { type: 'colours_changed'; colours: Colours }
+  /** The DM edited the cast. The whole list, to everyone, like `welcome`'s
+   *  `roster`. Never sent to a player whose slot was removed: the server closes
+   *  that connection first, and the reload lands on the picker. */
+  | { type: 'roster_changed'; roster: RosterEntry[] }
   /** Somebody else's in-progress sweep, keyed by their connection. Never our
    *  own: we are already drawing that one from our own pointer. */
   | { type: 'sketch'; by: number; kind: ShapeKind; at: WirePos; to: WirePos; color: string }
@@ -752,6 +756,11 @@ export type ClientMsg =
    *  position: where each browser is in the track is up to that browser, and
    *  syncing positions would turn this toward a mixer. See `docs/sound.md`. */
   | { type: 'set_audio'; url: string | null }
+  /** DM-only. The whole cast, in order. A slot missing from it was removed,
+   *  which the server refuses while that player owns a token. A new slot's id is
+   *  made here from its name (`slugFor`) and never changes after; a rename
+   *  changes only `name`. See `docs/rooms.md`. */
+  | { type: 'set_roster'; roster: RosterEntry[] }
   /** A shape being swept out right now: relayed to everyone watching, stored by
    *  nobody. `drawing: false` is the release that ends it.
    *

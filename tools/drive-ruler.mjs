@@ -170,7 +170,7 @@ await dm.wait(800);
 // new one goes into the first free cell out from the middle of the view, so on a
 // board with something already standing there it is a cell or two over. It used
 // to drag from the middle of the canvas and a drag that misses the token is a
-// pan — which moves the whole board and fails the pixel checks below for an
+// selection box, which moves nothing and fails the checks below for an
 // entirely unrelated reason.
 //
 // Neither client is zoomed. `span` and `TRAIL_SHARE` are pixel quantities tuned

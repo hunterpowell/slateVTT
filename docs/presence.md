@@ -118,9 +118,10 @@ somewhere different every time you look. `dock.ts` makes the same argument in th
 about its own strip being its last child.
 
 **Absent people are dimmed, not removed.** Every roster slot is drawn from the first frame and none
-ever leaves, so the row has one layout for the whole session. A chip that vanished would move its
-neighbours under the pointer, and would make "nobody is here" and "there is no such person" look
-the same.
+leaves when its player does, so the row keeps one layout while people come and go. A chip that
+vanished would move its neighbours under the pointer, and would make "nobody is here" and "there is
+no such person" look the same. The strip is rebuilt only when the DM edits the cast
+(`RosterChanged`, `docs/rooms.md`), which is the one time the row *should* change.
 
 **The chat destination chips are dimmed from the same answer.** Whispering someone who isn't there
 is the specific failure this feature exists to prevent, so `chat.ts` asks `presence.connected`

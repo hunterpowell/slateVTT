@@ -162,13 +162,31 @@ const MAX_DICE: u8 = 20;
 /// every other cap in this file.
 const MAX_NOTES_LEN: usize = 10_000;
 
+/// How many player slots a room's roster may hold. Twice the table the project
+/// is built for, so a DM is never refused a friend who turned up, and small
+/// enough that the presence strip and the chat chips still fit on one row each.
+const MAX_ROSTER: usize = 12;
+
+/// How long a character's name may be, the same as a token's for the same
+/// reason: it is written on the board, in the strip and in the chat log.
+const MAX_PLAYER_NAME_LEN: usize = MAX_TOKEN_NAME_LEN;
+
+/// How long a roster slug may be. It goes into a `localStorage` key and every
+/// token's `owner`, so it is kept shorter than the name it is made from.
+const MAX_PLAYER_ID_LEN: usize = 32;
+
 /// The table, plus the DM, who holds no slot.
+///
+/// **The seed, not the cast.** A room's roster is saved with the room and the DM
+/// edits it from the table tab (`SetRoster`), so this is only what a room with
+/// no roster on disk starts with. Changing it here changes no room that has
+/// saved since milestone 46. See `docs/rooms.md`.
 ///
 /// The id is a short slug, not the name, because it's what `localStorage`
 /// remembers and what a token's `owner` is written as, and a name with a space
 /// and a title in it makes both harder to read. The two are independent:
-/// renaming a character edits only the right-hand column here, and every token
-/// they own still points at them.
+/// renaming a character changes only the name, and every token they own still
+/// points at them.
 const ROSTER: [(&str, &str); 6] = [
     ("cleodara", "Cleodara"),
     ("saelyn", "Saelyn"),
@@ -212,42 +230,69 @@ struct RoomDef {
     /// What the room picker shows. Free text, and the only field here nothing
     /// is keyed on, so renaming a campaign is safe at any point.
     name: &'static str,
-    /// A slice, not a fixed array, so two casts may differ in size.
+    /// The cast a room with no roster on disk starts with. A slice, not a fixed
+    /// array, so two casts may differ in size, and it may be empty: the DM needs
+    /// no slot to join and adds the players from the table tab.
     roster: &'static [(&'static str, &'static str)],
+    /// Which server process serves this room, chosen by `SLATE_SITE`.
+    ///
+    /// **A site is a separate process with its own DM secret, save files,
+    /// libraries and uploads**, run by a different DM. Rooms on one site share
+    /// the secret and the libraries (`docs/rooms.md` says why), so a DM who
+    /// must not reach the other rooms gets a site of their own rather than a
+    /// room on this one. Nothing in the code crosses between two sites; they
+    /// meet only in this table.
+    site: &'static str,
 }
+
+/// The site a process serves when `SLATE_SITE` is unset: the rooms the Pi's
+/// first service was running before sites existed, so its env file didn't
+/// change.
+pub const DEFAULT_SITE: &str = "home";
 
 /// Every room, fixed at boot.
 ///
 /// A const, not a registry: the rooms are known before the first socket opens,
 /// so `AppState` holds a map that is built once and only read after that. Don't
 /// add an `RwLock<HashMap<..>>`: a lock guards a table that changes, and nothing
-/// changes this one. Adding a campaign is an edit to this array and a redeploy,
-/// the same as editing a roster.
+/// changes this one. Adding a campaign is an edit to this array and a redeploy.
 ///
-/// The first entry is the primary room. Two things follow from that and nothing
-/// else does: its save file is `SLATE_STATE` as given, not a sibling named after
-/// its id, and a fresh checkout boots it into `RoomState::hardcoded`, not an
-/// empty board. Both keep the single-room server's behaviour for that room, so
-/// neither applies to any other room.
-const ROOMS: [RoomDef; 2] = [
+/// A process serves only the rooms on its own site. The first room of each site
+/// is that site's primary room: its save file is `SLATE_STATE` as given, not a
+/// sibling named after its id. The very first entry is also the only room a
+/// fresh checkout boots into `RoomState::hardcoded` rather than an empty board,
+/// because that board's tokens are its party. See `is_primary` and `boots_demo`.
+const ROOMS: [RoomDef; 3] = [
     RoomDef {
         id: "campaign",
         name: "Campaign",
         roster: &ROSTER,
+        site: DEFAULT_SITE,
     },
     RoomDef {
         id: "halloween",
         name: "Halloween One-Shot",
         roster: &HALLOWEEN_ROSTER,
+        site: DEFAULT_SITE,
+    },
+    RoomDef {
+        id: "sword-legend",
+        name: "The Legend of the Swords on the Heights",
+        roster: &[],
+        site: "sword-legend",
     },
 ];
 
-/// The rooms, in the order the picker shows them.
-pub fn rooms() -> impl Iterator<Item = (&'static str, &'static str)> {
-    ROOMS.iter().map(|def| (def.id, def.name))
+/// The rooms one site serves, in the order the picker shows them. Empty for a
+/// site nothing names, which `main.rs` refuses to boot.
+pub fn rooms(site: &str) -> impl Iterator<Item = (&'static str, &'static str)> + '_ {
+    ROOMS
+        .iter()
+        .filter(move |def| def.site == site)
+        .map(|def| (def.id, def.name))
 }
 
-/// The cast of one room, or `None` if there is no such room.
+/// The seed cast of one room, or `None` if there is no such room.
 ///
 /// The lookup every caller outside this module wants: `main.rs` spawns a room
 /// per id and has no business holding a `RoomDef`.
@@ -258,8 +303,22 @@ pub fn roster_of(id: &str) -> Option<Vec<RosterEntry>> {
         .map(|def| roster_from(def.roster))
 }
 
-/// Whether this room is the one the single-room server became. See `ROOMS`.
+/// Whether this room is the first on its site, the one whose save file is
+/// `SLATE_STATE` itself. See `ROOMS`.
 pub fn is_primary(id: &str) -> bool {
+    let Some(def) = ROOMS.iter().find(|def| def.id == id) else {
+        return false;
+    };
+    ROOMS
+        .iter()
+        .find(|other| other.site == def.site)
+        .is_some_and(|first| first.id == id)
+}
+
+/// Whether a missing save file boots this room into the built-in board. Only
+/// the very first room, because that board's six tokens are its cast: another
+/// site's primary room seeded with them would open on somebody else's party.
+pub fn boots_demo(id: &str) -> bool {
     ROOMS.first().is_some_and(|def| def.id == id)
 }
 
@@ -631,6 +690,12 @@ enum Event {
     /// is no caret for an echo to move. That's the difference from
     /// `NotesChanged`, the other thing here that a player writes.
     ColoursChanged,
+    /// The DM edited the cast.
+    ///
+    /// Payload-free and the same for every recipient, like `ColoursChanged`:
+    /// the roster already reaches everybody in `Welcome`. Anyone whose slot
+    /// went has been disconnected by `apply` before this is dispatched.
+    RosterChanged,
 }
 
 impl Initiative {
@@ -1255,6 +1320,11 @@ fn persists(event: &Event) -> bool {
         // things a player writes that reach the disk, which is also why the
         // undo ring has to be told to leave them alone.
         Event::NotesChanged { .. } | Event::ColoursChanged => true,
+
+        // The cast is the DM's and outlasts the session. It's on `Saved` like
+        // the colours, and kept off the undo ring by hand like them; see
+        // `undid`.
+        Event::RosterChanged => true,
     }
 }
 
@@ -1356,7 +1426,14 @@ fn undid(msg: &ClientMsg) -> Option<&'static str> {
         // snapshot never holds a track and a restore can't change one. The arm
         // is here because the match is exhaustive, and unlike the scratchpad and
         // colours it needs nothing in the `Undo` arm of `apply`.
-        | ClientMsg::SetAudio { .. } => None,
+        | ClientMsg::SetAudio { .. }
+        // `persists` says yes, and the DM did write it, so this isn't the
+        // scratchpad's reason. It's that a restore can't change who somebody
+        // is: `Restored` carries no roster, a client builds its strip and chips
+        // from the roster once per socket, and an undo that removed a slot would
+        // leave that person connected as nobody. The other half is the `Undo`
+        // arm of `apply`, as for the colours.
+        | ClientMsg::SetRoster { .. } => None,
     }
 }
 
@@ -1445,6 +1522,9 @@ fn moves_sight(msg: &ClientMsg) -> bool {
         | ClientMsg::SetNotes { .. }
         // What colour a ring is drawn in doesn't change what a ray reaches.
         | ClientMsg::SetColour { .. }
+        // Vision comes from the tokens a player owns, and a slot that owns one
+        // can't be removed. Adding or renaming one moves no token.
+        | ClientMsg::SetRoster { .. }
         | ClientMsg::SetInitiative { .. }
         | ClientMsg::RemoveFromInitiative { .. }
         | ClientMsg::ClearInitiative
@@ -1731,13 +1811,23 @@ fn is_owner(identity: &Identity, owner: &Owner) -> bool {
     }
 }
 
-/// The roster isn't persisted: it's a constant, and a saved copy could only
-/// disagree with it. It would have to become state if the DM could edit it.
+/// A room id or a roster id: lowercase letters, digits and hyphens, and not
+/// empty. Each is put into a path, a URL or a `localStorage` key, where a slash
+/// or a space would be trouble.
+fn is_slug(s: &str) -> bool {
+    !s.is_empty()
+        && s.chars()
+            .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-')
+}
+
+/// A room's seed cast, from its constant. The roster the room actually has is
+/// on `Saved` once it has been written, and the DM edits it with `SetRoster`;
+/// this is what a room with none on disk starts from.
 ///
-/// Each room has its own roster constant. A `RoomState` is handed its roster,
-/// so a slug that names a slot in one room names nothing in another. `hello`
-/// already refuses a `player_id` that isn't in `self.roster`, so that
-/// isolation needs no extra code. See the handshake tests.
+/// Each room has its own roster. A slug that names a slot in one room names
+/// nothing in another, because `hello` refuses a `player_id` that isn't in
+/// `self.roster`, so that isolation needs no extra code. See the handshake
+/// tests.
 fn roster_from(slots: &[(&str, &str)]) -> Vec<RosterEntry> {
     slots
         .iter()
@@ -1785,8 +1875,9 @@ impl RoomState {
         }
     }
 
-    /// A room off disk. Everything the file does not carry (the DM secret, the
-    /// roster, who is connected) comes from the environment or starts empty.
+    /// A room off disk. Everything the file does not carry (the DM secret, who
+    /// is connected) comes from the environment or starts empty. `roster` is
+    /// the seed, kept only if the file predates the saved roster.
     fn restored(saved: Saved, dm_secret: String, roster: Vec<RosterEntry>) -> Self {
         let mut state = Self::empty(dm_secret, roster);
         state.adopt(saved);
@@ -1839,7 +1930,7 @@ impl RoomState {
     /// `Saved` and read in only one of them loads correctly and undoes to a
     /// stale value, or the reverse.
     ///
-    /// It doesn't touch what a `Saved` doesn't describe: `dm_secret`, `roster`,
+    /// It doesn't touch what a `Saved` doesn't describe: `dm_secret`,
     /// `clients`, `pending`, and the ring itself. Leaving those alone is what
     /// makes undo safe. Restoring the socket table from ten commands ago would
     /// hand the room clients that have since disconnected, and restoring the
@@ -1897,6 +1988,12 @@ impl RoomState {
         // Exempted in the undo arm like the notes, for the same reason: boot
         // wants these back, an undo does not.
         self.colours = saved.colours;
+        // `None` is a file written before the roster was saved, and keeps the
+        // seed `ROOMS` handed the constructor. The undo arm exempts this too,
+        // for a different reason from the two above: see `ClientMsg::Undo`.
+        if let Some(roster) = saved.roster {
+            self.roster = roster;
+        }
     }
 
     fn to_saved(&self) -> Saved {
@@ -1943,6 +2040,7 @@ impl RoomState {
             // both the room's shape and the file's, because `PlayerId` is a
             // legal JSON key. The notes above need a list for want of one.
             colours: self.colours.clone(),
+            roster: Some(self.roster.clone()),
         }
     }
 
@@ -2284,6 +2382,50 @@ impl RoomState {
             saves_failing: health.failing,
             last_saved_unix: health.last_ok_unix,
         }
+    }
+
+    /// Whether the DM may replace the cast with `roster`.
+    ///
+    /// The id rules are `every_roster_id_is_a_slug`'s, because an id is what
+    /// `localStorage`, a token's `owner`, a colour and a scratchpad are keyed
+    /// on. **A slot that still owns a token can't be removed**: the token would
+    /// belong to nobody who could join, and handing it to somebody else first is
+    /// one edit on the token tab. Staged tokens count, since they're the party's
+    /// too.
+    fn roster_allowed(&self, roster: &[RosterEntry]) -> Result<(), String> {
+        if roster.len() > MAX_ROSTER {
+            return Err(format!("a roster holds {MAX_ROSTER} players"));
+        }
+        for (at, entry) in roster.iter().enumerate() {
+            let id = &entry.id.0;
+            if !is_slug(id) || id.len() > MAX_PLAYER_ID_LEN {
+                return Err(format!("{id:?} can't be a player's id"));
+            }
+            if roster[..at].iter().any(|earlier| earlier.id == entry.id) {
+                return Err(format!("two players can't both be {id}"));
+            }
+            if entry.name.trim().is_empty() {
+                return Err("a player needs a name".to_owned());
+            }
+            if entry.name.chars().count() > MAX_PLAYER_NAME_LEN {
+                return Err(format!(
+                    "a player's name is at most {MAX_PLAYER_NAME_LEN} characters"
+                ));
+            }
+        }
+        for old in &self.roster {
+            if roster.iter().any(|new| new.id == old.id) {
+                continue;
+            }
+            let owner = Owner::Player(old.id.clone());
+            if self.tokens.values().any(|token| token.owner == owner) {
+                return Err(format!(
+                    "{} still owns a token; give it to someone else first",
+                    old.name
+                ));
+            }
+        }
+        Ok(())
     }
 
     /// Re-sends the roster to everyone still on the picker, so a slot taken
@@ -3034,6 +3176,12 @@ impl RoomState {
             // Nothing to bound: a bool has no bad value, and either state is a
             // legitimate thing for the DM to ask for.
             ClientMsg::SetShowNames { .. } => require_dm(client, "label the board"),
+            // Checked whole here, so `apply` can't fail halfway through a
+            // removal and leave a slot half gone.
+            ClientMsg::SetRoster { roster } => {
+                require_dm(client, "edit the roster")?;
+                self.roster_allowed(roster)
+            }
 
             // Nothing to bound either: serde has already refused anything that
             // is not one of the two variants.
@@ -3676,6 +3824,49 @@ impl RoomState {
             // frame that repeats what the room already said is a no-op on
             // arrival, and a comparison here would be a second place the answer
             // is decided.
+            // A removed slot takes its colour and its scratchpad with it, so a
+            // name added later under the same id starts clean rather than
+            // inheriting somebody else's paragraph. Its connections are closed
+            // through `remove_client`, the one way anybody leaves, so the strip
+            // and the pickers hear about it. Their page reconnects, offers a
+            // slug the roster no longer has, and `hello` shows them the picker.
+            ClientMsg::SetRoster { roster } => {
+                let gone: Vec<PlayerId> = self
+                    .roster
+                    .iter()
+                    .filter(|old| !roster.iter().any(|new| new.id == old.id))
+                    .map(|old| old.id.clone())
+                    .collect();
+                self.roster = roster;
+
+                let mut events = vec![Event::RosterChanged];
+                if !gone.is_empty() {
+                    for id in &gone {
+                        self.notes.remove(&Owner::Player(id.clone()));
+                    }
+                    let before = self.colours.len();
+                    self.colours.retain(|id, _| !gone.contains(id));
+                    if self.colours.len() != before {
+                        events.push(Event::ColoursChanged);
+                    }
+                    let leaving: Vec<ClientId> = self
+                        .clients
+                        .iter()
+                        .filter(|(_, c)| {
+                            matches!(&c.identity, Identity::Player(id) if gone.contains(id))
+                        })
+                        .map(|(&id, _)| id)
+                        .collect();
+                    for client in leaving {
+                        self.remove_client(client);
+                    }
+                }
+                // The slots changed even if nobody left, and the undecided are
+                // sent `ChooseIdentity`, not `RosterChanged`.
+                self.refresh_pickers();
+                events
+            }
+
             ClientMsg::SetShowNames { show } => {
                 self.show_names = show;
                 vec![Event::NamesChanged]
@@ -4406,11 +4597,21 @@ impl RoomState {
                 // Taken and put back, not filtered out of the snapshot at push
                 // time: what belongs here is whatever people have typed
                 // *since*, which is what the room is holding right now.
+                //
+                // **The roster is left alone too**, for a different reason: the
+                // DM wrote it, but a restore can't change who somebody is.
+                // `Restored` carries no roster, and an undo that removed a slot
+                // would leave its player connected as nobody. A token restored
+                // with an owner no longer in the roster is the DM's to move and
+                // re-own; re-adding the name brings back the same id and the
+                // token with it.
                 let notes = std::mem::take(&mut self.notes);
                 let colours = std::mem::take(&mut self.colours);
+                let roster = std::mem::take(&mut self.roster);
                 self.adopt(back);
                 self.notes = notes;
                 self.colours = colours;
+                self.roster = roster;
                 // `adopt` empties both derived sets, because a `Saved` holds the
                 // party's memory and not their sight. Recomputed here instead of
                 // through `moves_sight` and `refresh_fog`, because `Restored`
@@ -4507,6 +4708,7 @@ impl RoomState {
                 | Event::Restored
                 | Event::PresenceChanged
                 | Event::ColoursChanged
+                | Event::RosterChanged
                 | Event::CursorsChanged
                 | Event::DmCursorChanged
                 | Event::UndoChanged => None,
@@ -5222,6 +5424,11 @@ impl RoomState {
             Event::PresenceChanged => Some(ServerMsg::Presence { here: self.here() }),
             Event::ColoursChanged => Some(ServerMsg::ColoursChanged {
                 colours: self.colours.clone(),
+            }),
+            // Unfiltered for the same reason: every client was sent the roster
+            // in `Welcome`, so an edit to it is no more secret than it was.
+            Event::RosterChanged => Some(ServerMsg::RosterChanged {
+                roster: self.roster.clone(),
             }),
         }
     }

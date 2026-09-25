@@ -65,6 +65,9 @@ export interface TokenTool {
   remove(ids: Iterable<string>): void;
   /** Called on Welcome and after every token delta. */
   update(scene: Scene): void;
+  /** The DM edited the cast. The roster passed in at creation is the same
+   *  array, already changed in place; this refills the owner dropdown. */
+  recast(): void;
   /**
    * Puts the panel down, called by the rail as it closes this tab.
    *
@@ -100,10 +103,19 @@ export function createTokenTool(
   /** The board on screen is the staged one, so a new token belongs to it. */
   const previewing = (): boolean => scene !== null && scene.previewing && scene.staged !== null;
 
-  ui.owner.replaceChildren(
-    option(DM_OWNER, 'DM'),
-    ...roster.map((entry) => option(entry.id, entry.name)),
-  );
+  const fillOwners = (): void => {
+    const was = ui.owner.value;
+    ui.owner.replaceChildren(
+      option(DM_OWNER, 'DM'),
+      ...roster.map((entry) => option(entry.id, entry.name)),
+    );
+    // Kept across a refill, so a rename doesn't reset the form under the DM.
+    // A slot that went can't have owned a token (the room refuses that), so
+    // the only thing that can lose its owner here is a token not yet built.
+    ui.owner.value = was;
+    if (ui.owner.value !== was) ui.owner.value = DM_OWNER;
+  };
+  fillOwners();
 
   // --- reading and writing the form ----------------------------------------
 
@@ -453,6 +465,10 @@ export function createTokenTool(
 
     stop() {
       library.close();
+    },
+
+    recast() {
+      fillOwners();
     },
 
     update(next) {

@@ -254,6 +254,26 @@ if systemctl try-restart slate-kindle 2>/dev/null; then
     say "slate-kindle restarted onto the new tree"
 fi
 
+# A second site (see "A second site" in the README) runs the same binary, so it
+# stays on the old build until it restarts. Only if it is installed and
+# running, like the Kindle. A failure here is reported rather than rolled back:
+# the home site just passed its own check on this build, and taking it back
+# down to fix somebody else's room would cost the game that is working.
+#
+# `is-active` first rather than `try-restart` alone, because try-restart also
+# succeeds on a unit that is stopped, and the check after it would then warn
+# about a site nobody had started.
+for site in slate-sword-legend; do
+    systemctl is-active --quiet "$site" 2>/dev/null || continue
+    systemctl restart "$site" || true
+    sleep 3
+    if systemctl is-active --quiet "$site"; then
+        say "$site restarted onto the new build"
+    else
+        printf '\n  WARNING: %s did not come back -- see journalctl -u %s -n 50\n' "$site" "$site"
+    fi
+done
+
 # ---------------------------------------------------------------------------
 # Done -- retire the rollback copies
 # ---------------------------------------------------------------------------

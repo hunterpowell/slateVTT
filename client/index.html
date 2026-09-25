@@ -65,11 +65,30 @@
         pointer-events: none;
       }
 
+      /* A button: clicking it swaps between mouse and trackpad gestures (see
+         `gestures.ts`). The whole line is the control, and only the mode word
+         at its start looks like one, so the line still reads as a hint. */
       #hint {
+        pointer-events: auto;
+        padding: 0;
+        border: none;
+        background: none;
         color: #5a616c;
+        font: inherit;
         font-size: 12px;
-        pointer-events: none;
+        text-align: right;
+        cursor: pointer;
         user-select: none;
+      }
+
+      #hint .hint-mode {
+        color: #7d8590;
+        border-bottom: 1px solid #2b3038;
+      }
+
+      #hint:hover .hint-mode {
+        color: #cfe6ff;
+        border-bottom-color: #4a525e;
       }
 
       /* A link out and nothing more. `/spells/` is a static page that imports
@@ -2378,6 +2397,53 @@
         margin-top: 10px;
       }
 
+      /* The cast, at the bottom of the table tab. A heading of its own because
+         it is a list, not a switch, and the only thing on this tab the DM
+         types into. */
+      .table-roster-head {
+        margin-top: 14px;
+      }
+
+      .table-roster-row,
+      .table-roster-add {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        margin-bottom: 5px;
+      }
+
+      .table-roster-name,
+      #table-roster-name {
+        flex: 1;
+        min-width: 0;
+        padding: 3px 4px;
+        border: 1px solid #2b3038;
+        border-radius: 4px;
+        background: #171a1f;
+        color: #d8d2c4;
+        font: inherit;
+        font-size: 12px;
+        user-select: text;
+      }
+
+      .table-roster-id {
+        max-width: 80px;
+        overflow: hidden;
+        color: #6f767f;
+        font-size: 11px;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+
+      .table-roster-remove {
+        margin-top: 0;
+      }
+
+      .table-roster-add .map-button {
+        width: auto;
+        margin-bottom: 0;
+      }
+
       #table-diagonals {
         padding: 3px 4px;
         border: 1px solid #2b3038;
@@ -2935,6 +3001,20 @@
           One looping track for the room. Everyone hears it at whatever level they set, and
           anybody who has not turned sound on hears nothing at all.
         </p>
+        <!-- The cast: who can join, and what they're called. A room-wide field
+             like everything above it. The rows are built by `roster.ts`; a
+             rename is typed in place, and each row's id is shown because it is
+             the label the chat and presence chips give that player. -->
+        <div class="map-head table-roster-head">Players</div>
+        <div id="table-roster" class="table-roster"></div>
+        <div class="table-roster-add">
+          <input id="table-roster-name" type="text" placeholder="a new character" aria-label="a new character's name" />
+          <button id="table-roster-add" class="map-button" type="button">add</button>
+        </div>
+        <p class="map-hint">
+          Who can join. Renaming keeps everything they own. Someone who still owns a token can't be
+          removed: give it to someone else first.
+        </p>
       </aside>
       <!-- The one panel everybody gets, and the one that is not behind a tab.
            Anyone may draw, so unlike the three above it is built on a player
@@ -2965,7 +3045,9 @@
          upward — the bottom edge is the one that stays put. -->
     <div id="turn-toast" hidden></div>
     <div id="corner">
-      <div id="hint">drag token to move · drag map or middle-drag to pan · wheel to zoom</div>
+      <!-- Its text is written by `gestures.ts`, which reads this person's
+           mouse/trackpad setting first. -->
+      <button id="hint" type="button"></button>
       <!-- The answer to the zoom percentage in `#hud`. It is out here for the
            link's reason below, and it goes *before* the link so that the link
            stays the last child: only `#hint` grows, so everything to its right

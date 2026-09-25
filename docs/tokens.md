@@ -47,8 +47,7 @@ arrives with no plan; a plan is a cell, and two creatures don't want the same on
 holds a row naming something that no longer exists, which the panel draws as a bare id and
 `next_turn` hands the turn to, and an anchored shape follows a token with no position.
 
-The Delete key deletes every token with a selection ring: the panel's token, the shift-click
-group, or both. The renderer already treats the two as one question (which tokens is this gesture
+The Delete key deletes every token with a selection ring: the panel's token, the group, or both. The renderer already treats the two as one question (which tokens is this gesture
 about; see *Moving several at once*), and the key does the same. The handler builds the union and
 hands it to `TokenTool.remove`, which confirms once, naming every creature, and sends N ordinary
 `delete_token`s, as a group drag sends N moves. There's no batch command, and a batch would answer
@@ -119,8 +118,9 @@ credential to offer, and could only use it to read the DM's cast list for next w
 
 ## Moving several at once
 
-Shift-click adds tokens to a group, and dragging any member moves all of them. Six goblins
-crossing a corridor is one drag instead of six, and that's all it's for.
+Shift-click, or a box dragged across bare board, gathers tokens into a group, and dragging any
+member moves all of them. Six goblins crossing a corridor is one drag instead of six, and that's all
+it's for.
 
 **The server doesn't know this feature exists, and nothing was added to it.** A group move is N
 ordinary `MoveToken`s from one client. The room has always taken them one at a time: it checks
@@ -130,19 +130,21 @@ permission, snapping and `moves_sight` again for a collection, and each of those
 answer for a single token that's also the right answer here.
 
 The permission question answers itself, which is why this stayed small. Membership comes from
-`tokenAt`, and tokens you can't move are already ignored by the pointer there, so a group can only
-ever hold tokens this client may move. A player gathering their own two summons needs no new rule.
+`tokenAt` and `inMarquee`, and both skip tokens you can't move, so a group can only ever hold tokens
+this client may move. A player gathering their own two summons needs no new rule.
 That's why it isn't DM-only: making it so would add a rule where there currently is none.
 
 These rules make a group something you have to be holding on purpose, so that no ordinary drag
 gains a second meaning:
 
-- Empty is the normal state. Only shift-click adds anything to a group, so every gesture
-  without the modifier behaves exactly as it did before groups existed.
+- Empty is the normal state. Only shift-click and a box add anything to a group. A box is a left
+  drag on bare board, which used to pan; pan moved to the right and middle buttons (*The box*,
+  below) so that no drag has two meanings.
 - Grabbing a member takes the group; grabbing anything else drops the group first. A plain click
   on a token outside the group clears it, which keeps a plain drag a plain drag.
 - A click on empty map drops the group, along with clearing the panel's selection; both mean
-  "never mind this token". A pan doesn't, for the same reason a pan has never cleared the panel.
+  "never mind this token". A pan doesn't, for the same reason a pan has never cleared the panel,
+  and a right or middle click is never a click on empty map (`clicks` on the pan drag).
 - So does Escape, which is what that key means to every tool in the rail. A group is something
   being held, and Escape is how you let go of anything held here. A board with walls traced across
   every square may not have an empty square to click on, which the previous rule alone doesn't
@@ -179,10 +181,67 @@ token and this gesture is about several, so building a group leaves the form sho
 was last plain-clicked. Connecting them would mean building a multi-edit form, and "set size on
 eight tokens" is a feature nobody asked for.
 
+### One group
+
+**A token with a ring is in the group** (milestone 45). The ring and the Delete key cover the
+panel's token as well as `selection`, and before this a drag moved only `selection`: plain-click
+the fighter, shift-click two goblins, drag a goblin, and the fighter stayed behind with its ring on
+while Delete still asked about all three.
+
+- A shift-click or a shift+box adds the panel's token to `selection` along with what it gathers,
+  so from then on the ring set and `selection` are one set. A plain-clicked token with nothing
+  gathered is a group of one, which already dragged correctly.
+- A shift-click on the panel's token drops it from `selection` and clears the panel, including when
+  it's a group of one. Dropping it from `selection` alone would leave it ringed and outside the
+  group again.
+- Escape empties `selection` and leaves the panel's token ringed: a group of one.
+
+`input.ts` reads the panel's token through the `selected` getter passed beside `onSelect`. Nothing
+else needs to know, because the panel's token is set in one place (a plain click on the board) and
+every other path only clears it. Only the DM has a panel, so none of this applies to a player.
+
+This doesn't reverse the rule above. The form still shows the token last plain-clicked; what
+changed is which tokens a drag moves.
+
+### The box
+
+A mouse's left-drag on bare board draws a box, and on release every token whose centre is inside
+it, among those `tokenAt` would let you grab, joins the group. A plain box replaces the group and
+clears the panel, as a click on empty ground does, since otherwise the panel's token would keep a
+ring outside the group. Clearing the panel loads nothing into the form, so it isn't the form
+following the group. Shift+box adds. A box that never left the click slop (`DRAW_CLICK_SLOP_PX`,
+not a pan's "any pixel", so a jittery click on a door still swings it) is a click on empty ground,
+unless shift was down, in which case it does nothing: shift only ever adds.
+
+It's local and silent like a shift-click, and computed once on release. Only the box is drawn
+during the drag, from `InputState.marquee`, in world coordinates. `inMarquee` in `marquee.ts` is the
+membership rule and is a pure function with its own tests.
+
+Two consequences, both deliberate:
+
+- **Pan moved to the right and middle buttons**, and right-drag also pans with a modal tool armed.
+  The canvas suppresses `contextmenu`; the rail and dock keep the browser's. A touch or pen drag on
+  bare board still pans, because a finger has no right button and touch mustn't break, so the box is
+  gated on `pointerType === 'mouse'`.
+- **The door-swing-or-clear branch belongs to a left click on bare board, not to the pan.** Before
+  this it ran for any pan that didn't move, so a middle-click on a door swung it. With right-drag
+  panning, a reflexive right-click on a door would have opened it on every screen. It now runs for
+  a box that never moved and for a touch or pen pan that never moved (`clicks` on the pan drag), and
+  a right or middle release does nothing.
+
+A shift-press that misses every token skips `beginHold`, for the shift-click's reason above: a
+shift+box that paused before moving would otherwise ping every screen.
+
+A trackpad reports as a mouse, so this took away click-drag panning from trackpad users, and most
+have no right-drag. *The bottom-right corner* in `docs/frontend.md` covers the switch that gives
+them two-finger pan.
+
 `tools/drive-select.mjs` tests this, because a pointer gesture over a canvas is invisible to every
-other suite: there's no pure function in it for `npm test`, and the room can't tell one group drag
+other suite: the only pure function in it is `inMarquee`, and the room can't tell one group drag
 from six separate ones. Its most important checks are on the second connection: that a shift-click
-changes nothing at all on the table's screen, and that dragging one token moves the other there too.
+or a box changes nothing at all on the table's screen, and that dragging one token moves the other
+there too. `drive-ui.mjs` checks that a right-click on a door doesn't swing it, and
+`drive-ping.mjs` that a held shift-press doesn't ping.
 
 ## Names on the board
 

@@ -1,10 +1,13 @@
 # Rooms
 
-More than one campaign on one server, and the screen that picks between them. Milestone 33.
+More than one campaign on one server, and the screen that picks between them (milestone 33). A
+second site, which is a second server for a DM who mustn't reach the first one's rooms, and the
+roster the DM edits (milestone 46).
 
 Read this before touching `ROOMS`, `RoomDef`, `roster_from`, `RoomState::blank`, `room::spawn`,
-`save_path`, `room_listing` or `ws_handler` on the server, or `rooms.ts`, `chooseRoom` in
-`main.ts`, the storage keys in `identity.ts`, or the room in `connect`.
+`save_path`, `room_listing` or `ws_handler` on the server, `SLATE_SITE`, `SetRoster`/
+`RosterChanged`/`roster_allowed`, or `rooms.ts`, `roster.ts`, `chooseRoom` in `main.ts`, the storage
+keys in `identity.ts`, or the room in `connect`.
 
 ## What asked for it
 
@@ -56,33 +59,41 @@ Everything else the architecture promised held. A socket resolves its room once 
 and then talks to that actor's `mpsc` directly, exactly as it did when there was one handle on
 `AppState`. Nothing on the hot path knows that rooms are plural.
 
-Adding a campaign is an edit to `ROOMS` and a redeploy, the same as editing a roster. A config file
-was the alternative and was declined. It would allow editing a room on the Pi without a
-cross-compile, but it costs a schema, boot-time validation, and a failure mode where a typo means
-no rooms at all.
+Adding a campaign is an edit to `ROOMS` and a redeploy. A config file was the alternative and was
+declined. It would allow adding a room on the Pi without a cross-compile, but it costs a schema,
+boot-time validation, and a failure mode where a typo means no rooms at all. Rooms are added about
+once a season. The roster changes far more often, which is why it moved out of the code and into
+the room (see *The roster is the DM's* below).
 
 ## The id is the dangerous field
 
-A `RoomDef` has three fields, and only one is dangerous. **The id names the save file, the
+A `RoomDef` has four fields, and the id is the dangerous one. **The id names the save file, the
 `localStorage` key a claimed slot is remembered under, and the `?room=` in a link**, so changing it
 after a room has been played in orphans all three at once. `name` is free text, and renaming a
-campaign is safe at any time.
+campaign is safe at any time. `roster` is only a seed (see *The roster is the DM's*). Moving a room
+to another `site` strands its save file in the old process's directory, so treat that like an id
+change.
 
 Two tests in `room/tests/rooms.rs` guard the id. `every_room_id_is_a_slug`, because it's joined
 onto a directory to make a path and put in a URL. And `room_ids_are_unique`, because `main.rs`
 builds a `HashMap` from them, and a duplicate would silently leave one room fewer, with the wrong
 roster on the other's save file.
 
-## The first entry is the primary room
+## The first room of each site is its primary room
 
-Exactly two things depend on being first, and both answer the same question: *which room did the
+Two things depend on being first, and both answer the same question: *which room did the
 single-room server become?*
 
 - **Its save file is `SLATE_STATE` as given.** Every other room's is a sibling named `<id>.json`.
-- **A missing save file boots it from `hardcoded`** rather than an empty board.
+  This is per site (`is_primary`): each process has its own `SLATE_STATE`, so a second site's
+  first room is that process's `SLATE_STATE`.
+- **A missing save file boots it from `hardcoded`** rather than an empty board. This one is only the
+  very first room in `ROOMS` (`boots_demo`), not every site's first, because the built-in board's
+  tokens are the campaign's party. A second site seeded with them would open on somebody else's
+  characters.
 
-Neither extends to a third room, and neither should. `exactly_one_room_is_primary` makes sure the
-pair can't become zero or two without anyone noticing.
+`every_site_has_exactly_one_primary_room` and `only_the_campaign_boots_into_the_built_in_board`
+keep both from drifting.
 
 ### Why the save path is a sibling rule and not a directory
 
@@ -275,15 +286,107 @@ the page that's computed per room actor. The DM sitting in the campaign is drawn
 showing the one-shot, and the one-shot's player is missing from the campaign's strip entirely,
 holding no slot in that room's roster.
 
+## Sites: a second DM gets a second process
+
+A **site** is one server process and the rooms it serves. `RoomDef::site` names it and
+`SLATE_SITE` picks it (default `home`, so the Pi's first service needed no change). A process lists,
+spawns and accepts sockets only for its own site's rooms, so `/api/rooms` on one site never names
+another's, and a `?room=` for another site's room is a 404.
+
+It exists for a second DM running a different table on the same box (`sword-legend`), who mustn't
+see the home site's campaign or one-shot. Inside one process, a room shares four things with its
+neighbours, and each would leak to that DM:
+
+- **The DM secret.** One secret opens every room in the process (`hello` checks it against the
+  process-wide value). His link would open the campaign as its DM.
+- **The room list.** `/api/rooms` needs no credential, so his players' picker would list the
+  campaign and the one-shot.
+- **The libraries.** Listing `maps/` is how the DM picks a map, so he'd see next week's dungeon.
+- **`uploads/`.** Served to anyone holding a URL.
+
+Making each of those per room was the alternative, and it reverses three decisions this file
+records: one secret, a public room list, and shared libraries. Each change would be a new place for
+the home site's rooms to leak, and each would need a test. A second process shares none of the four
+because it never had them: its own env file, secret, data directory and port. On the Pi it also runs
+as its own Linux user with the home site's data outside its view (`deploy/pi/README.md`, *A second
+site*), so even a bug in Slate itself couldn't reach across. Nothing in the code crosses between
+sites. They meet only in the `ROOMS` table.
+
+**`SLATE_SITE` naming no rooms stops the boot** rather than falling back. An empty site would be a
+server with nothing on its picker, and falling back to `home` would serve the home site's rooms
+under the second DM's secret, which is exactly the leak the site exists to prevent.
+
+What a misconfigured second site *could* show is what's compiled in: room names and seed rosters.
+Those are in this repository already, so they aren't secret. The boards, walls, libraries and
+uploads live on disk under the home site's own directory.
+
+### A server with one room skips the picker
+
+`chooseRoom` picks the only room when `/api/rooms` lists one, and the DM's switch button is hidden
+there because it would reload into the same room. A player's stays: it also changes character.
+
+## The roster is the DM's
+
+The roster used to be a constant, with a note on `roster_from` saying it would have to become state
+if the DM could edit it. A second site made that necessary. A DM who can't add a friend without
+someone else cross-compiling a release isn't running his own game.
+
+**It's saved with the room** (`Saved::roster`), and the constant in `ROOMS` only seeds a room that
+has never saved one. `None` on the file means a save from before this, and keeps the seed. An empty
+list is a real roster (a new site's room starts with no players), which is why the field is an
+`Option` and not a list defaulting to empty: loading an old campaign save as an empty roster would
+turn six players away on the first boot after the upgrade.
+`a_save_from_before_the_roster_was_saved_keeps_the_seed` pins it. The cost: once a room has saved,
+editing its seed in the code changes nothing.
+
+### One command, the whole list
+
+`SetRoster { roster }` sends the whole cast, and the room compares it with what it holds. That's one
+command and one event (`RosterChanged`) rather than add, rename and remove. A new slot's id is made on
+the client from its name (`slugFor` in `roster.ts`); the room checks it's a slug, short enough and
+unique, and checks names and the count (`roster_allowed`). **An id never changes.** It's what tokens,
+colours, scratchpads and each player's `localStorage` are keyed on, so a rename sends the same id with
+a new name. A name added again after its slot was removed makes the same id, which is how a token
+restored by an undo finds its owner again.
+
+`RosterChanged` is unfiltered: the roster already goes to everyone in `Welcome`. Clients that built
+DOM from it (the presence strip, the chat chips, the token panel's owners, the table tab) rebuild,
+and everything else reads the same array, **which `main.ts` changes in place**. Six modules captured
+it when they were built, and replacing it would leave them reading the old one. That's `adoptView`'s
+reason for changing the scene in place. Players still on the picker get a fresh `ChooseIdentity`,
+so a slot added while they're deciding appears.
+
+### Removing a slot
+
+- **Refused while that player owns a token**, staged tokens included. The token would belong to
+  nobody who could join. Handing it to somebody else first is one edit on the token tab.
+- **Their colour and scratchpad are deleted.** Otherwise a name added later under the same id would
+  be handed the last person's private paragraph.
+  `a_name_added_again_is_not_sent_the_last_persons_scratchpad` is the test.
+- **Their connections are closed** through `remove_client`, the one way anybody leaves. The page
+  reconnects, offers the slug it remembered, and `hello` refuses it (a slug not in the roster was
+  already not an identity), so they land on the picker. A connection left open would be somebody
+  playing as nobody.
+
+### Kept off the undo ring
+
+Edited by the DM, and still excluded, by the same two lines as the colours: `undid` returns `None`
+for `SetRoster`, and the `Undo` arm puts the roster back around `adopt`. The reason is different
+from the scratchpad's: **a restore can't change who somebody is.** `Restored` carries no roster, and
+an undo that took back an added slot would leave its player connected as nobody. So an undo can
+bring back a token whose owner has since been removed. The DM can move and re-own it, and re-adding
+the name brings the same id back.
+
 ## Not built
 
 - **Creating or deleting a room from the UI.** That's what the `RwLock` would be for. Don't build it
   before there's a reason.
 - **A DM secret per room.** The design in `docs/history.md` argued for one, for a DM running
-  campaigns for different groups. This is one DM, one group, one tunnel, and two links to keep
-  straight is worse than one. `the_dm_secret_opens_a_room_whatever_its_cast_is` records the
-  decision.
+  campaigns for different groups. Within a site that's still one DM and one group, and two links to
+  keep straight is worse than one. `the_dm_secret_opens_a_room_whatever_its_cast_is` records the
+  decision. A different DM gets a site instead (above).
 - **Per-room libraries.** Same DM, same art. Splitting `maps/`, `portraits/`, `backdrops/` or
-  `uploads/` gains nothing and costs a copy of every goblin.
+  `uploads/` gains nothing and costs a copy of every goblin. A different DM's are separate because
+  they're a different process.
 - **Moving anything between rooms.** A token, a map's calibration, a scratchpad. Each would be a
   reference across two actors that share none, and everything above depends on them sharing none.

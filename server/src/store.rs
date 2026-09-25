@@ -13,7 +13,8 @@ use tokio::fs;
 
 use crate::fog::{FogView, OverrideView};
 use crate::protocol::{
-    Colours, Diagonals, Initiative, MapInfo, Owner, Prepared, Shape, StagedView, Token, Wall,
+    Colours, Diagonals, Initiative, MapInfo, Owner, Prepared, RosterEntry, Shape, StagedView,
+    Token, Wall,
 };
 
 /// What actually goes to disk.
@@ -157,6 +158,17 @@ pub struct Saved {
     /// written before this existed came from a room with no backdrop, and the
     /// container's `None` loads it that way.
     pub backdrop: Option<String>,
+    /// The room's cast, as the DM last edited it.
+    ///
+    /// **`None` means a file written before the roster was saved**, and the
+    /// room keeps the seed from `ROOMS`. That is why this is an `Option` and not
+    /// a list defaulting to empty: an empty list is a real roster (a new room,
+    /// or a DM who removed everybody), and loading an old campaign save as one
+    /// would turn six players away at the door. Every write since is `Some`.
+    ///
+    /// On the undo ring because every `Saved` is, and exempted there by hand:
+    /// see the `Undo` arm of `apply`.
+    pub roster: Option<Vec<RosterEntry>>,
 }
 
 /// One person's scratchpad as it is written down.
@@ -471,6 +483,10 @@ mod tests {
             // so a round trip that lost this would look like a DM who had put
             // the picture away.
             backdrop: Some("/uploads/backdrop-campfire-9f8e7d6c.jpg".to_owned()),
+            roster: Some(vec![RosterEntry {
+                id: PlayerId::new("mira"),
+                name: "Mira of the Marsh".to_owned(),
+            }]),
         }
     }
 
@@ -587,6 +603,11 @@ mod tests {
             loaded.backdrop.as_deref(),
             Some("/uploads/backdrop-campfire-9f8e7d6c.jpg")
         );
+        // The cast the DM edited, not the seed the code would give it back.
+        let roster = loaded.roster.as_deref().expect("a saved roster");
+        assert_eq!(roster.len(), 1);
+        assert_eq!(roster[0].id, PlayerId::new("mira"));
+        assert_eq!(roster[0].name, "Mira of the Marsh");
         assert!(
             !loaded.show_cursors,
             "and the same for the pointers: a table that decided against them \
