@@ -32,5 +32,6 @@ overlay, tolerates its absence, and a checkout without it shows what `extra.json
 shown — a row that names a page.
 
 So the split is the licence line drawn in the filesystem: **committed means SRD 5.1 and CC-BY.**
-Anything the import produces from a book stays on the machine that owns the book. Keep it that way
-— this repository is public.
+Anything the import produces from a book stays out of the repository. Keep it that way, because
+this repository is public. The Pi does serve `text.json` to the table, behind the same hostname as
+the rest of the site (see `deploy/pi/README.md`).

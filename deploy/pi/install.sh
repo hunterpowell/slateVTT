@@ -185,12 +185,6 @@ if [ -n "$unexpected" ]; then
 fi
 say "client tree holds exactly index.html, dist, assets, spells and status"
 
-# The spell prose outside SRD 5.1 is under no open licence, and this tree is
-# served to anyone with the hostname. Deploy-Slate.ps1 leaves it behind; this
-# catches a hand deploy that copied the whole folder.
-[ ! -e "$OPT/client.new/spells/text.json" ] ||
-    die "spells/text.json is in the staged client tree -- it must not be served; delete it from the stage"
-
 say "new tree built; nothing live has been touched yet"
 
 # ---------------------------------------------------------------------------

@@ -12,8 +12,9 @@ anything that connects the two more closely.
 
 It also means this folder **isn't part of the bundle and has to be deployed separately**. esbuild
 never touches it, so a deploy that copies only `dist/` and `assets/` leaves a 404 behind a link that
-worked on the build machine. **`text.json` is never deployed**: the Pi serves this folder to anyone
-with the hostname, so it gets the same treatment as the public repo. See `deploy/pi/README.md`.
+worked on the build machine. **`text.json` is deployed with the rest of the folder**, even though
+it's kept out of the public repo. The Pi's hostname is the only thing between it and the internet. See
+`deploy/pi/README.md`.
 
 Everyone at the table owns the PHB, Xanathar's and Tasha's. A book is excellent at *"read me
 Fireball"* and useless at *"what 2nd-level bard spells are a bonus action and don't need
@@ -45,7 +46,7 @@ node --test client/spells/query.test.mjs
 `spells_tmp/` holds a plain-text dump of each book, with eighty dashes between spells. **It's
 gitignored, and so is the `text.json` the import produces**: Xanathar's, Tasha's and the 42 PHB
 spells outside SRD 5.1 are under no open licence, and this repository is public. The header facts go
-in `extra.json` and are committed; the prose stays local. A checkout without `text.json` shows what
+in `extra.json` and are committed; the prose stays out of the repository. A checkout without `text.json` shows what
 `extra.json` always showed, a row naming a page. See `LICENSE-SRD.md`.
 
 `tools/import-spells.mjs` reads the dumps and fills in everything a header block states (level,

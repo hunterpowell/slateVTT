@@ -427,9 +427,9 @@ server\target\aarch64-unknown-linux-gnu\release\slate-server  ->  stage/slate-se
 client\index.html                                             ->  stage/client/
 client\dist                                                   ->  stage/client/
 client\assets                                                 ->  stage/client/
+client\spells                                                 ->  stage/client/
 client\status                                                 ->  stage/client/
 build.json                                                    ->  stage/build.json
-client\spells\<each file but text.json>                       ->  stage/client/spells/
 deploy\pi\install.sh                                          ->  stage/install.sh
 ```
 
@@ -439,12 +439,12 @@ esbuild never touches them, so they arrive only if those lines run. The client l
 from its bottom-right corner, and a missing copy is a 404 behind a link that looked fine on the build
 machine.
 
-**`client\spells` goes one file at a time so `text.json` stays behind.** It's the prose for the
-spells outside SRD 5.1, under no open licence, and everything under `/opt/slate/client` is served to
-anyone with the hostname. `install.sh` refuses it too, which catches a hand deploy that copied the
-whole folder. Without it the page shows those spells as a row naming a page (see
-`client/spells/README.md`). The folder has no subdirectories, and the script refuses to deploy if
-one appears, because it would otherwise be left out.
+`client\spells` is copied whole, **so the gitignored `text.json` goes with it** and the Pi shows
+the prose for every spell. That prose is under no open licence and anything under
+`/opt/slate/client` is served to anyone with the hostname; serving it anyway was Hunter's call, on
+the grounds that the hostname is the access control for the whole site. The repository still
+doesn't carry it. A build machine without `text.json` deploys fine, and the page shows those
+spells as a row naming a page (see `client/spells/README.md`).
 
 `build.json` is the stamp the script writes naming the commit being deployed; it goes outside the
 client tree (see `SLATE_BUILD_INFO` above).
@@ -520,9 +520,7 @@ sudo systemctl start slate
 ### Doing it by hand
 
 `install.sh` is a plain shell script that reads top to bottom. If you need to deploy without the
-PowerShell half (from a machine that isn't the build machine, say), the `scp` table above (with
-`mkdir -p stage/client/spells` first, or `scp -r client\spells` to `stage/client/` on a machine
-with no `text.json`) and
+PowerShell half (from a machine that isn't the build machine, say), the `scp` table above and
 `sudo bash stage/install.sh stage` are all it takes.
 
 ## Verify
@@ -1091,9 +1089,6 @@ hand deploy can still hit them.
   than `index.html`, `dist`, `assets`, `spells` or `status` is in `client\`. This matters beyond
   tidiness: the client directory is served to anyone, so a map sitting in it can be downloaded by
   URL, bypassing the DM-only map picker entirely.
-- **`spells/text.json is in the staged client tree`**: the spell prose was copied along with the
-  rest of `client\spells`, which only a hand deploy does. Delete `~/stage/client/spells/text.json`
-  and run `install.sh` again. Nothing has been stopped.
 - **`slate did not serve within 20s`**: the new build installed and wouldn't answer. It has been
   rolled back and the old one is running again; what failed is kept at `/opt/slate/client.failed` and
   `/opt/slate/bin/slate-server.failed`. Start with `journalctl -u slate -n 50`. A 200 from `/` but not
