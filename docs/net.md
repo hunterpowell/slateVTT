@@ -105,7 +105,11 @@ So it asserts in one direction only. The other direction in the override test gu
 number drifting far below what a frame holds. There's no tuned number here: the largest legal token
 edit is orders of magnitude under the cap and is meant to stay there.
 
-A new command with a variable-length collection needs its own test beside these two. Raising the
+`AddShape` is the third, since a freehand path carries its corners.
+`room::tests::drawings::the_longest_path_fits_in_a_frame` is its assertion, against
+`MAX_PATH_POINTS` (256), with every corner at the edge of reach and long fractions.
+
+A new command with a variable-length collection needs its own test beside these three. Raising the
 frame cap is the other option and it has a cost: it's also how much a socket that hasn't sent
 `Hello` yet may push. That's acceptable behind a tunnel with a DM secret, and the reasoning is
 written at the constant.

@@ -1145,6 +1145,7 @@ function boot(ui: Ui, choice: RoomChoice, alone: boolean): void {
         at: frame.at,
         to: frame.to,
         color: frame.color,
+        points: [],
       });
     },
 

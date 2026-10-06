@@ -1,9 +1,11 @@
 // Drawn shapes: what they are, where they are, and which cells they cover.
 //
-// All four kinds are one struct (a kind and two points) because that is all
-// any of them needs. A line is its two ends, a rectangle its opposite corners, a
-// circle its centre and a point on the rim, a cone its apex and its tip. One
-// shape of data means one hit test and one coverage rule.
+// Four of the five kinds are one struct (a kind and two points) because that is
+// all any of them needs. A line is its two ends, a rectangle its opposite
+// corners, a circle its centre and a point on the rim, a cone its apex and its
+// tip. One shape of data means one hit test and one coverage rule. The fifth, a
+// freehand `path`, is the origin and a list of corners, and covers nothing: it
+// is hit-tested as a stroke, like a line.
 //
 // Everything here works in grid units. A shape is measured in cells the way a
 // token is placed in them, so recalibrating the grid leaves a 20 ft circle 20 ft
@@ -27,6 +29,24 @@ const FEET_PER_CELL = 5;
  * which is also what it should look like.
  */
 export const MAX_SHAPE_CELLS = 30;
+
+/**
+ * Corners in one freehand line once it is simplified. Mirrors the server's
+ * `MAX_PATH_POINTS`, which refuses past it.
+ */
+export const MAX_PATH_POINTS = 256;
+
+/** How far the pointer has to move, in cells, before a freehand line takes
+ *  another corner. Keeps a slow hand from piling up points in one spot. */
+export const PATH_STEP = 0.1;
+
+/** How far a simplified freehand line may stray from what was drawn, in cells,
+ *  before the cap forces it further. Small enough that nobody sees it. */
+const PATH_TOLERANCE = 0.04;
+
+/** How close to a line or a freehand stroke a click has to land to erase it,
+ *  in cells. A stroke has no inside to click. */
+const STROKE_REACH = 0.3;
 
 /** Holds a sweep inside what the server will accept, per axis, the same way
  *  the server bounds it. */
@@ -133,15 +153,19 @@ export interface Shape {
   to: Vec2;
   by: Owner;
   color: string;
+  /** A `path`'s corners, as offsets from the origin. Empty for the other kinds. */
+  points: Vec2[];
 }
 
 /** An in-progress sweep, ours or somebody else's. Stored only here, and gone
- *  the moment the mouse comes up. */
+ *  the moment the mouse comes up. Only our own can be a `path`, since nobody
+ *  sends one as a sketch. */
 export interface Sketch {
   kind: ShapeKind;
   at: Vec2;
   to: Vec2;
   color: string;
+  points: Vec2[];
 }
 
 /**
@@ -193,6 +217,7 @@ export function shapeFromWire(wire: WireShape): Shape {
     to: wire.to,
     by: wire.by,
     color: wire.color,
+    points: wire.points ?? [],
   };
 }
 
@@ -222,10 +247,95 @@ export function shapeEnd(origin: Vec2, to: Vec2): Vec2 {
   return { x: origin.x + to.x, y: origin.y + to.y };
 }
 
-/** Whether this kind encloses anything. A line measures; the rest cover ground,
- *  and only things that cover ground tint the cells underneath them. */
+/** Whether this kind encloses anything. A line and a freehand path are
+ *  strokes; the rest cover ground, and only things that cover ground tint the
+ *  cells underneath them. */
 export function isArea(kind: ShapeKind): boolean {
-  return kind !== 'line';
+  return kind !== 'line' && kind !== 'path';
+}
+
+/**
+ * The corners of a stroke in grid units, origin first, or none for an area.
+ *
+ * What a line and a path have in common: both are drawn, hit-tested and
+ * fog-gated as a run of segments. A line is the run with one segment.
+ */
+export function strokeOf(
+  shape: { kind: ShapeKind; to: Vec2; points: readonly Vec2[] },
+  origin: Vec2,
+): Vec2[] {
+  if (shape.kind === 'line') return [origin, shapeEnd(origin, shape.to)];
+  if (shape.kind === 'path') return [origin, ...shape.points.map((p) => shapeEnd(origin, p))];
+  return [];
+}
+
+/** Whether a point is within `reach` cells of any segment of a stroke. */
+export function nearStroke(corners: readonly Vec2[], px: number, py: number, reach: number): boolean {
+  for (let i = 1; i < corners.length; i++) {
+    const a = corners[i - 1];
+    const b = corners[i];
+    if (a === undefined || b === undefined) continue;
+    if (segmentDistance(a, b, px, py) <= reach) return true;
+  }
+  return false;
+}
+
+function segmentDistance(a: Vec2, b: Vec2, px: number, py: number): number {
+  const dx = b.x - a.x;
+  const dy = b.y - a.y;
+  const length2 = dx * dx + dy * dy;
+  // A zero-length segment is a point, and the projection below would divide
+  // by zero.
+  const t = length2 === 0 ? 0 : Math.max(0, Math.min(1, ((px - a.x) * dx + (py - a.y) * dy) / length2));
+  return Math.hypot(px - (a.x + dx * t), py - (a.y + dy * t));
+}
+
+/**
+ * A freehand line cut down to what the server will take.
+ *
+ * Douglas-Peucker: keep the corner furthest from the chord if it strays more
+ * than the tolerance, and recurse on both halves. Runs at the tolerance first,
+ * and doubles it until the line fits under `MAX_PATH_POINTS`, so a long
+ * scribble loses detail instead of being refused. `points` are offsets from the
+ * origin, which is the implied first corner and is never returned.
+ */
+export function simplifyPath(points: readonly Vec2[]): Vec2[] {
+  const all = [{ x: 0, y: 0 }, ...points];
+  for (let tolerance = PATH_TOLERANCE; ; tolerance *= 2) {
+    const kept = douglasPeucker(all, tolerance).slice(1);
+    if (kept.length <= MAX_PATH_POINTS) return kept;
+  }
+}
+
+function douglasPeucker(points: readonly Vec2[], tolerance: number): Vec2[] {
+  if (points.length < 3) return [...points];
+  const keep = new Array<boolean>(points.length).fill(false);
+  keep[0] = true;
+  keep[points.length - 1] = true;
+  // A stack, not recursion: a long, slow scribble is a few thousand points.
+  const spans: [number, number][] = [[0, points.length - 1]];
+  while (spans.length > 0) {
+    const [lo, hi] = spans.pop() ?? [0, 0];
+    const a = points[lo];
+    const b = points[hi];
+    if (a === undefined || b === undefined) continue;
+    let worst = -1;
+    let at = -1;
+    for (let i = lo + 1; i < hi; i++) {
+      const p = points[i];
+      if (p === undefined) continue;
+      const d = segmentDistance(a, b, p.x, p.y);
+      if (d > worst) {
+        worst = d;
+        at = i;
+      }
+    }
+    if (at !== -1 && worst > tolerance) {
+      keep[at] = true;
+      spans.push([lo, at], [at, hi]);
+    }
+  }
+  return points.filter((_, i) => keep[i]);
 }
 
 /**
@@ -279,8 +389,8 @@ export function labelFor(shape: Shape | Sketch): string {
  * bounding box, and clicking a shape to erase it asks it of the cursor. The
  * coverage rule and the hit test are the same test.
  *
- * A line encloses nothing, so nothing is inside it. There is no clicking a
- * line to erase it, since a line is never kept.
+ * A line or a path encloses nothing, so nothing is inside either. Clicking one
+ * to erase it goes through `nearStroke` instead (see `erasableAt`).
  */
 export function containsPoint(
   kind: ShapeKind,
@@ -304,6 +414,7 @@ export function containsPoint(
 
   switch (kind) {
     case 'line':
+    case 'path':
       return false;
 
     case 'circle':
@@ -415,7 +526,10 @@ export function erasableAt(
     if (!canErase(isDm, playerId, shape)) continue;
     const origin = shapeOrigin(scene, shape);
     if (origin === null) continue;
-    if (containsPoint(shape.kind, origin, shape.to, at.x, at.y)) return shape;
+    const hit = isArea(shape.kind)
+      ? containsPoint(shape.kind, origin, shape.to, at.x, at.y)
+      : nearStroke(strokeOf(shape, origin), at.x, at.y, STROKE_REACH);
+    if (hit) return shape;
   }
   return null;
 }

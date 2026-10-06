@@ -10,13 +10,15 @@ this project that no visibility filter touches.
 
 ## Drawings
 
-Spell areas and measuring shapes: line, circle, cone, rectangle. **Anyone may draw.** It's the only
+Spell areas, measuring shapes and marks: line, circle, cone, rectangle, and a freehand path.
+**Anyone may draw.** It's the only
 thing in the room a player can add, and the only thing they can delete. `by: Owner` records who
 drew it, and `can_erase` allows the DM or that person.
 
-**All four kinds are one struct: a kind and two points.** A line is its two ends, a rectangle its
-opposite corners, a circle its centre and a point on the rim, a cone its apex and its tip. So
-there's one hit test and one coverage rule rather than four of each. `to` is an *offset* from the
+**Four of the five kinds are one struct: a kind and two points.** A line is its two ends, a
+rectangle its opposite corners, a circle its centre and a point on the rim, a cone its apex and its
+tip. So there's one hit test and one coverage rule rather than four of each. The path is the
+exception, and *Kept lines and freehand* below says what it costs. `to` is an *offset* from the
 origin rather than a second position, which is what makes an anchored shape move with its token
 instead of stretching towards a fixed cell.
 
@@ -41,13 +43,13 @@ the sweeper (who is drawing it from their own pointer and would see it rubber-ba
 written to disk. `drawing: false` releases it.
 
 **Whether a release keeps anything is decided by the client alone.** The measure tool stops at the
-release; the three area tools follow it with `AddShape`. The server accepts all four kinds, stores
-whatever it's told to, and never learns which tool was in use, by the same rule that keeps it from
-learning the DM is previewing. A "keep this line" toggle would be a change to `drawtool.ts` and
-nothing else.
+release; every other tool follows it with `AddShape`. The measure and line tools sweep the same
+kind, and the server never learns which was in use, by the same rule that keeps it from learning
+the DM is previewing. That's why a tool in `drawtool.ts` is a row in `TOOLS` with its own `keeps`,
+not a `ShapeKind`.
 
-**The measure tool draws in the sweeper's own colour, and the three area tools use the picked
-swatch.** That's the third thing the chosen tool decides, besides what gets swept and whether the
+**The measure tool draws in the sweeper's own colour, and every tool that keeps what it draws uses
+the picked swatch.** That's the third thing the chosen tool decides, besides what gets swept and whether the
 release keeps anything, and it splits the same way as the other two. A line that vanishes when you
 let go is a *gesture*, so what watchers want to know is who is measuring, the same question
 `Pinged` carries an `Owner` to answer. A shape that stays on the board is an object, not a person,
@@ -71,6 +73,42 @@ closes, so `RoomCmd::Disconnected` dispatches `SketchEnded` unconditionally. An 
 drawing is a no-op on arrival, and that's cheaper than keeping "is this client sketching" as
 state. This is the one place the movement ruler can't copy: nothing announces that a drag stopped,
 so the ruler has to guess with `STALE_MS`.
+
+### Kept lines and freehand
+
+Milestone 47 added two tools, for marking a connection between two things (and for a breath weapon
+or a witch bolt) and for drawing freely.
+
+**The line tool is the measure tool with `keeps` set.** Same kind, same snapping, same length
+label, palette colour instead of the sweeper's. It doesn't tint cells: which squares a 5 ft
+wide line spell catches is ruled on at the table. What it did need was a hit test.
+`containsPoint` is false everywhere on a line, which was fine while no line was ever kept, but a
+kept one would have been erasable only by "clear all". Strokes (a line, a path) are hit-tested by
+`nearStroke` instead, within `STROKE_REACH` of any segment, and a hovered stroke draws thicker
+because it has no fill to brighten.
+
+**A path is the origin plus `Shape::points`, a list of corners each stored as an offset from the
+origin**, like `to`. It breaks the two-point rule because a freehand line can't be described any
+other way. What it doesn't do keeps the cost down: it never snaps, never anchors to a token (a mark
+on the floor, which a creature walking over it shouldn't drag along), has no label, and covers no
+cells. `strokeOf` turns a line or a path into one list of corners, so drawing, erasing and the
+fog walk treat both the same way. `to` is unused on a path.
+
+**A path is never sketched.** Nothing goes out while the pen is down, and on release the whole
+stroke goes out as one `AddShape`. Relaying a growing list to six clients at 25 Hz from a Pi is
+more traffic than a few seconds of watching someone draw is worth, and sending only the new points
+would have needed a new message. The server refuses a `Sketch` whose kind is `Path`, since a
+sketch has no points and would draw as nothing.
+
+Bounds: every corner within `MAX_SHAPE_CELLS` of the origin, the same box every shape fits in;
+at most `MAX_PATH_POINTS` corners; and `points` refused on any other kind, so a circle can't carry a
+list into the save file. The client takes a corner every `PATH_STEP` of travel and simplifies on
+release (Douglas-Peucker in `simplifyPath`), doubling its tolerance until the stroke fits under the
+cap, so a long scribble loses detail rather than being refused.
+`drawings::the_longest_path_fits_in_a_frame` is the frame-size test `docs/net.md` asks for.
+
+The fog gate walks each segment with `line_cells`, so a path is sent once any segment crosses
+`known`. `mirror.ts` does the same walk over `strokeOf`.
 
 ### What one event has to cover
 

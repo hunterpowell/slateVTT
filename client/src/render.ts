@@ -25,7 +25,15 @@ import { feetMoved, rulerAlpha, trailCells } from './ruler.js';
 import type { Board, Scene, Token } from './scene.js';
 import { shownBoard, shownOverrides, shownPos, shownWalls, showingStaged } from './scene.js';
 import type { Shape, Sketch } from './shapes.js';
-import { CONE_HALF_ANGLE, coveredCells, isArea, labelFor, shapeEnd, shapeOrigin } from './shapes.js';
+import {
+  CONE_HALF_ANGLE,
+  coveredCells,
+  isArea,
+  labelFor,
+  shapeEnd,
+  shapeOrigin,
+  strokeOf,
+} from './shapes.js';
 import { crossesWall } from './walls.js';
 
 const TAU = Math.PI * 2;
@@ -193,8 +201,10 @@ const SHAPE_FILL_ALPHA = 0.24;
 const SHAPE_EDGE_ALPHA = 1;
 const SKETCH_ALPHA = 0.75;
 const SHAPE_EDGE_WIDTH = 2;
-/** The shape the pointer would erase, so a click is never a surprise. */
+/** The shape the pointer would erase, so a click is never a surprise. An area
+ *  fills more strongly; a line or a path has no fill, so its stroke thickens. */
 const SHAPE_HOVER_ALPHA = 0.4;
+const STROKE_HOVER_WIDTH = 4;
 const SHAPE_FONT = '600 12px ui-sans-serif, system-ui, sans-serif';
 /** The ping ring and the arrow that stands in for one off screen. Both drawn in
  *  the sender's own colour, which is why neither has a colour constant here. */
@@ -832,23 +842,12 @@ function drawShapes(ctx: CanvasRenderingContext2D, frame: Frame, board: Board): 
     // Drawing nothing beats drawing it at cell zero.
     const origin = shapeOrigin(scene, shape);
     if (origin === null) continue;
-    const fill = shape.id === frame.hoveredShapeId ? SHAPE_HOVER_ALPHA : SHAPE_FILL_ALPHA;
-    paintShape(ctx, frame, board, shape.kind, origin, shape.to, shape.color, fill, 1, false);
+    const hovered = shape.id === frame.hoveredShapeId;
+    paintShape(ctx, frame, board, shape, origin, hovered, 1, false);
   }
 
   for (const sketch of frame.sketches) {
-    paintShape(
-      ctx,
-      frame,
-      board,
-      sketch.kind,
-      sketch.at,
-      sketch.to,
-      sketch.color,
-      SHAPE_FILL_ALPHA,
-      SKETCH_ALPHA,
-      true,
-    );
+    paintShape(ctx, frame, board, sketch, sketch.at, false, SKETCH_ALPHA, true);
   }
 }
 
@@ -863,14 +862,13 @@ function paintShape(
   ctx: CanvasRenderingContext2D,
   frame: Frame,
   board: Board,
-  kind: Shape['kind'],
+  shape: Shape | Sketch,
   origin: { x: number; y: number },
-  to: { x: number; y: number },
-  color: string,
-  fillAlpha: number,
+  hovered: boolean,
   alpha: number,
   dashed: boolean,
 ): void {
+  const { kind, to, color } = shape;
   const { grid } = board;
   const o = gridToWorld(grid, origin.x, origin.y);
   const end = shapeEnd(origin, to);
@@ -884,7 +882,7 @@ function paintShape(
     // hundred `rect`s into one path is the same picture for one of them.
     const cells = coveredCells(kind, origin, to);
     if (cells.length > 0) {
-      ctx.globalAlpha = alpha * fillAlpha;
+      ctx.globalAlpha = alpha * (hovered ? SHAPE_HOVER_ALPHA : SHAPE_FILL_ALPHA);
       ctx.fillStyle = color;
       ctx.fill(cellPath(grid, cells));
     }
@@ -893,7 +891,8 @@ function paintShape(
   ctx.globalAlpha = alpha * SHAPE_EDGE_ALPHA;
   ctx.strokeStyle = color;
   // Constant on screen at any zoom, like the grid and the rings.
-  ctx.lineWidth = SHAPE_EDGE_WIDTH / frame.cam.zoom;
+  const width = hovered && !isArea(kind) ? STROKE_HOVER_WIDTH : SHAPE_EDGE_WIDTH;
+  ctx.lineWidth = width / frame.cam.zoom;
   if (dashed) ctx.setLineDash([7 / frame.cam.zoom, 5 / frame.cam.zoom]);
   ctx.lineJoin = 'round';
 
@@ -903,6 +902,16 @@ function paintShape(
       ctx.moveTo(o.x, o.y);
       ctx.lineTo(e.x, e.y);
       break;
+
+    case 'path': {
+      ctx.lineCap = 'round';
+      ctx.moveTo(o.x, o.y);
+      for (const corner of strokeOf(shape, origin).slice(1)) {
+        const c = gridToWorld(grid, corner.x, corner.y);
+        ctx.lineTo(c.x, c.y);
+      }
+      break;
+    }
 
     case 'circle':
       ctx.arc(o.x, o.y, Math.hypot(e.x - o.x, e.y - o.y), 0, TAU);
@@ -948,7 +957,9 @@ function drawShapeLabels(ctx: CanvasRenderingContext2D, frame: Frame, board: Boa
 
   const label = (shape: Shape | Sketch, origin: { x: number; y: number }): void => {
     // Nothing has been swept yet. The movement ruler drops its reading at zero
-    // for the same reason: a "0 ft" flashing under the cursor is noise.
+    // for the same reason: a "0 ft" flashing under the cursor is noise. A path
+    // has no reading at all: it is a mark, not a measurement.
+    if (shape.kind === 'path') return;
     if (shape.to.x === 0 && shape.to.y === 0) return;
     const end = shapeEnd(origin, shape.to);
     const world = gridToWorld(board.grid, end.x, end.y);

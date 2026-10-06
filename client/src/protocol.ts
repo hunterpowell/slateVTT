@@ -195,9 +195,9 @@ export interface WireToken {
   staged_only: boolean;
 }
 
-/** The four things anyone can draw. A closed set on the Rust side too: an
+/** The five things anyone can draw. A closed set on the Rust side too: an
  *  unknown kind does not deserialize. */
-export type ShapeKind = 'line' | 'circle' | 'cone' | 'rect';
+export type ShapeKind = 'line' | 'circle' | 'cone' | 'rect' | 'path';
 
 /** Where a shape's first point is: a cell, or a token it follows.
  *
@@ -219,6 +219,9 @@ export interface WireShape {
   by: Owner;
   /** `#rrggbbaa`, like the grid colour. */
   color: string;
+  /** A `path`'s corners after the origin, each an offset from it like `to`.
+   *  Absent on every other kind. */
+  points?: WirePos[];
 }
 
 /** A point in image pixels, the other coordinate space. Its own type for the
@@ -790,8 +793,17 @@ export type ClientMsg =
    *  and these whenever the mouse moves. No frame ends one; each recipient
    *  drops a cursor that stops arriving, on its own timer. */
   | { type: 'move_cursor'; at: WirePos }
-  /** Keep the shape just swept. No id: the server assigns it, like a token's. */
-  | { type: 'add_shape'; kind: ShapeKind; from: WireOrigin; to: WirePos; color: string }
+  /** Keep the shape just swept. No id: the server assigns it, like a token's.
+   *  `points` is a `path`'s corners, refused on any other kind. A `path` is
+   *  never sent as a `sketch`: it isn't watched while it is drawn. */
+  | {
+      type: 'add_shape';
+      kind: ShapeKind;
+      from: WireOrigin;
+      to: WirePos;
+      color: string;
+      points?: WirePos[];
+    }
   /** Whoever drew it, or the DM. */
   | { type: 'remove_shape'; id: string }
   /** DM-only: it erases other people's drawings. */

@@ -149,27 +149,6 @@
         "cells": ""
       }
     },
-    "/uploads/please-a4a8df16.jpg": {
-      "grid_px": 23.329184,
-      "offset_x": 0.0,
-      "offset_y": 0.0,
-      "grid_color": "#ffffff4d",
-      "play_area": null,
-      "fog": false,
-      "vision_ft": 60.0,
-      "lighting": "dynamic",
-      "grid_shape": {
-        "kind": "square"
-      },
-      "walls": [],
-      "overrides": {
-        "x": 0,
-        "y": 0,
-        "w": 0,
-        "h": 0,
-        "cells": ""
-      }
-    },
     "/uploads/test-c42ecd7f.webp": {
       "grid_px": 54.0,
       "offset_x": 4.5834055,
@@ -192,10 +171,10 @@
         "cells": ""
       }
     },
-    "/uploads/dungeon-iso-9167dae1.webp": {
-      "grid_px": 23.329184,
-      "offset_x": -5.8302383,
-      "offset_y": 14.151973,
+    "/uploads/bridge-37c094e4.webp": {
+      "grid_px": 88.8,
+      "offset_x": 26.920715,
+      "offset_y": 60.76377,
       "grid_color": "#ffffff4d",
       "play_area": null,
       "fog": false,
@@ -203,7 +182,49 @@
       "lighting": "dynamic",
       "grid_shape": {
         "kind": "iso",
-        "ratio": 1.8573334
+        "ratio": 1.6186188
+      },
+      "walls": [],
+      "overrides": {
+        "x": 0,
+        "y": 0,
+        "w": 0,
+        "h": 0,
+        "cells": ""
+      }
+    },
+    "/uploads/please-a4a8df16.jpg": {
+      "grid_px": 23.329184,
+      "offset_x": 0.0,
+      "offset_y": 0.0,
+      "grid_color": "#ffffff4d",
+      "play_area": null,
+      "fog": false,
+      "vision_ft": 60.0,
+      "lighting": "dynamic",
+      "grid_shape": {
+        "kind": "square"
+      },
+      "walls": [],
+      "overrides": {
+        "x": 0,
+        "y": 0,
+        "w": 0,
+        "h": 0,
+        "cells": ""
+      }
+    },
+    "/uploads/buh-2e020abc.webp": {
+      "grid_px": 54.0,
+      "offset_x": 0.0,
+      "offset_y": 0.0,
+      "grid_color": "#ffffffa3",
+      "play_area": null,
+      "fog": false,
+      "vision_ft": 60.0,
+      "lighting": "dynamic",
+      "grid_shape": {
+        "kind": "square"
       },
       "walls": [],
       "overrides": {
@@ -225,6 +246,28 @@
       "lighting": "dynamic",
       "grid_shape": {
         "kind": "square"
+      },
+      "walls": [],
+      "overrides": {
+        "x": 0,
+        "y": 0,
+        "w": 0,
+        "h": 0,
+        "cells": ""
+      }
+    },
+    "/uploads/dungeon-iso-9167dae1.webp": {
+      "grid_px": 23.329184,
+      "offset_x": -5.8302383,
+      "offset_y": 14.151973,
+      "grid_color": "#ffffff4d",
+      "play_area": null,
+      "fog": false,
+      "vision_ft": 60.0,
+      "lighting": "dynamic",
+      "grid_shape": {
+        "kind": "iso",
+        "ratio": 1.8573334
       },
       "walls": [],
       "overrides": {
@@ -276,49 +319,6 @@
         "h": 0,
         "cells": ""
       }
-    },
-    "/uploads/buh-2e020abc.webp": {
-      "grid_px": 54.0,
-      "offset_x": 0.0,
-      "offset_y": 0.0,
-      "grid_color": "#ffffffa3",
-      "play_area": null,
-      "fog": false,
-      "vision_ft": 60.0,
-      "lighting": "dynamic",
-      "grid_shape": {
-        "kind": "square"
-      },
-      "walls": [],
-      "overrides": {
-        "x": 0,
-        "y": 0,
-        "w": 0,
-        "h": 0,
-        "cells": ""
-      }
-    },
-    "/uploads/bridge-37c094e4.webp": {
-      "grid_px": 88.8,
-      "offset_x": 26.920715,
-      "offset_y": 60.76377,
-      "grid_color": "#ffffff4d",
-      "play_area": null,
-      "fog": false,
-      "vision_ft": 60.0,
-      "lighting": "dynamic",
-      "grid_shape": {
-        "kind": "iso",
-        "ratio": 1.6186188
-      },
-      "walls": [],
-      "overrides": {
-        "x": 0,
-        "y": 0,
-        "w": 0,
-        "h": 0,
-        "cells": ""
-      }
     }
   },
   "notes": [
@@ -330,5 +330,31 @@
     }
   ],
   "colours": {},
-  "backdrop": null
+  "backdrop": null,
+  "roster": [
+    {
+      "id": "elias",
+      "name": "Elias"
+    },
+    {
+      "id": "corvus",
+      "name": "Corvus Nevermore"
+    },
+    {
+      "id": "rostam",
+      "name": "Rostam"
+    },
+    {
+      "id": "ironbeak",
+      "name": "Iron Beak"
+    },
+    {
+      "id": "baron",
+      "name": "Baron"
+    },
+    {
+      "id": "player-6",
+      "name": "Player 6"
+    }
+  ]
 }

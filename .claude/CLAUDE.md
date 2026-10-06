@@ -26,7 +26,8 @@ would load the file into every session.
 - Lets the DM prepare the next map out of sight of the table, then promote it
 - Lets the DM show everyone a picture in place of the board during stretches with nothing to
   move, without disturbing the board underneath
-- Lets anyone measure a distance, draw a spell area, or ping a spot so everyone sees it
+- Lets anyone measure a distance, draw a spell area, a line or a freehand mark, or ping a spot so
+  everyone sees it
 - Lets the DM trace walls and doors, and limits what the table sees to what their own tokens have
   line of sight to (or, per map, to the whole room each token is in), with a manual override
 - Lets the DM undo the last few changes to the room
@@ -248,9 +249,11 @@ enum Lighting { Dynamic, Room }
 /// A grid cell. A tuple: it indexes a lattice and is never sent on the wire as is.
 type Cell = (i32, i32);
 
-/// `to` is an *offset* from the origin. Grid units, like a token.
-struct Shape { id: ShapeId, kind: ShapeKind, from: Origin, to: Pos, by: Owner, color: String }
-enum ShapeKind { Line, Circle, Cone, Rect }
+/// `to` is an *offset* from the origin. Grid units, like a token. `points` is
+/// a `Path`'s corners (offsets too), empty on every other kind. `docs/drawings.md`.
+struct Shape { id: ShapeId, kind: ShapeKind, from: Origin, to: Pos, by: Owner, color: String,
+               points: Vec<Pos> }
+enum ShapeKind { Line, Circle, Cone, Rect, Path }
 enum Origin { Point(Pos), Token(TokenId) }
 
 /// In image pixels, not cells: the exception to invariant 1.
@@ -456,13 +459,17 @@ nor any one creature. That's why it's on the table tab.
 ## Drawings and distance
 
 Line, circle, cone, rectangle: one struct holding a kind and two points, with `to` an offset from
-the origin. One hit test and one coverage rule, both `containsPoint`. Stored in grid units, so a
-20 ft circle stays 20 ft across after recalibrating. The client snaps both ends; Alt drags freely.
+the origin. One coverage rule, `containsPoint`. Stored in grid units, so a 20 ft circle stays 20 ft
+across after recalibrating. The client snaps both ends; Alt drags freely. The fifth kind, a
+freehand `Path`, adds a list of corners (`points`), never snaps or anchors, and covers no cells.
+A line and a path are strokes: hit-tested by `nearStroke` over `strokeOf`, not `containsPoint`.
 
-Anyone may draw; it's the only thing a player can create or delete. The measure tool draws in the
-player's own colour; area tools use the picked swatch. A sketch in progress is sent on the wire
-but not stored in the room (`Sketch` carries `drawing`, as `MoveToken` carries `dragging`). No
-staged shapes. `shapes_for` withholds an anchored shape via `unseen_by_table`, and an unanchored
+Anyone may draw; it's the only thing a player can create or delete. The measure tool keeps nothing
+and draws in the player's own colour; every other tool (the line tool too, which sweeps the same
+kind) keeps its shape in the picked swatch. A tool is a row in `TOOLS`, not a kind. A sketch in
+progress is sent on the wire but not stored in the room (`Sketch` carries `drawing`, as
+`MoveToken` carries `dragging`). **A path is never sketched**: it goes out whole on release, and
+the server refuses a `Path` sketch. No staged shapes. `shapes_for` withholds an anchored shape via `unseen_by_table`, and an unanchored
 one unless a cell it covers is `known`.
 
 A cell is five feet, counted in cells crossed. `Diagonals` is the DM's setting and affects only
@@ -479,7 +486,8 @@ only says someone is pointing there. Not in `moves_sight`, not in `persists`, ab
 ping shows an edge arrow and never pans the camera.
 
 → `docs/drawings.md` before touching `shapes.ts`, `drawtool.ts`, `ruler.ts`, `pings.ts`,
-`snapOrigin`/`snapExtent`/`hasExtent`, `trailCells`, `crossesWall`, `edgeMarker`, `SetDiagonals`,
+`snapOrigin`/`snapExtent`/`hasExtent`, `strokeOf`/`nearStroke`/`simplifyPath`, `MAX_PATH_POINTS`,
+`trailCells`, `crossesWall`, `edgeMarker`, `SetDiagonals`,
 or `Shape`/`ShapeKind`/`Sketch`/`Ping` on the server.
 
 ## Walls and doors

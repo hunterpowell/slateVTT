@@ -24,6 +24,7 @@ fn draw(state: &mut RoomState, by: ClientId, rx: &mut mpsc::Receiver<ServerMsg>)
             from: Origin::Point(Pos { x: 2.0, y: 2.0 }),
             to: Pos { x: 3.0, y: 0.0 },
             color: "#ff8c42e6".to_owned(),
+            points: Vec::new(),
         },
     );
     let _ = drain_all(rx);
@@ -269,6 +270,7 @@ fn the_dm_is_told_what_their_next_press_would_take_beside_every_change() {
             from: Origin::Point(Pos { x: 2.0, y: 2.0 }),
             to: Pos { x: 3.0, y: 0.0 },
             color: "#ff8c42e6".to_owned(),
+            points: Vec::new(),
         },
     );
     match drain_all(&mut dm_rx).as_slice() {

@@ -320,6 +320,7 @@ fn an_aura_on_a_creature_in_the_dark_is_not_sent() {
             from: Origin::Token(TokenId::new("m")),
             to: Pos { x: 4.0, y: 0.0 },
             color: "#ff8c42e6".to_owned(),
+            points: Vec::new(),
         },
     );
     assert_eq!(state.shapes_for(false).len(), 1);

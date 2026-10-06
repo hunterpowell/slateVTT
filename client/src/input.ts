@@ -14,7 +14,16 @@ import type { Rulers } from './ruler.js';
 import type { Scene, Token } from './scene.js';
 import { shownBoard, shownPos, shownWalls, showingStaged } from './scene.js';
 import type { Sketches } from './shapes.js';
-import { anchorable, clampExtent, erasableAt, hasExtent, snapExtent, snapOrigin } from './shapes.js';
+import {
+  PATH_STEP,
+  anchorable,
+  clampExtent,
+  erasableAt,
+  hasExtent,
+  simplifyPath,
+  snapExtent,
+  snapOrigin,
+} from './shapes.js';
 import type { WallTool } from './walltool.js';
 import { snapToCorner, wallAt } from './walls.js';
 
@@ -170,6 +179,9 @@ type Drag =
        *  so a sweep that passes over a creature doesn't adopt it halfway
        *  through. */
       anchor: string | null;
+      /** A freehand path's corners so far, as offsets from `at`. Empty for
+       *  every other kind, which `to` describes on its own. */
+      points: Vec2[];
       /**
        * Whether the pointer has gone anywhere. A sweep that never moves is a
        * click, and a click erases a shape.
@@ -548,7 +560,7 @@ export function attachInput(
   /** Our own copy of the sweep, so it draws under the cursor. The server
    *  doesn't echo sketches to their sender. */
   const showOwnSketch = (d: Extract<Drag, { kind: 'draw' }>): void => {
-    sketches.own({ kind: d.tool, at: d.at, to: d.to, color: d.color });
+    sketches.own({ kind: d.tool, at: d.at, to: d.to, color: d.color, points: d.points });
   };
 
   /**
@@ -847,7 +859,12 @@ export function attachInput(
       // Starting on a token anchors to it, so an aura follows its creature.
       // Alt skips the anchor, for a circle centred on somebody without being
       // about them.
-      const on = e.altKey ? null : anchorTokenAt(scene, w.x, w.y);
+      //
+      // A freehand path does neither: it starts exactly where the pen went
+      // down, since a snapped origin would put a jump in its first stroke, and
+      // it is a mark on the floor rather than something a creature carries.
+      const freehand = tool === 'path';
+      const on = e.altKey || freehand ? null : anchorTokenAt(scene, w.x, w.y);
       drag = {
         kind: 'draw',
         pointerId: e.pointerId,
@@ -862,9 +879,14 @@ export function attachInput(
         // anchored sweep starts at the token's position instead, so an aura is
         // centred on the creature, including a wide one whose centre is a
         // corner where four cells meet.
-        at: on === null ? snapOrigin(gridUnder(w)) : { x: on.x, y: on.y },
+        at: freehand
+          ? gridUnder(w)
+          : on === null
+            ? snapOrigin(gridUnder(w))
+            : { x: on.x, y: on.y },
         anchor: on?.id ?? null,
         to: { x: 0, y: 0 },
+        points: [],
         fromX: p.x,
         fromY: p.y,
         moved: false,
@@ -1029,6 +1051,19 @@ export function attachInput(
       return;
     }
 
+    if (drag.kind === 'draw' && drag.tool === 'path') {
+      // Every corner the pen passes, unsnapped and held inside reach, with a
+      // minimum step so a slow hand doesn't stack points in one place. Nothing
+      // is sent while it is drawn: the table sees it when the pen comes up.
+      const g = gridUnder(w);
+      const reach = clampExtent({ x: g.x - drag.at.x, y: g.y - drag.at.y });
+      const last = drag.points.at(-1) ?? { x: 0, y: 0 };
+      if (Math.hypot(reach.x - last.x, reach.y - last.y) >= PATH_STEP) drag.points.push(reach);
+      if (Math.hypot(p.x - drag.fromX, p.y - drag.fromY) > DRAW_CLICK_SLOP_PX) drag.moved = true;
+      if (drag.moved) showOwnSketch(drag);
+      return;
+    }
+
     if (drag.kind === 'draw') {
       const g = gridUnder(w);
       const reach = { x: g.x - drag.at.x, y: g.y - drag.at.y };
@@ -1098,6 +1133,21 @@ export function attachInput(
       // No frame was ever sent for this one, so there is no release to send.
       const shape = erasableAt(scene, identity.isDm, identity.playerId, at);
       if (shape !== null) send({ type: 'remove_shape', id: shape.id });
+      return;
+    }
+
+    // A freehand path sent no frames, so it has no release to send: it goes
+    // to the room whole, as one command, or not at all.
+    if (d.tool === 'path') {
+      if (d.points.length === 0) return;
+      send({
+        type: 'add_shape',
+        kind: 'path',
+        from: { kind: 'point', at: d.at },
+        to: { x: 0, y: 0 },
+        color: d.color,
+        points: simplifyPath(d.points),
+      });
       return;
     }
 

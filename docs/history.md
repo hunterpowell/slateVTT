@@ -2451,3 +2451,20 @@ Keep box membership a pure function so `npm test` can cover it.
   instead, which already traces a door and reads its dash pattern; `drive-select.mjs` has no walls.
   `drive-ping.mjs` got the held shift-press. `drive-ruler.mjs`'s raw press was on its token and only
   needed a comment.)*
+
+### 47: kept lines and freehand
+
+Two tools on the draw panel, asked for by both DMs: a line that stays (a connection between two
+things, a breath weapon, a witch bolt) and a pen. Planned and built on 2026-10-05.
+
+- The line needed no server change, since the room already stored `Line`. It needed a hit test,
+  because `containsPoint` is false on a line and a kept one was erasable only by "clear all", and
+  `drawtool.ts` stopped keying tools by kind, since two buttons now sweep `line`.
+- Cell tinting for a line was offered and declined: which squares a 5 ft line catches is ruled on
+  at the table.
+- The pen is the first shape that isn't two points (`ShapeKind::Path`, `Shape::points`). Watching a
+  stroke while it's drawn was declined, so a path never goes out as a `Sketch` and the server
+  refuses one.
+- `shape_covers` now takes the `Shape`, because a path's coverage needs its points.
+- `drive-draw.mjs` is new. It wraps each page's socket and counts frames, which is how it asserts
+  that the DM received nothing while the pen was down.

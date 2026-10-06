@@ -1,5 +1,5 @@
-// The four shapes, which are one shape: a kind and two points, one hit test and
-// one coverage rule. Everything here is in grid units, so a 20 ft circle stays
+// The four area-and-line shapes, which are one shape: a kind and two points, one
+// hit test and one coverage rule. A freehand path is the fifth, and a stroke. Everything here is in grid units, so a 20 ft circle stays
 // 20 ft across when the DM recalibrates.
 
 import { test } from 'node:test';
@@ -15,9 +15,13 @@ import {
   hasExtent,
   isArea,
   labelFor,
+  MAX_PATH_POINTS,
+  nearStroke,
+  simplifyPath,
   snapExtent,
   snapOrigin,
   shapeEnd,
+  strokeOf,
 } from './shapes.js';
 import { feetMoved } from './ruler.js';
 
@@ -116,12 +120,12 @@ test('a shape reports a length and a move reports cells crossed, and they differ
   // The honest inconsistency, and it is documented as one: a circle is a circle,
   // while "everything within 20 ft" of a movement ruler is a square. Different
   // questions, left different on purpose.
-  assert.equal(feetOf({ kind: 'circle', at: ORIGIN, to: at(3, 3), color: '' }), 20);
+  assert.equal(feetOf({ kind: 'circle', at: ORIGIN, to: at(3, 3), color: '', points: [] }), 20);
   assert.equal(feetMoved(ORIGIN, at(3, 3), 'equal'), 15);
 });
 
 test('a rectangle measures its longer side and labels both', () => {
-  const rect = { kind: 'rect', at: ORIGIN, to: at(2, -4), color: '' } as const;
+  const rect = { kind: 'rect' as const, at: ORIGIN, to: at(2, -4), color: '', points: [] };
   assert.equal(feetOf(rect), 20);
   assert.equal(labelFor(rect), '10 × 20 ft');
 });
@@ -203,8 +207,53 @@ test('the DM may erase anything and a player only what they drew', () => {
 });
 
 function shape(by: { kind: 'dm' } | { kind: 'player'; id: string }) {
-  return { id: 's1', kind: 'circle' as const, anchor: null, at: ORIGIN, to: at(1, 0), by, color: '' };
+  return {
+    id: 's1',
+    kind: 'circle' as const,
+    anchor: null,
+    at: ORIGIN,
+    to: at(1, 0),
+    by,
+    color: '',
+    points: [],
+  };
 }
+
+test('a kept line is clicked near, not inside', () => {
+  const line = strokeOf({ kind: 'line', to: at(4, 0), points: [] }, at(1, 1));
+  assert.deepEqual(line, [at(1, 1), at(5, 1)]);
+  assert.ok(nearStroke(line, 3, 1.2, 0.3), 'just beside the middle');
+  assert.ok(nearStroke(line, 5.2, 1, 0.3), 'just past the end');
+  assert.ok(!nearStroke(line, 3, 2, 0.3), 'a cell away');
+  assert.ok(!nearStroke(line, 6, 1, 0.3), 'a cell past the end');
+});
+
+test('a freehand path is a run of segments from its origin', () => {
+  // An L, with corners as offsets from the origin rather than from each other.
+  const path = strokeOf({ kind: 'path', to: ORIGIN, points: [at(4, 0), at(4, 4)] }, at(1, 1));
+  assert.deepEqual(path, [at(1, 1), at(5, 1), at(5, 5)]);
+  assert.ok(nearStroke(path, 3, 1, 0.3), 'the first leg');
+  assert.ok(nearStroke(path, 5, 3, 0.3), 'the second');
+  assert.ok(!nearStroke(path, 3, 3, 0.3), 'not the corner it cuts');
+  assert.ok(!isArea('path'));
+  assert.deepEqual(strokeOf({ kind: 'circle', to: at(2, 0), points: [] }, ORIGIN), []);
+});
+
+test('simplifying keeps the corners and drops the points along a straight run', () => {
+  const run = [at(0.1, 0), at(0.2, 0), at(0.3, 0), at(1, 0), at(1, 0.5), at(1, 1)];
+  assert.deepEqual(simplifyPath(run), [at(1, 0), at(1, 1)]);
+});
+
+test('a scribble too long for the server is simplified until it fits', () => {
+  // A zigzag with no straight runs, so the first pass can drop nothing.
+  const zigzag = Array.from({ length: MAX_PATH_POINTS * 4 }, (_, i) =>
+    at(i * 0.01, i % 2 === 0 ? 0 : 0.5),
+  );
+  const kept = simplifyPath(zigzag);
+  assert.ok(kept.length <= MAX_PATH_POINTS, `${kept.length} points`);
+  assert.ok(kept.length > 0);
+  assert.deepEqual(kept.at(-1), zigzag.at(-1), 'and still ends where the hand stopped');
+});
 
 function pairs(flat: readonly number[]): string[] {
   const out: string[] = [];

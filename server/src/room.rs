@@ -99,6 +99,11 @@ const MAX_SHAPES: usize = 64;
 /// cells across is a frozen browser on five other machines, and a sketch
 /// reaches them before anybody has decided to keep it.
 pub const MAX_SHAPE_CELLS: f32 = 30.0;
+/// Corners in one freehand line, after the client has simplified it. Bounds the
+/// save file and the frame; `MAX_PATH_POINTS` in `shapes.ts` mirrors it, and
+/// `drawings::the_longest_path_fits_in_a_frame` keeps it inside
+/// `MAX_WS_MESSAGE_BYTES`.
+pub const MAX_PATH_POINTS: usize = 256;
 
 /// How many segments a map may hold. A traced dungeon is a couple of hundred, so
 /// this is generous. It bounds the save file and the fog raycast that runs
@@ -1682,6 +1687,39 @@ fn shape_fields(to: Pos, color: &str) -> Result<(), String> {
     Ok(())
 }
 
+/// A path's corners, or the absence of them on any other kind.
+///
+/// Each corner is held to the same reach as any shape's far point, so a path
+/// stays inside the box every other shape does, and nothing else on a kind with
+/// two points can carry a list into the save file.
+fn path_points(kind: ShapeKind, points: &[Pos]) -> Result<(), String> {
+    if kind != ShapeKind::Path {
+        return if points.is_empty() {
+            Ok(())
+        } else {
+            Err("only a freehand line has points".to_owned())
+        };
+    }
+    if points.is_empty() {
+        return Err("a freehand line needs somewhere to go".to_owned());
+    }
+    if points.len() > MAX_PATH_POINTS {
+        return Err(format!(
+            "a freehand line can have at most {MAX_PATH_POINTS} points"
+        ));
+    }
+    for p in points {
+        finite(&[p.x, p.y])?;
+        if p.x.abs() > MAX_SHAPE_CELLS || p.y.abs() > MAX_SHAPE_CELLS {
+            return Err(format!(
+                "a shape can reach at most {} feet",
+                MAX_SHAPE_CELLS as i32 * 5
+            ));
+        }
+    }
+    Ok(())
+}
+
 /// Who a client is, as a shape records it. The one place `Identity` becomes
 /// `Owner`: they say the same thing, but `Identity` is who is connected and
 /// `Owner` is what a token or a drawing remembers about them.
@@ -2668,9 +2706,7 @@ impl RoomState {
                 .tokens
                 .get(id)
                 .is_some_and(|t| !self.unseen_by_table(t)),
-            Origin::Point(at) => {
-                !self.map.fog || fog::shape_covers(shape.kind, *at, shape.to, &self.known)
-            }
+            Origin::Point(at) => !self.map.fog || fog::shape_covers(shape, *at, &self.known),
         }
     }
 
@@ -3318,7 +3354,19 @@ impl RoomState {
             // No `require_dm` anywhere in this group but the last: anyone may
             // draw. The permission that does exist is on erasing, and it is
             // per-shape, not per-role.
-            ClientMsg::Sketch { at, to, color, .. } => {
+            // A path isn't watched while it is drawn, so it has no sketch.
+            // Refused, not ignored: a sketch carries no points, and a path
+            // without them would draw as nothing on five screens.
+            ClientMsg::Sketch {
+                kind,
+                at,
+                to,
+                color,
+                ..
+            } => {
+                if *kind == ShapeKind::Path {
+                    return Err("a freehand line is sent when it is finished".to_owned());
+                }
                 finite(&[at.x, at.y])?;
                 shape_fields(*to, color)
             }
@@ -3425,7 +3473,11 @@ impl RoomState {
             ClientMsg::MoveCursor { at } => finite(&[at.x, at.y]),
 
             ClientMsg::AddShape {
-                from, to, color, ..
+                kind,
+                from,
+                to,
+                color,
+                points,
             } => {
                 if self.shapes.len() >= MAX_SHAPES {
                     return Err(format!("this board already holds {MAX_SHAPES} drawings"));
@@ -3445,6 +3497,7 @@ impl RoomState {
                         }
                     }
                 }
+                path_points(*kind, points)?;
                 shape_fields(*to, color)
             }
 
@@ -4278,6 +4331,7 @@ impl RoomState {
                 from,
                 to,
                 color,
+                points,
             } => {
                 // The id is the server's to invent, like a token's, so two
                 // people drawing at once cannot propose the same one.
@@ -4294,6 +4348,7 @@ impl RoomState {
                     to,
                     by,
                     color,
+                    points,
                 });
                 vec![Event::ShapesChanged]
             }

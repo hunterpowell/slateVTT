@@ -387,6 +387,7 @@ mod tests {
                 to: Pos { x: 4.0, y: 0.0 },
                 by: Owner::Player(PlayerId::new("cleodara")),
                 color: "#ff8c42e6".to_owned(),
+                points: Vec::new(),
             }],
             // One of each kind, because the door carries state inside its tag
             // and so is the one a round trip could flatten.

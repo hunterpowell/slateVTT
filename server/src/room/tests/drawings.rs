@@ -11,6 +11,7 @@ fn add_shape(kind: ShapeKind, from: Origin, to: (f32, f32)) -> ClientMsg {
         from,
         to: Pos { x: to.0, y: to.1 },
         color: INK.to_owned(),
+        points: Vec::new(),
     }
 }
 
@@ -404,6 +405,7 @@ fn a_drawing_needs_a_colour_the_client_could_actually_use() {
             from: Origin::default(),
             to: Pos { x: 2.0, y: 0.0 },
             color: bad.to_owned(),
+            points: Vec::new(),
         };
         assert_eq!(
             state.check(ClientId(2), &msg),
@@ -582,6 +584,172 @@ fn a_blacked_out_room_takes_the_drawings_in_it_too() {
     state.handle(ClientId(1), paint(&footprint, Some(Override::Dark)));
 
     assert_eq!(shapes_seen(&state, &as_player("saelyn")).len(), 0);
+}
+
+// --- kept lines and freehand ------------------------------------------
+
+fn path_at(x: f32, y: f32, points: &[(f32, f32)]) -> ClientMsg {
+    ClientMsg::AddShape {
+        kind: ShapeKind::Path,
+        from: Origin::Point(Pos { x, y }),
+        to: Pos::default(),
+        color: INK.to_owned(),
+        points: points.iter().map(|&(x, y)| Pos { x, y }).collect(),
+    }
+}
+
+#[test]
+fn a_straight_line_can_be_kept() {
+    // The measure tool and the line tool send the same kind. Which one keeps
+    // it is the client's business, so the room has to accept a kept line.
+    let mut state = room();
+    let _saelyn = join_as_player(&mut state, ClientId(2), "saelyn");
+
+    assert!(state.handle(
+        ClientId(2),
+        add_shape(
+            ShapeKind::Line,
+            Origin::Point(Pos { x: 1.5, y: 1.5 }),
+            (6.0, 0.0)
+        ),
+    ));
+    assert_eq!(only_shape(&state).kind, ShapeKind::Line);
+}
+
+#[test]
+fn a_freehand_line_keeps_its_points_through_the_save_file() {
+    let mut state = room();
+    let _saelyn = join_as_player(&mut state, ClientId(2), "saelyn");
+    assert!(state.handle(ClientId(2), path_at(2.3, 4.1, &[(1.0, 0.5), (2.0, -1.25)])));
+
+    let json = serde_json::to_vec(&state.to_saved()).expect("encodes");
+    let restored = reboot(serde_json::from_slice(&json).expect("decodes"));
+
+    let shape = only_shape(&restored);
+    assert_eq!(shape.kind, ShapeKind::Path);
+    assert_eq!(shape.by, Owner::Player(PlayerId::new("saelyn")));
+    let points: Vec<(f32, f32)> = shape.points.iter().map(|p| (p.x, p.y)).collect();
+    assert_eq!(points, [(1.0, 0.5), (2.0, -1.25)]);
+}
+
+#[test]
+fn a_freehand_line_is_not_watched_while_it_is_drawn() {
+    // A sketch carries no points, so a path sketch would draw as nothing on
+    // five screens. Refused rather than relayed.
+    let mut state = room();
+    let _saelyn = join_as_player(&mut state, ClientId(2), "saelyn");
+    let frame = ClientMsg::Sketch {
+        kind: ShapeKind::Path,
+        at: Pos { x: 1.0, y: 1.0 },
+        to: Pos::default(),
+        color: INK.to_owned(),
+        drawing: true,
+    };
+    assert!(state.check(ClientId(2), &frame).is_err());
+}
+
+#[test]
+fn only_a_freehand_line_carries_points() {
+    // Otherwise a circle could carry a list of nothing into the save file.
+    let mut state = room();
+    let _saelyn = join_as_player(&mut state, ClientId(2), "saelyn");
+
+    let circle_with_points = ClientMsg::AddShape {
+        kind: ShapeKind::Circle,
+        from: Origin::default(),
+        to: Pos { x: 2.0, y: 0.0 },
+        color: INK.to_owned(),
+        points: vec![Pos { x: 1.0, y: 1.0 }],
+    };
+    assert!(state.check(ClientId(2), &circle_with_points).is_err());
+    assert!(
+        state.check(ClientId(2), &path_at(1.0, 1.0, &[])).is_err(),
+        "and a path with none is a dot nobody can find to erase"
+    );
+}
+
+#[test]
+fn a_freehand_line_is_bounded_like_every_other_shape() {
+    let mut state = room();
+    let _saelyn = join_as_player(&mut state, ClientId(2), "saelyn");
+
+    let far = path_at(0.0, 0.0, &[(1.0, 1.0), (9_000.0, 0.0)]);
+    assert!(
+        state.check(ClientId(2), &far).is_err(),
+        "a corner past reach"
+    );
+
+    let nan = path_at(0.0, 0.0, &[(f32::NAN, 0.0)]);
+    assert!(state.check(ClientId(2), &nan).is_err(), "a corner nowhere");
+
+    let many: Vec<(f32, f32)> = (0..=MAX_PATH_POINTS)
+        .map(|i| (i as f32 / 10.0, 0.0))
+        .collect();
+    assert!(
+        state.check(ClientId(2), &path_at(0.0, 0.0, &many)).is_err(),
+        "one corner too many"
+    );
+    assert!(
+        state
+            .check(ClientId(2), &path_at(0.0, 0.0, &many[..MAX_PATH_POINTS]))
+            .is_ok()
+    );
+}
+
+#[test]
+fn the_longest_path_fits_in_a_frame() {
+    // Every corner at the edge of reach with long fractions, so nothing here is
+    // cheaper to serialise than the real thing.
+    let points: Vec<(f32, f32)> = (0..MAX_PATH_POINTS)
+        .map(|i| (-29.123_457 + i as f32 * 1e-4, -29.876_543))
+        .collect();
+    let frame = serde_json::json!({
+        "type": "add_shape",
+        "kind": ShapeKind::Path,
+        "from": Origin::Point(Pos { x: -1_234.567_9, y: -1_234.567_9 }),
+        "to": Pos::default(),
+        "color": INK,
+        "points": points.iter().map(|&(x, y)| Pos { x, y }).collect::<Vec<_>>(),
+    });
+    let bytes = serde_json::to_vec(&frame).expect("encodes");
+
+    let parsed: ClientMsg = serde_json::from_slice(&bytes).expect("the server parses its own");
+    assert!(
+        matches!(&parsed, ClientMsg::AddShape { points, .. } if points.len() == MAX_PATH_POINTS)
+    );
+    assert!(
+        bytes.len() <= crate::MAX_WS_MESSAGE_BYTES,
+        "the longest legal path is {} bytes and the frame cap is {}",
+        bytes.len(),
+        crate::MAX_WS_MESSAGE_BYTES,
+    );
+}
+
+#[test]
+fn a_freehand_line_on_ground_the_party_has_never_seen_is_withheld() {
+    // Each segment is walked, so a path is withheld until one of them crosses
+    // `known`, like a straight line, and the table isn't told it exists.
+    let mut state = fog_room(10.0);
+    let _dm = join_as_dm(&mut state, ClientId(1));
+    let mut rx = join_as_player(&mut state, ClientId(2), "saelyn");
+
+    state.handle(ClientId(1), path_at(20.5, 20.5, &[(3.0, 0.0), (3.0, 3.0)]));
+    assert_eq!(shapes_seen(&state, &as_player("saelyn")).len(), 0);
+    assert_eq!(shapes_seen(&state, &Identity::Dm).len(), 1);
+    let frames = drain(&mut rx);
+    assert!(
+        !frames.iter().any(|m| matches!(
+            m,
+            ServerMsg::ShapesChanged { shapes } if !shapes.is_empty()
+        )),
+        "the table is not sent the path, got {frames:?}"
+    );
+
+    // Starts in the dark, but its last segment runs back to where Saelyn
+    // stands, so the ground under it is known.
+    state.handle(ClientId(1), path_at(20.5, 1.5, &[(0.0, 4.0), (-19.0, 0.0)]));
+    let seen = shapes_seen(&state, &as_player("saelyn"));
+    assert_eq!(seen.len(), 1, "only the path that reaches explored ground");
 }
 
 // --- ping -----------------------------------------------------------------

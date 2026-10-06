@@ -20,7 +20,7 @@ use std::collections::{HashMap, HashSet};
 
 use serde::{Deserialize, Serialize};
 
-use crate::protocol::{GridShape, Lighting, MapInfo, Pos, Px, Rect, ShapeKind, Wall};
+use crate::protocol::{GridShape, Lighting, MapInfo, Pos, Px, Rect, Shape, ShapeKind, Wall};
 use crate::room::{MAX_MAP_PX, MAX_SHAPE_CELLS};
 
 /// A cell of the grid, by its integer coordinates. The cell a token at
@@ -910,7 +910,8 @@ const CONE_COS: f32 = 0.894_427_2;
 /// of it fall out.
 const COVERAGE_SLACK: f32 = 0.15;
 
-/// Whether any cell this shape covers is one of `cells`.
+/// Whether any cell this shape covers is one of `cells`, with the shape starting
+/// at `origin` (the caller has already resolved an anchor, or there wasn't one).
 ///
 /// **All-or-nothing.** A shape is sent whole or withheld whole, so this asks for
 /// one cell and doesn't narrow the geometry. Sending the rest to draw under the
@@ -926,16 +927,36 @@ const COVERAGE_SLACK: f32 = 0.15;
 /// the shape, not to how much dungeon the party has explored. The box is clipped
 /// to the largest shape `check` will accept, so a hand-edited save can't turn
 /// one drawing into a sweep of the whole lattice.
-pub fn shape_covers(kind: ShapeKind, origin: Pos, to: Pos, cells: &HashSet<Cell>) -> bool {
+pub fn shape_covers(shape: &Shape, origin: Pos, cells: &HashSet<Cell>) -> bool {
     if cells.is_empty() {
         return false;
     }
+    let (kind, to) = (shape.kind, shape.to);
 
     // A line encloses nothing, so `contains_point` is false everywhere on it and
     // the box below would find nothing at all. A line covers the ground it is
     // drawn across, which needs a walk, not a containment test.
     if matches!(kind, ShapeKind::Line) {
         return line_cells(origin, to).any(|cell| cells.contains(&cell));
+    }
+
+    // A path is the same walk once per segment. Each corner is an offset from
+    // the origin, so a segment starts at the previous corner and runs by the
+    // difference between the two.
+    if matches!(kind, ShapeKind::Path) {
+        let mut from = Pos::default();
+        return shape.points.iter().any(|&p| {
+            let start = Pos {
+                x: origin.x + from.x,
+                y: origin.y + from.y,
+            };
+            let step = Pos {
+                x: p.x - from.x,
+                y: p.y - from.y,
+            };
+            from = p;
+            line_cells(start, step).any(|cell| cells.contains(&cell))
+        });
     }
 
     let reach = match kind {
@@ -995,7 +1016,7 @@ fn contains_point(kind: ShapeKind, origin: Pos, to: Pos, px: f32, py: f32) -> bo
     let dy = py - origin.y;
 
     match kind {
-        ShapeKind::Line => false,
+        ShapeKind::Line | ShapeKind::Path => false,
         ShapeKind::Circle => hypot(dx, dy) <= hypot(to.x, to.y) + COVERAGE_SLACK,
         ShapeKind::Rect => {
             let (lo_x, hi_x) = (
@@ -1639,12 +1660,12 @@ mod tests {
     }
 
     fn covers(kind: ShapeKind, origin: (f32, f32), to: (f32, f32), cell: Cell) -> bool {
-        shape_covers(
+        let shape = Shape {
             kind,
-            pos(origin.0, origin.1),
-            pos(to.0, to.1),
-            &cells(&[cell]),
-        )
+            to: pos(to.0, to.1),
+            ..Shape::default()
+        };
+        shape_covers(&shape, pos(origin.0, origin.1), &cells(&[cell]))
     }
 
     #[test]
@@ -1706,11 +1727,30 @@ mod tests {
     fn a_shape_over_nothing_at_all_covers_nothing() {
         // An unexplored map is the empty set, and every shape on it is
         // withheld. If this fails, it has to fail in that direction.
-        assert!(!shape_covers(
-            ShapeKind::Circle,
-            pos(0.0, 0.0),
-            pos(30.0, 0.0),
-            &HashSet::new()
-        ));
+        let circle = Shape {
+            kind: ShapeKind::Circle,
+            to: pos(30.0, 0.0),
+            ..Shape::default()
+        };
+        assert!(!shape_covers(&circle, pos(0.0, 0.0), &HashSet::new()));
+    }
+
+    #[test]
+    fn a_path_covers_the_ground_under_every_segment_and_nowhere_else() {
+        // An L: east four cells, then south four. The corner is an offset from
+        // the origin, not from the previous corner.
+        let path = Shape {
+            kind: ShapeKind::Path,
+            points: vec![pos(4.0, 0.0), pos(4.0, 4.0)],
+            ..Shape::default()
+        };
+        let o = pos(1.5, 1.5);
+        let on = |cell: Cell| shape_covers(&path, o, &cells(&[cell]));
+        assert!(on((1, 1)), "where it starts");
+        assert!(on((3, 1)), "along the first leg");
+        assert!(on((5, 3)), "along the second");
+        assert!(on((5, 5)), "where it ends");
+        assert!(!on((3, 4)), "not inside the corner it turns");
+        assert!(!on((1, 5)), "and not along the hypotenuse");
     }
 }

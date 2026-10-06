@@ -616,7 +616,7 @@ impl Token {
     }
 }
 
-/// The four things anyone can draw on the board. A closed set, checked by serde
+/// The five things anyone can draw on the board. A closed set, checked by serde
 /// rather than by hand: an unknown kind fails to deserialize, the way an
 /// unknown `ClientMsg` does.
 ///
@@ -637,6 +637,9 @@ pub enum ShapeKind {
     Cone,
     /// The two points are opposite corners.
     Rect,
+    /// A line drawn freehand: the origin, then every point in `Shape::points`.
+    /// The one kind that isn't two points, and the one that ignores `to`.
+    Path,
 }
 
 /// How the movement ruler charges a diagonal step. Room-wide, the DM's to set.
@@ -719,6 +722,11 @@ pub struct Shape {
     /// `#rrggbbaa`, like `MapInfo::grid_color` and validated by the same rule.
     /// The client picks from a small palette; the server only checks the shape.
     pub color: String,
+    /// A `Path`'s corners after the origin, each an offset from it like `to`.
+    /// Empty for every other kind, and left off the wire when empty.
+    /// `docs/drawings.md`.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub points: Vec<Pos>,
 }
 
 impl Shape {
@@ -1387,6 +1395,9 @@ pub enum ClientMsg {
         from: Origin,
         to: Pos,
         color: String,
+        /// A `Path`'s corners, and refused on any other kind.
+        #[serde(default)]
+        points: Vec<Pos>,
     },
     /// Whoever drew it, or the DM. Not a permission a player has anywhere else,
     /// and the reason `Shape::by` is stored at all.

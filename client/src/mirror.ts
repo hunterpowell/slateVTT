@@ -37,7 +37,7 @@ import type { Overrides } from './overrides.js';
 import type { Initiative } from './protocol.js';
 import type { Scene, Token } from './scene.js';
 import type { Shape } from './shapes.js';
-import { MAX_SHAPE_CELLS, coveredCells, isArea } from './shapes.js';
+import { MAX_SHAPE_CELLS, coveredCells, isArea, strokeOf } from './shapes.js';
 
 /** Nothing painted at all, which is what a player's copy always is. */
 const NO_OVERRIDES: Overrides = { x: 0, y: 0, w: 0, h: 0, tint: null };
@@ -169,18 +169,25 @@ function shapeSeen(scene: Scene, shown: ReadonlySet<string>, shape: Shape): bool
   const fog = scene.fog;
   if (fog === null) return false;
 
-  // A line encloses nothing, so `containsPoint` is false everywhere along one
-  // and `coveredCells` returns none at all. What a line covers is the ground it
-  // is drawn across, which is a walk instead of a test: `line_cells` on the
-  // server, sampled twice per cell so a shallow diagonal steps over none of it.
+  // A line or a path encloses nothing, so `containsPoint` is false everywhere
+  // along one and `coveredCells` returns none at all. What a stroke covers is
+  // the ground it is drawn across, which is a walk instead of a test, one per
+  // segment: `line_cells` on the server, sampled twice per cell so a shallow
+  // diagonal steps over none of it.
   if (!isArea(shape.kind)) {
-    const length = Math.min(Math.hypot(shape.to.x, shape.to.y), MAX_SHAPE_CELLS);
-    const steps = Math.max(Math.ceil(length * 2), 1);
-    for (let i = 0; i <= steps; i++) {
-      const t = i / steps;
-      const cx = Math.floor(shape.at.x + shape.to.x * t);
-      const cy = Math.floor(shape.at.y + shape.to.y * t);
-      if (cellKnown(fog, cx, cy)) return true;
+    const corners = strokeOf(shape, shape.at);
+    for (let k = 1; k < corners.length; k++) {
+      const a = corners[k - 1];
+      const b = corners[k];
+      if (a === undefined || b === undefined) continue;
+      const dx = b.x - a.x;
+      const dy = b.y - a.y;
+      const length = Math.min(Math.hypot(dx, dy), MAX_SHAPE_CELLS);
+      const steps = Math.max(Math.ceil(length * 2), 1);
+      for (let i = 0; i <= steps; i++) {
+        const t = i / steps;
+        if (cellKnown(fog, Math.floor(a.x + dx * t), Math.floor(a.y + dy * t))) return true;
+      }
     }
     return false;
   }

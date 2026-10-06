@@ -76,6 +76,7 @@ function shape(over: Partial<Shape> = {}): Shape {
     to: { x: 1, y: 0 },
     by: { kind: 'dm' },
     color: '#ff0000',
+    points: [],
     ...over,
   };
 }

@@ -1861,6 +1861,7 @@ fn covering_the_board_leaves_the_encounter_exactly_where_it_was() {
             from: Origin::Point(Pos { x: 2.0, y: 2.0 }),
             to: Pos { x: 3.0, y: 0.0 },
             color: "#ff8c42e6".to_owned(),
+            points: Vec::new(),
         },
     );
     state.handle(dm, paint(&[(9, 9), (9, 10)], Some(Override::Dark)));

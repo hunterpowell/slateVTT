@@ -32,7 +32,7 @@ Everything from 8 on was planned after the original seven: 17 and 18 after 16 la
 existed, and all three were written to overturn something the roadmap already said (each entry names
 what). 28 also overturned part of its own design.
 
-**Everything through 46 is built except 29.** 25, 26, 34 and 38 were never planned and were built out
+**Everything through 47 is built except 29.** 25, 26, 34 and 38 were never planned and were built out
 of order; their entries in `docs/history.md` say why. 33 is multi-room, which was unscheduled until a
 Halloween one-shot became the second room it was waiting for.
 
@@ -81,6 +81,7 @@ Halloween one-shot became the second room it was waiting for.
 45. Marquee select, right-drag pan, and trackpad gestures. 2026-09-23. `docs/tokens.md`,
     `docs/frontend.md`.
 46. A second site, and the roster the DM edits. 2026-09-24. `docs/rooms.md`.
+47. Kept lines and freehand drawing. 2026-10-05. `docs/drawings.md`.
 
 ## 29. Party sight and split sight
 

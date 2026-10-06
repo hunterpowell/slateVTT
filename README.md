@@ -188,6 +188,7 @@ which token is standing on a given square.
 | `drive-names.mjs`  | The names-under-tokens switch, on both boards at once              | both     |
 | `drive-ruler.mjs`  | The movement trail, the diagonal switch, the initiative panel      | both     |
 | `drive-ping.mjs`   | The hold that pings, and the ring reaching an unexplored corner    | both     |
+| `drive-draw.mjs`   | The line and pen tools: a pen stroke reaching the DM only when it's finished, and erasing a stroke by clicking beside it | both     |
 | `drive-select.mjs` | Shift-click and box selection, the group drag that moves them together, and Delete removing them | both     |
 | `drive-staged.mjs` | Tracing and painting the next dungeon, and the table not being told | both     |
 | `drive-undo.mjs`   | The DM's undo reaching the table, and not rebuilding their page    | both     |
