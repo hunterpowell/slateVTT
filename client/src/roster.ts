@@ -15,6 +15,10 @@
 // otherwise deletes their colour and scratchpad and sends them back to the
 // character picker. The confirm says so, since there's no undo for it: see
 // `docs/rooms.md`.
+//
+// The section folds behind its heading, folded by default, and each browser
+// remembers which way it was left. It's set up once and rarely touched after,
+// and the rest of the table tab is used mid-session.
 
 import type { ClientMsg, RosterEntry } from './protocol.js';
 
@@ -56,10 +60,41 @@ export function slugFor(name: string, taken: readonly string[]): string {
 }
 
 export interface RosterEditorUi {
+  /** The heading. A click folds or unfolds `body`. */
+  fold: HTMLButtonElement;
+  /** In the heading, so a folded roster still says how many slots it has. */
+  count: HTMLElement;
+  /** Everything under the heading. */
+  body: HTMLElement;
   /** One row per slot. Empty in the document; built here from the roster. */
   list: HTMLElement;
   name: HTMLInputElement;
   add: HTMLButtonElement;
+}
+
+/**
+ * Whether this browser had the roster unfolded last time. Folded by default:
+ * the cast is set up once and then rarely touched.
+ *
+ * In `localStorage`, not the room, like the initiative fold in `panel.ts`, and
+ * wrapped in `try` for the same reason.
+ */
+const OPEN_KEY = 'slate.roster.open';
+
+function readOpen(): boolean {
+  try {
+    return localStorage.getItem(OPEN_KEY) === '1';
+  } catch {
+    return false;
+  }
+}
+
+function storeOpen(open: boolean): void {
+  try {
+    localStorage.setItem(OPEN_KEY, open ? '1' : '0');
+  } catch {
+    /* the roster still folds; it just forgets by the next load */
+  }
 }
 
 export interface RosterEditor {
@@ -75,6 +110,17 @@ export function createRosterEditor(
   send: (msg: ClientMsg) => void,
   confirmRemove: (message: string) => boolean,
 ): RosterEditor {
+  const fold = (open: boolean): void => {
+    ui.body.hidden = !open;
+    ui.fold.setAttribute('aria-expanded', String(open));
+  };
+  fold(readOpen());
+  ui.fold.addEventListener('click', () => {
+    const open = ui.body.hidden;
+    fold(open);
+    storeOpen(open);
+  });
+
   const sendCast = (next: RosterEntry[]): void => {
     send({ type: 'set_roster', roster: next });
   };
@@ -164,6 +210,7 @@ export function createRosterEditor(
       active instanceof HTMLInputElement && ui.list.contains(active) ? active.dataset['id'] : undefined;
 
     ui.list.replaceChildren(...roster.map(row));
+    ui.count.textContent = `· ${roster.length}`;
     ui.add.disabled = roster.length >= MAX_ROSTER;
     ui.name.disabled = roster.length >= MAX_ROSTER;
     ui.name.placeholder =

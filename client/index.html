@@ -2400,8 +2400,41 @@
       /* The cast, at the bottom of the table tab. A heading of its own because
          it is a list, not a switch, and the only thing on this tab the DM
          types into. */
+      /* A button that reads as the panel's other headings, with the same
+         disclosure arrow as the initiative fold. */
       .table-roster-head {
+        display: flex;
+        align-items: baseline;
+        gap: 6px;
+        width: 100%;
         margin-top: 14px;
+        padding: 0;
+        border: 0;
+        background: none;
+        color: inherit;
+        font: inherit;
+        font-weight: 600;
+        text-align: left;
+        cursor: pointer;
+      }
+
+      .table-roster-chevron {
+        color: #6f767f;
+        font-size: 10px;
+        transition: transform 0.12s ease;
+      }
+
+      .table-roster-head:hover .table-roster-chevron {
+        color: #e8e6e1;
+      }
+
+      .table-roster-head[aria-expanded='false'] .table-roster-chevron {
+        transform: rotate(-90deg);
+      }
+
+      .table-roster-count {
+        color: #6f767f;
+        font-weight: 400;
       }
 
       .table-roster-row,
@@ -3004,17 +3037,33 @@
         <!-- The cast: who can join, and what they're called. A room-wide field
              like everything above it. The rows are built by `roster.ts`; a
              rename is typed in place, and each row's id is shown because it is
-             the label the chat and presence chips give that player. -->
-        <div class="map-head table-roster-head">Players</div>
-        <div id="table-roster" class="table-roster"></div>
-        <div class="table-roster-add">
-          <input id="table-roster-name" type="text" placeholder="a new character" aria-label="a new character's name" />
-          <button id="table-roster-add" class="map-button" type="button">add</button>
+             the label the chat and presence chips give that player.
+
+             Folded behind its heading because it is edited at setup and then
+             rarely, while everything above it is touched mid-session. The
+             heading keeps the count so a folded roster can still be checked at
+             a glance. Whether it is open is this browser's, in `roster.ts`. -->
+        <button
+          id="table-roster-fold"
+          class="map-head table-roster-head"
+          type="button"
+          aria-expanded="false"
+          aria-controls="table-roster-body"
+        >
+          <span class="table-roster-chevron" aria-hidden="true">&#9662;</span>
+          Players <span id="table-roster-count" class="table-roster-count"></span>
+        </button>
+        <div id="table-roster-body" hidden>
+          <div id="table-roster" class="table-roster"></div>
+          <div class="table-roster-add">
+            <input id="table-roster-name" type="text" placeholder="a new character" aria-label="a new character's name" />
+            <button id="table-roster-add" class="map-button" type="button">add</button>
+          </div>
+          <p class="map-hint">
+            Who can join. Renaming keeps everything they own. Someone who still owns a token can't be
+            removed: give it to someone else first.
+          </p>
         </div>
-        <p class="map-hint">
-          Who can join. Renaming keeps everything they own. Someone who still owns a token can't be
-          removed: give it to someone else first.
-        </p>
       </aside>
       <!-- The one panel everybody gets, and the one that is not behind a tab.
            Anyone may draw, so unlike the three above it is built on a player

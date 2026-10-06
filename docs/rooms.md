@@ -356,6 +356,11 @@ it when they were built, and replacing it would leave them reading the old one. 
 reason for changing the scene in place. Players still on the picker get a fresh `ChooseIdentity`,
 so a slot added while they're deciding appears.
 
+The editor folds behind its heading on the table tab, folded by default, with the count in the
+heading. Whether it's open is in `localStorage` (`slate.roster.open`), like the initiative fold.
+It's a section and not its own rail tab because the roster is a room-wide field, and a tab for
+something touched once a campaign would take strip space every session.
+
 ### Removing a slot
 
 - **Refused while that player owns a token**, staged tokens included. The token would belong to

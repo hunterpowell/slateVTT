@@ -254,6 +254,9 @@ interface Ui {
     };
     trackClear: HTMLButtonElement;
     roster: {
+      fold: HTMLButtonElement;
+      count: HTMLElement;
+      body: HTMLElement;
       list: HTMLElement;
       name: HTMLInputElement;
       add: HTMLButtonElement;
@@ -439,6 +442,9 @@ function findUi(): Ui {
       },
       trackClear: need<HTMLButtonElement>('#table-track-clear'),
       roster: {
+        fold: need<HTMLButtonElement>('#table-roster-fold'),
+        count: need('#table-roster-count'),
+        body: need('#table-roster-body'),
         list: need('#table-roster'),
         name: need<HTMLInputElement>('#table-roster-name'),
         add: need<HTMLButtonElement>('#table-roster-add'),
