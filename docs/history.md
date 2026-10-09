@@ -2468,3 +2468,17 @@ things, a breath weapon, a witch bolt) and a pen. Planned and built on 2026-10-0
 - `shape_covers` now takes the `Shape`, because a path's coverage needs its points.
 - `drive-draw.mjs` is new. It wraps each page's socket and counts frames, which is how it asserts
   that the DM received nothing while the pen was down.
+
+### 48: a player's phone
+
+Asked for by the second site's DM, who has one player on a phone. Planned and built on 2026-10-09.
+This narrows the mobile non-goal; it doesn't drop it. Players only, portrait only.
+
+- Before this, a 390px screen showed almost no board: the right column (248px) and the draw panel
+  (190px) were wider than the screen together. A touchscreen also couldn't zoom, because a second
+  finger was ignored and "pinch" meant a trackpad's ctrl+wheel.
+- Hiding the draw tool on phones was offered and declined in favour of folding it. Landscape got no
+  layout of its own.
+- `drive-phone.mjs` is new. It emulates the phone in headless Chrome, including its `pointer` and
+  `hover` media features, and sends real two-finger touch events. The iOS keyboard is the one part
+  it can't see.

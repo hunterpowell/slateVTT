@@ -73,7 +73,9 @@ given, use it to decide new requests.
   Anything that reads spell data *into* Slate is the lookup this rules out. See
   `client/spells/README.md`.
 - **User accounts, email, password reset, OAuth.**
-- **Mobile-first design.** Desktop browser is the target. Don't break touch, don't optimise for it.
+- **Mobile-first design.** Desktop browser is the target. The exception is a player on a portrait
+  phone, who gets a narrow layout and two-finger zoom. DM tools stay desktop-only, and every phone
+  rule is scoped to `body.player`. See `docs/frontend.md`, *A player's phone*.
 
 Scope creep is the main risk to this project. When a smaller change would satisfy a request,
 propose the smaller change.
@@ -569,8 +571,12 @@ is a second tab strip, for everyone, in `dock.ts` rather than a generalised rail
 arms the canvas, its tabs show unread counts, and its panels stack. It grows upward, with the
 strip last.
 
+On a phone, a player's screen rearranges under `@media (max-width: 640px)`. Two fingers zoom and
+pan (`pinch.ts`), and the draw panel folds to one button without putting the tool down.
+
 → `docs/frontend.md` before touching `coords.ts`, `rail.ts`, `dock.ts`, `Stage.fit`/`fitToRect`,
-`#corner`, `gestures.ts`, the wheel handler in `input.ts`, or the order of the right-hand column.
+`#corner`, `gestures.ts`, the wheel handler in `input.ts`, the order of the right-hand column,
+`pinch.ts`, `viewport.ts`, `#draw-fold`, or any `body.player` rule.
 
 ## Maps
 

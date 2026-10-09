@@ -204,6 +204,7 @@ which token is standing on a given square.
 | `drive-status.mjs` | The status page: its three states, that it fits an 800×480 panel, and that a join shows up on it | both     |
 | `drive-mirror.mjs` | Player view: the DM's own board redrawn as the table's, and switched off again | DM       |
 | `drive-isometric.mjs` | Calibrating a map to diamonds, and the table getting the same grid | both     |
+| `drive-phone.mjs`  | A player on an emulated phone: the board left clear, the draw fold, two-finger zoom, one-finger pan and a long-press ping | both     |
 | `drive-fit.mjs`    | The fit-board control and the Home key, on two different cameras | both     |
 | `drive-sound.mjs`  | The room's music: the player's `<audio>` pointed at the DM's pick, and an undo not restarting it | both     |
 

@@ -21,6 +21,9 @@ import type { ClientMsg, ShapeKind } from './protocol.js';
 
 export interface DrawToolUi {
   root: HTMLElement;
+  /** Folds the panel to one button. Only shown on a player's phone; see
+   *  `docs/frontend.md`, *A player's phone*. */
+  fold: HTMLButtonElement;
   /** One button per tool, plus the off switch. */
   tools: HTMLElement;
   swatches: HTMLElement;
@@ -155,7 +158,23 @@ export function createDrawTool(
     document.body.classList.toggle('drawing', held !== null);
     ui.hint.textContent =
       held === null ? 'Pick a shape to draw. Click one on the map to erase it.' : held.hint;
+    // Folding never puts the tool down, so the folded button says what is in
+    // hand: a finger on the board does something other than pan while it is.
+    ui.fold.textContent = held === null ? 'draw' : `draw · ${held.label}`;
+    ui.fold.classList.toggle('is-on', held !== null);
   };
+
+  let folded = readFolded();
+  const showFold = (): void => {
+    ui.root.classList.toggle('is-folded', folded);
+    ui.fold.setAttribute('aria-expanded', String(!folded));
+  };
+  ui.fold.addEventListener('click', () => {
+    folded = !folded;
+    storeFolded(folded);
+    showFold();
+  });
+  showFold();
 
   for (const tool of TOOLS) {
     const button = document.createElement('button');
@@ -249,4 +268,27 @@ export function createDrawTool(
       showColor();
     },
   };
+}
+
+/**
+ * Whether this browser had the draw panel folded last time. Per person, like
+ * the initiative fold in `panel.ts`, and wrapped in `try` for the same reason.
+ * Folded unless the player opened it: on a phone the board comes first.
+ */
+const FOLDED_KEY = 'slate.draw.folded';
+
+function readFolded(): boolean {
+  try {
+    return localStorage.getItem(FOLDED_KEY) !== '0';
+  } catch {
+    return true;
+  }
+}
+
+function storeFolded(folded: boolean): void {
+  try {
+    localStorage.setItem(FOLDED_KEY, folded ? '1' : '0');
+  } catch {
+    /* the panel still folds; it just forgets by the next load */
+  }
 }

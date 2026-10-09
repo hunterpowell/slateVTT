@@ -84,6 +84,7 @@ import type { Wall } from './walls.js';
 import { wallFromWire } from './walls.js';
 import type { WallTool } from './walltool.js';
 import { createWallTool } from './walltool.js';
+import { trackKeyboard } from './viewport.js';
 
 interface Ui {
   canvas: HTMLCanvasElement;
@@ -184,6 +185,7 @@ interface Ui {
   };
   drawtool: {
     root: HTMLElement;
+    fold: HTMLButtonElement;
     tools: HTMLElement;
     swatches: HTMLElement;
     clear: HTMLButtonElement;
@@ -372,6 +374,7 @@ function findUi(): Ui {
     },
     drawtool: {
       root: need('#drawtool'),
+      fold: need<HTMLButtonElement>('#draw-fold'),
       tools: need('#draw-tools'),
       swatches: need('#draw-swatches'),
       clear: need<HTMLButtonElement>('#draw-clear'),
@@ -652,6 +655,11 @@ function boot(ui: Ui, choice: RoomChoice, alone: boolean): void {
       if (welcome.player_id !== null) storePlayerId(choice.id, welcome.player_id);
       roster = welcome.roster;
       showWhoami(ui, identity, choice, welcome.state.tokens, alone);
+
+      // The phone layout's only hook. Every rule for a narrow screen is scoped
+      // to it, so a DM in a narrow window keeps the desktop layout and every
+      // DM tool. See `docs/frontend.md`, *A player's phone*.
+      document.body.classList.toggle('player', !identity.isDm);
 
       // Built here and not beside the rulers, because it needs to know who we
       // are: every ring it holds is attributed, ours included.
@@ -1866,4 +1874,5 @@ function loadImage(url: string): Promise<HTMLImageElement> {
 }
 
 // Floating: nothing awaits the page. `chooseRoom` handles its own one failure.
+trackKeyboard();
 void chooseRoom();

@@ -2,7 +2,7 @@
 <html lang="en">
   <head>
     <meta charset="utf-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, interactive-widget=resizes-content" />
     <title>Slate</title>
     <!-- Inline so the browser's automatic /favicon.ico request stops 404ing. -->
     <link
@@ -30,6 +30,9 @@
         display: block;
         width: 100vw;
         height: 100vh;
+        /* A phone's 100vh includes the strip under its address bar, which would
+           size the board taller than what is on screen. */
+        height: 100dvh;
         cursor: grab;
         touch-action: none;
       }
@@ -2494,6 +2497,174 @@
          *reset* button greys itself in JS rather than the whole panel greying
          here. Half of a reset is forgetting where the party has explored, and
          they have not explored the next dungeon. */
+
+      /* --- a player's phone ------------------------------------------------- */
+
+      /* Hidden everywhere but the phone layout below. On a desktop the panel
+         is always open and its head is the plain label above. */
+      #draw-fold {
+        display: none;
+      }
+
+      /* Portrait phone, players only. Why each of these is scoped to
+         `body.player`, and why the draw panel folds without putting the tool
+         down, is in `docs/frontend.md`, *A player's phone*.
+
+         Top to bottom: who you are and the corner's controls on one row; the
+         right-hand column, full width, from presence down to the dock; and a
+         bottom row shared by the dock's strip and the folded draw button. The
+         bottom follows `--kb`, which `viewport.ts` sets to however much of the
+         screen an iPhone's keyboard covers. */
+      @media (max-width: 640px) {
+        body.player #whoami {
+          top: 8px;
+          left: 8px;
+        }
+
+        body.player #corner {
+          top: 14px;
+          right: 8px;
+          bottom: auto;
+        }
+
+        body.player #hud {
+          display: none;
+        }
+
+        body.player #right-rail {
+          top: 44px;
+          left: 8px;
+          right: 8px;
+          bottom: calc(8px + var(--kb, 0px));
+          width: auto;
+        }
+
+        body.player #chat {
+          flex-basis: 40dvh;
+        }
+
+        /* Room on the left of the strip for the folded draw button, which sits
+           in the same row. */
+        body.player #dock-tabs {
+          margin-left: 84px;
+        }
+
+        /* Ends above the bottom row, so the open draw panel never covers the
+           dock's tabs. */
+        body.player #left-rail {
+          top: 44px;
+          left: 8px;
+          right: 8px;
+          bottom: calc(58px + var(--kb, 0px));
+          width: auto;
+        }
+
+        body.player #drawtool {
+          display: flex;
+          flex-direction: column;
+          gap: 8px;
+        }
+
+        body.player #drawtool .map-head {
+          display: none;
+        }
+
+        /* Pinned to the bottom row beside the dock's tabs, outside the panel it
+           opens, so it stays put whether the panel is open or not. */
+        body.player #draw-fold {
+          display: block;
+          position: fixed;
+          left: 8px;
+          bottom: calc(8px + var(--kb, 0px));
+          box-sizing: border-box;
+          width: 76px;
+          padding: 5px 4px;
+          border: 1px solid #2b3038;
+          border-radius: 4px;
+          background: #171a1f;
+          color: #8d939c;
+          font: inherit;
+          font-size: 11px;
+          overflow: hidden;
+          text-overflow: ellipsis;
+          white-space: nowrap;
+        }
+
+        body.player #draw-fold.is-on {
+          border-color: #4d90c8;
+          background: rgba(120, 190, 255, 0.14);
+          color: #cfe6ff;
+        }
+
+        body.player #drawtool.is-folded {
+          padding: 0;
+          background: none;
+        }
+
+        body.player #drawtool.is-folded > :not(#draw-fold) {
+          display: none !important;
+        }
+
+        body.player #drawtool .draw-tools {
+          grid-template-columns: repeat(3, 1fr);
+        }
+
+        body.player #drawtool .draw-swatches {
+          margin: 0;
+        }
+
+        body.player #chat-toast,
+        body.player #turn-toast {
+          left: 8px;
+          right: 8px;
+          max-width: none;
+        }
+
+        body.player #chat-toast {
+          bottom: calc(60px + var(--kb, 0px));
+        }
+
+        body.player #turn-toast {
+          bottom: calc(100px + var(--kb, 0px));
+        }
+      }
+
+      /* A finger, on any screen size. */
+      @media (pointer: coarse) {
+        body.player .dock-tab,
+        body.player .draw-tool,
+        body.player #draw-fold,
+        body.player #chat-send,
+        body.player #whoami-switch {
+          min-height: 40px;
+        }
+
+        body.player .draw-swatch,
+        body.player .presence-swatch {
+          width: 30px;
+          height: 30px;
+        }
+
+        body.player #initiative #init-collapse {
+          width: 32px;
+          height: 32px;
+        }
+
+        /* iOS zooms the whole page into any field set smaller than 16px when
+           it takes focus, and doesn't zoom back out. */
+        body.player #chat-text,
+        body.player #notes-text {
+          font-size: 16px;
+        }
+      }
+
+      /* The hint is the mouse/trackpad switch, which a touchscreen has no use
+         for. */
+      @media (hover: none) {
+        body.player #hint {
+          display: none;
+        }
+      }
     </style>
   </head>
   <body>
@@ -3071,6 +3242,7 @@
            clear-all button. -->
       <aside id="drawtool" hidden>
         <div class="map-head">Draw</div>
+        <button id="draw-fold" type="button" aria-controls="draw-tools">draw</button>
         <div id="draw-tools" class="draw-tools"></div>
         <div id="draw-swatches" class="draw-swatches"></div>
         <button id="draw-clear" class="map-subtle" type="button" hidden>erase everything</button>

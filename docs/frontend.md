@@ -166,3 +166,61 @@ column.
 
 See `docs/chat.md`, `docs/notes.md` and `docs/sound.md` for what lives in it, and
 `docs/presence.md` for the strip above it.
+
+## A player's phone
+
+One player at the second site plays on a phone, so a player's screen works on a portrait phone.
+The DM's doesn't, and doesn't need to: wall tracing, fog painting and calibration were designed for
+a mouse.
+
+**Every phone rule is scoped to `body.player`**, which `onWelcome` sets for a connection that isn't
+the DM's. A width query alone would also catch a DM who narrows their window, and hiding the left
+rail from them would hide every editing panel. The rules live at the end of the `<style>` block in
+`index.html`:
+
+- `@media (max-width: 640px)` does the layout. The right-hand column goes full width below a top
+  row (`#whoami` on the left, `#corner` on the right). The dock's strip shares the bottom row with
+  the draw button. `#hud` is hidden.
+- `@media (pointer: coarse)` raises tap targets to about 40px. It also sets the chat and scratchpad
+  fields to 16px, because iOS zooms the page into any smaller field that takes focus and doesn't
+  zoom back out.
+- `@media (hover: none)` hides `#hint`. The mouse/trackpad switch means nothing on a touchscreen.
+
+The order of the right-hand column is unchanged, and so are its reasons.
+
+### The draw button
+
+On a phone the draw panel folds to one button (`#draw-fold`), and starts folded. The fold is kept
+in `localStorage` like the initiative fold. The button is `position: fixed` in the bottom row,
+outside the flow of the panel it opens, and the left rail ends above that row. Without both, the
+open panel covered the dock's tabs.
+
+**Folding doesn't put the tool down.** The button reads `draw · measure` while a tool is armed and
+turns the armed blue. A tool still armed under a hidden panel is the failure rail rule 2 exists
+for. Disarming on fold would fix it too, but then a player measuring twice in a turn would have to
+open the panel twice. On a desktop the button is `display: none` and the panel is always open.
+
+### Two fingers
+
+`input.ts` tracks every touch pointer. A second finger landing while the first is panning, or
+hasn't moved yet, starts a `pinch` drag. `pinch.ts` keeps the world point that was under the
+fingers' midpoint under it as they move, so a single function zooms and pans. A second finger does
+nothing while the first holds a token or a sweep, because a zoom under that finger would move the
+drop.
+
+Lifting either finger ends the pinch, and **the finger left on the glass doesn't pan** until it
+lifts. Handing it a pan would jump the board by the distance between that finger and the midpoint.
+Starting a pinch cancels the first finger's ping timer and its click, so nothing pings, deselects
+or swings a door.
+
+### The keyboard
+
+Android Chrome and Firefox shrink the page above the on-screen keyboard because of
+`interactive-widget=resizes-content` in the viewport tag. iOS Safari ignores that flag and covers
+the bottom of the page, chat box included. `viewport.ts` measures how much `visualViewport` has
+lost and sets `--kb`, and the phone layout lifts its bottom edges by that. **Headless Chrome can't
+show the iOS case**, so `drive-phone.mjs` doesn't check it. It has to be checked on a real
+iPhone.
+
+`#stage` uses `100dvh` after `100vh`, because a phone's `100vh` includes the strip under the address
+bar.

@@ -7,6 +7,8 @@ import type { Gestures } from './gestures.js';
 import type { Identity } from './identity.js';
 import { canMove } from './identity.js';
 import { inMarquee } from './marquee.js';
+import type { PinchStart } from './pinch.js';
+import { pinchCamera, startPinch } from './pinch.js';
 import type { Pings } from './pings.js';
 import { HOLD_MS } from './pings.js';
 import type { ClientMsg, ShapeKind, WireOrigin } from './protocol.js';
@@ -139,6 +141,12 @@ type Drag =
     }
   | { kind: 'calibrate'; pointerId: number; x0: number; y0: number }
   /**
+   * Two fingers on the board: zoom and pan together (`pinch.ts`). `pointerId`
+   * is the first finger, so every guard that reads it still works, and
+   * `other` the second. Lifting either ends it.
+   */
+  | { kind: 'pinch'; pointerId: number; other: number; start: PinchStart }
+  /**
    * The DM painting cells of the fog override by hand.
    *
    * The simplest of the five: nothing to predict, nothing to throttle, and no
@@ -246,6 +254,7 @@ export interface InputState {
  *   wheel                          zoom, anchored on the cursor, or in
  *                                  trackpad mode, pan (see `gestures.ts`)
  *   pinch, ctrl+wheel              zoom, in trackpad mode
+ *   two fingers on a touchscreen   zoom and pan together (`pinch.ts`)
  *
  * The box is a mouse's alone. A finger has no right button to pan with, so a
  * touch or pen drag on empty ground still pans.
@@ -740,7 +749,38 @@ export function attachInput(
     gather(ids);
   };
 
+  /**
+   * Every finger on the canvas, in screen pixels. Only a pinch reads it, and
+   * only touches go in: a pen and a finger together are not a pinch.
+   */
+  const touches = new Map<number, Vec2>();
+
+  /**
+   * A second finger landing turns a one-finger pan, or a press that hasn't
+   * moved yet, into a pinch. It does nothing while a token or a sweep is in
+   * hand: that finger is busy, and a zoom under it would move the drop.
+   */
+  const maybePinch = (e: PointerEvent): boolean => {
+    if (e.pointerType !== 'touch' || touches.size !== 2) return false;
+    if (drag !== null && drag.kind !== 'pan') return false;
+    const [first, second] = [...touches.keys()];
+    const a = first === undefined ? undefined : touches.get(first);
+    const b = second === undefined ? undefined : touches.get(second);
+    if (first === undefined || second === undefined || a === undefined || b === undefined) {
+      return false;
+    }
+    // The first finger's press was being timed as a ping and must not fire
+    // under a zoom; and a pan that turns into a pinch is not a click, so
+    // nothing is put down or swung when the fingers lift.
+    cancelHold();
+    drag = { kind: 'pinch', pointerId: first, other: second, start: startPinch(cam, a, b) };
+    canvas.setPointerCapture(e.pointerId);
+    return true;
+  };
+
   canvas.addEventListener('pointerdown', (e) => {
+    if (e.pointerType === 'touch') touches.set(e.pointerId, localPoint(e));
+    if (maybePinch(e)) return;
     if (drag !== null) return;
     if (e.button !== 0 && e.button !== 1 && e.button !== 2) return;
     e.preventDefault(); // middle button would otherwise start autoscroll
@@ -987,6 +1027,9 @@ export function attachInput(
   canvas.addEventListener('pointermove', (e) => {
     const p = localPoint(e);
     const w = screenToWorld(cam, p.x, p.y);
+    // Kept current while one finger pans, so a pinch that starts mid-pan
+    // starts from where that finger is now.
+    if (touches.has(e.pointerId)) touches.set(e.pointerId, p);
     state.cursorGrid = gridUnder(w);
     // Before and outside every branch below: where a hand is doesn't depend on
     // what it is holding. A pointer goes out while a token is being dragged,
@@ -1044,6 +1087,14 @@ export function attachInput(
       canvas.style.cursor = restingCursor(w);
       return;
     }
+    if (drag.kind === 'pinch') {
+      const a = touches.get(drag.pointerId);
+      const b = touches.get(drag.other);
+      if (a === undefined || b === undefined) return;
+      Object.assign(cam, pinchCamera(drag.start, a, b, MIN_ZOOM, MAX_ZOOM));
+      return;
+    }
+
     if (drag.pointerId !== e.pointerId) return;
 
     if (drag.kind === 'calibrate') {
@@ -1171,6 +1222,7 @@ export function attachInput(
   const endDrag = (e: PointerEvent): void => {
     const p = localPoint(e);
     const w = screenToWorld(cam, p.x, p.y);
+    touches.delete(e.pointerId);
 
     // An early release abandons the hold and the click underneath it runs as
     // normal, so a door still swings, a shape still erases, and a token still
@@ -1185,6 +1237,16 @@ export function attachInput(
       consumed = null;
       if (canvas.hasPointerCapture(e.pointerId)) canvas.releasePointerCapture(e.pointerId);
       canvas.style.cursor = restingCursor(w);
+      return;
+    }
+
+    // Either finger ends a pinch, and the one left on the glass does nothing
+    // until it lifts too. Handing it a pan from here would jump the board by
+    // however far that finger is from the midpoint the pinch was holding.
+    if (drag !== null && drag.kind === 'pinch') {
+      if (e.pointerId !== drag.pointerId && e.pointerId !== drag.other) return;
+      drag = null;
+      if (canvas.hasPointerCapture(e.pointerId)) canvas.releasePointerCapture(e.pointerId);
       return;
     }
 
