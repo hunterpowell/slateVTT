@@ -565,6 +565,17 @@ so nothing can disagree with a board nobody can see. It's scaled to fit inside t
 token's portrait, which is cropped to fill: the DM picked this image to be looked at, so letterbox
 bars are correct and cropping isn't.
 
+A backdrop may be a looping WebM. `backdrops/` sniffs against its own `library::BACKDROPS`, the
+images plus WebM, and is the only library that takes video: maps and portraits are drawn under
+the camera and a video there would be a second renderer. The WebM check requires the `webm`
+DocType, not just the Matroska magic, because a `.mkv` may hold codecs a browser can't play. The
+room still holds one URL, and the client builds a `<video>` for a `.webm` one (`loadVideo` in
+`main.ts`), which `drawBackdrop` draws each frame like a still. It's **always muted**, because the
+room's music is the one track (`docs/sound.md`); muted is also what lets it start without a click.
+Each client loops on its own. There's no shared playback position, for the reason the music has
+none. A video is released when it comes down rather than cached like a still, so nothing decodes
+off screen. It's under the same 25 MB cap as the stills.
+
 `shownBackdrop` is the fourth `shown*` function beside `shownBoard`, and it answers an earlier
 question than the other three: they pick which board to draw, and this decides whether a board is
 drawn at all. Its one branch is that **preview wins**. A backdrop is what the table is looking at,

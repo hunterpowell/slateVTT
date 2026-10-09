@@ -5,6 +5,11 @@ inside of a tavern) for the stretches of an evening where there's nothing to mov
 measure. Drop PNG, JPEG or WebP files in here, in subfolders if you like, and they appear in the
 table panel under **show a backdrop…**.
 
+A WebM video works too: it plays muted, on a loop, on every screen. Keep it under 25 MB (the same
+cap as a picture), which is roughly half a minute to a minute of 1080p VP9. Every player downloads
+it through the tunnel, so a short loop is better than a long one. A `.mkv` is refused even if it
+plays on your machine; re-export as WebM.
+
 A backdrop isn't a map, which is why it has its own folder rather than living in `maps/`. It has no
 grid, nothing stands on it, nothing is traced across it and nobody explores it. Loading a *map*
 clears the board (the walls, the drawings and everywhere the party has been), because a new image is

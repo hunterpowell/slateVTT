@@ -105,8 +105,8 @@ struct AppState {
     portraits: Arc<Path>,
     backdrops: Arc<Path>,
     /// The one library that isn't pictures, and the reason `library::Formats`
-    /// exists: the three above are sniffed against `IMAGES` and this one
-    /// against `AUDIO`. See `docs/sound.md`.
+    /// exists: maps and portraits are sniffed against `IMAGES`, backdrops
+    /// against `BACKDROPS` and this one against `AUDIO`. See `docs/sound.md`.
     tracks: Arc<Path>,
     /// The status page's own credential. When `None`, `/api/status` is **not
     /// mounted at all**, which is why this is read before the router is built.
@@ -252,11 +252,13 @@ impl Library {
 
     /// What this library will list, accept and refuse.
     ///
-    /// The three picture libraries share one arm, so adding the track library
-    /// visibly changed nothing about the other three. See `library::Formats`.
+    /// Maps and portraits share one arm, so adding a library visibly changes
+    /// nothing about them. Backdrops have their own because they also take a
+    /// looping video. See `library::Formats`.
     fn formats(self) -> &'static library::Formats {
         match self {
-            Self::Maps | Self::Portraits | Self::Backdrops => &library::IMAGES,
+            Self::Maps | Self::Portraits => &library::IMAGES,
+            Self::Backdrops => &library::BACKDROPS,
             Self::Tracks => &library::AUDIO,
         }
     }
@@ -1702,5 +1704,41 @@ mod tests {
             library::sniff(Library::Tracks.formats(), b"\x89PNG\r\n\x1a\n"),
             None
         );
+    }
+
+    /// The start of what a muxer writes: the EBML magic, a size, then the
+    /// header's children, the DocType among them.
+    fn ebml_header(doc_type: &[u8]) -> Vec<u8> {
+        let mut bytes = vec![0x1a, 0x45, 0xdf, 0xa3, 0x9f];
+        bytes.extend_from_slice(&[0x42, 0x86, 0x81, 0x01, 0x42, 0xf7, 0x81, 0x01]);
+        bytes.extend_from_slice(&[0x42, 0x82, 0x80 | doc_type.len() as u8]);
+        bytes.extend_from_slice(doc_type);
+        bytes
+    }
+
+    #[test]
+    fn only_the_backdrops_take_a_webm() {
+        let webm = ebml_header(b"webm");
+        assert_eq!(
+            library::sniff(Library::Backdrops.formats(), &webm),
+            Some("webm")
+        );
+        for which in [Library::Maps, Library::Portraits, Library::Tracks] {
+            assert_eq!(
+                library::sniff(which.formats(), &webm),
+                None,
+                "{} must not take a video",
+                which.noun()
+            );
+        }
+    }
+
+    #[test]
+    fn a_matroska_file_is_not_a_webm() {
+        let backdrops = Library::Backdrops.formats();
+        assert_eq!(library::sniff(backdrops, &ebml_header(b"matroska")), None);
+        assert_eq!(library::sniff(backdrops, &[0x1a, 0x45, 0xdf, 0xa3]), None);
+        // The DocType's bytes without the magic in front of them.
+        assert_eq!(library::sniff(backdrops, b"\x42\x82\x84webm"), None);
     }
 }

@@ -401,7 +401,7 @@ export interface Frame {
 export function drawBackdrop(
   ctx: CanvasRenderingContext2D,
   view: Viewport,
-  img: HTMLImageElement,
+  img: HTMLImageElement | HTMLVideoElement,
 ): void {
   const w = view.width * view.dpr;
   const h = view.height * view.dpr;
@@ -410,11 +410,16 @@ export function drawBackdrop(
   ctx.fillStyle = VOID;
   ctx.fillRect(0, 0, w, h);
 
+  // A video's `width` is its layout attribute, not its frame size. The frame
+  // loop draws every animation frame while covered, so a video plays by being
+  // drawn again here and needs nothing else.
+  const iw = img instanceof HTMLVideoElement ? img.videoWidth : img.width;
+  const ih = img instanceof HTMLVideoElement ? img.videoHeight : img.height;
   // A zero-sized image is a broken one; `drawImage` would throw on the divide.
-  if (img.width === 0 || img.height === 0) return;
+  if (iw === 0 || ih === 0) return;
 
-  const scale = Math.min(w / img.width, h / img.height);
-  const drawn = { w: img.width * scale, h: img.height * scale };
+  const scale = Math.min(w / iw, h / ih);
+  const drawn = { w: iw * scale, h: ih * scale };
   ctx.drawImage(img, (w - drawn.w) / 2, (h - drawn.h) / 2, drawn.w, drawn.h);
 }
 

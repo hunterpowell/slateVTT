@@ -1465,12 +1465,18 @@ async function start(
    * click and the download finishing, the board stays on screen, which is
    * better than a black window.
    *
-   * It shares `fetchMap`'s cache, since a backdrop is another large image
+   * A still shares `fetchMap`'s cache, since a backdrop is another large image
    * fetched by URL and toggling one on and off twice in an evening should not
-   * fetch it twice.
+   * fetch it twice. A video doesn't: a playing element can't be shared or left
+   * decoding off screen, so it is released when it comes down and rebuilt
+   * from the browser's HTTP cache when it goes back up.
+   *
+   * `backdropVideo` is the video element from the moment it is built, before
+   * it can be drawn, so one still loading can be released too.
    */
-  let backdrop: HTMLImageElement | null = null;
+  let backdrop: HTMLImageElement | HTMLVideoElement | null = null;
   let backdropUrl: string | null = null;
+  let backdropVideo: HTMLVideoElement | null = null;
 
   // Keyed by URL, not by token, so changing a token's art finds the new
   // picture and two goblins sharing a portrait share one download. Portraits
@@ -1582,7 +1588,29 @@ async function start(
       // Cleared, not kept, so the frame loop cannot draw the *previous* picture
       // between one being chosen and it arriving.
       backdrop = null;
+      if (backdropVideo !== null) {
+        releaseVideo(backdropVideo);
+        backdropVideo = null;
+      }
       if (url === null) return;
+
+      // The server writes `.webm` only for bytes it sniffed as WebM, so the
+      // extension can be trusted to say which element to build.
+      if (url.endsWith('.webm')) {
+        const video = loadVideo(url);
+        backdropVideo = video.element;
+        video.ready.then(
+          () => {
+            // Compared by element, not URL: taking a video down and putting
+            // the same one back up builds a second element, and this one has
+            // been released.
+            if (backdropVideo !== video.element) return;
+            backdrop = video.element;
+          },
+          (err: unknown) => console.warn(err),
+        );
+        return;
+      }
 
       fetchMap(url).then(
         (img) => {
@@ -1871,6 +1899,46 @@ function loadImage(url: string): Promise<HTMLImageElement> {
     img.addEventListener('error', () => reject(new Error(`could not load ${url}`)));
     img.src = url;
   });
+}
+
+/**
+ * A looping backdrop video, and a promise that settles once it has a frame to
+ * draw. The element is returned at once so the caller can release it before
+ * then.
+ *
+ * **Always muted.** The room's music is the one track (`docs/sound.md`), and
+ * muted is also what lets a browser start it without a click.
+ */
+function loadVideo(url: string): { element: HTMLVideoElement; ready: Promise<void> } {
+  const video = document.createElement('video');
+  video.muted = true;
+  video.loop = true;
+  video.playsInline = true;
+  video.preload = 'auto';
+  const ready = new Promise<void>((resolve, reject) => {
+    video.addEventListener(
+      'loadeddata',
+      () => {
+        // A refusal still leaves the first frame to draw, which is better than
+        // the board.
+        video.play().catch((err: unknown) => console.warn(err));
+        resolve();
+      },
+      { once: true },
+    );
+    video.addEventListener('error', () => reject(new Error(`could not load ${url}`)), {
+      once: true,
+    });
+  });
+  video.src = url;
+  return { element: video, ready };
+}
+
+/** Stops a video and lets the browser drop its decoder and buffered data. */
+function releaseVideo(video: HTMLVideoElement): void {
+  video.pause();
+  video.removeAttribute('src');
+  video.load();
 }
 
 // Floating: nothing awaits the page. `chooseRoom` handles its own one failure.

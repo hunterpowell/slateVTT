@@ -119,10 +119,34 @@ const WAV: Format = Format {
     matches: |bytes| bytes.len() >= 12 && bytes.starts_with(b"RIFF") && &bytes[8..12] == b"WAVE",
 };
 
+/// An EBML header whose DocType is `webm`. The magic alone is any Matroska
+/// file, and a `.mkv` may hold codecs a browser won't decode, so the DocType
+/// is required: it is the first child of the header in every muxer's output,
+/// well inside the bytes checked here.
+const WEBM: Format = Format {
+    extension: "webm",
+    matches: |bytes| {
+        let head = &bytes[..bytes.len().min(64)];
+        head.starts_with(&[0x1a, 0x45, 0xdf, 0xa3])
+            // DocType's ID, a one-byte size of 4, then the name.
+            && head.windows(7).any(|w| w == b"\x42\x82\x84webm")
+    },
+};
+
 pub const IMAGES: Formats = Formats {
     formats: &[PNG, JPEG, WEBP],
     extensions: &["png", "jpg", "jpeg", "webp"],
     named: "a PNG, JPEG or WebP image",
+};
+
+/// The pictures, and a looping video. Only `backdrops/` takes video: a map or
+/// portrait is drawn under the camera with a grid and hit tests, and a
+/// backdrop is drawn instead of all that. It is played muted, because the
+/// room's music is the one track (`docs/sound.md`).
+pub const BACKDROPS: Formats = Formats {
+    formats: &[PNG, JPEG, WEBP, WEBM],
+    extensions: &["png", "jpg", "jpeg", "webp", "webm"],
+    named: "a PNG, JPEG or WebP image, or a WebM video",
 };
 
 /// **`.m4a` is not accepted.** Its `ftyp` box carries a brand, and the brand
