@@ -207,7 +207,7 @@ const ROSTER: [(&str, &str); 6] = [
 /// casts are independent: a different length, and no slug in common unless one
 /// is written twice on purpose. A player who plays in both rooms holds two
 /// slugs, which keeps their tokens, colour and scratchpad separate in each.
-const HALLOWEEN_ROSTER: [(&str, &str); 6] = [
+const HALLOWEEN_ROSTER: [(&str, &str); 5] = [
     ("elias", "Elias"),
     ("corvus", "Corvus Nevermore"),
     ("rostam", "Rostam"),
