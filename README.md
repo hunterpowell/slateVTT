@@ -1,3 +1,5 @@
+<img src="docs/slate.svg" width="96" alt="" />
+
 # Slate
 
 A minimal virtual tabletop for a private, remote D&D game: a handful of players plus a DM. It
