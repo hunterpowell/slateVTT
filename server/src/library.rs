@@ -358,13 +358,33 @@ fn is_reserved(stem: &str) -> bool {
 
 /// FNV-1a. Not a cryptographic hash and doesn't need to be: it distinguishes
 /// two files a DM actually has, and neither is a secret.
-fn fnv1a(bytes: &[u8]) -> u32 {
-    let mut hash: u32 = 0x811c_9dc5;
-    for &byte in bytes {
-        hash ^= u32::from(byte);
-        hash = hash.wrapping_mul(0x0100_0193);
+///
+/// Fed a chunk at a time, so a library file is fingerprinted without being held
+/// in memory. Feeding the same bytes in any split gives the same hash, which is
+/// what keeps a streamed copy's name the same as the one `copy_name` gives.
+pub struct Fnv1a(u32);
+
+impl Fnv1a {
+    pub fn new() -> Self {
+        Self(0x811c_9dc5)
     }
-    hash
+
+    pub fn update(&mut self, bytes: &[u8]) {
+        for &byte in bytes {
+            self.0 ^= u32::from(byte);
+            self.0 = self.0.wrapping_mul(0x0100_0193);
+        }
+    }
+
+    pub fn finish(&self) -> u32 {
+        self.0
+    }
+}
+
+fn fnv1a(bytes: &[u8]) -> u32 {
+    let mut hash = Fnv1a::new();
+    hash.update(bytes);
+    hash.finish()
 }
 
 /// Everything that is not a letter or a digit becomes a single dash.
@@ -404,6 +424,12 @@ fn slug(text: &str) -> String {
 /// gives one that changes with them. Either way the slug comes from the key,
 /// so what the DM reads in the folder is the path they picked.
 pub fn copy_name(key: &str, fingerprint: &[u8], extension: &str) -> String {
+    hashed_copy_name(key, fnv1a(fingerprint), extension)
+}
+
+/// `copy_name` with the fingerprint already hashed, for a file read through in
+/// chunks by `Fnv1a`.
+pub fn hashed_copy_name(key: &str, hash: u32, extension: &str) -> String {
     // The extension is dropped from the readable half, since it is already the
     // extension of the copy. A key fingerprint keeps it, so the same name as a
     // PNG and as a JPEG stays two files; a content fingerprint doesn't need it,
@@ -415,7 +441,7 @@ pub fn copy_name(key: &str, fingerprint: &[u8], extension: &str) -> String {
     } else {
         &readable
     };
-    format!("{readable}-{:08x}.{extension}", fnv1a(fingerprint))
+    format!("{readable}-{hash:08x}.{extension}")
 }
 
 /// Whether this library would show a file with that extension.
@@ -842,6 +868,22 @@ mod tests {
         assert_eq!(
             copy_name("portrait/cleo.jpg", b"the portrait", "jpg"),
             copy_name("portrait/cleo.jpg", b"the portrait", "jpg")
+        );
+    }
+
+    #[test]
+    fn a_hash_fed_in_chunks_names_the_same_copy() {
+        // A streamed copy's name has to match the one a whole-file read gave,
+        // or every portrait and backdrop already in uploads/ is copied again
+        // under a new name and the old URLs stop matching new picks.
+        let bytes: Vec<u8> = (0..10_000u32).map(|n| (n * 7 % 251) as u8).collect();
+        let mut hash = Fnv1a::new();
+        for chunk in bytes.chunks(333) {
+            hash.update(chunk);
+        }
+        assert_eq!(
+            hashed_copy_name("track/mix.mp3", hash.finish(), "mp3"),
+            copy_name("track/mix.mp3", &bytes, "mp3")
         );
     }
 

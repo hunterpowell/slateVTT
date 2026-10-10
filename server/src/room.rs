@@ -212,8 +212,7 @@ const HALLOWEEN_ROSTER: [(&str, &str); 6] = [
     ("corvus", "Corvus Nevermore"),
     ("rostam", "Rostam"),
     ("ironbeak", "Iron Beak"),
-    ("baron", "Baron"),
-    ("player-6", "Player 6"),
+    ("borrin", "Borrin"),
 ];
 
 /// The map a room that has never been given one stands on.

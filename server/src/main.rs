@@ -36,12 +36,14 @@ const MAX_MAP_BYTES: usize = 25 * 1024 * 1024;
 /// Token art is drawn inside a circle a cell wide. Anything approaching this is
 /// already far more image than the board can show.
 const MAX_TOKEN_BYTES: usize = 4 * 1024 * 1024;
-/// Background music the table hears for an hour. Bounded well under the map cap
-/// because `copy_out` reads a whole file into memory and the box this runs on
-/// has a gigabyte of it, and because seven browsers fetch a track. They only
-/// fetch it once each: `/uploads` is `immutable` and a copy's name is a
-/// fingerprint of its bytes.
-const MAX_TRACK_BYTES: usize = 16 * 1024 * 1024;
+/// Background music, up to a two-hour mix at 128 kbps. Above the upload route's
+/// limit, so a track this size reaches the library by being copied into
+/// `tracks/` on the host and then picked. `copy_out` streams, so the size costs
+/// disk and download, not memory. `docs/sound.md`.
+const MAX_TRACK_BYTES: usize = 128 * 1024 * 1024;
+/// How much of a library file `copy_out` holds at once. The first chunk is also
+/// what is sniffed, so it must cover every sniffer's leading bytes.
+const COPY_CHUNK_BYTES: usize = 64 * 1024;
 /// Protocol frames are tiny JSON commands. Keeping this bounded prevents a
 /// public WebSocket from using one frame to reserve an unreasonable buffer.
 ///
@@ -191,11 +193,9 @@ impl Library {
             // A map's cap: a backdrop fills the whole window, so it is the
             // same kind of picture as a battle map with the grid left off.
             Self::Backdrops => MAX_MAP_BYTES,
-            // Sixteen mebibytes is around seventeen minutes at 128 kbps and
-            // about ninety seconds of uncompressed WAV. Refusing the WAV is
-            // intended: a DM who drops a five-minute WAV in gets one clear
-            // error instead of a Pi reading fifty megabytes into a gigabyte
-            // of RAM.
+            // About two hours at 128 kbps and twelve minutes of uncompressed
+            // WAV. Refusing the long WAV is intended: it should be re-encoded
+            // rather than fetched by seven browsers through the tunnel.
             Self::Tracks => MAX_TRACK_BYTES,
         }
     }
@@ -1014,14 +1014,15 @@ async fn copy_out(
     })?;
 
     // Checked before the read, so a file too large for the library isn't
-    // pulled into memory just to be rejected.
-    let size = fs::metadata(&pick.path).await.map_err(|err| {
+    // read through just to be rejected.
+    let unread = |err: std::io::Error| {
         error!(%err, path = %pick.path.display(), "could not read that {noun}");
         (
             StatusCode::INTERNAL_SERVER_ERROR,
             format!("could not read that {noun}"),
         )
-    })?;
+    };
+    let size = fs::metadata(&pick.path).await.map_err(unread)?;
     if size.len() > which.max_bytes() as u64 {
         return Err((
             StatusCode::PAYLOAD_TOO_LARGE,
@@ -1029,18 +1030,21 @@ async fn copy_out(
         ));
     }
 
-    let bytes = fs::read(&pick.path).await.map_err(|err| {
-        error!(%err, path = %pick.path.display(), "could not read that {noun}");
-        (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            format!("could not read that {noun}"),
-        )
-    })?;
+    // **Never read a library file whole**: a track can be a hundred megabytes
+    // on a box with a gigabyte of memory. Streaming takes two passes. The
+    // first sniffs and, if the name comes from the contents, hashes, so a
+    // re-pick of a copy already in uploads/ ends there without a write.
+    let first = if which.names_by_content() {
+        read_through(&pick.path, which.formats(), Pass::Hash).await
+    } else {
+        read_through(&pick.path, which.formats(), Pass::Sniff).await
+    }
+    .map_err(unread)?;
 
     // Sniffed, not taken from the name, as in `add`: the extension decides the
     // `Content-Type` the copy is later served with, and a file's name is not
     // evidence of what is inside it.
-    let Some(extension) = library::sniff(which.formats(), &bytes) else {
+    let Some(extension) = first.extension else {
         return Err((
             StatusCode::UNSUPPORTED_MEDIA_TYPE,
             format!("that file is not {}", which.formats().named),
@@ -1048,33 +1052,141 @@ async fn copy_out(
     };
 
     let key = format!("{}{}", which.prefix(), pick.key);
-    let fingerprint: &[u8] = if which.names_by_content() {
-        &bytes
+    let name = if which.names_by_content() {
+        library::hashed_copy_name(&key, first.hash, extension)
     } else {
-        key.as_bytes()
+        library::copy_name(&key, key.as_bytes(), extension)
     };
-    let name = library::copy_name(&key, fingerprint, extension);
     let path = state.uploads.join(&name);
+    let stored = Json(StoredImage {
+        url: format!("/uploads/{name}"),
+    });
 
     // An existing copy under this name is already this file, so there is
     // nothing to write. When the name comes from the bytes that is certain;
     // for a map it only means the same path was picked before. Rewriting
     // either would churn the disk and, if the write failed halfway, break the
     // URL the calibration table is keyed on.
-    if fs::metadata(&path).await.is_err() {
-        fs::write(&path, &bytes).await.map_err(|err| {
-            error!(%err, path = %path.display(), "could not copy that {noun}");
-            (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                format!("could not copy that {noun}"),
-            )
-        })?;
-        info!(%name, source = %pick.key, %noun, bytes = bytes.len(), "copied a file out of a library");
+    if fs::metadata(&path).await.is_ok() {
+        return Ok(stored);
     }
 
-    Ok(Json(StoredImage {
-        url: format!("/uploads/{name}"),
-    }))
+    // Written beside the copy and renamed into place, so a copy cut off
+    // halfway is never served under the name of a whole one.
+    let partial = state.uploads.join(format!(".{}.part", Uuid::new_v4()));
+    let uncopied = |err: std::io::Error| {
+        error!(%err, path = %path.display(), "could not copy that {noun}");
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            format!("could not copy that {noun}"),
+        )
+    };
+    let copied = async {
+        let mut sink = fs::File::create(&partial).await?;
+        let second = read_through(&pick.path, which.formats(), Pass::Copy(&mut sink)).await?;
+        sink.sync_all().await?;
+        Ok::<_, std::io::Error>(second)
+    }
+    .await;
+    let second = match copied {
+        Ok(second) => second,
+        Err(err) => {
+            let _ = fs::remove_file(&partial).await;
+            return Err(uncopied(err));
+        }
+    };
+
+    // The name came from the first read. A file the DM replaced between the
+    // two would otherwise sit under the old contents' name.
+    if second.extension != first.extension
+        || (which.names_by_content() && second.hash != first.hash)
+    {
+        let _ = fs::remove_file(&partial).await;
+        warn!(path = %pick.path.display(), %noun, "a library file changed while it was copied");
+        return Err((
+            StatusCode::CONFLICT,
+            format!("that {noun} changed while it was being copied; pick it again"),
+        ));
+    }
+
+    if let Err(err) = fs::rename(&partial, &path).await {
+        let _ = fs::remove_file(&partial).await;
+        return Err(uncopied(err));
+    }
+    info!(%name, source = %pick.key, %noun, bytes = second.bytes, "copied a file out of a library");
+
+    Ok(stored)
+}
+
+/// What `read_through` does with a library file besides sniffing it.
+enum Pass<'a> {
+    /// Stop after the first chunk. A map is named from its path, so its first
+    /// pass needs nothing more.
+    Sniff,
+    /// Read to the end, hashing.
+    Hash,
+    /// Read to the end, hashing and writing each chunk to this file.
+    Copy(&'a mut fs::File),
+}
+
+struct ReadThrough {
+    /// What the leading bytes sniffed as.
+    extension: Option<&'static str>,
+    /// FNV-1a of what was read: the whole file's after `Hash` or `Copy`.
+    hash: u32,
+    bytes: u64,
+}
+
+/// Reads a library file `COPY_CHUNK_BYTES` at a time. Stops after the first
+/// chunk if it doesn't sniff as anything, since nothing more will be done with
+/// the file.
+async fn read_through(
+    path: &Path,
+    formats: &library::Formats,
+    mut pass: Pass<'_>,
+) -> std::io::Result<ReadThrough> {
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+    let mut source = fs::File::open(path).await?;
+    let mut chunk = vec![0; COPY_CHUNK_BYTES];
+    let mut hash = library::Fnv1a::new();
+    let mut extension = None;
+    let mut bytes: u64 = 0;
+
+    loop {
+        // Filled before use, so the first chunk holds every leading byte a
+        // sniffer looks at however the reads are split.
+        let mut filled = 0;
+        while filled < chunk.len() {
+            let read = source.read(&mut chunk[filled..]).await?;
+            if read == 0 {
+                break;
+            }
+            filled += read;
+        }
+        let read = &chunk[..filled];
+
+        if bytes == 0 {
+            extension = library::sniff(formats, read);
+            if extension.is_none() || matches!(pass, Pass::Sniff) {
+                break;
+            }
+        }
+        hash.update(read);
+        if let Pass::Copy(sink) = &mut pass {
+            sink.write_all(read).await?;
+        }
+        bytes += filled as u64;
+        if filled < chunk.len() {
+            break;
+        }
+    }
+
+    Ok(ReadThrough {
+        extension,
+        hash: hash.finish(),
+        bytes,
+    })
 }
 
 #[derive(Deserialize)]
@@ -1106,9 +1218,11 @@ async fn add(
     let which = library_named(&state, &headers, &segment, "add to")?;
     let noun = which.noun();
 
-    // The route's own limit is the largest of any library, so this is where a
-    // smaller cap is applied. Refused with a sentence, where the layer would
-    // drop the connection.
+    // The route's own limit is the map cap, so this is where a smaller cap is
+    // applied. Refused with a sentence, where the layer would drop the
+    // connection. The track cap is larger than the route's: the body is held
+    // in memory here, so a long track is copied into `tracks/` on the host and
+    // picked instead (`docs/sound.md`).
     if body.len() > which.max_bytes() {
         return Err((
             StatusCode::PAYLOAD_TOO_LARGE,
@@ -1585,6 +1699,82 @@ mod tests {
             key.as_bytes()
         };
         library::copy_name(&key, fingerprint, extension)
+    }
+
+    /// A tracks library and an uploads directory of their own, and the state
+    /// that points at them.
+    fn library_state(label: &str) -> (AppState, std::path::PathBuf) {
+        let root = std::env::temp_dir().join(format!(
+            "slate-copy-{label}-{}-{}",
+            std::process::id(),
+            Uuid::new_v4()
+        ));
+        std::fs::create_dir_all(root.join("tracks")).expect("tracks dir");
+        std::fs::create_dir_all(root.join("uploads")).expect("uploads dir");
+        let state = AppState {
+            tracks: root.join("tracks").into(),
+            uploads: root.join("uploads").into(),
+            ..app_state(None)
+        };
+        (state, root)
+    }
+
+    #[tokio::test]
+    async fn a_track_bigger_than_a_chunk_is_copied_whole_under_the_name_it_always_had() {
+        // Streaming must not change a copy's name: every portrait, backdrop
+        // and track already in uploads/ was named from a whole-file read, and
+        // a different name would copy each one again on its next pick.
+        let (state, root) = library_state("whole");
+        let mut bytes = b"OggS".to_vec();
+        bytes.extend((0..COPY_CHUNK_BYTES * 3 + 17).map(|n| (n % 251) as u8));
+        std::fs::write(root.join("tracks").join("Mix.ogg"), &bytes).expect("write track");
+
+        let Json(stored) = copy_out(&state, Library::Tracks, "Mix.ogg")
+            .await
+            .expect("copies");
+        let name = copy_name_for(Library::Tracks, "mix.ogg", &bytes, "ogg");
+        assert_eq!(stored.url, format!("/uploads/{name}"));
+        assert_eq!(
+            std::fs::read(root.join("uploads").join(&name)).expect("the copy"),
+            bytes
+        );
+
+        let Json(again) = copy_out(&state, Library::Tracks, "Mix.ogg")
+            .await
+            .expect("re-picks");
+        assert_eq!(again.url, stored.url);
+        let left: Vec<_> = std::fs::read_dir(root.join("uploads"))
+            .expect("uploads")
+            .map(|entry| entry.expect("entry").file_name())
+            .collect();
+        assert_eq!(
+            left,
+            vec![std::ffi::OsString::from(&name)],
+            "no partial copy left behind"
+        );
+
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[tokio::test]
+    async fn a_file_that_is_not_audio_writes_nothing() {
+        let (state, root) = library_state("refused");
+        std::fs::write(root.join("tracks").join("notes.mp3"), b"just some text")
+            .expect("write file");
+
+        let refused = copy_out(&state, Library::Tracks, "notes.mp3").await;
+        assert_eq!(
+            refused.err().map(|(status, _)| status),
+            Some(StatusCode::UNSUPPORTED_MEDIA_TYPE)
+        );
+        assert_eq!(
+            std::fs::read_dir(root.join("uploads"))
+                .expect("uploads")
+                .count(),
+            0
+        );
+
+        let _ = std::fs::remove_dir_all(root);
     }
 
     #[test]

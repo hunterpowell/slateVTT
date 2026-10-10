@@ -20,10 +20,13 @@ wrong for six of them. Sound also starts **off** on every screen until each pers
 That's partly a browser rule (a page may not start audio nobody asked for) and partly the right
 default anyway.
 
-Keep them small. There's a 16 MiB cap, which is about seventeen minutes at 128 kbps or ninety
-seconds of uncompressed WAV. Each browser downloads a track once and never again (`/uploads` is
-served `immutable`), but the first fetch is seven copies off a Raspberry Pi through a tunnel, so a
-3 MB Ogg loop is better here than a 15 MB one.
+The cap is 128 MiB, which is about two hours at 128 kbps or twelve minutes of uncompressed WAV.
+Smaller is still better. Each browser downloads a track once and never again (`/uploads` is served
+`immutable`), but the first fetch is seven copies off a Raspberry Pi through a tunnel.
+
+**upload a track…** only takes files up to 25 MB. For anything bigger, copy it into this folder on
+the host (`scp` on the Pi, as in `deploy/pi/README.md`) and pick it from the list. Switching to
+another track and back starts a long mix again from the beginning.
 
 MP3 plays everywhere. Ogg is smaller at the same quality but doesn't play in Safari. `.m4a` isn't
 accepted: an MP4 container doesn't say in its header whether there's a video track alongside the

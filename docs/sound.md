@@ -173,8 +173,25 @@ the format that works everywhere.
 
 ## Size, and why the Pi doesn't mind
 
-`MAX_TRACK_BYTES` is 16 MiB: around seventeen minutes at 128 kbps, or about ninety seconds of
-uncompressed WAV. Refusing long WAVs is the cap working as intended.
+`MAX_TRACK_BYTES` is 128 MiB: about two hours at 128 kbps, or twelve minutes of uncompressed WAV.
+It was 16 MiB until a two-hour mix was wanted for most of a session. Refusing long WAVs is the cap
+working as intended.
+
+**`copy_out` never reads a library file whole.** That was what held the cap down: the old pick did
+`fs::read` on a box with a gigabyte of memory. It now reads in 64 KiB chunks over two passes. The
+first sniffs and hashes, and ends there if the copy already exists, so re-picking a track during a
+session costs a read and no write. The second writes a `.part` file and renames it into place, and
+refuses the pick if the hash differs from the first pass (the file was replaced in between). The
+chunked hash gives the same names as the whole-file one, so nothing already in `uploads/` was
+copied again (`a_track_bigger_than_a_chunk_is_copied_whole_under_the_name_it_always_had`).
+
+**The upload button still stops at 25 MB**, the map cap the route is built with, because `add` holds
+the whole request body in memory. Cloudflare's free plan also caps a request at 100 MB. A longer
+track goes into `tracks/` on the host the way the seed files do (`deploy/pi/README.md`) and is
+picked from the panel.
+
+A long mix shows the costs of having no playback position more plainly. Switching to the boss track
+and back starts the mix again from the top, and a dropped socket does the same for that one person.
 
 Each browser fetches a track once. `/uploads` is served `immutable, max-age=31536000` by
 `cache_forever`, and a library copy's name is a fingerprint of its bytes, so the loop restarting
