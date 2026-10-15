@@ -355,6 +355,13 @@ as is; the table sees the turn pass to something they can't see, which is what's
 Nothing else about a token edit rebuilds the panel, so without it the table keeps a row naming a
 token their client has just been told to forget.
 
+**Removing the last row is the same as Clear**, round counter included. Before milestone 49 it
+nulled `current` and left `round` alone, and Clear is hidden while the panel is folded, so a DM who
+ended a fight row by row started the next one on round 5.
+
+The DM's *roll monsters* button fills in a flat d20 for each of their creatures not in the order yet.
+It's an exception to the dice non-goal, and `docs/dice.md` (*The monster roll*) says where it stops.
+
 `N` advances the turn, with no modifier (Ctrl+N belongs to the browser) and not inside a field,
 where it's a letter. It's the first unmodified letter key in the client, given to the button the DM
 presses more than any other in a fight. It's bound in `createPanel` inside the `isDm` branch, so a

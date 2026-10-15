@@ -34,6 +34,7 @@ interface PanelUi {
   tokenSelect: HTMLSelectElement;
   valueInput: HTMLInputElement;
   clear: HTMLButtonElement;
+  roll: HTMLButtonElement;
   next: HTMLButtonElement;
   previous: HTMLButtonElement;
   collapse: HTMLButtonElement;
@@ -225,6 +226,7 @@ export function createPanel(
   ui.controls.hidden = !isDm;
   ui.form.hidden = !isDm;
   ui.clear.hidden = !isDm;
+  ui.roll.hidden = !isDm;
 
   if (isDm) {
     ui.next.addEventListener('click', () => send({ type: 'next_turn' }));
@@ -262,6 +264,10 @@ export function createPanel(
       if (!window.confirm('Clear the initiative order?')) return;
       send({ type: 'clear_initiative' });
     });
+
+    // No confirm, unlike clear: it only adds rows for creatures that had none,
+    // and undo takes the batch back as one step.
+    ui.roll.addEventListener('click', () => send({ type: 'roll_initiative' }));
   }
 
   // Null, not empty: empty is a real state of the dropdown (everyone is
@@ -550,6 +556,7 @@ export function createPanel(
       if (isDm) {
         ui.form.hidden = collapsed;
         ui.clear.hidden = collapsed;
+        ui.roll.hidden = collapsed;
       }
 
       // Players only see the panel once there is something in it; the DM always

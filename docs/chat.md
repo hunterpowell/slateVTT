@@ -209,7 +209,9 @@ it wants the key.
 - **A link to the initiative panel.** A shouted number is text and a panel row is state, and a thrown
   number is still text, so milestone 40 changed nothing here. The DM reads the number and types it
   in. Parsing messages to fill a row would make this reach into a subsystem it otherwise doesn't
-  touch, and it's the first step toward what the non-goal forbids.
+  touch, and it's the first step toward what the non-goal forbids. Milestone 49's monster roll
+  doesn't change this: the room writes the rows and then logs them, and no line is ever read back.
+  See `docs/dice.md`.
 - **A fog check.** Words aren't on the board. `moves_sight` is false for `Say`, and `Said` isn't in
   any visibility filter that reads a cell.
 - **Timestamps, read receipts, editing or deleting.** A line said is said.

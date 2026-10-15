@@ -1334,7 +1334,8 @@
         padding: 3px 8px;
       }
 
-      #init-clear {
+      #init-clear,
+      #init-roll {
         width: 100%;
         margin-top: 6px;
         padding: 3px;
@@ -2741,6 +2742,9 @@
         <input id="init-value" type="number" step="1" placeholder="d20" aria-label="Initiative" />
         <button type="submit">set</button>
       </form>
+      <button id="init-roll" type="button" hidden title="A d20 for every monster not in the order yet, logged to you alone">
+        roll monsters
+      </button>
       <button id="init-clear" type="button" hidden>clear order</button>
     </aside>
       <!-- Everybody's, unlike the left rail: neither of the panels behind this

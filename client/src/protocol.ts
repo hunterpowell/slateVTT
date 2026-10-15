@@ -855,5 +855,8 @@ export type ClientMsg =
   | { type: 'set_initiative'; token: string; value: number }
   | { type: 'remove_from_initiative'; token: string }
   | { type: 'clear_initiative' }
+  /** DM-only. A flat d20 for every DM token not yet in the order, thrown by
+   *  the room and logged to the DM alone. No modifier: see `docs/dice.md`. */
+  | { type: 'roll_initiative' }
   | { type: 'next_turn' }
   | { type: 'previous_turn' };

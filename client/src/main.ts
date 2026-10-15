@@ -110,6 +110,7 @@ interface Ui {
     tokenSelect: HTMLSelectElement;
     valueInput: HTMLInputElement;
     clear: HTMLButtonElement;
+    roll: HTMLButtonElement;
     next: HTMLButtonElement;
     previous: HTMLButtonElement;
     collapse: HTMLButtonElement;
@@ -299,6 +300,7 @@ function findUi(): Ui {
       tokenSelect: need<HTMLSelectElement>('#init-token'),
       valueInput: need<HTMLInputElement>('#init-value'),
       clear: need<HTMLButtonElement>('#init-clear'),
+      roll: need<HTMLButtonElement>('#init-roll'),
       next: need<HTMLButtonElement>('#init-next'),
       previous: need<HTMLButtonElement>('#init-previous'),
       collapse: need<HTMLButtonElement>('#init-collapse'),

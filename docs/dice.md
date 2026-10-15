@@ -131,14 +131,51 @@ toast gets the style too. Nothing filters on it.
 `#[serde(default)]`, and isn't on `Saved` or the undo ring. It lets a reader tell a thrown number
 from a typed one. `a_typed_line_is_not_marked_as_thrown` tests that.
 
+## The monster roll
+
+Milestone 49. `ClientMsg::RollInitiative` carries nothing and is DM-only under the default rule. It
+throws one flat d20 for every token that is `Owner::Dm`, not `staged_only` and not already in the
+order, and enters each through `Initiative::set`. It's the one place a thrown number becomes state,
+and the only exception to "no link to initiative" in the non-goal.
+
+**It passes the scope test because it's a flat d20.** A DM rolling a handful of d20s for the
+goblins does exactly this. There is no modifier, no per-token die, and nothing a player can trigger.
+A Dex bonus is the first field of a character sheet, so a request for modifiers is still out, as is
+rolling for a player's character. The DM corrects a row by typing over it.
+
+- **Ids are sorted before rolling**, because `HashMap` order varies and ties keep entry order, the
+  same reason `promote_staged_tokens` sorts.
+- **Hidden monsters roll.** `initiative_for` already drops their rows from the table's copy.
+- **Staged-only ones don't**, for the reason `SetInitiative` refuses them: they aren't in this fight.
+- **It doesn't start combat.** Players still have to type their own rolls in, and the DM presses `N`
+  when everyone is in, as before.
+- **Nobody left to roll produces no event**, so no log line and no undo step. That matches
+  `next_turn` on an empty order: a no-op, not a refusal.
+
+The rolls go to the log as one rolled line from the DM to the DM (`by: Owner::Dm, to: ChatTo::Dm`),
+through `RoomState::log`, so `party_to` keeps them from every player. Names are listed highest first
+and as they are, duplicates included, since the panel shows which row got which. `initiative_lines`
+splits the batch so no line exceeds `MAX_CHAT_LEN`, each keeping the `Initiative:` prefix.
+`the_largest_batch_of_rolls_fits_in_chat_lines` builds the worst case (`MAX_TOKENS` monsters with the
+longest names allowed) and measures it.
+
+It's one undo step ("rolling initiative"). Undo takes back the rows and leaves the log line, for the
+reason no roll can be un-thrown.
+
+On the client, the button sits under the add form in `panel.ts`, is shown to the DM only, and folds
+away with the form. There is no setting to hide it: a DM who rolls physical dice for monsters just
+doesn't press it.
+
 ## Not built
 
 - **Modifiers, expressions, macros.** See the scope test. `2d6+3` is a character sheet with two
   fields filled in.
 - **Advantage, disadvantage, keep-highest.** Throw two d20s and choose.
-- **Linking rolls to initiative.** `docs/chat.md` refuses this for typed numbers, and the same
-  applies to thrown ones: a roll is text, an initiative row is state, and parsing one into the
-  other leads toward rules knowledge. The DM reads the number and types it in.
+- **Linking a player's roll to initiative.** `docs/chat.md` refuses this for typed numbers, and the
+  same applies to thrown ones: a roll is text, an initiative row is state, and parsing one into the
+  other leads toward rules knowledge. The DM reads the number and types it in. The monster roll
+  above runs the other way (the room throws and writes the row, then logs it) and covers only the
+  DM's own creatures.
 - **Per-token or per-character dice.** A die belongs to a person. A token that owned dice would
   be a stat block.
 - **History between sessions.** The log is session memory. Undo can't take back a roll either

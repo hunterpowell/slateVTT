@@ -49,7 +49,9 @@ given, use it to decide new requests.
   a monster is in scope; anything that knows what a hit point *means* is not.
 - **Dice beyond a loaner.** Test: *could a bag of plastic do this?* Counts yes (`8d6`),
   arithmetic no: no modifiers, expressions, macros, parsing of typed text, per-token dice, or
-  link to initiative. A modifier is the first field of a character sheet. See `docs/dice.md`.
+  link to initiative. A modifier is the first field of a character sheet. Exception: the DM can
+  throw a flat d20 for each of their own creatures into the order, and nothing more. See
+  `docs/dice.md`.
 - **Voice and video** (the group uses Discord). Text chat is the exception: a player can whisper
   the DM or message the table, and nothing more. No player-to-player, channels, threads, history
   between sessions, formatting, emotes or commands. See `docs/chat.md`.
@@ -642,8 +644,12 @@ rejection sampling; there's no `rand`. `Say` and `Roll` differ in one arm of `ma
 DM may roll to themselves. `DICE_SIDES` is a closed set, and `MAX_DICE` keeps the result within
 `MAX_CHAT_LEN` (`the_largest_roll_fits_a_chat_line`).
 
+`RollInitiative` is the monster roll: a flat d20 per DM token on the board not yet in the order,
+logged DM-to-DM and split under `MAX_CHAT_LEN`.
+
 → `docs/dice.md` before touching `Roll`/`ChatLine::rolled`, `roll`, `rolled_text`,
-`may_address`, `RoomState::log`, `DICE_SIDES`/`MAX_DICE`, or the die row in `chat.ts`.
+`may_address`, `RoomState::log`, `DICE_SIDES`/`MAX_DICE`, the die row in `chat.ts`, or
+`RollInitiative`/`roll_initiative`/`initiative_lines` and the roll button in `panel.ts`.
 
 ## The room's music
 

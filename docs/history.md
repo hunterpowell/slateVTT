@@ -2482,3 +2482,27 @@ This narrows the mobile non-goal; it doesn't drop it. Players only, portrait onl
 - `drive-phone.mjs` is new. It emulates the phone in headless Chrome, including its `pointer` and
   `hover` media features, and sends real two-finger touch events. The iOS keyboard is the one part
   it can't see.
+
+### 49: the round reset, and the DM's monster roll
+
+From Hunter's notes running a one-shot as the DM. Planned and built on 2026-10-14. The second fight
+started on the wrong round, and entering the order one creature at a time was slow enough to
+complain about.
+
+- **The bug.** `Initiative::remove` nulled `current` when the list emptied but left `round` alone, so
+  a DM who ended a fight row by row (Clear is hidden while the panel is folded) started the next one
+  on round 5. Removing the last row now calls `clear`.
+- **The roll.** `RollInitiative` throws a flat d20 for every DM token on the board that isn't in the
+  order, hidden ones included, and logs one rolled line to the DM alone. It's the first exception to
+  "no link to initiative" in the dice non-goal; `docs/dice.md` says where it stops.
+- The design hid the button behind a per-browser checkbox for DMs who roll physical dice. It was
+  built that way and removed the same day at Hunter's request: not pressing the button already
+  covers that DM.
+- Rolling doesn't start combat (asked and declined: players still have to type theirs in), and
+  duplicate names are logged as they are (asked and declined: the panel shows which row got which).
+- The log line splits to stay under `MAX_CHAT_LEN`, each line keeping the `Initiative:` prefix.
+  `the_largest_batch_of_rolls_fits_in_chat_lines` measures the worst case directly, and
+  `a_room_full_of_monsters_rolls_in_lines_that_fit` does it through the room.
+- Building it found a numbering collision: the phone layout had been recorded here as 48 but never
+  added to the roadmap's list, and the plan written the same morning reused 48–51. The plan moved to
+  49–52.

@@ -38,6 +38,7 @@
     "remove_wall",
     "reset_fog",
     "roll",
+    "roll_initiative",
     "say",
     "set_backdrop",
     "set_audio",

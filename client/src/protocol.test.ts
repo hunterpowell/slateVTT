@@ -50,6 +50,7 @@ const CLIENT_TAGS: Record<ClientMsg['type'], true> = {
   remove_wall: true,
   reset_fog: true,
   roll: true,
+  roll_initiative: true,
   say: true,
   set_backdrop: true,
   set_audio: true,

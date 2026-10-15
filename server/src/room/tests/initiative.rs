@@ -244,3 +244,226 @@ fn a_players_refused_initiative_edit_changes_nothing() {
     );
     assert!(state.initiative.entries.is_empty());
 }
+
+#[test]
+fn removing_every_row_one_at_a_time_starts_the_next_fight_on_round_one() {
+    // The one-shot's bug: Clear is hidden while the panel is folded, so the DM
+    // ended the fight row by row and the next one began on round 3.
+    let mut init = in_combat(&[("t1", 20), ("t2", 15)]);
+    init.next_turn();
+    init.next_turn();
+    init.next_turn();
+    assert_eq!(init.round, 2);
+
+    init.remove(&TokenId::new("t1"));
+    init.remove(&TokenId::new("t2"));
+    assert_eq!((current(&init), init.round), (None, 1));
+
+    init.set(TokenId::new("t3"), 12);
+    init.next_turn();
+    assert_eq!((current(&init), init.round), (Some("t3"), 1));
+}
+
+// --- rolling the monsters ---------------------------------------------------
+
+/// The rolled lines one connection was sent, in order.
+fn rolled_lines(rx: &mut mpsc::Receiver<ServerMsg>) -> Vec<ChatLine> {
+    drain(rx)
+        .into_iter()
+        .filter_map(|msg| match msg {
+            ServerMsg::Said { line } if line.rolled => Some(line),
+            _ => None,
+        })
+        .collect()
+}
+
+#[test]
+fn rolling_enters_every_dm_creature_on_the_board_that_has_not_rolled() {
+    let mut state = room();
+    let _dm = join_as_dm(&mut state, ClientId(1));
+    stage(&mut state, ClientId(1), "/maps/next.png");
+    state.handle(ClientId(1), create_hidden("Lurker"));
+    state.handle(
+        ClientId(1),
+        with(create("Next Room", 1.0, Owner::Dm), |_, staged| {
+            *staged = true
+        }),
+    );
+    let lurker = made(&state, "Lurker").id;
+    let next = made(&state, "Next Room").id;
+    assert!(token(&state, next.0.as_str()).staged_only);
+
+    // The ogre already rolled; the DM typed it. Its number must not change.
+    state.handle(
+        ClientId(1),
+        ClientMsg::SetInitiative {
+            token: TokenId::new("t6"),
+            value: 30,
+        },
+    );
+    state.handle(ClientId(1), ClientMsg::RollInitiative);
+
+    let rows: HashMap<&str, i32> = state
+        .initiative
+        .entries
+        .iter()
+        .map(|e| (e.token.0.as_str(), e.value))
+        .collect();
+    assert_eq!(rows.get("t6"), Some(&30), "a creature that rolled kept it");
+    for id in ["t7", lurker.0.as_str()] {
+        let value = *rows.get(id).unwrap_or_else(|| panic!("{id} did not roll"));
+        assert!((1..=20).contains(&value), "{id} rolled {value}");
+    }
+    assert!(!rows.contains_key(next.0.as_str()), "the next room rolled");
+    assert!(
+        !rows.contains_key("t1"),
+        "a player's character was rolled for"
+    );
+    assert_eq!(rows.len(), 3);
+    assert_eq!(
+        current(&state.initiative),
+        None,
+        "rolling builds the order; it does not start the fight"
+    );
+}
+
+#[test]
+fn only_the_dm_may_roll_the_monsters() {
+    let mut state = room();
+    let mut saelyn = join_as_player(&mut state, ClientId(1), "saelyn");
+    state.handle(ClientId(1), ClientMsg::RollInitiative);
+    assert!(state.initiative.entries.is_empty());
+    assert!(state.chat.is_empty());
+    assert!(matches!(
+        drain(&mut saelyn).as_slice(),
+        [ServerMsg::Error { .. }]
+    ));
+}
+
+#[test]
+fn the_rolls_reach_the_dm_alone_and_a_hidden_monster_stays_hidden() {
+    let mut state = room();
+    let mut dm = join_as_dm(&mut state, ClientId(1));
+    let mut saelyn = join_as_player(&mut state, ClientId(2), "saelyn");
+    state.handle(ClientId(1), create_hidden("Lurker"));
+    let lurker = made(&state, "Lurker").id;
+    settle(&mut [&mut dm, &mut saelyn]);
+
+    state.handle(ClientId(1), ClientMsg::RollInitiative);
+
+    let lines = rolled_lines(&mut dm);
+    assert_eq!(lines.len(), 1);
+    let line = &lines[0];
+    assert_eq!((&line.by, &line.to), (&Owner::Dm, &ChatTo::Dm));
+    assert!(line.text.starts_with("Initiative: "), "{}", line.text);
+    assert!(line.text.contains("Lurker"), "{}", line.text);
+
+    let frames = drain(&mut saelyn);
+    assert!(
+        !frames.iter().any(|m| matches!(m, ServerMsg::Said { .. })),
+        "a player was sent the DM's rolls: {frames:?}"
+    );
+    let table = frames
+        .iter()
+        .find_map(|m| match m {
+            ServerMsg::InitiativeChanged { initiative } => Some(initiative),
+            _ => None,
+        })
+        .expect("the table's order changed too");
+    assert!(order(table).contains(&"t6"));
+    assert!(
+        !order(table).contains(&lurker.0.as_str()),
+        "the table was sent a row for a hidden monster"
+    );
+
+    // And a player joining afterwards gets neither in their snapshot.
+    let mut late = connect(&mut state, ClientId(3));
+    state.handle(
+        ClientId(3),
+        ClientMsg::Hello {
+            dm_secret: None,
+            player_id: Some(PlayerId::new("torrin")),
+        },
+    );
+    match late.try_recv() {
+        Ok(ServerMsg::Welcome { state: view, .. }) => {
+            assert!(view.chat.is_empty(), "the snapshot carried the rolls");
+            assert!(!order(&view.initiative).contains(&lurker.0.as_str()));
+        }
+        other => panic!("expected a welcome, got {other:?}"),
+    }
+}
+
+#[test]
+fn rolling_is_one_step_on_the_ring() {
+    let mut state = room();
+    let mut dm = join_as_dm(&mut state, ClientId(1));
+    state.handle(ClientId(1), ClientMsg::RollInitiative);
+    let label = drain_all(&mut dm).into_iter().find_map(|m| match m {
+        ServerMsg::UndoChanged { label } => Some(label),
+        _ => None,
+    });
+    assert_eq!(label.flatten().as_deref(), Some("rolling initiative"));
+
+    state.handle(ClientId(1), ClientMsg::Undo);
+    assert!(state.initiative.entries.is_empty(), "undo kept the rows");
+    assert_eq!(state.chat.len(), 1, "undo took back a thrown die");
+}
+
+#[test]
+fn nobody_left_to_roll_is_not_an_error_and_not_a_step() {
+    let mut state = room();
+    let mut dm = join_as_dm(&mut state, ClientId(1));
+    state.handle(ClientId(1), ClientMsg::RollInitiative);
+    let depth = state.undo.len();
+    drain_all(&mut dm);
+
+    assert!(!state.handle(ClientId(1), ClientMsg::RollInitiative));
+    assert_eq!(state.undo.len(), depth);
+    assert_eq!(state.chat.len(), 1, "a second batch was logged");
+    assert!(drain_all(&mut dm).is_empty());
+}
+
+#[test]
+fn the_largest_batch_of_rolls_fits_in_chat_lines() {
+    // The two-limits rule, as `the_largest_roll_fits_a_chat_line`: the worst
+    // case is a room full of monsters with the longest names allowed, all
+    // rolling double figures.
+    let name = "W".repeat(MAX_TOKEN_NAME_LEN);
+    let rolls = vec![(name.clone(), 20); MAX_TOKENS];
+    let lines = initiative_lines(&rolls);
+
+    for line in &lines {
+        assert!(
+            line.chars().count() <= MAX_CHAT_LEN,
+            "{} characters against a cap of {MAX_CHAT_LEN}",
+            line.chars().count()
+        );
+    }
+    let named: usize = lines.iter().map(|l| l.matches(&name).count()).sum();
+    assert_eq!(named, MAX_TOKENS, "a creature was left out of the log");
+}
+
+#[test]
+fn a_room_full_of_monsters_rolls_in_lines_that_fit() {
+    // The same through the room, with every line delivered.
+    let mut state = room();
+    let mut dm = join_as_dm(&mut state, ClientId(1));
+    while state.tokens.len() < MAX_TOKENS {
+        let n = state.tokens.len();
+        state.handle(
+            ClientId(1),
+            create(
+                &format!("{n:0>width$}", width = MAX_TOKEN_NAME_LEN),
+                1.0,
+                Owner::Dm,
+            ),
+        );
+        // Drain as we go: a full mailbox stops `apply` silently.
+        drain_all(&mut dm);
+    }
+    state.handle(ClientId(1), ClientMsg::RollInitiative);
+    let lines = rolled_lines(&mut dm);
+    assert!(lines.len() > 1, "the batch was never split");
+    assert!(lines.iter().all(|l| l.text.chars().count() <= MAX_CHAT_LEN));
+}

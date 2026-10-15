@@ -740,8 +740,10 @@ impl Initiative {
                 .or_else(|| self.entries.first())
                 .map(|e| e.token.clone());
         }
+        // The last row going ends the fight the same way `clear` does. Leaving
+        // `round` behind started the next fight on round 5.
         if self.entries.is_empty() {
-            self.current = None;
+            self.clear();
         }
     }
 
@@ -1396,6 +1398,7 @@ fn undid(msg: &ClientMsg) -> Option<&'static str> {
         ClientMsg::SetInitiative { .. } => Some("an initiative row"),
         ClientMsg::RemoveFromInitiative { .. } => Some("removing an initiative row"),
         ClientMsg::ClearInitiative => Some("clearing the order"),
+        ClientMsg::RollInitiative => Some("rolling initiative"),
         ClientMsg::NextTurn | ClientMsg::PreviousTurn => Some("the turn"),
         // The first exclusion above. Without it, undo would push itself.
         ClientMsg::Undo => None,
@@ -1532,6 +1535,7 @@ fn moves_sight(msg: &ClientMsg) -> bool {
         | ClientMsg::SetInitiative { .. }
         | ClientMsg::RemoveFromInitiative { .. }
         | ClientMsg::ClearInitiative
+        | ClientMsg::RollInitiative
         | ClientMsg::NextTurn
         | ClientMsg::PreviousTurn
         // **False because it recomputes sight itself.** An undo moves the
@@ -1785,6 +1789,31 @@ fn rolled_text(sides: u8, faces: &[u8]) -> String {
     let dice: Vec<String> = faces.iter().map(|face| face.to_string()).collect();
     let total: u32 = faces.iter().map(|face| u32::from(*face)).sum();
     format!("{}d{sides} → {} ({total})", faces.len(), dice.join(", "))
+}
+
+/// How a batch of monster initiative reads in the log: `Initiative: Goblin 14,
+/// Bugbear 3`, split into as many lines as it takes to keep each one within
+/// `MAX_CHAT_LEN`. Every line carries the prefix so it reads on its own.
+fn initiative_lines(rolls: &[(String, u8)]) -> Vec<String> {
+    const PREFIX: &str = "Initiative: ";
+    let mut lines = Vec::new();
+    let mut line = String::from(PREFIX);
+    for (name, value) in rolls {
+        let entry = format!("{name} {value}");
+        let fresh = line.len() == PREFIX.len();
+        let added = if fresh { 0 } else { 2 } + entry.chars().count();
+        if !fresh && line.chars().count() + added > MAX_CHAT_LEN {
+            lines.push(std::mem::replace(&mut line, String::from(PREFIX)));
+        }
+        if line.len() > PREFIX.len() {
+            line.push_str(", ");
+        }
+        line.push_str(&entry);
+    }
+    if line.len() > PREFIX.len() {
+        lines.push(line);
+    }
+    lines
 }
 
 /// The permission rule for erasing. The DM may clear anything; everyone else may
@@ -2645,6 +2674,53 @@ impl RoomState {
             self.chat.pop_front();
         }
         vec![Event::Said { line }]
+    }
+
+    /// A flat d20 for each DM creature on the board that hasn't rolled, entered
+    /// in the order and reported to the DM alone.
+    ///
+    /// Hidden monsters roll too: `initiative_for` already drops their rows from
+    /// the table's copy. Staged-only ones don't, for the reason `SetInitiative`
+    /// refuses them. Ids are sorted first because `HashMap` order varies, and
+    /// equal rolls keep the order they were entered in.
+    ///
+    /// Nobody left to roll is not an error, as `next_turn` on an empty order
+    /// isn't. No event means no log line and no step on the ring.
+    fn roll_initiative(&mut self) -> Vec<Event> {
+        let mut ids: Vec<TokenId> = self
+            .tokens
+            .values()
+            .filter(|t| t.owner == Owner::Dm && !t.staged_only)
+            .filter(|t| self.initiative.index_of(&t.id).is_none())
+            .map(|t| t.id.clone())
+            .collect();
+        if ids.is_empty() {
+            return Vec::new();
+        }
+        ids.sort();
+
+        let mut rolls: Vec<(String, u8)> = Vec::with_capacity(ids.len());
+        for id in ids {
+            let Some(name) = self.tokens.get(&id).map(|t| t.name.clone()) else {
+                continue;
+            };
+            let value = roll(20, 1).first().copied().unwrap_or(1);
+            self.initiative.set(id, i32::from(value));
+            rolls.push((name, value));
+        }
+        // Read the way the order reads. Stable, so ties stay in entry order.
+        rolls.sort_by(|a, b| b.1.cmp(&a.1));
+
+        let mut events = vec![Event::InitiativeChanged];
+        for text in initiative_lines(&rolls) {
+            events.extend(self.log(ChatLine {
+                by: Owner::Dm,
+                to: ChatTo::Dm,
+                text,
+                rolled: true,
+            }));
+        }
+        events
     }
 
     /// This session's talk as this recipient may see it.
@@ -3669,6 +3745,7 @@ impl RoomState {
 
             ClientMsg::RemoveFromInitiative { .. }
             | ClientMsg::ClearInitiative
+            | ClientMsg::RollInitiative
             | ClientMsg::NextTurn
             | ClientMsg::PreviousTurn => require_dm(client, "change initiative"),
 
@@ -4615,6 +4692,7 @@ impl RoomState {
                 self.initiative.clear();
                 vec![Event::InitiativeChanged]
             }
+            ClientMsg::RollInitiative => self.roll_initiative(),
             ClientMsg::NextTurn => {
                 self.initiative.next_turn();
                 vec![Event::InitiativeChanged]

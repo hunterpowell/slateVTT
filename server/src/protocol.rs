@@ -890,7 +890,8 @@ pub struct RosterSlot {
 #[serde(default)]
 pub struct InitiativeEntry {
     pub token: TokenId,
-    /// Whatever the table rolled. The DM types it; nothing here knows about d20s.
+    /// Whatever the table rolled. The DM types it, or `RollInitiative` throws a
+    /// flat d20 for a monster; nothing here knows what the number means.
     pub value: i32,
 }
 
@@ -1620,6 +1621,11 @@ pub enum ClientMsg {
         token: TokenId,
     },
     ClearInitiative,
+    /// A flat d20 for every DM token on the board that isn't in the order yet,
+    /// written to the log for the DM alone. The bounded exception to the dice
+    /// non-goal: no modifier, no per-token die, and nothing a player can
+    /// trigger. See `docs/dice.md`.
+    RollInitiative,
     NextTurn,
     PreviousTurn,
 
@@ -2057,6 +2063,7 @@ mod tests {
             ClientMsg::SetInitiative { .. } => "set_initiative",
             ClientMsg::RemoveFromInitiative { .. } => "remove_from_initiative",
             ClientMsg::ClearInitiative => "clear_initiative",
+            ClientMsg::RollInitiative => "roll_initiative",
             ClientMsg::NextTurn => "next_turn",
             ClientMsg::PreviousTurn => "previous_turn",
             ClientMsg::Undo => "undo",
@@ -2173,6 +2180,7 @@ mod tests {
         "remove_wall",
         "reset_fog",
         "roll",
+        "roll_initiative",
         "say",
         "set_backdrop",
         "set_audio",
