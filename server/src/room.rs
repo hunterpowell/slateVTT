@@ -2666,7 +2666,15 @@ impl RoomState {
     ///
     /// Shared by `Say` and `Roll` so that the cap, the trim and the event are
     /// written once. What decides *who hears it* is downstream, in `party_to`.
-    fn log(&mut self, line: ChatLine) -> Vec<Event> {
+    fn log(&mut self, mut line: ChatLine) -> Vec<Event> {
+        // Here rather than at each caller, so a line can't be logged without
+        // it. `current` rather than a non-empty order: rolls entered before the
+        // DM starts the fight belong to no round.
+        line.round = self
+            .initiative
+            .current
+            .is_some()
+            .then_some(self.initiative.round);
         self.chat.push_back(line.clone());
         // From the front: the cap limits how much of the evening is kept, and
         // the oldest lines are the ones nobody is looking for any more.
@@ -2718,6 +2726,7 @@ impl RoomState {
                 to: ChatTo::Dm,
                 text,
                 rolled: true,
+                round: None,
             }));
         }
         events
@@ -4460,6 +4469,7 @@ impl RoomState {
                     text: text.trim().to_owned(),
                     // Somebody typed this.
                     rolled: false,
+                    round: None,
                 })
             }
 
@@ -4482,6 +4492,7 @@ impl RoomState {
                     // The room threw this one. That is the only difference from
                     // `Say`, and all the flag means.
                     rolled: true,
+                    round: None,
                 })
             }
 

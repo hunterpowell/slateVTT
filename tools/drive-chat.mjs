@@ -391,6 +391,73 @@ check(
   true,
 );
 
+// --- round rules --------------------------------------------------------------
+
+// The log draws a rule where its lines change round, and an end-of-combat rule
+// after the last one. **The check worth having is the reload**: a live log grows
+// a line at a time through `append`, while a refreshed one is rebuilt whole from
+// `Welcome`, and the two must draw the same rules. A unit test can't see that.
+//
+// It clears the order first and last, so it starts from no fight whatever ran
+// before it, and leaves the room with no fight.
+
+const initiative = async (id) => {
+  await dm.evaluate(`document.getElementById(${JSON.stringify(id)}).click(); "ok"`);
+  await dm.wait(400);
+};
+
+await initiative('init-clear');
+check(
+  'the DM can put any token in the order',
+  await dm.evaluate(`(() => {
+    const sel = document.querySelector('#init-token');
+    if (sel.options.length === 0) return 'no tokens';
+    sel.value = sel.options[0].value;
+    document.querySelector('#init-value').value = '12';
+    document.querySelector('#init-add').requestSubmit();
+    return 'ok';
+  })()`),
+  'ok',
+);
+await dm.wait(400);
+
+const ROUNDED = `[${run} rounds]`;
+await say(saelyn, 'table', `before the fight ${ROUNDED}`);
+await initiative('init-next'); // round 1 starts
+await say(saelyn, 'table', `round one ${ROUNDED}`);
+await say(torrin, 'table', `still round one ${ROUNDED}`);
+await initiative('init-next'); // one creature in the order, so this wraps
+await say(saelyn, 'table', `round two ${ROUNDED}`);
+await initiative('init-clear');
+await say(torrin, 'table', `after the fight ${ROUNDED}`);
+
+/** This section's rows, rules included, from the first of its lines on. */
+const rounded = (session) =>
+  session.evaluate(`(() => {
+    const rows = [...document.querySelectorAll('#chat-log > *')].map(r => r.textContent);
+    const first = rows.findIndex(r => r.includes(${JSON.stringify(ROUNDED)}));
+    return first < 0 ? [] : rows.slice(first);
+  })()`);
+
+const expected = [
+  `Saelyn: before the fight ${ROUNDED}`,
+  '— Round 1 —',
+  `Saelyn: round one ${ROUNDED}`,
+  `Torrin: still round one ${ROUNDED}`,
+  '— Round 2 —',
+  `Saelyn: round two ${ROUNDED}`,
+  '— End of combat —',
+  `Torrin: after the fight ${ROUNDED}`,
+];
+check('the live log rules off each round and the end of the fight', await rounded(torrin), expected);
+check('and the DM’s reads the same', await rounded(dm), expected);
+
+await torrin.send('Page.reload');
+await torrin.wait(2500);
+await torrin.evaluate(`[...document.querySelectorAll('#dock-tabs .dock-tab')]
+  .find(b => b.firstChild.textContent === 'chat').click(); "ok"`);
+check('a reloaded log draws the same rules as the live one', await rounded(torrin), expected);
+
 note('nothing here is persisted: the log dies with the server, so there is nothing to put back');
 
 const failures = verdict(dm);

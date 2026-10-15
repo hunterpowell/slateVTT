@@ -90,6 +90,20 @@ export interface Chat {
   recast(): void;
 }
 
+/**
+ * The rule drawn above a line, from its round and the round of the line above
+ * it (`null` for the first line in the log).
+ *
+ * A rule marks where the log's lines change round, not where the turns did: a
+ * round nobody spoke in gets no rule. The end of a fight gets one, so talk
+ * after it doesn't read as part of the last round. Two fights with nothing said
+ * between them can't be told apart from here, and that is accepted.
+ */
+export function roundRule(above: number | null, round: number | null): string | null {
+  if (round !== null) return round === above ? null : `Round ${round}`;
+  return above !== null ? 'End of combat' : null;
+}
+
 /** What a destination is called in a sentence. */
 function toName(to: ChatTo, roster: readonly RosterEntry[]): string {
   if (to.kind === 'table') return 'the table';
@@ -185,21 +199,36 @@ export function createChat(
     return row;
   };
 
+  // The rule, if any, then the line. Every path that puts lines in the log
+  // comes through here with the line above, so a rebuilt log draws the same
+  // rules as one that grew a line at a time. The toast calls `draw` alone.
+  const drawAfter = (above: WireChatLine | undefined, line: WireChatLine): HTMLElement[] => {
+    const label = roundRule(above?.round ?? null, line.round);
+    if (label === null) return [draw(line)];
+    const rule = document.createElement('div');
+    rule.className = 'chat-round';
+    rule.textContent = `— ${label} —`;
+    return [rule, draw(line)];
+  };
+
+  const drawAll = (): HTMLElement[] => lines.flatMap((line, i) => drawAfter(lines[i - 1], line));
+
   const toBottom = (): void => {
     ui.log.scrollTop = ui.log.scrollHeight;
   };
 
   const append = (line: WireChatLine): void => {
+    const above = lines.at(-1);
     lines.push(line);
     // Read before the append: someone scrolled up reading earlier lines
     // shouldn't be pulled to the bottom by an arrival. While the panel is
     // hidden this is false and `opened` catches up instead.
     const following = ui.log.scrollTop + ui.log.clientHeight >= ui.log.scrollHeight - 8;
-    ui.log.append(draw(line));
+    ui.log.append(...drawAfter(above, line));
     if (following) toBottom();
   };
 
-  for (const line of history) ui.log.append(draw(line));
+  ui.log.replaceChildren(...drawAll());
 
   // --- the box beside the dock ---------------------------------------------
 
@@ -393,7 +422,7 @@ export function createChat(
       // Someone scrolled up reading earlier lines should stay there when a
       // name changes colour.
       const wasAt = ui.log.scrollTop;
-      ui.log.replaceChildren(...lines.map(draw));
+      ui.log.replaceChildren(...drawAll());
       ui.log.scrollTop = wasAt;
     },
     recast() {

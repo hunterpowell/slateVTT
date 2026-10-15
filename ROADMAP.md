@@ -32,7 +32,7 @@ Everything from 8 on was planned after the original seven: 17 and 18 after 16 la
 existed, and all three were written to overturn something the roadmap already said (each entry names
 what). 28 also overturned part of its own design.
 
-**Everything through 49 is built except 29.** 25, 26, 34 and 38 were never planned and were built out
+**Everything through 50 is built except 29.** 25, 26, 34 and 38 were never planned and were built out
 of order; their entries in `docs/history.md` say why. 33 is multi-room, which was unscheduled until a
 Halloween one-shot became the second room it was waiting for.
 
@@ -89,7 +89,7 @@ largest. 52 is client-only.
 48. A player's phone. 2026-10-09. `docs/frontend.md`.
 49. Initiative: the round reset, and the DM's monster roll. 2026-10-14. `docs/tokens.md`,
     `docs/dice.md`.
-50. **Not built.** Round dividers in chat. Design below.
+50. Round dividers in chat. 2026-10-14. `docs/chat.md`.
 51. **Not built.** Encounters on the shelf. Design below.
 52. **Not built.** Ghost and path, then move. Design below.
 
@@ -167,29 +167,6 @@ That's also the argument for the switch being an enum on the room rather than a 
 It needs another three-browser driver. `tools/drive-chat.mjs` is the precedent: the assertion is that
 player A is sent a creature and player B isn't, and two connections can't show that. Use fixed debug
 ports, as milestone 26 established.
-
-## 50. Round dividers in chat
-
-Not built. Rolls posted during a fight couldn't be matched to a round, so the log was no use for
-checking what happened on whose turn.
-
-Read first: `docs/chat.md`.
-
-`ChatLine` gains `round: Option<u32>`, set in `RoomState::log` to `Some(initiative.round)` while
-`initiative.current` is `Some`, and `None` otherwise. That's all the server does. `ChatLine` is
-session memory and `Serialize`-only, so there's no `#[serde(default)]`, no migration and no undo
-question. The round is already public (`initiative_for` sends it unchanged), so no filter changes.
-
-On the client, `chat.ts` draws a `— Round N —` rule before any line whose `round` is `Some` and
-differs from the line above it. Write the decision as a pure function of the previous round and
-this one, and give it a table of cases in `chat.test.ts`. The log rebuilt from `Welcome` must draw
-the same rules as the live one. That's the case most likely to be missed, because the two go
-through different paths.
-
-Timestamps were the alternative and were left out. "21:47" doesn't say which turn it was, and the
-question asked at the table is "was that this round?"
-
-Docs: `docs/chat.md` and the `ChatLine` comment in CLAUDE.md's state model.
 
 ## 51. Encounters on the shelf
 

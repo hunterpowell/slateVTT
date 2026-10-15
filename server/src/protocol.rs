@@ -867,6 +867,11 @@ pub struct ChatLine {
     /// only: no disk, so no migration and no `#[serde(default)]`; not on
     /// `Saved`, so not on the undo ring. See `docs/dice.md`.
     pub rolled: bool,
+    /// The round it was said in, while a turn is being taken, and `None`
+    /// outside a fight. Stamped by `RoomState::log` and nowhere else, so callers
+    /// pass `None`. The client draws the round rules from it; the round is
+    /// already public, so no filter reads it. See `docs/chat.md`.
+    pub round: Option<u32>,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]

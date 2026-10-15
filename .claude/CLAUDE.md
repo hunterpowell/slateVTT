@@ -235,7 +235,9 @@ struct RoomState {
 
 /// `to` is stored alongside `by` so a whisper looks like one on both screens
 /// involved. `rolled` means the server threw it; used for styling, never filtering.
-struct ChatLine { by: Owner, to: ChatTo, text: String, rolled: bool }
+/// `round` is stamped by `log` while a turn is being taken; it draws the log's
+/// round rules. `docs/chat.md`.
+struct ChatLine { by: Owner, to: ChatTo, text: String, rolled: bool, round: Option<u32> }
 /// Two destinations, never a third. `docs/chat.md`.
 enum ChatTo { Table, Dm, Player(PlayerId) }
 /// A whole room and the action that produced it.
@@ -629,11 +631,12 @@ Two destinations and never a third (`ChatTo`); the non-goal is the specification
 `Say`, with no sender field. **`party_to` is the entire visibility rule and never checks
 `is_dm`**; both paths out (`chat_for` and the `Said` arm) go through it. Session memory, never on
 `Saved`: a refresh keeps the log (rolls included), whispers are never written to disk, and undo
-can't take back messages. The sender is echoed. The chosen destination is sticky and shown in two
+can't take back messages. Each line carries the round it was said in, and the log draws a rule
+where the round changes and where the fight ends. The sender is echoed. The chosen destination is sticky and shown in two
 places; an incoming line badges a tab and shows a toast, without opening anything.
 
 → `docs/chat.md` before touching `chat.ts`, `dock.ts`, `party_to`, `chat_for`,
-`RoomState::chat`, or `Say`/`Said`/`ChatTo`/`ChatLine` on the server.
+`RoomState::chat`, `RoomState::log`, `roundRule`/`drawAfter`, or `Say`/`Said`/`ChatTo`/`ChatLine` on the server.
 
 ## The loaner die
 

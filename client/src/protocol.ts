@@ -441,6 +441,9 @@ export interface WireChatLine {
    *  and one a player typed have to look different, or having the server roll
    *  gains nothing the table can see. */
   rolled: boolean;
+  /** The round it was said in while a turn was being taken; `null` outside a
+   *  fight. Only draws the round rules in the log. */
+  round: number | null;
 }
 
 export interface RosterSlot {

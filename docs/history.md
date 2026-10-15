@@ -2506,3 +2506,19 @@ complain about.
 - Building it found a numbering collision: the phone layout had been recorded here as 48 but never
   added to the roadmap's list, and the plan written the same morning reused 48–51. The plan moved to
   49–52.
+
+### 50: round dividers in chat
+
+From Hunter's notes running a one-shot as the DM. Planned and built on 2026-10-14. Rolls posted
+during a fight couldn't be matched to a round.
+
+- `ChatLine` gained `round`, stamped in `RoomState::log` rather than at the three places a line is
+  made, so a line can't be logged without it. Session memory and `Serialize`-only, so no default
+  and no undo question.
+- The plan drew a rule only where a round started. An `— End of combat —` rule was added before
+  building, at Hunter's request, so talk after a fight doesn't read as the last round's. The toast
+  was kept free of rules.
+- The plan warned that the `Welcome` log and the live one go through different paths. There were
+  three, not two: `repaint` rebuilds the log on a colour or roster change. All three now share
+  `drawAfter`, and `drive-chat.mjs` reloads a player and compares the rules with the live log.
+- Accepted gap: two fights with nothing said between them share a round 1 rule.

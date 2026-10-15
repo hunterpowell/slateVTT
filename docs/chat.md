@@ -198,6 +198,33 @@ them should be triggered by a sentence someone is typing. `undo.ts` makes the sa
 other side with `typingIn`, and that was the precedent. Escape blurs the box, since nothing else in
 it wants the key.
 
+## Round rules
+
+Rolls posted during a fight have to be matched to a round, or the log is no use for checking what
+happened on whose turn. So `RoomState::log` stamps every line with `round: Some(initiative.round)`
+while `initiative.current` is `Some`, and `None` otherwise. It keys on `current` rather than a
+non-empty order because initiative rolls entered before the DM starts the fight belong to no
+round. No filter reads the field: the round is already public in `initiative_for`.
+
+The client draws a rule above a line from two values, its round and the round of the line above
+(`roundRule` in `chat.ts`, with its cases in `chat.test.ts`):
+
+- `— Round N —` where the round changes to `N`, including the first line of a fight.
+- `— End of combat —` where a line with no round follows one with a round, so talk after the
+  fight doesn't read as part of the last round.
+- Nothing otherwise. A round nobody spoke in gets no rule, so the log can go from Round 2 to
+  Round 4.
+
+**The log is drawn by three paths** (the `Welcome` history, `append`, and `repaint` when a colour
+or the roster changes), and all three go through `drawAfter` with the line above. A path that
+called `draw` alone would drop or misplace rules on a refresh or a colour change, and only a
+reload shows it; `drive-chat.mjs` reloads a player and compares. The toast calls `draw` alone and
+never shows a rule, because it's one line at a glance.
+
+Two fights with nothing said between them can't be told apart, since the log only has round
+numbers: a fight that ended on round 1 and the next one's first line in round 1 share a rule.
+That's accepted rather than given a fight id.
+
 ## Not built
 
 - **Player-to-player anything.** Not a chip, not a `ChatTo` variant, not a refusal that could be
@@ -214,7 +241,8 @@ it wants the key.
   See `docs/dice.md`.
 - **A fog check.** Words aren't on the board. `moves_sight` is false for `Say`, and `Said` isn't in
   any visibility filter that reads a cell.
-- **Timestamps, read receipts, editing or deleting.** A line said is said.
+- **Timestamps, read receipts, editing or deleting.** A line said is said. Timestamps were also
+  the alternative to the round rules and were left out: "21:47" doesn't say which turn it was.
 - **Sound.** Not argued against, just not built, and worth an argument before it is. Milestone 41
   added music to the room and didn't answer this: music playing under the scene and a ding when a
   whisper arrives are different features, and `docs/sound.md` says the same. The argument is still

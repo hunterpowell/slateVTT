@@ -343,3 +343,48 @@ fn the_dm_cannot_whisper_themselves() {
         other => panic!("expected a refusal, got {other:?}"),
     }
 }
+
+// --- rounds ---------------------------------------------------------------
+
+/// The round on every line one connection was sent, in order.
+fn rounds_heard(rx: &mut mpsc::Receiver<ServerMsg>) -> Vec<Option<u32>> {
+    drain(rx)
+        .into_iter()
+        .filter_map(|msg| match msg {
+            ServerMsg::Said { line } => Some(line.round),
+            _ => None,
+        })
+        .collect()
+}
+
+#[test]
+fn a_line_carries_the_round_only_while_a_turn_is_being_taken() {
+    let mut state = room();
+    let _dm = join_as_dm(&mut state, ClientId(1));
+    let mut saelyn = join_as_player(&mut state, ClientId(2), "saelyn");
+
+    // An order with nobody acting yet is initiative being rolled, not a fight.
+    state.initiative.entries.push(InitiativeEntry {
+        token: TokenId::new("t1"),
+        value: 12,
+    });
+    state.handle(ClientId(2), shout("12"));
+
+    state.initiative.current = Some(TokenId::new("t1"));
+    state.initiative.round = 3;
+    state.handle(ClientId(2), shout("i swing"));
+
+    state.handle(ClientId(1), ClientMsg::ClearInitiative);
+    state.handle(ClientId(2), shout("loot"));
+
+    let expected = [None, Some(3), None];
+    assert_eq!(rounds_heard(&mut saelyn), expected);
+    // The log a refresh is handed draws its rules from the same field.
+    let joined: Vec<_> = state
+        .snapshot_for(&as_player("saelyn"))
+        .chat
+        .into_iter()
+        .map(|line| line.round)
+        .collect();
+    assert_eq!(joined, expected);
+}
