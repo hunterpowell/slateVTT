@@ -26,7 +26,7 @@ import { createLibraryList } from './library.js';
 import { markerRow } from './markers.js';
 import type { ClientMsg, Hp, Marker, Owner, RosterEntry } from './protocol.js';
 import type { Scene, Token } from './scene.js';
-import { shownBoard, shownPos } from './scene.js';
+import { leavesOnPromote, shownBoard, shownPos } from './scene.js';
 
 export interface TokenToolUi {
   root: HTMLElement;
@@ -48,6 +48,8 @@ export interface TokenToolUi {
   save: HTMLButtonElement;
   duplicate: HTMLButtonElement;
   remove: HTMLButtonElement;
+  bring: HTMLButtonElement;
+  leave: HTMLButtonElement;
   fresh: HTMLButtonElement;
   hint: HTMLElement;
 }
@@ -150,8 +152,28 @@ export function createTokenTool(
     ui.remove.hidden = token === null;
     ui.fresh.hidden = token === null;
     ui.hint.textContent = hintFor(token);
+    showBring(token);
     showArt();
     showMarks();
+  };
+
+  /**
+   * *Bring to next map* is offered for exactly the tokens a promote would
+   * remove: the DM's, on the board, with no plan. *Leave behind* is offered
+   * for the DM's tokens on the board that have one. Neither is offered for a
+   * player's token, which always comes along (the room refuses `clear_plan`
+   * for one too). Rechecked on every delta as well as on select, because the
+   * plan each sends arrives as one, and so does a map being staged or promoted.
+   */
+  const showBring = (token: Token | null): void => {
+    const monster =
+      token !== null &&
+      scene !== null &&
+      scene.staged !== null &&
+      token.owner.kind === 'dm' &&
+      !token.stagedOnly;
+    ui.bring.hidden = !(monster && leavesOnPromote(token));
+    ui.leave.hidden = !(monster && !leavesOnPromote(token));
   };
 
   /**
@@ -201,7 +223,11 @@ export function createTokenTool(
         ? 'Built on the next map only. The table meets it on promote.'
         : 'Click a token on the map to edit it.';
     }
-    if (!previewing()) return 'Drag it on the map to move it.';
+    if (!previewing()) {
+      return scene?.staged != null && leavesOnPromote(token)
+        ? 'Drag it on the map to move it. It is removed on promote unless brought to the next map.'
+        : 'Drag it on the map to move it.';
+    }
     return token.stagedOnly
       ? 'Drag it to place it for the next map.'
       : 'Drag it to plan where it lands on promote.';
@@ -414,6 +440,35 @@ export function createTokenTool(
     if (token !== null) remove([token.id]);
   });
 
+  /**
+   * A plan at the cell the creature stands on, so the promote keeps it.
+   *
+   * The same drop a drag in preview sends, so there is nothing new on the wire.
+   * It is needed because preview doesn't draw a token that promote removes, so
+   * there is nothing there to drag. Once it has a plan, preview draws it and
+   * the DM drags it into place on the next map.
+   */
+  ui.bring.addEventListener('click', () => {
+    const token = selected();
+    if (token === null) return;
+    send({
+      type: 'move_token',
+      id: token.id,
+      x: token.x,
+      y: token.y,
+      dragging: false,
+      staged: true,
+    });
+  });
+
+  /** The plan goes and the token stays where it is on the board, so the next
+   *  promote removes it. Preview stops drawing it when the change arrives. */
+  ui.leave.addEventListener('click', () => {
+    const token = selected();
+    if (token === null) return;
+    send({ type: 'clear_plan', id: token.id });
+  });
+
   // --- art ------------------------------------------------------------------
 
   ui.artClear.addEventListener('click', () => {
@@ -495,6 +550,7 @@ export function createTokenTool(
       // server has it, so a rename has to reach it; the fields hold what the DM
       // has typed but not yet saved, and reloading those would eat the edit.
       if (token !== null) ui.head.textContent = token.name;
+      showBring(token);
     },
   };
 }

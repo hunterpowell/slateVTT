@@ -1006,13 +1006,14 @@ pub struct RoomState {
     /// silent, not resume Tuesday's prep. See `docs/sound.md`.
     audio: Option<String>,
     /// Everything the DM has prepared on each map, keyed by its URL: the grid
-    /// they calibrated, the walls they traced and the fog they painted.
+    /// they calibrated, the walls they traced, the fog they painted and the
+    /// encounter they placed.
     ///
     /// Server-side only. It never enters a snapshot or a message, because the
     /// finished `MapInfo` and the board's own `walls` already say everything a
     /// client needs. It's a shelf, not a scene list: it holds what the DM
-    /// authored on an image and nothing about play (no tokens, no initiative,
-    /// and no `revealed`). See `docs/maps.md`.
+    /// authored on an image and nothing about play (no positions or damage from
+    /// a fight, no initiative, and no `revealed`). See `docs/maps.md`.
     calibrations: HashMap<String, Prepared>,
     /// The last few states of the room, oldest first, for the DM's undo.
     ///
@@ -1369,6 +1370,7 @@ fn undid(msg: &ClientMsg) -> Option<&'static str> {
         } else {
             "moving a token"
         }),
+        ClientMsg::ClearPlan { .. } => Some("leaving a token behind"),
         ClientMsg::CreateToken { .. } => Some("building a token"),
         ClientMsg::UpdateToken { .. } => Some("editing a token"),
         ClientMsg::DeleteToken { .. } => Some("deleting a token"),
@@ -1465,6 +1467,8 @@ fn moves_sight(msg: &ClientMsg) -> bool {
         ClientMsg::MoveToken {
             dragging, staged, ..
         } => !dragging && !staged,
+        // A plan, for the same reason as a staged move above.
+        ClientMsg::ClearPlan { .. } => false,
         // Geometry and paint each name a board, as a token move does, and for
         // the same reason: nothing on the staged board casts a shadow on the
         // live one. There's no staged fog for a staged wall to block or a
@@ -3244,6 +3248,34 @@ impl RoomState {
                 finite(&[*x, *y])
             }
 
+            // Refused rather than ignored in every case, the way deleting a
+            // missing token is: each means the DM's panel and the room disagree.
+            ClientMsg::ClearPlan { id } => {
+                require_dm(client, "leave a token behind")?;
+                let Some(token) = self.tokens.get(id) else {
+                    return Err(format!("no such token: {}", id.0));
+                };
+                // **A player's token always comes to the next map.** Clearing
+                // its plan wouldn't remove it (a promote removes only the DM's),
+                // but the button is *leave behind*, and the room refuses what
+                // it can't mean rather than doing something else.
+                if token.owner != Owner::Dm {
+                    return Err(format!(
+                        "{} belongs to a player and always comes along",
+                        token.name
+                    ));
+                }
+                // A staged-only token's plan is the only position it has.
+                // Leaving it behind is deleting it.
+                if token.staged_only {
+                    return Err(format!("{} only exists on the next map", token.name));
+                }
+                if token.staged_pos.is_none() {
+                    return Err(format!("{} is already being left behind", token.name));
+                }
+                Ok(())
+            }
+
             ClientMsg::CreateToken {
                 name,
                 img,
@@ -3361,11 +3393,24 @@ impl RoomState {
                 // Unlike `lighting`, this one carries a number, so serde
                 // refusing the variant is not the whole check.
                 grid_shape,
-                staged: _,
+                staged,
             } => {
                 require_dm(client, "change the map")?;
                 if url.is_empty() || url.len() > MAX_URL_LEN {
                     return Err("that is not a usable map URL".to_owned());
+                }
+                // A load into the staged slot brings that map's encounter back
+                // off the shelf, and the staged-only tokens there now go onto
+                // the shelf. Checked here, before anything moves, so the room
+                // never holds half an encounter.
+                if *staged && self.staged.as_ref().map(|b| &b.map.url) != Some(url) {
+                    let staying = self.tokens.values().filter(|t| !t.staged_only).count();
+                    let arriving = self.calibrations.get(url).map_or(0, |p| p.tokens.len());
+                    if staying + arriving > MAX_TOKENS {
+                        return Err(format!(
+                            "this map's {arriving} prepared tokens would take the room past {MAX_TOKENS}"
+                        ));
+                    }
                 }
                 finite(&[*grid_px, *offset_x, *offset_y])?;
                 if !(MIN_GRID_PX..=MAX_GRID_PX).contains(grid_px) {
@@ -3783,6 +3828,16 @@ impl RoomState {
     fn apply(&mut self, origin: ClientId, msg: ClientMsg) -> Vec<Event> {
         match msg {
             ClientMsg::Hello { .. } => Vec::new(),
+            // The plan goes and the token stays where it is on the board, so
+            // the next promote removes it. The same event `clear_plans` emits,
+            // which reaches the DM alone: a player's copy has no plan to lose.
+            ClientMsg::ClearPlan { id } => match self.tokens.get_mut(&id) {
+                Some(token) => {
+                    token.staged_pos = None;
+                    vec![Event::TokenPlanChanged { id }]
+                }
+                None => Vec::new(), // proved to exist by `check`
+            },
             ClientMsg::MoveToken {
                 id,
                 x,
@@ -4138,12 +4193,24 @@ impl RoomState {
                     // Staged token state belongs to the staged map and goes
                     // with it. The same `loading` as the calibration table tells
                     // the two cases apart: a *different* map is a different next
-                    // room, so the monsters placed for the last one go. A
-                    // recalibration must not sweep them away. Correcting the
-                    // grid after placing an ambush is an ordinary thing to do,
-                    // and this is the case that gets missed.
+                    // room, so the monsters placed for the last one go onto the
+                    // shelf under the outgoing map's URL, and the plans on live
+                    // tokens are cleared. A recalibration must not sweep them
+                    // away. Correcting the grid after placing an ambush is an
+                    // ordinary thing to do, and this is the case that gets
+                    // missed.
+                    //
+                    // The outgoing URL is read here, before `self.staged` is
+                    // replaced below: the same ordering trap as `sweep_board`.
                     let mut events = if loading {
-                        self.clear_staged_tokens()
+                        let outgoing = self
+                            .staged
+                            .as_ref()
+                            .map(|board| board.map.url.clone())
+                            .unwrap_or_default();
+                        let mut events = self.shelve_tokens(&outgoing);
+                        events.extend(self.clear_plans());
+                        events
                     } else {
                         Vec::new()
                     };
@@ -4209,6 +4276,12 @@ impl RoomState {
                         }
                     };
                     self.staged = Some(carried);
+                    // And the encounter prepared on the incoming image. After
+                    // the shelving above, so the tokens that just left can't be
+                    // counted twice, and only on a load.
+                    if loading {
+                        events.extend(self.restore_tokens(&url));
+                    }
 
                     // Still one event, because the slot is one bundle:
                     // `StagedChanged` carries the whole slot, so a load that
@@ -4321,11 +4394,20 @@ impl RoomState {
                     return Vec::new(); // proved to exist by `check`
                 };
 
+                // The encounter as prepared goes onto the shelf before any of
+                // it becomes real, so loading this map again later gives the
+                // template and never the fight that is about to happen on it.
+                self.file_encounter(&board.map.url);
+                // Then the outgoing map's monsters leave with it: every DM token
+                // with no plan for the next map. Through `delete_token`, which
+                // asks `was_unseen` against the fog as it stands, so this runs
+                // before the sweep below clears it.
+                let mut events = self.remove_unplanned_monsters();
                 // Tokens first, so that by the time a client is told the slot
                 // has emptied (which ends the DM's preview), every token already
                 // holds the position it landed on. It also reads the fog before
                 // the sweep below does, so this order must not change.
-                let mut events = self.promote_staged_tokens();
+                events.extend(self.promote_staged_tokens());
                 // A promote is a new map arriving on the board, so the drawings
                 // go the way they go for any other load, and so does everywhere
                 // the party had explored: this is a different dungeon and they
@@ -4364,17 +4446,22 @@ impl RoomState {
             }
 
             ClientMsg::ClearStaged => {
-                let mut events = self.clear_staged_tokens();
                 // The staged slot's other exit. It files what it is throwing
                 // away, as the load arm does: the shelf is keyed by image, not
                 // by slot, so which of the two buttons the DM pressed must not
                 // change what next week's load finds. Discarding the *prep* is
-                // `ClearWalls`, which is a step on the undo ring; this discards
-                // the slot.
+                // `ClearWalls` or deleting the tokens; this discards the slot.
                 //
-                // The plans are not filed and are lost, because they are on the
-                // tokens, not on the map. See *Two omissions, and the second is
-                // the boundary* in `docs/maps.md`.
+                // The plans on live tokens are not filed and are lost: where
+                // the party would have stood is play state. See *Two
+                // omissions* in `docs/maps.md`.
+                let outgoing = self
+                    .staged
+                    .as_ref()
+                    .map(|board| board.map.url.clone())
+                    .unwrap_or_default();
+                let mut events = self.shelve_tokens(&outgoing);
+                events.extend(self.clear_plans());
                 if let Some(board) = self.staged.take() {
                     self.shelve(
                         &board.map.url,
@@ -5043,37 +5130,130 @@ impl RoomState {
         events
     }
 
-    /// Everything the staged map owned, thrown away with it: every plan is
-    /// cleared and every token that only existed on that map is deleted.
+    /// Files the staged-only tokens under a map's URL as that map's encounter,
+    /// leaving them in the room.
     ///
-    /// Without this the next map inherits monsters placed on a map nobody will
-    /// ever see again, and staged-only tokens that no board shows, since the
-    /// live one doesn't draw them and the map they were built on is gone.
+    /// Each is stored as an ordinary token standing at its plan, so the shelf
+    /// holds creatures at cells and nothing about which slot they were in.
+    /// Replaces the entry's whole list, including with nothing, by the shelf's
+    /// rule: what's filed is what the board holds, and deleting the goblins is
+    /// how an encounter is thrown away. Nothing is filed under an empty URL,
+    /// for the reason `shelve` gives.
+    ///
+    /// Promote calls this alone, because the tokens it files stay in the room
+    /// and become real. Leaving the slot calls `shelve_tokens`.
+    fn file_encounter(&mut self, url: &str) {
+        if url.is_empty() {
+            return;
+        }
+        let mut encounter: Vec<Token> = self
+            .tokens
+            .values()
+            .filter(|t| t.staged_only)
+            .map(|t| {
+                let mut stored = t.clone();
+                if let Some(at) = stored.staged_pos.take() {
+                    stored.x = at.x;
+                    stored.y = at.y;
+                }
+                stored.staged_only = false;
+                stored
+            })
+            .collect();
+        // Sorted so restoring creates them in a stable order, which is the
+        // order of the frames the DM's tabs receive.
+        encounter.sort_by(|a, b| a.id.cmp(&b.id));
+        self.calibrations.entry(url.to_owned()).or_default().tokens = encounter;
+    }
+
+    /// The staged map's encounter, filed under its URL and taken out of the
+    /// room, because the map it was built on is leaving the staged slot.
     /// Reached from `ClearStaged` and from a *load* into the staged slot.
     ///
-    /// Every event it produces reaches the DM alone: a deleted staged-only token
-    /// was never announced, and a cleared plan is a field no player holds.
-    fn clear_staged_tokens(&mut self) -> Vec<Event> {
-        let mut doomed: Vec<TokenId> = Vec::new();
-        let mut planned: Vec<TokenId> = Vec::new();
-        for token in self.tokens.values() {
-            if token.staged_only {
-                doomed.push(token.id.clone());
-            } else if token.staged_pos.is_some() {
-                planned.push(token.id.clone());
-            }
-        }
+    /// Without the deletion the next map inherits monsters placed on a map
+    /// that isn't staged any more, and staged-only tokens that no board shows.
+    /// Every event reaches the DM alone: a staged-only token was never
+    /// announced to the table.
+    fn shelve_tokens(&mut self, url: &str) -> Vec<Event> {
+        self.file_encounter(url);
+        let mut doomed: Vec<TokenId> = self
+            .tokens
+            .values()
+            .filter(|t| t.staged_only)
+            .map(|t| t.id.clone())
+            .collect();
         // `HashMap` order varies per process, and these ids decide the order of
         // the frames the DM's other tabs receive. Sorted for the same reason
         // `snapshot_for` sorts: two clients must not be sent one burst in two
         // different orders.
         doomed.sort();
-        planned.sort();
+        doomed.iter().flat_map(|id| self.delete_token(id)).collect()
+    }
+
+    /// The encounter filed under a map's URL, put back as staged-only tokens
+    /// planned where they were placed.
+    ///
+    /// **Fresh ids**, because a promoted copy of the same template may still be
+    /// on the board. `check` has already refused a load that would pass
+    /// `MAX_TOKENS`. Each one is a creation nobody held before, so
+    /// `was_unseen` is true, as in `CreateToken`, and it reaches the DM alone.
+    fn restore_tokens(&mut self, url: &str) -> Vec<Event> {
+        let encounter = self
+            .calibrations
+            .get(url)
+            .map(|p| p.tokens.clone())
+            .unwrap_or_default();
+        encounter
+            .into_iter()
+            .map(|mut token| {
+                let id = TokenId(Uuid::new_v4().simple().to_string());
+                token.id = id.clone();
+                token.staged_pos = Some(Pos {
+                    x: token.x,
+                    y: token.y,
+                });
+                token.staged_only = true;
+                self.tokens.insert(id.clone(), token);
+                Event::TokenChanged {
+                    id,
+                    was_unseen: true,
+                }
+            })
+            .collect()
+    }
+
+    /// The outgoing map's monsters, removed on promote: every live token the DM
+    /// owns that has no plan for the next map.
+    ///
+    /// A creature that should follow the party (an NPC, a monster giving
+    /// chase, a torch) is given a plan first, which is what the token tab's
+    /// *Bring to next map* is for. Through `delete_token`, so the initiative
+    /// row, anchored shapes and `was_unseen` all go the usual way.
+    fn remove_unplanned_monsters(&mut self) -> Vec<Event> {
+        let mut doomed: Vec<TokenId> = self
+            .tokens
+            .values()
+            .filter(|t| t.owner == Owner::Dm && !t.staged_only && t.staged_pos.is_none())
+            .map(|t| t.id.clone())
+            .collect();
+        doomed.sort(); // stable frame order, as above
+        doomed.iter().flat_map(|id| self.delete_token(id)).collect()
+    }
+
+    /// Every plan on a live token, cleared because the staged map it described
+    /// is leaving the slot. Plans aren't filed: where the party would have
+    /// stood is play state. Only the DM is told, because a plan is a field no
+    /// player holds.
+    fn clear_plans(&mut self) -> Vec<Event> {
+        let mut planned: Vec<TokenId> = self
+            .tokens
+            .values()
+            .filter(|t| t.staged_pos.is_some())
+            .map(|t| t.id.clone())
+            .collect();
+        planned.sort(); // stable frame order, as above
 
         let mut events: Vec<Event> = Vec::new();
-        for id in doomed {
-            events.extend(self.delete_token(&id));
-        }
         for id in planned {
             if let Some(token) = self.tokens.get_mut(&id) {
                 token.staged_pos = None;

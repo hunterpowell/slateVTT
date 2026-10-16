@@ -1317,7 +1317,7 @@ fn a_staged_recalibration_drops_the_paint_and_keeps_the_walls() {
 
 #[test]
 fn a_staged_load_sweeps_what_was_prepared_for_the_last_one() {
-    // `clear_staged_tokens`' rule, reaching the other two things the slot now
+    // `shelve_tokens`' rule, reaching the other two things the slot now
     // holds. A different map is a different next room, and none of the tracing
     // done for the last one means anything on it.
     let mut state = room();

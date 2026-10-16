@@ -332,6 +332,12 @@ pub struct Prepared {
     /// to disk, and for the same reason: `Cell` is a tuple and JSON has no key
     /// shaped like one.
     pub overrides: OverrideView,
+    /// The encounter prepared on this image: the staged-only tokens it held as
+    /// it left the staged slot, or as it was promoted. Each is stored as an
+    /// ordinary token standing at its plan, and comes back staged-only with a
+    /// fresh id. The template, never the fight: nothing played on the live
+    /// board is written here. See *The shelf* in `docs/maps.md`.
+    pub tokens: Vec<Token>,
 }
 
 /// What the DM is counting down on a creature. Not a stat block: nothing here
@@ -1371,6 +1377,13 @@ pub enum ClientMsg {
     PromoteStaged,
     /// Throw the staged map away, and the plans made on it with it. DM-only.
     ClearStaged,
+    /// Drops one DM token's plan, so the next promote removes it with the old
+    /// map: *leave behind*, the inverse of *bring to next map*. DM-only, and
+    /// refused for a player's token, which always survives a promote, and for
+    /// a staged-only one, whose plan is the only position it has.
+    ClearPlan {
+        id: TokenId,
+    },
 
     // Drawing. Anyone may draw; it's the only part of the room a player can
     // add to.
@@ -2049,6 +2062,7 @@ mod tests {
             ClientMsg::SetMap { .. } => "set_map",
             ClientMsg::PromoteStaged => "promote_staged",
             ClientMsg::ClearStaged => "clear_staged",
+            ClientMsg::ClearPlan { .. } => "clear_plan",
             ClientMsg::Sketch { .. } => "sketch",
             ClientMsg::AddShape { .. } => "add_shape",
             ClientMsg::RemoveShape { .. } => "remove_shape",
@@ -2168,6 +2182,7 @@ mod tests {
         "add_shape",
         "add_walls",
         "clear_initiative",
+        "clear_plan",
         "clear_shapes",
         "clear_staged",
         "clear_walls",

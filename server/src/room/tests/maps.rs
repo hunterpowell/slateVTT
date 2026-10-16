@@ -859,18 +859,31 @@ fn promoting_reaches_the_table_but_the_empty_slot_reaches_only_the_dm() {
 
     state.handle(dm, ClientMsg::PromoteStaged);
 
+    // The seed room's two monsters had no plan, so they leave with the old map
+    // first. That is `remove_unplanned_monsters`, tested below; here it is
+    // just two frames ahead of the ones this test is about.
+    let to_player = drain(&mut player_rx);
     assert!(
-        matches!(player_rx.try_recv(), Ok(ServerMsg::MapChanged { map }) if map.url == "/uploads/next.png")
+        to_player.iter().any(
+            |msg| matches!(msg, ServerMsg::MapChanged { map } if map.url == "/uploads/next.png")
+        ),
+        "{to_player:?}"
     );
     assert!(
-        player_rx.try_recv().is_err(),
-        "the slot emptying is not a player's business"
+        !to_player
+            .iter()
+            .any(|msg| matches!(msg, ServerMsg::StagedChanged { .. })),
+        "the slot emptying is not a player's business: {to_player:?}"
     );
 
-    assert!(matches!(dm_rx.try_recv(), Ok(ServerMsg::MapChanged { .. })));
+    let to_dm = drain(&mut dm_rx);
+    let map_at = to_dm
+        .iter()
+        .position(|msg| matches!(msg, ServerMsg::MapChanged { .. }))
+        .expect("the DM is told the map changed");
     assert!(matches!(
-        dm_rx.try_recv(),
-        Ok(ServerMsg::StagedChanged { board: None })
+        to_dm.get(map_at + 1),
+        Some(ServerMsg::StagedChanged { board: None })
     ));
 }
 
@@ -878,11 +891,14 @@ fn promoting_reaches_the_table_but_the_empty_slot_reaches_only_the_dm() {
 fn promoting_does_not_move_a_single_token() {
     // Tokens are stored in cells, so there is nothing sensible to carry them
     // across two unrelated images by. They stay put and the DM repositions.
+    // The party's, that is: the DM's unplanned monsters are removed, which is
+    // `a_promote_takes_the_old_maps_monsters_with_it`.
     let mut state = room();
     let _dm = join_as_dm(&mut state, ClientId(1));
     let before: Vec<(TokenId, f32, f32)> = state
         .tokens
         .values()
+        .filter(|t| t.owner != Owner::Dm)
         .map(|t| (t.id.clone(), t.x, t.y))
         .collect();
 
@@ -1313,7 +1329,7 @@ fn promoting_applies_every_plan_and_empties_the_fields() {
     let planned = token(&state, "t1").id;
     state.handle(ClientId(1), drop_at(&planned, 20.5, 1.5, true));
     state.handle(ClientId(1), create_staged("Ambusher"));
-    let unplanned_before = token(&state, "t6");
+    let unplanned_before = token(&state, "t2");
 
     state.handle(ClientId(1), ClientMsg::PromoteStaged);
 
@@ -1325,7 +1341,8 @@ fn promoting_applies_every_plan_and_empties_the_fields() {
     assert!(!ambusher.staged_only, "it exists on the board now");
     assert_eq!(ambusher.staged_pos, None);
 
-    let after = token(&state, "t6");
+    // A party token. An unplanned monster would have been removed instead.
+    let after = token(&state, "t2");
     assert_eq!(
         (after.x, after.y),
         (unplanned_before.x, unplanned_before.y),
@@ -1400,11 +1417,15 @@ fn a_promote_leaves_a_still_hidden_creature_unannounced() {
 
     state.handle(ClientId(1), ClientMsg::PromoteStaged);
 
+    // The map, and the seed room's two unplanned monsters leaving with the old
+    // one. Nothing about the ambusher.
     let to_saelyn = drain(&mut saelyn);
     assert!(
-        to_saelyn
-            .iter()
-            .all(|msg| matches!(msg, ServerMsg::MapChanged { .. })),
+        to_saelyn.iter().all(|msg| match msg {
+            ServerMsg::MapChanged { .. } => true,
+            ServerMsg::TokenRemoved { id } => id.0 == "t6" || id.0 == "t7",
+            _ => false,
+        }),
         "only the map should have reached the table: {to_saelyn:?}"
     );
     assert!(made(&state, "Ambusher").hidden, "and it is still hidden");
@@ -1580,6 +1601,467 @@ fn a_dragged_plan_is_not_worth_saving_but_the_drop_is() {
         "a plan is dragged into place like a token, and costs the disk as little"
     );
     assert!(state.handle(ClientId(1), drop_at(&id, 5.0, 5.0, true)));
+}
+
+// --- encounters on the shelf -----------------------------------------------
+
+/// A monster built on the staged map with hit points, so a test can tell the
+/// template from a damaged copy.
+fn create_goblin(name: &str) -> ClientMsg {
+    match create_staged(name) {
+        ClientMsg::CreateToken {
+            name,
+            img,
+            size,
+            owner,
+            x,
+            y,
+            hidden,
+            light_ft,
+            markers,
+            staged,
+            ..
+        } => ClientMsg::CreateToken {
+            name,
+            img,
+            size,
+            owner,
+            x,
+            y,
+            hidden,
+            hp: Some(Hp { current: 7, max: 7 }),
+            light_ft,
+            markers,
+            staged,
+        },
+        other => other,
+    }
+}
+
+/// That edit with the hit points changed.
+fn wound(token: &Token, current: i32) -> ClientMsg {
+    match edit(token) {
+        ClientMsg::UpdateToken {
+            id,
+            name,
+            img,
+            size,
+            owner,
+            hidden,
+            light_ft,
+            markers,
+            ..
+        } => ClientMsg::UpdateToken {
+            id,
+            name,
+            img,
+            size,
+            owner,
+            hidden,
+            hp: Some(Hp { current, max: 7 }),
+            light_ft,
+            markers,
+        },
+        other => other,
+    }
+}
+
+fn encounter<'a>(state: &'a RoomState, url: &str) -> &'a [Token] {
+    state
+        .calibrations
+        .get(url)
+        .map_or(&[], |p| p.tokens.as_slice())
+}
+
+#[test]
+fn an_encounter_comes_back_when_its_map_is_staged_again() {
+    // The request: prepare two or three maps for an evening, and find each
+    // one's monsters still on it.
+    let (mut state, _dm_rx) = staged_room(ClientId(1));
+    state.handle(ClientId(1), create_goblin("Goblin"));
+    let first = made(&state, "Goblin");
+    state.handle(ClientId(1), drop_at(&first.id, 9.5, 4.5, true));
+
+    stage(&mut state, ClientId(1), "/uploads/elsewhere.png");
+    assert!(
+        state.tokens.values().all(|t| t.name != "Goblin"),
+        "the goblin is on the shelf, not in the room"
+    );
+    assert_eq!(encounter(&state, "/uploads/next.png").len(), 1);
+
+    stage(&mut state, ClientId(1), "/uploads/next.png");
+    let back = made(&state, "Goblin");
+    assert!(
+        back.staged_only,
+        "back as it was placed: on the next map only"
+    );
+    assert_eq!(back.staged_pos, Some(Pos { x: 9.5, y: 4.5 }));
+    assert_eq!(back.hp, Some(Hp { current: 7, max: 7 }));
+    assert_ne!(back.id, first.id, "a fresh id, as every restore gets");
+}
+
+#[test]
+fn discarding_the_next_map_keeps_its_encounter() {
+    // The slot's other exit files the same way, as it already does for walls.
+    let (mut state, _dm_rx) = staged_room(ClientId(1));
+    state.handle(ClientId(1), create_goblin("Goblin"));
+
+    state.handle(ClientId(1), ClientMsg::ClearStaged);
+    assert!(state.tokens.values().all(|t| t.name != "Goblin"));
+
+    stage(&mut state, ClientId(1), "/uploads/next.png");
+    assert!(made(&state, "Goblin").staged_only);
+}
+
+#[test]
+fn deleting_the_monsters_and_leaving_means_the_encounter_is_gone() {
+    // What's filed is what the board holds, including nothing, so a DM can
+    // throw an encounter away.
+    let (mut state, _dm_rx) = staged_room(ClientId(1));
+    state.handle(ClientId(1), create_goblin("Goblin"));
+    stage(&mut state, ClientId(1), "/uploads/elsewhere.png");
+    stage(&mut state, ClientId(1), "/uploads/next.png");
+    let id = made(&state, "Goblin").id;
+    state.handle(ClientId(1), ClientMsg::DeleteToken { id });
+
+    stage(&mut state, ClientId(1), "/uploads/elsewhere.png");
+    assert!(encounter(&state, "/uploads/next.png").is_empty());
+}
+
+#[test]
+fn the_fight_never_reaches_the_shelf() {
+    // The template is filed at promote. Damage done on the live board
+    // afterwards is play state, and loading the map again gives the encounter
+    // as prepared.
+    let (mut state, _dm_rx) = staged_room(ClientId(1));
+    state.handle(ClientId(1), create_goblin("Goblin"));
+    state.handle(ClientId(1), ClientMsg::PromoteStaged);
+
+    let live = made(&state, "Goblin");
+    state.handle(ClientId(1), wound(&live, 2));
+    let shelved = encounter(&state, "/uploads/next.png");
+    assert_eq!(shelved.len(), 1);
+    assert_eq!(
+        shelved.first().and_then(|t| t.hp),
+        Some(Hp { current: 7, max: 7 })
+    );
+
+    // Staging the same map again brings a fresh goblin beside the wounded one.
+    stage(&mut state, ClientId(1), "/uploads/next.png");
+    let goblins: Vec<&Token> = state
+        .tokens
+        .values()
+        .filter(|t| t.name == "Goblin")
+        .collect();
+    assert_eq!(goblins.len(), 2);
+    assert!(
+        goblins
+            .iter()
+            .any(|t| !t.staged_only && t.hp == Some(Hp { current: 2, max: 7 }))
+    );
+    assert!(
+        goblins
+            .iter()
+            .any(|t| t.staged_only && t.hp == Some(Hp { current: 7, max: 7 }))
+    );
+}
+
+#[test]
+fn a_promote_takes_the_old_maps_monsters_with_it() {
+    // The bug this milestone fixes: last map's fight showing up on the next.
+    // An unplanned DM token goes, with its initiative row. A planned one (what
+    // *Bring to next map* sends: a plan at its own cell) and the party stay.
+    let (mut state, _dm_rx) = staged_room(ClientId(1));
+    let ogre = token(&state, "t6");
+    let wraith = token(&state, "t7");
+    state.handle(
+        ClientId(1),
+        ClientMsg::SetInitiative {
+            token: ogre.id.clone(),
+            value: 12,
+        },
+    );
+    state.handle(ClientId(1), drop_at(&wraith.id, wraith.x, wraith.y, true));
+
+    state.handle(ClientId(1), ClientMsg::PromoteStaged);
+
+    assert!(
+        !state.tokens.contains_key(&ogre.id),
+        "the ogre stayed behind"
+    );
+    assert!(state.initiative.index_of(&ogre.id).is_none());
+    let after = token(&state, "t7");
+    assert_eq!(
+        (after.x, after.y),
+        (wraith.x, wraith.y),
+        "the wraith followed"
+    );
+    for party in ["t1", "t2", "t3", "t4", "t5", "t8"] {
+        token(&state, party);
+    }
+}
+
+#[test]
+fn a_monster_the_table_never_saw_leaves_without_a_word() {
+    // `delete_token` asks `was_unseen` before the sweep clears the fog. Asked
+    // after it, or of `Token::unseen`, the table would be sent a removal for
+    // an id it never held.
+    let mut state = fog_room(10.0); // too short to reach the ogre
+    let mut dm_rx = join_as_dm(&mut state, ClientId(1));
+    let mut saelyn = join_as_player(&mut state, ClientId(2), "saelyn");
+    stage(&mut state, ClientId(1), "/uploads/next.png");
+    settle(&mut [&mut dm_rx, &mut saelyn]);
+
+    state.handle(ClientId(1), ClientMsg::PromoteStaged);
+
+    assert!(!state.tokens.contains_key(&TokenId::new("m")));
+    let to_saelyn = drain(&mut saelyn);
+    assert!(
+        !to_saelyn
+            .iter()
+            .any(|msg| matches!(msg, ServerMsg::TokenRemoved { id } if id.0 == "m")),
+        "{to_saelyn:?}"
+    );
+    assert!(
+        drain(&mut dm_rx)
+            .iter()
+            .any(|msg| matches!(msg, ServerMsg::TokenRemoved { id } if id.0 == "m")),
+        "the DM is told"
+    );
+}
+
+#[test]
+fn a_monster_the_table_could_see_is_taken_off_their_board() {
+    // The counterpart, so the test above can't pass by sending nothing.
+    let mut state = fog_room(60.0);
+    let _dm_rx = join_as_dm(&mut state, ClientId(1));
+    let mut saelyn = join_as_player(&mut state, ClientId(2), "saelyn");
+    stage(&mut state, ClientId(1), "/uploads/next.png");
+    drain(&mut saelyn);
+
+    state.handle(ClientId(1), ClientMsg::PromoteStaged);
+
+    assert!(
+        drain(&mut saelyn)
+            .iter()
+            .any(|msg| matches!(msg, ServerMsg::TokenRemoved { id } if id.0 == "m"))
+    );
+}
+
+#[test]
+fn a_shelved_encounter_reaches_nobody() {
+    // Filing and restoring are the DM's business: no player frame names a
+    // staged-only token, on its way to the shelf or back, and no snapshot
+    // holds the shelf.
+    let (mut state, mut dm_rx) = staged_room(ClientId(1));
+    let mut saelyn = join_as_player(&mut state, ClientId(2), "saelyn");
+    state.handle(ClientId(1), create_goblin("Shelfgoblin"));
+    drain(&mut saelyn);
+
+    stage(&mut state, ClientId(1), "/uploads/elsewhere.png");
+    for who in [Identity::Dm, as_player("saelyn")] {
+        let json = serde_json::to_string(&state.snapshot_for(&who)).expect("serialises");
+        assert!(!json.contains("Shelfgoblin"), "the shelf leaked: {json}");
+    }
+    stage(&mut state, ClientId(1), "/uploads/next.png");
+
+    assert!(
+        drain(&mut saelyn).iter().all(|msg| !matches!(
+            msg,
+            ServerMsg::TokenChanged { .. } | ServerMsg::TokenRemoved { .. }
+        )),
+        "the table heard about the encounter"
+    );
+    // The DM's tabs are told it left and came back.
+    let to_dm = drain(&mut dm_rx);
+    assert!(
+        to_dm
+            .iter()
+            .any(|msg| matches!(msg, ServerMsg::TokenRemoved { .. }))
+    );
+    assert!(to_dm.iter().any(
+        |msg| matches!(msg, ServerMsg::TokenChanged { token } if token.name == "Shelfgoblin" && token.staged_only)
+    ));
+}
+
+#[test]
+fn recalibrating_the_staged_map_neither_files_nor_restores() {
+    // The arm that gets missed, again. A recalibration is the same next room.
+    let (mut state, _dm_rx) = staged_room(ClientId(1));
+    state.handle(ClientId(1), create_goblin("Goblin"));
+    let id = made(&state, "Goblin").id;
+
+    state.handle(
+        ClientId(1),
+        staged(calibrate("/uploads/next.png", 96.0, 4.0, "#aabbccdd")),
+    );
+
+    assert_eq!(made(&state, "Goblin").id, id, "the same goblin, not a copy");
+    assert!(encounter(&state, "/uploads/next.png").is_empty());
+}
+
+#[test]
+fn an_encounter_that_would_overfill_the_room_is_refused_whole() {
+    let (mut state, _dm_rx) = staged_room(ClientId(1));
+    for name in ["G1", "G2", "G3"] {
+        state.handle(ClientId(1), create_goblin(name));
+    }
+    stage(&mut state, ClientId(1), "/uploads/elsewhere.png");
+
+    // Fill the live board to two short of the cap: three goblins don't fit.
+    let mut n = 0;
+    while state.tokens.len() < MAX_TOKENS - 2 {
+        let id = TokenId::new(&format!("filler{n}"));
+        state.tokens.insert(
+            id.clone(),
+            Token {
+                id,
+                ..Token::default()
+            },
+        );
+        n += 1;
+    }
+    let back = staged(set_map("/uploads/next.png", 80.0, 0.0, 0.0));
+    assert!(state.check(ClientId(1), &back).is_err());
+
+    state.tokens.remove(&TokenId::new("filler0"));
+    assert!(
+        state.check(ClientId(1), &back).is_ok(),
+        "exactly at the cap fits"
+    );
+}
+
+fn leave_behind(id: &TokenId) -> ClientMsg {
+    ClientMsg::ClearPlan { id: id.clone() }
+}
+
+#[test]
+fn a_monster_left_behind_goes_with_the_old_map() {
+    // *Leave behind* undoes *bring to next map*: the plan goes, the token
+    // stays put on the board, and the promote then removes it.
+    let (mut state, _dm_rx) = staged_room(ClientId(1));
+    let wraith = token(&state, "t7");
+    state.handle(ClientId(1), drop_at(&wraith.id, wraith.x, wraith.y, true));
+
+    state.handle(ClientId(1), leave_behind(&wraith.id));
+    let after = token(&state, "t7");
+    assert_eq!(after.staged_pos, None);
+    assert_eq!(
+        (after.x, after.y),
+        (wraith.x, wraith.y),
+        "still on the board"
+    );
+
+    state.handle(ClientId(1), ClientMsg::PromoteStaged);
+    assert!(!state.tokens.contains_key(&wraith.id));
+}
+
+#[test]
+fn every_party_token_comes_to_the_next_map() {
+    // Whatever state it is in: unplanned, planned, hidden. Only the DM's
+    // tokens are ever removed by a promote.
+    let (mut state, _dm_rx) = staged_room(ClientId(1));
+    state.handle(ClientId(1), drop_at(&TokenId::new("t1"), 20.5, 1.5, true));
+    let saelyn = token(&state, "t2");
+    state.handle(ClientId(1), set_hidden(&saelyn, true));
+
+    state.handle(ClientId(1), ClientMsg::PromoteStaged);
+
+    for party in ["t1", "t2", "t3", "t4", "t5", "t8"] {
+        assert!(
+            state.tokens.contains_key(&TokenId::new(party)),
+            "{party} was left behind"
+        );
+    }
+}
+
+#[test]
+fn a_players_token_can_not_be_left_behind() {
+    let (mut state, _dm_rx) = staged_room(ClientId(1));
+    let cleodara = TokenId::new("t1");
+    state.handle(ClientId(1), drop_at(&cleodara, 20.5, 1.5, true));
+
+    let err = state
+        .check(ClientId(1), &leave_behind(&cleodara))
+        .expect_err("should be refused");
+    assert!(err.contains("Cleodara"), "should name the token: {err}");
+    assert_eq!(
+        token(&state, "t1").staged_pos,
+        Some(Pos { x: 20.5, y: 1.5 }),
+        "and the plan is untouched"
+    );
+}
+
+#[test]
+fn leaving_behind_is_refused_where_it_means_nothing() {
+    let (mut state, _dm_rx) = staged_room(ClientId(1));
+    let _saelyn = join_as_player(&mut state, ClientId(2), "saelyn");
+    state.handle(ClientId(1), create_goblin("Goblin"));
+    let goblin = made(&state, "Goblin").id;
+    let ogre = TokenId::new("t6");
+
+    // Already being left behind: no plan to clear.
+    assert!(state.check(ClientId(1), &leave_behind(&ogre)).is_err());
+    // Its plan is the only position it has.
+    assert!(state.check(ClientId(1), &leave_behind(&goblin)).is_err());
+    assert!(
+        state
+            .check(ClientId(1), &leave_behind(&TokenId::new("nobody")))
+            .is_err()
+    );
+
+    // And a player can't do it even to a planned monster.
+    state.handle(ClientId(1), drop_at(&ogre, 14.5, 9.5, true));
+    assert!(state.check(ClientId(2), &leave_behind(&ogre)).is_err());
+    assert!(state.check(ClientId(1), &leave_behind(&ogre)).is_ok());
+}
+
+#[test]
+fn leaving_a_monster_behind_is_the_dms_news_alone() {
+    // A player's copy has no plan, so a frame could only tell them the DM
+    // just changed their mind about the next map.
+    let (mut state, mut dm_rx) = staged_room(ClientId(1));
+    let mut saelyn = join_as_player(&mut state, ClientId(2), "saelyn");
+    let ogre = TokenId::new("t6");
+    state.handle(ClientId(1), drop_at(&ogre, 14.5, 9.5, true));
+    drain(&mut dm_rx);
+    drain(&mut saelyn);
+
+    state.handle(ClientId(1), leave_behind(&ogre));
+
+    assert!(drain(&mut saelyn).is_empty(), "the table was told");
+    assert!(drain(&mut dm_rx).iter().any(|msg| matches!(
+        msg,
+        ServerMsg::TokenChanged { token } if token.id == ogre && token.staged_pos.is_none()
+    )));
+}
+
+#[test]
+fn leaving_a_monster_behind_can_be_undone() {
+    let (mut state, _dm_rx) = staged_room(ClientId(1));
+    let ogre = TokenId::new("t6");
+    state.handle(ClientId(1), drop_at(&ogre, 14.5, 9.5, true));
+    state.handle(ClientId(1), leave_behind(&ogre));
+
+    state.handle(ClientId(1), ClientMsg::Undo);
+
+    assert_eq!(
+        token(&state, "t6").staged_pos,
+        Some(Pos { x: 14.5, y: 9.5 })
+    );
+}
+
+#[test]
+fn undoing_a_promote_brings_the_removed_monsters_back() {
+    // An accidental promote is one step, and the ogre comes back with it.
+    let (mut state, _dm_rx) = staged_room(ClientId(1));
+    state.handle(ClientId(1), ClientMsg::PromoteStaged);
+    assert!(!state.tokens.contains_key(&TokenId::new("t6")));
+
+    state.handle(ClientId(1), ClientMsg::Undo);
+
+    assert_eq!(token(&state, "t6").name, "Ogre");
+    assert!(state.staged.is_some(), "and the next map is next again");
 }
 
 #[test]

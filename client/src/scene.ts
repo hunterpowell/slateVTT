@@ -257,14 +257,26 @@ export function shownBackdrop(scene: Scene): string | null {
  * live one, or draws a token that does not exist yet on the board the table is
  * looking at. Every draw and every hit-test goes through it.
  *
- * A token with no plan shows at its own position while previewing, because that
- * is where it lands on a promote: tokens keep their cells.
+ * Preview shows the board as it will be after a promote. A party token with no
+ * plan shows at its own position, because tokens keep their cells. A DM token
+ * with no plan doesn't show at all, because the promote removes it
+ * (`leavesOnPromote`).
  */
 export function shownPos(scene: Scene, token: Token): Vec2 | null {
   if (scene.previewing && scene.staged !== null) {
+    if (leavesOnPromote(token)) return null;
     return token.stagedPos ?? { x: token.x, y: token.y };
   }
   return token.stagedOnly ? null : { x: token.x, y: token.y };
+}
+
+/**
+ * The outgoing map's monsters: on the board, the DM's, and with no plan for
+ * the next map. The client's copy of the rule in `remove_unplanned_monsters` on
+ * the server, so preview and the token tab agree with what a promote does.
+ */
+export function leavesOnPromote(token: Token): boolean {
+  return token.owner.kind === 'dm' && !token.stagedOnly && token.stagedPos === null;
 }
 
 /**

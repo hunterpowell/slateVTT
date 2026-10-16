@@ -460,6 +460,20 @@ mod tests {
                         (4, 4),
                         Override::Dark,
                     )])),
+                    // The encounter prepared on it, with hit points so a round
+                    // trip that dropped a token's fields would show.
+                    tokens: vec![Token {
+                        id: TokenId::new("g1"),
+                        name: "Goblin Boss".to_owned(),
+                        x: 7.5,
+                        y: 2.5,
+                        owner: Owner::Dm,
+                        hp: Some(Hp {
+                            current: 21,
+                            max: 21,
+                        }),
+                        ..Token::default()
+                    }],
                 },
             )]),
             // One the DM's and one a player's, because a round trip could
@@ -591,6 +605,18 @@ mod tests {
         assert_eq!(
             crate::fog::unpack_overrides(&remembered.overrides).get(&(4, 4)),
             Some(&Override::Dark)
+        );
+        let boss = remembered.tokens.first().expect("the prepared encounter");
+        assert_eq!(
+            (boss.name.as_str(), boss.x, boss.y),
+            ("Goblin Boss", 7.5, 2.5)
+        );
+        assert_eq!(
+            boss.hp,
+            Some(Hp {
+                current: 21,
+                max: 21
+            })
         );
 
         assert!(
@@ -825,6 +851,10 @@ mod tests {
             remembered.walls.is_empty(),
             "a map prepared before the shelf existed had nothing traced on it, \
              which is exactly what an empty list says"
+        );
+        assert!(
+            remembered.tokens.is_empty(),
+            "nor an encounter placed on it, from before the shelf kept one"
         );
     }
 

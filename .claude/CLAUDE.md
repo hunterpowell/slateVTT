@@ -59,7 +59,9 @@ given, use it to decide new requests.
   between during play. It would turn every `staged` flag into a scene id and fork token
   positions per scene. The **backdrop** is not a step toward it. It's a picture shown instead of
   the board, with nothing to switch between. The room holds one backdrop URL; a *list* of
-  backdrops in the state model would be a scene manager under another name. See `docs/maps.md`.
+  backdrops in the state model would be a scene manager under another name. Nor is the shelf's
+  **encounter**: a map comes back with its monsters as prepared, never with a fight as it was
+  left. See `docs/maps.md`.
 - **Compendiums, handouts, journals.** Exception: one private scratchpad per person, the DM's
   included. A second document per person makes it a journal, so no titles, pages, sharing or
   handout button. See `docs/notes.md`.
@@ -200,7 +202,8 @@ struct RoomState {
     /// written into the sets above. DM-only, sent in full, staged like the walls.
     overrides: HashMap<Cell, Override>,
     /// Everything the DM prepared on each map, keyed by URL: grid, walls, fog
-    /// paint. Server-side only. The shelf, not a scene list. `docs/maps.md`.
+    /// paint, encounter. Server-side only. The shelf, not a scene list.
+    /// `docs/maps.md`.
     calibrations: HashMap<String, Prepared>,
     /// Last ten states, for the DM's undo. Each is the state *after* a change,
     /// so the back is the present. Each snapshot is a `Saved`. Memory only.
@@ -597,9 +600,17 @@ pick is canonicalised inside the library, and an add must be a single path compo
 
 A backdrop is shown instead of the board and is not a map. `SetBackdrop` sweeps nothing, the
 board is untouched underneath, and preview takes priority over it. A map remembers what the DM
-prepared (`Prepared`: grid, walls, paint, keyed by URL, never sent). What gets filed is what the
-board held when it stopped being the live board. The DM's preparation is remembered and the
-party's play state is not; remembering `revealed` or plans would be the scene system.
+prepared (`Prepared`: grid, walls, paint and the encounter, keyed by URL, never sent). What gets
+filed is what the board held when it stopped being held. The DM's preparation is remembered and
+the party's play state is not; remembering `revealed`, plans or a fight's damage would be the scene
+system.
+
+The encounter is the staged-only tokens. Leaving the staged slot (a staged load or `ClearStaged`)
+files them under the **outgoing** URL and removes them, and a staged load restores the incoming
+map's with fresh ids. A recalibration does neither. A promote files the template, then removes
+every live DM token without a plan, so preview doesn't draw those (`leavesOnPromote`) and the
+token tab's *bring to next map* gives one a plan (*leave behind*, `ClearPlan`, drops it). **A
+player's token always comes along**: nothing removes it, and `ClearPlan` is refused for one.
 
 **Preview is client-only; the server must not learn about it.** Intent travels in each command's
 `staged` flag. Everything that draws or hit-tests reads `shownBoard`/`shownWalls`/
@@ -611,8 +622,10 @@ two readers and must agree. `iso-fixed` is a client-side gesture, not room state
 must stay flat: no depth sorting, wall height, sprite anchoring or elevation.
 
 → `docs/maps.md` before touching `maptool.ts`, `calibrate.ts`, `library.rs`, `library.ts`,
-`drawBackdrop`, `shownBackdrop`, `fog::basis`, `gridBasis`/`shapeOf`, `gridFromEdge`, or
-`SetMap`/`MapInfo`/`GridShape`/`SetBackdrop` on the server.
+`drawBackdrop`, `shownBackdrop`, `fog::basis`, `gridBasis`/`shapeOf`, `gridFromEdge`,
+`shownPos`/`leavesOnPromote`, `shelve_tokens`/`file_encounter`/`restore_tokens`/
+`remove_unplanned_monsters`, or `SetMap`/`MapInfo`/`GridShape`/`SetBackdrop`/`Prepared`/`ClearPlan` on the
+server.
 
 ## Undo
 

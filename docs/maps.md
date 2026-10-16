@@ -354,9 +354,12 @@ holds only what it has learned about each one.
 ### A wrapper, not two more fields on `Calibration`
 
 ```rust
-struct Prepared { calibration: Calibration, walls: Vec<Wall>, overrides: OverrideView }
+struct Prepared { calibration: Calibration, walls: Vec<Wall>, overrides: OverrideView,
+                  tokens: Vec<Token> }
 calibrations: HashMap<String, Prepared>
 ```
+
+`tokens` is milestone 51's; see *Encounters* below.
 
 `Calibration` is what the client sent; the room builds one as a bare struct literal from the
 `SetMap` fields. What the room has learned about an image is a different thing, and keeping them
@@ -392,16 +395,59 @@ start a trace over, and `ClearWalls` is how prep gets thrown away.
 `ClearStaged` files too, and that's required, not an extra. The shelf is keyed by image, not by
 slot, so which of the two exits the DM took mustn't change what next week's load finds.
 
+### Encounters
+
+Milestone 51. The DM wanted two or three maps prepared for an evening, each with its monsters, and
+nothing done on one to affect another. Before this, the shelf kept terrain only, so one encounter
+could be prepared at a time, and a live monster with no plan was drawn in preview at its live cell,
+so the fight on the board showed up on the next map.
+
+- **Filing.** `shelve_tokens(url)` stores every staged-only token on `calibrations[url].tokens`
+  (as an ordinary token standing at its plan) and deletes it from the room. Both exits from the
+  staged slot call it under the **outgoing** URL: a staged load, before the new map is assigned, and
+  `ClearStaged`. It replaces the whole list, so deleting the goblins and leaving throws the
+  encounter away.
+- **Restoring.** A staged load then puts the incoming URL's tokens back as staged-only, planned
+  where they stood, with **fresh ids**, because a promoted copy of the same template may still be on
+  the board. `check` refuses the whole load if it would pass `MAX_TOKENS`, so the room never holds
+  half an encounter. A recalibration neither files nor restores.
+- **Promote** files a copy of the staged-only tokens first (`file_encounter`), so loading the map
+  again later gives the encounter as prepared. Then `remove_unplanned_monsters` deletes every live
+  DM token without a plan, before the sweep clears the fog that `delete_token`'s `was_unseen` reads.
+  Then the existing promote runs. It's one undo step, so an accidental promote brings the monsters
+  back.
+- A live-slot load doesn't touch tokens. Encounters arrive through staging only (Hunter's call,
+  2026-10-15).
+- Plans on live tokens are still cleared and not filed. Where the party will stand is play state.
+
+**A DM token that should follow the party needs a plan before the promote.** Preview doesn't draw a
+token the promote will remove (`leavesOnPromote` in `scene.ts`), so it can't be dragged there. The
+token tab's *bring to next map* button gives it a plan at its current cell with an ordinary
+`MoveToken { staged: true }`, and it's used on the live board, because switching slots clears the
+selection. *Leave behind* is its inverse: `ClearPlan { id }` drops the plan, and the token stays on
+the board to be removed by the promote. It's the only command that clears one token's plan, because
+a plan on a DM token now means something (it survives), where before a plan at the token's own
+cell was a no-op.
+
+**A player's token always comes to the next map.** `remove_unplanned_monsters` asks only about
+`Owner::Dm`, and `ClearPlan` is refused for a player's token (it wouldn't remove it, but the room
+refuses what a command can't mean). The token tab offers neither button for one.
+`every_party_token_comes_to_the_next_map` tests it.
+
 ### Two omissions, and the second is the boundary
 
-- Token plans. `staged_pos`/`staged_only` are on `Token`, one per token, and stay tied to
-  whatever is in the staged slot. The DM preps *terrain* for many maps and *the encounter* for the
-  one they're about to run.
+- Plans on live tokens. Where the party lands on the next map is decided while the next map is
+  staged and thrown away when it leaves the slot. The encounter (staged-only tokens) is filed; see
+  above. Until milestone 51 this item was all token state, and the DM could prepare the encounter
+  for only one map at a time.
 - `revealed` isn't remembered. Returning to a dungeon means the party explores it again. The
   rule is **the DM's preparation is remembered and the party's play state isn't**. Remembering where
   they had walked would make a map swap a partial scene restore, which immediately raises "why not
   the token positions too", and that leads to the scene system this project refuses.
-  `the_party_re_explores_a_dungeon_they_return_to` tests that boundary.
+  `the_party_re_explores_a_dungeon_they_return_to` tests that boundary. The encounter keeps to the
+  same rule: going back to a map gives the monsters as prepared, **never the fight as it was left**.
+  No damage or positions from play are written to the shelf, and there's still one staged slot. A
+  request for a map to come back mid-fight is the scene system, and the non-goal answers it.
 
 ### Consequences worth knowing
 
@@ -465,9 +511,9 @@ Calibrations are one table keyed by URL across both slots, so calibrating while 
 arrives on the board correctly calibrated when it's promoted. `PromoteStaged` and `ClearStaged` are
 refused when nothing is staged, the same way deleting a nonexistent token is refused.
 
-On promote, tokens keep their grid coordinates and the DM repositions them. There's no sensible way
-to carry a cell over to an unrelated image, and trying would move tokens for reasons nobody asked
-for. The party's explored cells clear, which is already the rule for a new map. **The walls and the
+On promote, the party's tokens keep their grid coordinates and the DM repositions them. There's no
+sensible way to carry a cell over to an unrelated image, and trying would move tokens for reasons
+nobody asked for. The DM's tokens without a plan are removed (*Encounters*, above). The party's explored cells clear, which is already the rule for a new map. **The walls and the
 overrides no longer do**: `sweep_board` clears the board's, and the staged board's take their
 place. That's milestone 20, and it's the one thing a promote does differently from any other map
 load.

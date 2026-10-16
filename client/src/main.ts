@@ -233,6 +233,8 @@ interface Ui {
     save: HTMLButtonElement;
     duplicate: HTMLButtonElement;
     remove: HTMLButtonElement;
+    bring: HTMLButtonElement;
+    leave: HTMLButtonElement;
     fresh: HTMLButtonElement;
     hint: HTMLElement;
   };
@@ -423,6 +425,8 @@ function findUi(): Ui {
       save: need<HTMLButtonElement>('#token-save'),
       duplicate: need<HTMLButtonElement>('#token-duplicate'),
       remove: need<HTMLButtonElement>('#token-delete'),
+      bring: need<HTMLButtonElement>('#token-bring'),
+      leave: need<HTMLButtonElement>('#token-leave'),
       fresh: need<HTMLButtonElement>('#token-new'),
       hint: need('#token-hint'),
     },
@@ -980,6 +984,10 @@ function boot(ui: Ui, choice: RoomChoice, alone: boolean): void {
       // table is looking at.
       if (move.staged) {
         token.stagedPos = { x: move.x, y: move.y };
+        // A settled plan can be the token's first, and the token panel offers
+        // *bring to next map* only for a token without one. Not on drag frames:
+        // nothing in the panel reads a plan's position.
+        if (!move.dragging) tokenTool?.update(room.scene);
       } else {
         token.x = move.x;
         token.y = move.y;

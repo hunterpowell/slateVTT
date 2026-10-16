@@ -684,6 +684,9 @@ export type ClientMsg =
   | { type: 'set_colour'; colour: number }
   /** DM-only. The staged map becomes the board; tokens keep their cells. */
   | { type: 'promote_staged' }
+  /** Drops a DM token's plan, so the next promote removes it ("leave behind").
+   *  Refused for a player's token, which always comes along. */
+  | { type: 'clear_plan'; id: string }
   /** DM-only. Throw the staged map away. */
   | { type: 'clear_staged' }
   /** DM-only. No id: the server assigns it. `staged` builds it on the map being

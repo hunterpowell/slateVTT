@@ -33,6 +33,7 @@ const CLIENT_TAGS: Record<ClientMsg['type'], true> = {
   add_shape: true,
   add_walls: true,
   clear_initiative: true,
+  clear_plan: true,
   clear_shapes: true,
   clear_staged: true,
   clear_walls: true,

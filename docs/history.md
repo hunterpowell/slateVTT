@@ -2522,3 +2522,34 @@ during a fight couldn't be matched to a round.
   three, not two: `repaint` rebuilds the log on a colour or roster change. All three now share
   `drawAfter`, and `drive-chat.mjs` reloads a player and compares the rules with the live log.
 - Accepted gap: two fights with nothing said between them share a round 1 rule.
+
+### 51: encounters on the shelf
+
+From Hunter's notes running a one-shot as the DM. Planned 2026-10-14, built 2026-10-15. A fight on
+the live board showed up in preview of the next map, and only one map's encounter could be prepared
+at a time.
+
+- `Prepared` gained `tokens`: the staged-only tokens, filed under a map's URL when it leaves the
+  staged slot and restored with fresh ids when it's staged again. A promote files the template and
+  removes every live DM token without a plan. The design is in *Encounters* in `docs/maps.md`.
+- Two decisions taken before building. A live-slot load doesn't bring a map's monsters; encounters
+  arrive through staging only. And preview hides a DM token the promote will remove, with a token-tab
+  button to keep one.
+- **The design as written had a gap.** It hid those tokens from preview and said a token that should
+  follow the party needs a plan first, but the only way to make a plan was to drag the token in
+  preview. *Bring to next map* sends the same `MoveToken { staged: true }` at the token's own cell,
+  so the wire didn't change.
+- The button is used on the live board, not in preview. Switching slots clears the selection
+  (`main.ts`), and preview doesn't draw the token. `drive-encounter.mjs` was first written the other
+  way round and failed for that reason.
+- Move frames didn't refresh the token panel, only edits did, so the button stayed up after its
+  plan arrived. A settled staged drop now calls `tokenTool.update`.
+- The over-the-cap case is refused in `check`, whole, so the room never holds half an encounter.
+- Four existing promote tests assumed every token survives a promote. The seed room's Ogre and
+  Wraith are unplanned DM tokens, so those tests now say which tokens they mean.
+- First shipped with no way to clear one token's plan, which mattered now that a plan on a DM token
+  means "keep it". Added the same day at Hunter's request: *leave behind*, a new `ClearPlan { id }`
+  (the protocol's four edits), emitting the existing DM-only `TokenPlanChanged`. Hunter also asked
+  that a player's token always come to the next map. It already did, so that became a guarantee:
+  `ClearPlan` is refused for one, the panel offers neither button for one, and
+  `every_party_token_comes_to_the_next_map` tests it.

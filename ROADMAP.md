@@ -32,7 +32,7 @@ Everything from 8 on was planned after the original seven: 17 and 18 after 16 la
 existed, and all three were written to overturn something the roadmap already said (each entry names
 what). 28 also overturned part of its own design.
 
-**Everything through 50 is built except 29.** 25, 26, 34 and 38 were never planned and were built out
+**Everything through 51 is built except 29.** 25, 26, 34 and 38 were never planned and were built out
 of order; their entries in `docs/history.md` say why. 33 is multi-room, which was unscheduled until a
 Halloween one-shot became the second room it was waiting for.
 
@@ -90,7 +90,7 @@ largest. 52 is client-only.
 49. Initiative: the round reset, and the DM's monster roll. 2026-10-14. `docs/tokens.md`,
     `docs/dice.md`.
 50. Round dividers in chat. 2026-10-14. `docs/chat.md`.
-51. **Not built.** Encounters on the shelf. Design below.
+51. Encounters on the shelf. 2026-10-15. `docs/maps.md`, `docs/tokens.md`.
 52. **Not built.** Ghost and path, then move. Design below.
 
 ## 29. Party sight and split sight
@@ -167,89 +167,6 @@ That's also the argument for the switch being an enum on the room rather than a 
 It needs another three-browser driver. `tools/drive-chat.mjs` is the precedent: the assertion is that
 player A is sent a creature and player B isn't, and two connections can't show that. Use fixed debug
 ports, as milestone 26 established.
-
-## 51. Encounters on the shelf
-
-Not built. The DM wanted to prepare two or three maps for an evening and have nothing done on one
-affect another. What happened instead was that a fight on the live board showed up on the next map:
-the monsters' movement, damage and markers all appeared in preview.
-
-Read first: *The shelf* and *Staged maps* in `docs/maps.md`, *Preparing the next room* in
-`docs/tokens.md`, `docs/undo.md`, and `was_unseen` in `docs/fog.md`.
-
-### Why it happened
-
-Two things combined. A token is one creature with two positions: `staged_pos` is a second position,
-and name, hit points and markers are shared between the boards. That's intended, and it isn't what
-went wrong. What went wrong is that a live token with no plan is drawn in preview at its live cell,
-so every monster in the fight appeared on the next map too, moved and damaged. The shelf remembers
-walls and fog paint per map but deliberately not monsters (*Two omissions* in `docs/maps.md`), so
-the encounter for only one map could be prepared at a time.
-
-### What changes
-
-`Prepared` gains `tokens: Vec<Token>`, `#[serde(default)]`: the staged-only creatures prepared on
-that map, each stored with its `x, y` set to where it was placed. It's server-only and never sent,
-like the rest of `Prepared`. `calibrations` is on `Saved`, so undo covers it without extra work.
-
-- **Filing.** A helper, `shelve_tokens(url)`, takes every `staged_only` token out of `self.tokens`
-  (and out of the order) and stores it on `calibrations[url].tokens` with `x, y = staged_pos`. It
-  replaces that entry's whole list, following the shelf's rule that what's filed is whatever the
-  board holds, including nothing. It's called from the staged load arm, where `clear_staged_tokens`
-  runs now, under the **outgoing** staged URL, before the new map is assigned. That's the same
-  ordering trap `sweep_board` documents. `ClearStaged` calls it beside its existing `shelve`.
-- **Restoring.** The staged load arm then inserts the incoming URL's shelved tokens as `staged_only`
-  with `staged_pos` set and **fresh ids**, because a promoted copy of the same template may still
-  be on the board. It's refused past `MAX_TOKENS`. A recalibration (`!loading`) neither files nor
-  restores. That's the arm `docs/tokens.md` already warns gets missed.
-- **Plans on live tokens are still cleared, not filed.** Where the party will stand is play state.
-- **Promote**, in this order:
-  1. File a clone of the staged-only tokens under the staged URL. That's the template as it stood
-     at promote, so loading the map again later gives the encounter as prepared.
-  2. Remove the outgoing map's monsters: every live token that is `Owner::Dm`, not `staged_only`
-     and without a `staged_pos`, through `delete_token`, which already removes initiative rows and
-     anchored shapes and asks `was_unseen`. This happens before `sweep_board` clears the fog, for
-     the reason `promote_staged_tokens` reads `was_unseen` first. A DM token that should follow the
-     party (a monster giving chase, an NPC, a torch) needs a plan on the next map first.
-  3. The existing `promote_staged_tokens` and `sweep_board` sequence, unchanged.
-
-  It stays one undo step, so an accidental promote brings the removed monsters back.
-- **A live-slot load doesn't touch tokens**, as now. Encounters arrive through staging. If Hunter
-  wants a direct load to bring a map's monsters too, that's a decision to make before building,
-  not during.
-
-On the client, `shownPos` returns `null` in preview for a live `Owner::Dm` token with no plan,
-since promote will remove it. Preview then shows the board as it will be after promote: party
-tokens, planned tokens and staged-only tokens. Update the three-state table in `docs/tokens.md`.
-
-### Where the boundary moves, and where it stays
-
-This overturns the first of *Two omissions* in `docs/maps.md` and keeps the second. The rule
-**the DM's preparation is remembered and the party's play state isn't** still holds, and it's what
-keeps this from being the scene system: going back to a map gives the encounter as prepared,
-**never the fight as it was left**. No damage, positions or `revealed` are remembered for a map
-that has been played on, and there's still one staged slot. Several prepared maps come from loading
-them through that slot one after another. If a later request asks for a map to come back mid-fight,
-that's the scene system, and the non-goal answers it.
-
-### Tests
-
-In `server/src/room/tests/maps.rs`:
-
-- Prepare goblins on B, stage C, stage B again. The goblins come back at their positions with their
-  hit points and new ids.
-- Damaging a live goblin doesn't change the shelved one.
-- Promote removes unplanned DM tokens and their initiative rows, and keeps party tokens and planned
-  DM tokens.
-- Recalibrating the staged map neither files nor restores.
-- The not-sent tests: no frame names a shelved token to anyone, and a player who never saw a removed
-  monster isn't sent its `TokenRemoved`.
-- A save with no `tokens` key under a shelf entry loads. Write the old JSON by hand, per the first
-  lesson below.
-- Undoing a promote brings the removed monsters back.
-
-Docs: rewrite *Two omissions* in `docs/maps.md`, and update the *Maps* summary in CLAUDE.md, the
-`calibrations` field comment, and the scene-system non-goal if it needs to name this.
 
 ## 52. Ghost and path, then move
 

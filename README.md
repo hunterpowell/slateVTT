@@ -193,6 +193,7 @@ which token is standing on a given square.
 | `drive-draw.mjs`   | The line and pen tools: a pen stroke reaching the DM only when it's finished, and erasing a stroke by clicking beside it | both     |
 | `drive-select.mjs` | Shift-click and box selection, the group drag that moves them together, and Delete removing them | both     |
 | `drive-staged.mjs` | Tracing and painting the next dungeon, and the table not being told | both     |
+| `drive-encounter.mjs` | Promote removing the old map's monsters: hidden from preview, and kept by *bring to next map* | DM       |
 | `drive-undo.mjs`   | The DM's undo reaching the table, and not rebuilding their page    | both     |
 | `drive-panels.mjs` | The initiative panel folding, `n` advancing the turn, the damage box, token markers, and the sight check no longer being offered | both     |
 | `drive-chat.mjs`   | Whisper and shout, and the loaner die, each absent from a *third* person's page; the round rules surviving a reload | three    |
@@ -254,8 +255,8 @@ drivers: the room is in the URL rather than in any message, so nothing else abou
 `drive-rooms.mjs` is the exception, since the picker is what it tests.
 
 Point them at a scratch `SLATE_STATE`, never at the room you're about to play in. The first thing
-`drive-ui.mjs` does is erase every wall on the board, `drive-staged.mjs` throws away whatever was in
-the staged slot, and the fog, names, ruler, ping and cursor drivers each build a token or flip a
+`drive-ui.mjs` does is erase every wall on the board, `drive-staged.mjs` and `drive-encounter.mjs`
+throw away whatever was in the staged slot, and the fog, names, ruler, ping and cursor drivers each build a token or flip a
 switch that persists. **A scratch `SLATE_STATE` covers every room**: the first room's save is that
 path and the others are saved beside it, so one scratch directory holds them all.
 

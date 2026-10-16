@@ -515,9 +515,15 @@ So a token is in one of three states:
 
 | State | Live board | Preview |
 |---|---|---|
-| Live, unplanned | at `x, y` | at `x, y`, staying put |
+| Live, unplanned, a player's | at `x, y` | at `x, y`, staying put |
+| Live, unplanned, the DM's | at `x, y` | absent: removed on promote |
 | Live, planned | at `x, y` | at `staged_pos`, will move on promote |
 | Staged-only | **absent, including for the DM** | at `staged_pos` |
+
+Preview shows the board as it will be after a promote. The second row is milestone 51: before it,
+the fight on the live board was drawn on the next map too. `leavesOnPromote` in `scene.ts` is the
+client's copy of `remove_unplanned_monsters`, and *bring to next map* on the token tab is how the
+DM keeps one (see *Encounters* in `docs/maps.md`).
 
 **Staged-only tokens must be absent from the DM's own live board.** Switching back to `Map` mode
 has to show the board as the table sees it, or the DM loses the one view they have of what everyone
@@ -525,9 +531,11 @@ else is looking at. It's also why the live board doesn't mark a planned token at
 in preview, and the live board has to match what the table sees.
 
 Both fields are DM-only and reach the DM's client because `Token::view_for` includes them for the
-DM, since the DM's board is what draws a plan. There's no command to cancel one token's plan:
-dragging it back onto its live cell leaves a `staged_pos` that promote applies as a no-op, which has
-the same result with far less code.
+DM, since the DM's board is what draws a plan. For a party token there's no command to cancel a
+plan: dragging it back onto its live cell leaves a `staged_pos` that promote applies as a no-op,
+which has the same result with far less code. For a DM token a plan decides whether it survives the
+promote, so `ClearPlan` (*leave behind* on the token tab) exists for DM tokens only. See
+*Encounters* in `docs/maps.md`.
 
 ### Promote, discard, and what goes with the staged map
 
@@ -539,10 +547,16 @@ time gets a `TokenChanged`. A player who could already see it gets a plain `Toke
 that's still `hidden` gets none of them: a promote settles `staged_only` and says nothing about the
 other reason.
 
+Before any of that, a promote files the staged-only tokens on the shelf and removes every DM token
+with no plan, because those belonged to the map that is leaving. See *Encounters* in
+`docs/maps.md`.
+
 The pitfalls all come down to one rule: **staged token state belongs to the staged map and has to
 go when it goes.**
 
-- `ClearStaged` clears every `staged_pos` and deletes every `staged_only` token.
+- `ClearStaged` clears every `staged_pos` and takes every `staged_only` token out of the room,
+  filing them on the shelf under the staged map's URL (milestone 51; before that they were
+  deleted).
 - **A load into the staged slot does the same, and a recalibration must not.** `SetMap` already
   tells the two apart by URL; this uses the same `loading`. Correcting the grid after placing an
   ambush is a normal thing to do and mustn't delete the ambush. This is the arm that gets missed.

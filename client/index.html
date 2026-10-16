@@ -3033,6 +3033,13 @@
           <button id="token-duplicate" class="map-button" type="button" hidden>duplicate</button>
           <button id="token-delete" class="map-button" type="button" title="Delete this token (Delete)" hidden>delete</button>
         </div>
+        <!-- A promote removes every DM token without a plan, so a creature
+             that should follow the party is given one here, at the cell it
+             stands on, and "leave behind" takes it away again. One of the two
+             shows for a DM token on the board while a map is staged; neither
+             shows for a player's token, which always comes along. -->
+        <button id="token-bring" class="map-button" type="button" title="Keep this creature on promote, planned at its current cell" hidden>bring to next map</button>
+        <button id="token-leave" class="map-button" type="button" title="Drop this creature's plan, so the promote removes it" hidden>leave behind</button>
         <button id="token-new" class="map-subtle" type="button" hidden>+ new token</button>
         <p class="map-hint" id="token-hint">Click a token on the map to edit it.</p>
       </aside>

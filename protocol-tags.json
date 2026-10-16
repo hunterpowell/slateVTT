@@ -21,6 +21,7 @@
     "add_shape",
     "add_walls",
     "clear_initiative",
+    "clear_plan",
     "clear_shapes",
     "clear_staged",
     "clear_walls",
