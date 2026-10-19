@@ -2553,3 +2553,19 @@ at a time.
   that a player's token always come to the next map. It already did, so that became a guarantee:
   `ClearPlan` is refused for one, the panel offers neither button for one, and
   `every_party_token_comes_to_the_next_map` tests it.
+
+### 53: players enter their own initiative
+
+From playtest feedback (Hunter's brother, running sessions on the second site). Built 2026-10-19. The
+DM was typing in every player's roll as it was called out.
+
+- A player may send `SetInitiative` for a token they own that the table can see and that has no row.
+  Once only: correcting a roll stays the DM's. Allowed after combat starts, which needed nothing
+  because `Initiative::set` never moves the turn. Design in *A player's own roll* in `docs/tokens.md`.
+- One refusal text for a missing, someone else's or unseen token, so the error doesn't confirm a
+  hidden id exists. A test compares the three.
+- The client reuses the DM's add form, narrowed to the player's own tokens. It shows only once the
+  order has a row and doesn't fold, which `drive-panels.mjs` now checks from a second browser.
+- Done in the same session: the ping ring got a solid black border (3px each side of the ring; it was
+  a 60% halo showing about 1.5px), because it blended into dark maps. Cursors kept the lighter halo.
+  Whether pings also need motion or a different shape is still open.

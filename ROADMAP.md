@@ -32,13 +32,18 @@ Everything from 8 on was planned after the original seven: 17 and 18 after 16 la
 existed, and all three were written to overturn something the roadmap already said (each entry names
 what). 28 also overturned part of its own design.
 
-**Everything through 51 is built except 29.** 25, 26, 34 and 38 were never planned and were built out
-of order; their entries in `docs/history.md` say why. 33 is multi-room, which was unscheduled until a
-Halloween one-shot became the second room it was waiting for.
+**Everything through 53 is built except 29 and 52.** 25, 26, 34 and 38 were never planned and were
+built out of order; their entries in `docs/history.md` say why. 33 is multi-room, which was
+unscheduled until a Halloween one-shot became the second room it was waiting for.
 
 49–52 were planned on 2026-10-14 from the notes Hunter took running a one-shot as the DM. Build them
 in order, one per session. 49 and 50 are small. 51 changes a boundary in `docs/maps.md` and is the
 largest. 52 is client-only.
+
+53 and 54 came on 2026-10-19 from playtest feedback: Hunter's brother after running sessions on the
+second site, and the main campaign's DM. The same feedback asked for a sidebar of maps, which Hunter
+set aside: the shelf already keeps each map's walls and encounter, and switching between several maps
+in play is the scene system.
 
 8. Map library: list `maps/`, pick one, remember its calibration. `docs/maps.md`.
 9. Token lifecycle: create and delete tokens with an image, a size and a reassignable owner.
@@ -92,6 +97,8 @@ largest. 52 is client-only.
 50. Round dividers in chat. 2026-10-14. `docs/chat.md`.
 51. Encounters on the shelf. 2026-10-15. `docs/maps.md`, `docs/tokens.md`.
 52. **Not built.** Ghost and path, then move. Design below.
+53. Players enter their own initiative. 2026-10-19. `docs/tokens.md`.
+54. **Not built.** Pointing at the backdrop: pings, cursors and a fading pen. Design below.
 
 ## 29. Party sight and split sight
 
@@ -205,6 +212,105 @@ token moving during a drag.
 
 A possible follow-up, not part of this milestone: on drop, slide the token along the trail instead
 of jumping. It's client-only and about twenty lines.
+
+## 54. Pointing at the backdrop
+
+Not built. While a backdrop is up the board takes no input (`body.covered #stage { pointer-events:
+none }`), so nobody can point at anything. The case that asked for it: the main campaign's DM was
+showing a building and wanted to mark which window was broken. Hunter wants pings and cursors on the
+backdrop, and a pen whose strokes fade.
+
+Read first: *Backdrop* in `docs/maps.md`, *Ping* and the freehand path in `docs/drawings.md`, and the
+cursor half of `docs/presence.md`.
+
+### Everything fades, so nothing is stored
+
+**A stroke on the backdrop is a gesture, not a drawing.** It shows for a few seconds (start at about
+8, tune in play) and fades like a ping. Nothing goes on `RoomState`: no list of marks, nothing on
+`Saved`, nothing in `snapshot_for`, not in `persists` or `moves_sight`, no undo step, no erasing and
+no `can_erase`. A latecomer misses a stroke the way they miss a ping. That's what keeps it small.
+
+Kept strokes were considered and declined (2026-10-19). They need a list in the room that a backdrop
+change clears, a save and undo decision, and erase permissions: a second drawing system attached to a
+picture, when the backdrop exists to avoid being a board. **If kept marks are asked for later, the
+answer is still to load the picture as a map.**
+
+No setting either. Hunter first asked for one, but a mark that disappears on its own can't clutter
+anything, so there's nothing to switch off. `show_cursors` and `show_dm_cursor` still apply to
+cursors on the backdrop, because they're about the pointers, not the board.
+
+### Positions are fractions of the picture
+
+The board's positions are grid units (`Pos`), and the backdrop has no grid and no camera; each window
+letterboxes it differently (`drawBackdrop`). The one position seven screens agree on is a fraction of
+the image: `x` and `y` in `0..=1` across its natural width and height. Give it its own type (`Frac`,
+say), for the reason `Px` is separate from `Pos`: so the two can't be swapped silently. The client
+converts using the same fit rectangle `drawBackdrop` computes, so pull that calculation out into one
+function both use. The room refuses non-finite values and anything outside `0..=1`.
+
+### On the wire
+
+One pair, in the style of the backdrop's own one command and one event:
+
+- `ClientMsg::Point { gesture }` and `ServerMsg::Pointed { by: Owner, gesture }`, with `enum Gesture
+  { Ping(Frac), Cursor(Frac), Stroke(Vec<Frac>) }`. A new variant pair is the protocol's four edits.
+- Relayed to everyone but the sender. The only filtering is that a `Cursor` goes through the same two
+  switches as `MoveCursor`. There's no fog to check (a picture has none, and everyone is looking at
+  the same one), so `cursor_seen`'s fog half doesn't apply.
+- **Dropped, not refused, when no backdrop is up**, checked where `show_cursors` is checked. The DM
+  taking the picture down mid-stroke is a normal race, and an error banner for it is worse than a lost
+  gesture (the reason `MoveCursor` is dropped while cursors are off).
+- A stroke is sent whole on release and never sketched, like a `Path`. Reuse `simplifyPath` and
+  `MAX_PATH_POINTS`, refuse past the cap, and add a test that the largest legal stroke fits in
+  `MAX_WS_MESSAGE_BYTES` (as `largest_override_fits_in_a_frame` does).
+- Colour comes from the sender, as a ping's does (`colourOf`), so there's no colour field. Strokes use
+  the person's own hue, not the draw panel's swatch.
+
+One variant pair was chosen over reusing `Ping`/`MoveCursor` with a board-or-picture position.
+Reusing them changes the shape of two existing messages and makes every reader of them branch. A
+separate pair leaves the board's gestures untouched, and the backdrop stays something nothing else
+reads.
+
+### On the client
+
+**Keep the `pointer-events: none` rule.** It's why no board handler has to check for the backdrop.
+Put a transparent element over the stage, shown only while covered, with its own small handler in its
+own module:
+
+- Pointer movement sends `Cursor` at the cursor throttle.
+- A hold of `HOLD_MS` without moving past `HOLD_SLOP_PX` pings, and grows the same ring locally first.
+- A drag past the slop draws a stroke, sent on release. No tool needs arming: on a picture there's
+  nothing else a drag could mean (no pan, no tokens, no selection), so the draw tool's state doesn't
+  matter here.
+- The right and middle buttons, which pan the board, do nothing here.
+
+Rendering: `drawBackdrop` is drawn instead of `render`, so pings, cursors and strokes on the picture
+need a small pass after it, in screen space via the fit rectangle. Reuse `ringRadius`/`ringAlpha`,
+`drawDot` and the label halo. No edge arrows, since the whole picture is always on screen.
+
+- **Preview wins**, as it does for the backdrop itself: a DM previewing the staged map sees the board,
+  and backdrop gestures aren't drawn for them. Nor is their board cursor sent as a `Cursor` gesture,
+  since they aren't pointing at the picture.
+- When the backdrop comes down or changes, drop everything held for it. A stroke made on the last
+  picture means nothing on the next one.
+- A player's phone: one finger draws or pings. Pinch-zoom doesn't apply, because the backdrop has no
+  camera.
+
+### Tests
+
+- Server, in `room/tests/maps.rs` beside the other backdrop tests: a gesture reaches everyone but the
+  sender; it's dropped with no backdrop up; a cursor gesture is dropped while `show_cursors` is off,
+  and the DM's while `show_dm_cursor` is off; nothing about it reaches the save, the undo ring or a
+  latecomer's `Welcome`; the largest stroke fits in a frame; values outside `0..=1` are refused.
+- Client unit: the fraction-to-screen conversion round-trips for wide and tall windows.
+- Driver: extend `drive-backdrop.mjs`. With two browsers of different sizes, a ping and a stroke land
+  on the same spot of the picture on both, and the stroke is gone after it fades. Its existing last
+  check still has to pass: the board's pixels before the picture went up and after it came down are
+  identical.
+
+Docs: a *Pointing at it* section under *Backdrop* in `docs/maps.md`; one line each in
+`docs/drawings.md` (*Ping*) and `docs/presence.md`; and the backdrop line in CLAUDE.md's *What it
+does*.
 
 ## Unscheduled
 

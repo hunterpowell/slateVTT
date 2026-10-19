@@ -234,8 +234,8 @@ That's accepted rather than given a fight id.
   this stays true. `ClientMsg::Roll` is a frame, not a syntax. Once a message body is scanned for
   anything, this becomes a chat system.
 - **A link to the initiative panel.** A shouted number is text and a panel row is state, and a thrown
-  number is still text, so milestone 40 changed nothing here. The DM reads the number and types it
-  in. Parsing messages to fill a row would make this reach into a subsystem it otherwise doesn't
+  number is still text, so milestone 40 changed nothing here. The player types their own number into
+  the panel (milestone 53), or the DM does. Parsing messages to fill a row would make this reach into a subsystem it otherwise doesn't
   touch, and it's the first step toward what the non-goal forbids. Milestone 49's monster roll
   doesn't change this: the room writes the rows and then logs them, and no line is ever read back.
   See `docs/dice.md`.

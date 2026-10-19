@@ -12,7 +12,7 @@ replaces Foundry for one group that only needs a shared map, tokens, and turn or
 - Monsters the DM can keep hidden, with hit points only they can see, and positions
   planned on the map the table hasn't been shown yet
 - An initiative tracker with round counter, next/previous turn, portraits, and (for the
-  DM) a hit point bar on each row
+  DM) a hit point bar on each row. Players enter their own roll.
 - A movement ruler that tints the squares a drag crossed, counting diagonals whichever
   way the DM sets the room to
 - Measuring and spell-area drawing that anyone at the table can use
@@ -195,7 +195,7 @@ which token is standing on a given square.
 | `drive-staged.mjs` | Tracing and painting the next dungeon, and the table not being told | both     |
 | `drive-encounter.mjs` | Promote removing the old map's monsters: hidden from preview, and kept by *bring to next map* | DM       |
 | `drive-undo.mjs`   | The DM's undo reaching the table, and not rebuilding their page    | both     |
-| `drive-panels.mjs` | The initiative panel folding, `n` advancing the turn, the damage box, token markers, and the sight check no longer being offered | both     |
+| `drive-panels.mjs` | The initiative panel folding, `n` advancing the turn, the damage box, a player entering their own roll, token markers, and the sight check no longer being offered | both     |
 | `drive-chat.mjs`   | Whisper and shout, and the loaner die, each absent from a *third* person's page; the round rules surviving a reload | three    |
 | `drive-notes.mjs`  | The scratchpad: one person in two tabs, and the DM holding none of it | three    |
 | `drive-presence.mjs` | Who is connected, the colour a player picks, and being told it's your turn | three    |

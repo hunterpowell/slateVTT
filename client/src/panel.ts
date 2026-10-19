@@ -1,9 +1,10 @@
-// The initiative panel. Read-only for players; the DM gets the controls.
+// The initiative panel. The DM gets the controls; a player gets only the form,
+// to enter the roll for a creature of theirs that isn't in the order yet.
 //
 // Rebuilt whole on every change, not diffed. It is at most a dozen rows and
 // only changes when the DM does something.
 
-import type { Identity } from './identity.js';
+import { ownsToken, type Identity } from './identity.js';
 import { markerRow } from './markers.js';
 import { asTable, tableInitiative } from './mirror.js';
 import type { ClientMsg, Hp, Initiative } from './protocol.js';
@@ -224,7 +225,6 @@ export function createPanel(
   const isDm = identity.isDm;
 
   ui.controls.hidden = !isDm;
-  ui.form.hidden = !isDm;
   ui.clear.hidden = !isDm;
   ui.roll.hidden = !isDm;
 
@@ -248,16 +248,6 @@ export function createPanel(
       send({ type: 'next_turn' });
     });
 
-    ui.form.addEventListener('submit', (e) => {
-      e.preventDefault();
-      const token = ui.tokenSelect.value;
-      const value = Number.parseInt(ui.valueInput.value, 10);
-      if (token === '' || Number.isNaN(value)) return;
-      send({ type: 'set_initiative', token, value });
-      ui.valueInput.value = '';
-      ui.valueInput.focus();
-    });
-
     ui.clear.addEventListener('click', () => {
       // The order takes real effort to enter and a stray click would bin it
       // mid-combat.
@@ -269,6 +259,19 @@ export function createPanel(
     // and undo takes the batch back as one step.
     ui.roll.addEventListener('click', () => send({ type: 'roll_initiative' }));
   }
+
+  // Everyone's. The DM's dropdown lists every creature not yet in the order, a
+  // player's only their own; the room refuses a player's second entry for the
+  // same token, so correcting a roll stays with the DM.
+  ui.form.addEventListener('submit', (e) => {
+    e.preventDefault();
+    const token = ui.tokenSelect.value;
+    const value = Number.parseInt(ui.valueInput.value, 10);
+    if (token === '' || Number.isNaN(value)) return;
+    send({ type: 'set_initiative', token, value });
+    ui.valueInput.value = '';
+    ui.valueInput.focus();
+  });
 
   // Null, not empty: empty is a real state of the dropdown (everyone is
   // already in the order), and the first build has to happen even then, to
@@ -504,59 +507,72 @@ export function createPanel(
           ?.focus();
       }
 
-      if (isDm) {
-        // A token built on the next map isn't in this fight. The server
-        // refuses it, so offering it would be offering an error. Next room's
-        // order needs rolls nobody has made yet.
-        //
-        // Nor is a token that has already rolled. `set_initiative` would still
-        // re-value one, but the row's own field does that, and a list that
-        // keeps offering the six creatures already in the order makes the DM
-        // read past them to find the seventh.
-        const rolled = new Set(initiative.entries.map((e) => e.token));
-        const rollable = scene.tokens.filter((t) => !t.stagedOnly && !rolled.has(t.id));
+      // A token built on the next map isn't in this fight. The server refuses
+      // it, so offering it would be offering an error. Next room's order needs
+      // rolls nobody has made yet.
+      //
+      // Nor is a token that has already rolled. For the DM, `set_initiative`
+      // would still re-value one, but the row's own field does that, and a list
+      // that keeps offering the six creatures already in the order makes the
+      // DM read past them to find the seventh. For a player it would be
+      // refused.
+      //
+      // A player's copy of the scene holds only what the table can see, which
+      // is everything the room lets them enter, so `ownsToken` is the whole
+      // filter. The server checks again.
+      const rolled = new Set(initiative.entries.map((e) => e.token));
+      const rollable = scene.tokens.filter(
+        (t) => !t.stagedOnly && !rolled.has(t.id) && (isDm || ownsToken(identity, t)),
+      );
 
-        // Only rebuild the dropdown when the token list itself changes, so a
-        // half-made selection survives every turn advance. Names are part of
-        // the key, so renaming a token reaches its option. So is the order,
-        // since entering a roll takes a token out of the list: the key is
-        // built from what is left, not every token, so it changes when either
-        // does.
-        const ids = rollable.map((t) => `${t.id}:${t.name}`).join(',');
-        if (ids !== knownTokenIds) {
-          knownTokenIds = ids;
-          ui.tokenSelect.replaceChildren(
-            ...[...rollable]
-              .sort((a, b) => a.name.localeCompare(b.name))
-              .map((token) => {
-                const option = document.createElement('option');
-                option.value = token.id;
-                option.textContent = token.name;
-                return option;
-              }),
-          );
+      // Only rebuild the dropdown when the token list itself changes, so a
+      // half-made selection survives every turn advance. Names are part of
+      // the key, so renaming a token reaches its option. So is the order,
+      // since entering a roll takes a token out of the list: the key is
+      // built from what is left, not every token, so it changes when either
+      // does.
+      const ids = rollable.map((t) => `${t.id}:${t.name}`).join(',');
+      if (ids !== knownTokenIds) {
+        knownTokenIds = ids;
+        ui.tokenSelect.replaceChildren(
+          ...[...rollable]
+            .sort((a, b) => a.name.localeCompare(b.name))
+            .map((token) => {
+              const option = document.createElement('option');
+              option.value = token.id;
+              option.textContent = token.name;
+              return option;
+            }),
+        );
 
-          // Everybody is in the fight. An empty picker beside a live button
-          // looks usable and does nothing, so it is disabled, as the rail does
-          // with inert tabs. The placeholder has no value, so a submit through
-          // it hits the form's existing empty-token check.
-          ui.tokenSelect.disabled = rollable.length === 0;
-          if (rollable.length === 0) {
-            const empty = document.createElement('option');
-            empty.value = '';
-            empty.textContent = 'everyone has rolled';
-            ui.tokenSelect.append(empty);
-          }
+        // Everybody is in the fight. An empty picker beside a live button
+        // looks usable and does nothing, so it is disabled, as the rail does
+        // with inert tabs. The placeholder has no value, so a submit through
+        // it hits the form's existing empty-token check.
+        ui.tokenSelect.disabled = rollable.length === 0;
+        if (rollable.length === 0) {
+          const empty = document.createElement('option');
+          empty.value = '';
+          empty.textContent = 'everyone has rolled';
+          ui.tokenSelect.append(empty);
         }
       }
 
       // The DM's editing controls fold away with the rows they edit. The turn
       // buttons don't: advancing the turn from a folded panel is most of what
       // folding it is for.
+      //
+      // A player's form doesn't fold, and goes once they have nothing left to
+      // enter. It's the one thing they're being asked to do, and a folded panel
+      // would hide the question. Nor does it appear before the order has a row:
+      // a box asking for a roll outside a fight would sit on screen all
+      // evening. The DM starts the order, usually with *roll monsters*.
       if (isDm) {
         ui.form.hidden = collapsed;
         ui.clear.hidden = collapsed;
         ui.roll.hidden = collapsed;
+      } else {
+        ui.form.hidden = rollable.length === 0 || initiative.entries.length === 0;
       }
 
       // Players only see the panel once there is something in it; the DM always

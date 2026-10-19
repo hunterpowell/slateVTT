@@ -3783,9 +3783,34 @@ impl RoomState {
             ClientMsg::ResetFog => require_dm(client, "reset the fog"),
 
             ClientMsg::SetInitiative { token, .. } => {
-                require_dm(client, "change initiative")?;
-                let Some(named) = self.tokens.get(token) else {
-                    return Err(format!("no such token: {}", token.0));
+                let named = match &client.identity {
+                    Identity::Dm => {
+                        let Some(named) = self.tokens.get(token) else {
+                            return Err(format!("no such token: {}", token.0));
+                        };
+                        named
+                    }
+                    // A player may enter the roll for a creature they own, once.
+                    // Correcting it is the DM's, as it was before. One refusal
+                    // for a token that doesn't exist, isn't theirs or the table
+                    // can't see, so the error says nothing about which: a
+                    // hidden token's id is data (invariant 4).
+                    Identity::Player(_) => {
+                        let Some(named) = self
+                            .tokens
+                            .get(token)
+                            .filter(|t| can_move(client, t) && !self.unseen_by_table(t))
+                        else {
+                            return Err("only the DM can change initiative".to_owned());
+                        };
+                        if self.initiative.index_of(token).is_some() {
+                            return Err(format!(
+                                "{} is already in the order; ask the DM to change it",
+                                named.name
+                            ));
+                        }
+                        named
+                    }
                 };
                 // Refused like a token that doesn't exist, because on the board
                 // it's a creature that isn't there. Combat is the fight

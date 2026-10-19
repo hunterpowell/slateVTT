@@ -147,7 +147,8 @@ rolling for a player's character. The DM corrects a row by typing over it.
   same reason `promote_staged_tokens` sorts.
 - **Hidden monsters roll.** `initiative_for` already drops their rows from the table's copy.
 - **Staged-only ones don't**, for the reason `SetInitiative` refuses them: they aren't in this fight.
-- **It doesn't start combat.** Players still have to type their own rolls in, and the DM presses `N`
+- **It doesn't start combat.** Players still type their own rolls in (into their own row since
+  milestone 53), and the DM presses `N`
   when everyone is in, as before.
 - **Nobody left to roll produces no event**, so no log line and no undo step. That matches
   `next_turn` on an empty order: a no-op, not a refusal.
@@ -173,7 +174,8 @@ doesn't press it.
 - **Advantage, disadvantage, keep-highest.** Throw two d20s and choose.
 - **Linking a player's roll to initiative.** `docs/chat.md` refuses this for typed numbers, and the
   same applies to thrown ones: a roll is text, an initiative row is state, and parsing one into the
-  other leads toward rules knowledge. The DM reads the number and types it in. The monster roll
+  other leads toward rules knowledge. The player types their number into their own row (milestone
+  53, `docs/tokens.md`), or the DM types it for them. The monster roll
   above runs the other way (the room throws and writes the row, then logs it) and covers only the
   DM's own creatures.
 - **Per-token or per-character dice.** A die belongs to a person. A token that owned dice would

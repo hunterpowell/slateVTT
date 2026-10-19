@@ -331,6 +331,8 @@ Everything is DM-only except the cases below. Each exception is based on what th
 never on a role:
 
 - **Drawing.** Anyone may add a shape. Erasing is `can_erase`: the DM, or whoever drew it.
+- **Initiative, once.** A player may enter the row for a token they own and the table can see, if
+  it has none yet. Correcting it is the DM's. See `docs/tokens.md`, *A player's own roll*.
 - **Chat.** Anyone may send a message; a player may not address another player. `party_to`
   decides who sees a line and never checks `is_dm`. `Roll` shares `may_address` with `Say`.
 - **Writing a scratchpad, picking a colour.** `SetNotes` and `SetColour` carry no key. Whose it
@@ -345,7 +347,7 @@ never on a role:
 
 Walls and fog overrides are the other extreme: DM-only with no per-item rule, and a player is
 never sent one or told one changed. Token creation, deletion, editing, ownership, planning
-(`staged_pos`), map changes, initiative edits, the roster, and every room-wide setting
+(`staged_pos`), map changes, initiative edits other than a player's first entry, the roster, and every room-wide setting
 (`show_names`, `diagonals`, `show_cursors`, `show_dm_cursor`, `backdrop`, `audio`) are DM-only.
 
 The DM owns every library: listing, picking, adding, removing. Every route under `/api` except

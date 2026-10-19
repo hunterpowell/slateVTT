@@ -208,9 +208,12 @@ const STROKE_HOVER_WIDTH = 4;
 const SHAPE_FONT = '600 12px ui-sans-serif, system-ui, sans-serif';
 /** The ping ring and the arrow that stands in for one off screen. Both drawn in
  *  the sender's own colour, which is why neither has a colour constant here. */
-const PING_WIDTH = 3;
-const PING_HALO_WIDTH = 6;
-const PING_HALO = 'rgba(0, 0, 0, 0.6)';
+const PING_WIDTH = 4;
+/** Centred under the ring, so 3px of solid black shows on each side of it.
+ *  Opaque, unlike the cursor's halo: at 60% the ring blended into dark maps in
+ *  play, and a ping is the one mark that must never be missed. */
+const PING_HALO_WIDTH = 10;
+const PING_HALO = '#000';
 /** Between the ring and the name written under it. */
 const PING_TEXT_GAP = 7;
 const PING_FONT = '600 12px ui-sans-serif, system-ui, sans-serif';
@@ -233,6 +236,7 @@ const PING_ARROW_PX = 13;
  */
 const CURSOR_R_PX = 5;
 const CURSOR_HALO_WIDTH = 2;
+const CURSOR_HALO = 'rgba(0, 0, 0, 0.6)';
 const CURSOR_FONT = '600 11px ui-sans-serif, system-ui, sans-serif';
 /** Between the dot and the name under it. */
 const CURSOR_TEXT_GAP = 5;
@@ -1632,7 +1636,7 @@ function drawCursors(ctx: CanvasRenderingContext2D, frame: Frame, board: Board):
 function drawDot(ctx: CanvasRenderingContext2D, at: Vec2, colour: string): void {
   ctx.beginPath();
   ctx.arc(at.x, at.y, CURSOR_R_PX, 0, TAU);
-  ctx.strokeStyle = PING_HALO;
+  ctx.strokeStyle = CURSOR_HALO;
   ctx.lineWidth = CURSOR_HALO_WIDTH;
   ctx.stroke();
   ctx.fillStyle = colour;
@@ -1657,7 +1661,7 @@ function drawPingArrow(
   ctx.lineTo(-PING_ARROW_PX * 0.7, -PING_ARROW_PX * 0.75);
   ctx.closePath();
   ctx.strokeStyle = PING_HALO;
-  ctx.lineWidth = 3;
+  ctx.lineWidth = 6;
   ctx.stroke();
   ctx.fillStyle = colour;
   ctx.fill();

@@ -1,5 +1,6 @@
-// Drives the initiative panel folding away, the damage box, and the markers —
-// the three things on this panel that only a browser can see.
+// Drives the initiative panel folding away, the damage box, a player entering
+// their own roll, and the markers — the things on this panel that only a
+// browser can see.
 //
 //   cd server && SLATE_DM_SECRET=test-secret cargo run
 //   node tools/drive-panels.mjs                     # or: ... http://host:port secret
@@ -329,6 +330,86 @@ check(
   0,
 );
 
+
+// ============================================================================
+// A player enters their own roll
+// ============================================================================
+//
+// The room's half (whose token, once only, nothing hidden) is in
+// `room/tests/initiative.rs`. What only a browser can say is that the player is
+// offered the form at all, that it lists their own creatures and nobody else's,
+// and that it goes away once they've entered.
+
+const playerForm = () =>
+  player.evaluate(`(() => {
+    const form = document.getElementById('init-add');
+    return {
+      shown: form.offsetParent !== null,
+      options: [...document.querySelectorAll('#init-token option')]
+        .filter(o => o.value !== '')
+        .map(o => o.textContent),
+    };
+  })()`);
+
+await player.wait(500);
+const offered = await playerForm();
+note(`the player is offered ${JSON.stringify(offered.options)}`);
+check('a player with a creature not in the order is shown the form', offered.shown, true);
+check(
+  "and it lists none of the DM's creatures",
+  offered.options.some((n) => PANEL_TOKEN.test(n)),
+  false,
+);
+
+const ENTERED = offered.options[0];
+check(
+  'the player entered a roll',
+  await player.evaluate(`(() => {
+    const sel = document.querySelector('#init-token');
+    const opt = [...sel.options].find(o => o.textContent === ${JSON.stringify(ENTERED)});
+    if (!opt) return 'missing';
+    sel.value = opt.value;
+    document.querySelector('#init-value').value = '11';
+    document.querySelector('#init-add').requestSubmit();
+    return 'ok';
+  })()`),
+  'ok',
+);
+await player.wait(800);
+await dm.wait(200);
+
+const rowValue = (page, name) =>
+  page.evaluate(`(() => {
+    const row = [...document.querySelectorAll('.init-row')]
+      .find(r => r.querySelector('.init-name').textContent === ${JSON.stringify(name)});
+    if (!row) return 'missing row';
+    const v = row.querySelector('.init-value');
+    return v.tagName === 'INPUT' ? v.value : v.textContent;
+  })()`);
+
+check("and it reached the DM's order", await rowValue(dm, ENTERED), '11');
+const after = await playerForm();
+check(
+  'the creature is no longer offered',
+  after.options.includes(ENTERED),
+  false,
+);
+check(
+  "the player's number is not a field, so a second entry can't be typed",
+  await player.evaluate(`document.querySelectorAll('.init-value-edit').length`),
+  0,
+);
+
+// Put back: the DM's × on that row. The player's token isn't this driver's to
+// delete, so the sweep at the bottom wouldn't touch its row.
+await dm.evaluate(`(() => {
+  const row = [...document.querySelectorAll('.init-row')]
+    .find(r => r.querySelector('.init-name').textContent === ${JSON.stringify(ENTERED)});
+  if (row) row.querySelector('.init-remove').click();
+  return 'ok';
+})()`);
+await dm.wait(500);
+check('and the DM took it back out', await rowValue(dm, ENTERED), 'missing row');
 
 // ============================================================================
 // Markers — the one field on a token that the table is shown

@@ -396,6 +396,39 @@ Escape restores the number *before* blurring, since a blur commits and abandonin
 possible. The player's row is still a span: re-valuing is the DM's job, and the player's copy of the
 panel has no use for it.
 
+### A player's own roll
+
+Milestone 53. A player may send `SetInitiative` for a token they own, if the table can see it and
+it has no row yet. Everything else about the order stays the DM's: a second entry for the same token
+is refused, so correcting a misheard or "fixed" roll is still the DM typing over the row. It's the
+same exception as `can_move`, decided by what the sender owns, and `check` calls `can_move` for it.
+It's allowed after combat has started, because `Initiative::set` already never moves the turn: a
+latecomer sorts into place and waits.
+
+It isn't the link to initiative that `docs/dice.md` and `docs/chat.md` refuse. That's the room
+reading a number out of a chat line; this is a person typing a number into a field that's theirs.
+
+**One refusal covers a token that doesn't exist, isn't theirs, or that the table can't see**, with
+the same text, so the error can't confirm that a hidden token's id exists.
+`a_player_is_told_nothing_about_a_token_the_table_cannot_see` compares the three. The "already in
+the order" refusal names the token, which is safe because it's only reachable for one the player
+holds.
+
+A player's own token can still be refused: the DM can hide it, and a staged-only one isn't in this
+fight. Both are covered by `unseen_by_table`, the same question every filter asks.
+
+On the client it's the DM's add form, shown to a player with the dropdown narrowed to their own
+tokens not yet in the order (`ownsToken`). Their scene already holds only what the table can see, so
+that's the whole filter, and the room checks again. A player's form:
+
+- appears only once the order has a row, usually after the DM's *roll monsters*. A box asking for a
+  roll outside a fight would sit on screen all evening.
+- doesn't fold with the panel, because it's the one thing the player is being asked to do.
+- goes when they have nothing left to enter. A familiar or summon they own is a second option.
+
+A player's entry is an ordinary undo step ("an initiative row"). Undo already reverts players' moves
+and drawings, so this needs no exclusion.
+
 ### The damage box
 
 Damage is typed on the row, because the row is what the DM is looking at. Before this, taking

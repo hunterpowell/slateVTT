@@ -439,6 +439,13 @@ Sized in **screen pixels**, positioned in world space. A ring measured in cells 
 camera zooms out, and zooming out to see the whole dungeon is exactly when someone needs to point at
 a corner of it.
 
+The ring and the edge arrow are drawn over a solid black border, 3px each side of a 4px ring
+(`PING_HALO` in `render.ts`). It was a 60% halo showing about 1.5px, and in play the ring blended into
+dark maps. Cursors keep the lighter halo (`CURSOR_HALO`), since a pointer is meant to be quieter
+than a ping. Whether a ping also needs motion or a different shape to stand out from the board's
+other circles is open; `ringRadius`'s comment argues against a pulse, and was written before any
+playtest.
+
 ### No fog gate
 
 **A ping is relayed to everyone wherever it lands, including ground the party has never explored.**

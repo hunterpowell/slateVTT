@@ -245,6 +245,102 @@ fn a_players_refused_initiative_edit_changes_nothing() {
     assert!(state.initiative.entries.is_empty());
 }
 
+// --- a player's own roll ------------------------------------------------------
+
+fn set(token: &str, value: i32) -> ClientMsg {
+    ClientMsg::SetInitiative {
+        token: TokenId::new(token),
+        value,
+    }
+}
+
+#[test]
+fn a_player_enters_their_own_roll_once_and_the_dm_corrects_it() {
+    let mut state = room();
+    let _saelyn = join_as_player(&mut state, ClientId(1), "saelyn");
+    let _dm = join_as_dm(&mut state, ClientId(2));
+
+    // t2 is Saelyn's.
+    state.handle(ClientId(1), set("t2", 14));
+    assert_eq!(order(&state.initiative), ["t2"]);
+
+    // A second entry is a correction, and correcting is the DM's.
+    assert!(state.check(ClientId(1), &set("t2", 20)).is_err());
+    state.handle(ClientId(1), set("t2", 20));
+    assert_eq!(state.initiative.entries[0].value, 14);
+
+    state.handle(ClientId(2), set("t2", 20));
+    assert_eq!(state.initiative.entries[0].value, 20);
+}
+
+#[test]
+fn a_player_may_enter_a_roll_after_combat_has_started() {
+    let mut state = room();
+    let _saelyn = join_as_player(&mut state, ClientId(1), "saelyn");
+    let _dm = join_as_dm(&mut state, ClientId(2));
+    state.handle(ClientId(2), set("t6", 12));
+    state.handle(ClientId(2), ClientMsg::NextTurn);
+
+    state.handle(ClientId(1), set("t2", 18));
+    assert_eq!(order(&state.initiative), ["t2", "t6"]);
+    assert_eq!(current(&state.initiative), Some("t6"), "a latecomer waits");
+}
+
+#[test]
+fn a_player_may_not_enter_a_roll_for_a_token_they_do_not_own() {
+    let mut state = room();
+    let _saelyn = join_as_player(&mut state, ClientId(1), "saelyn");
+    // Another player's (Cleodara's) and the DM's (the ogre).
+    for token in ["t1", "t6"] {
+        assert!(
+            state.check(ClientId(1), &set(token, 10)).is_err(),
+            "Saelyn entered a roll for {token}"
+        );
+        state.handle(ClientId(1), set(token, 10));
+    }
+    assert!(state.initiative.entries.is_empty());
+}
+
+#[test]
+fn a_player_is_told_nothing_about_a_token_the_table_cannot_see() {
+    let mut state = room();
+    let mut dm = join_as_dm(&mut state, ClientId(1));
+    let mut saelyn = join_as_player(&mut state, ClientId(2), "saelyn");
+    state.handle(ClientId(1), create_hidden("Lurker"));
+    let lurker = made(&state, "Lurker").id;
+    // Saelyn's own token, hidden by the DM: it isn't on her board either.
+    state.handle(ClientId(1), set_hidden(&token(&state, "t2"), true));
+    settle(&mut [&mut dm, &mut saelyn]);
+
+    let ghost = state.check(ClientId(2), &set("ghost", 10));
+    let hidden = state.check(ClientId(2), &set(&lurker.0, 10));
+    let own_hidden = state.check(ClientId(2), &set("t2", 10));
+    assert!(ghost.is_err());
+    assert_eq!(
+        hidden, ghost,
+        "the refusal told a player a hidden token exists"
+    );
+    assert_eq!(own_hidden, ghost);
+}
+
+#[test]
+fn a_player_may_not_enter_a_roll_for_their_token_on_the_next_map() {
+    let mut state = room();
+    let _dm = join_as_dm(&mut state, ClientId(1));
+    let _saelyn = join_as_player(&mut state, ClientId(2), "saelyn");
+    stage(&mut state, ClientId(1), "/maps/crypt.png");
+    let saelyn = Owner::Player(PlayerId::new("saelyn"));
+    state.handle(
+        ClientId(1),
+        with(create("Familiar", 1.0, saelyn), |_, staged| *staged = true),
+    );
+    let familiar = made(&state, "Familiar");
+    assert!(familiar.staged_only);
+
+    state.handle(ClientId(2), set(&familiar.id.0, 10));
+    assert!(state.initiative.entries.is_empty());
+}
+
 #[test]
 fn removing_every_row_one_at_a_time_starts_the_next_fight_on_round_one() {
     // The one-shot's bug: Clear is hidden while the panel is folded, so the DM
