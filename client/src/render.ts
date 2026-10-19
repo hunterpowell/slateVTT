@@ -21,7 +21,7 @@ import type { Ping } from './pings.js';
 import { colourOf, EDGE_INSET_PX, edgeMarker, nameOf, ringAlpha, ringRadius } from './pings.js';
 import type { Colours, FogPaint, Hp, Marker, RosterEntry } from './protocol.js';
 import type { Ruler } from './ruler.js';
-import { feetMoved, rulerAlpha, trailCells } from './ruler.js';
+import { feetMoved, rulerAlpha, slidePos, trailCells } from './ruler.js';
 import type { Board, Scene, Token } from './scene.js';
 import { shownBoard, shownOverrides, shownPos, shownWalls, showingStaged } from './scene.js';
 import type { Shape, Sketch } from './shapes.js';
@@ -64,7 +64,11 @@ const PREVIEW_FILL_ALPHA = 0.3;
 const TOKEN_RIM = 'rgba(0, 0, 0, 0.55)';
 /** Yours. Warm, so it never reads as the blue "being dragged" state. */
 const OWNED_RING = 'rgba(240, 212, 140, 0.9)';
+/** The ghost of a token being dragged: where it is going. */
 const DRAG_RING = 'rgba(120, 190, 255, 0.95)';
+/** How solid a ghost's art is. Faint enough to read as a plan beside the token
+ *  still standing at the origin, solid enough to tell which creature it is. */
+const GHOST_ALPHA = 0.4;
 /** The token the DM's panel is editing. Dashed, so it cannot be mistaken for
  *  ownership or for whose turn it is, both of which are solid rings. */
 const SELECTED_RING = 'rgba(120, 190, 255, 0.9)';
@@ -304,10 +308,8 @@ export interface Frame {
   now: number;
   /** Token art, keyed by image URL. See `loadArt` in main.ts. */
   tokenImages: Map<string, HTMLImageElement>;
-  /** Every token being dragged right now. More than one is a group moving
-   *  together. */
-  draggingIds: ReadonlySet<string>;
-  /** Movement rulers by token id, ours and everyone else's alike. */
+  /** Movement rulers by token id, ours and everyone else's alike. Each one
+   *  still running also carries its token's ghost. */
   rulers: ReadonlyMap<string, Ruler>;
   /** The token the DM has selected for editing. Null for everyone else. */
   selectedId: string | null;
@@ -484,6 +486,8 @@ export function render(ctx: CanvasRenderingContext2D, view: Viewport, frame: Fra
   drawTrails(ctx, frame, board);
 
   drawTokens(ctx, frame, board);
+  // Over the tokens, so a ghost dragged across a crowd isn't lost under it.
+  drawGhosts(ctx, frame, board);
 
   // Over the tokens. A spell area is being asked about *now* (where it reaches
   // and who is caught in it), so it has to read across the creatures inside it
@@ -989,13 +993,27 @@ function drawShapeLabels(ctx: CanvasRenderingContext2D, frame: Frame, board: Boa
   ctx.restore();
 }
 
+/**
+ * Where a token is drawn: where it is, or partway along its slide if its drop
+ * has just landed (`slidePos`). Everything that draws *at* a token goes through
+ * this, so the art, the rings, the name and the hit points travel together.
+ * Nothing that hit-tests does.
+ */
+function drawnPos(frame: Frame, token: Token): Vec2 | null {
+  const at = shownPos(frame.scene, token);
+  if (at === null) return null;
+  const ruler = frame.rulers.get(token.id);
+  if (ruler === undefined || ruler.staged !== showingStaged(frame.scene)) return at;
+  return slidePos(ruler, at, frame.now);
+}
+
 function drawTokens(ctx: CanvasRenderingContext2D, frame: Frame, board: Board): void {
-  const { scene, tokenImages, draggingIds, cam, identity, currentTurn, selectedId } = frame;
+  const { scene, tokenImages, cam, identity, currentTurn, selectedId } = frame;
 
   for (const token of scene.tokens) {
     // Null is a token that is not on this board: one built on the map being
     // prepared, seen from the live one. Absent, not faint.
-    const at = shownPos(scene, token);
+    const at = drawnPos(frame, token);
     if (at === null) continue;
 
     // Per token, not per map: a token is `size` cells across, so a 2×2 fills
@@ -1010,11 +1028,6 @@ function drawTokens(ctx: CanvasRenderingContext2D, frame: Frame, board: Board): 
     ctx.globalAlpha = alphaFor(token);
 
     ctx.save();
-
-    if (draggingIds.has(token.id)) {
-      ctx.shadowColor = 'rgba(0, 0, 0, 0.6)';
-      ctx.shadowBlur = radius * 0.5;
-    }
 
     ctx.beginPath();
     ctx.arc(centre.x, centre.y, radius, 0, TAU);
@@ -1040,26 +1053,22 @@ function drawTokens(ctx: CanvasRenderingContext2D, frame: Frame, board: Board): 
       drawMarks(ctx, centre, radius, cam.zoom, token.markers);
     }
 
-    // One ring, five meanings: being dragged, not on the board yet, hidden,
-    // yours, or none of them. The dash is separate from the colour and says
-    // hidden on its own, so a token that is both teal and dashed reads as both,
-    // not as whichever the precedence picked.
-    const dragging = draggingIds.has(token.id);
+    // One ring, four meanings: not on the board yet, hidden, yours, or none of
+    // them. The dash is separate from the colour and says hidden on its own, so
+    // a token that is both teal and dashed reads as both, not as whichever the
+    // precedence picked. Being dragged is the ghost's ring, not this one.
     const mine = ownsToken(identity, token);
 
     ctx.beginPath();
     ctx.arc(centre.x, centre.y, radius, 0, TAU);
-    ctx.lineWidth =
-      (dragging || mine || token.hidden || token.stagedOnly ? 2.5 : 1.5) / cam.zoom;
-    ctx.strokeStyle = dragging
-      ? DRAG_RING
-      : token.stagedOnly
-        ? STAGED_ONLY_RING
-        : token.hidden
-          ? HIDDEN_RING
-          : mine
-            ? OWNED_RING
-            : TOKEN_RIM;
+    ctx.lineWidth = (mine || token.hidden || token.stagedOnly ? 2.5 : 1.5) / cam.zoom;
+    ctx.strokeStyle = token.stagedOnly
+      ? STAGED_ONLY_RING
+      : token.hidden
+        ? HIDDEN_RING
+        : mine
+          ? OWNED_RING
+          : TOKEN_RIM;
     if (token.hidden) ctx.setLineDash([6 / cam.zoom, 4 / cam.zoom]);
     ctx.stroke();
     ctx.setLineDash([]);
@@ -1093,6 +1102,54 @@ function drawTokens(ctx: CanvasRenderingContext2D, frame: Frame, board: Board): 
       ctx.setLineDash([]);
     }
 
+    ctx.restore();
+  }
+}
+
+/**
+ * Where each token being dragged is going: its art, faint, at the far end of
+ * the ruler, with the drag ring. The token itself stays drawn where it stands
+ * until the drop, on every screen, so a move reads as a plan and then an
+ * action.
+ *
+ * Read off the rulers, which are per token: a group drag draws one ghost per
+ * member, though only one of them is measured on the dragger's screen. Drawn
+ * only for a token this board shows, for the reason `drawRulers` skips one.
+ */
+function drawGhosts(ctx: CanvasRenderingContext2D, frame: Frame, board: Board): void {
+  const { scene, cam, rulers, tokenImages } = frame;
+  if (rulers.size === 0) return;
+  const staged = showingStaged(scene);
+
+  for (const [id, ruler] of rulers) {
+    if (ruler.to === null || ruler.staged !== staged) continue;
+    const token = scene.tokens.find((t) => t.id === id);
+    if (token === undefined || shownPos(scene, token) === null) continue;
+
+    const radius = (board.grid.px * token.size) / 2;
+    const centre = gridToWorld(board.grid, ruler.to.x, ruler.to.y);
+    const img = tokenImages.get(token.img);
+
+    ctx.save();
+    ctx.globalAlpha = alphaFor(token) * GHOST_ALPHA;
+    ctx.beginPath();
+    ctx.arc(centre.x, centre.y, radius, 0, TAU);
+    ctx.save();
+    ctx.clip();
+    if (img) {
+      ctx.drawImage(img, centre.x - radius, centre.y - radius, radius * 2, radius * 2);
+    } else {
+      ctx.fillStyle = '#5a6472';
+      ctx.fill();
+    }
+    ctx.restore();
+
+    // The ring at full strength, so the ghost's edge is clear over busy art.
+    ctx.globalAlpha = alphaFor(token);
+    ctx.lineWidth = 2.5 / cam.zoom;
+    ctx.strokeStyle = DRAG_RING;
+    if (token.hidden) ctx.setLineDash([6 / cam.zoom, 4 / cam.zoom]);
+    ctx.stroke();
     ctx.restore();
   }
 }
@@ -1388,14 +1445,16 @@ function drawTrails(ctx: CanvasRenderingContext2D, frame: Frame, board: Board): 
 
   ctx.save();
   for (const [id, ruler] of rulers) {
-    if (ruler.staged !== staged) continue;
+    if (ruler.staged !== staged || !ruler.measured) continue;
 
     const token = scene.tokens.find((t) => t.id === id);
     if (token === undefined) continue;
     const at = shownPos(scene, token);
     if (at === null) continue;
+    // The ghost while the drag runs, the token once it has landed.
+    const end = ruler.to ?? at;
 
-    const cells = trailCells(ruler.from, at);
+    const cells = trailCells(ruler.from, end);
     // Still in the cell it was picked up from: the same case the reading skips
     // on when it computes zero feet.
     if (cells.length === 0) continue;
@@ -1406,7 +1465,7 @@ function drawTrails(ctx: CanvasRenderingContext2D, frame: Frame, board: Board): 
     // The whole trail, not the squares either side of the wall: the DM is
     // being told this move went through something, and the hint isn't precise
     // enough to say which step did it.
-    const colour = rulerBlocked(scene, board, ruler, at) ? RULER_BLOCKED : TRAIL_FILL;
+    const colour = rulerBlocked(scene, board, ruler, end) ? RULER_BLOCKED : TRAIL_FILL;
 
     const path = cellPath(grid, cells);
     ctx.fillStyle = colour;
@@ -1444,15 +1503,17 @@ function drawRulers(ctx: CanvasRenderingContext2D, frame: Frame, board: Board): 
   for (const [id, ruler] of rulers) {
     // A ruler belongs to one of the two boards, and only the one on screen
     // draws: a live drag measured over a staged map is a line between two cells
-    // nobody is looking at.
-    if (ruler.staged !== staged) continue;
+    // nobody is looking at. An unmeasured one is only a ghost.
+    if (ruler.staged !== staged || !ruler.measured) continue;
 
     const token = scene.tokens.find((t) => t.id === id);
     if (token === undefined) continue;
     const at = shownPos(scene, token);
     if (at === null) continue;
+    // The ghost while the drag runs, the token once it has landed.
+    const end = ruler.to ?? at;
 
-    const feet = feetMoved(ruler.from, at, scene.diagonals);
+    const feet = feetMoved(ruler.from, end, scene.diagonals);
     // Still in the cell it was picked up from. There is nothing to report, and
     // a "0 ft" flashing under the cursor on every click is noise.
     if (feet === 0) continue;
@@ -1461,16 +1522,17 @@ function drawRulers(ctx: CanvasRenderingContext2D, frame: Frame, board: Board): 
     // instead of folded into each colour, so the halo, the line and the text
     // fade together: they are one annotation, and a halo outliving its line by
     // a frame reads as a rendering fault.
-    // `frame.now`, not destructured: the local `now` just below is where the
-    // token is *now*, which pairs with `start` and reads better there.
     const alpha = rulerAlpha(ruler, frame.now);
     if (alpha <= 0) continue;
     ctx.globalAlpha = alpha;
 
     const start = gridToWorld(board.grid, ruler.from.x, ruler.from.y);
-    const now = gridToWorld(board.grid, at.x, at.y);
+    // The line and the reading follow the token as it slides; the number is
+    // already the whole move.
+    const head = ruler.to ?? slidePos(ruler, at, frame.now);
+    const dest = gridToWorld(board.grid, head.x, head.y);
     const from = worldToScreen(cam, start.x, start.y);
-    const to = worldToScreen(cam, now.x, now.y);
+    const to = worldToScreen(cam, dest.x, dest.y);
     const radius = (board.grid.px * token.size * cam.zoom) / 2;
 
     // Stopped at the token's edge instead of run under it, so the line points
@@ -1491,7 +1553,7 @@ function drawRulers(ctx: CanvasRenderingContext2D, frame: Frame, board: Board): 
     ctx.stroke();
     // Amber where the move went through a wall. The DM's screen only, and
     // without asking who they are: a player's scene carries no walls to hit.
-    ctx.strokeStyle = rulerBlocked(scene, board, ruler, at) ? RULER_BLOCKED : RULER_LINE;
+    ctx.strokeStyle = rulerBlocked(scene, board, ruler, end) ? RULER_BLOCKED : RULER_LINE;
     ctx.lineWidth = RULER_WIDTH;
     ctx.stroke();
 
@@ -1706,7 +1768,7 @@ function drawTokenChrome(ctx: CanvasRenderingContext2D, frame: Frame, board: Boa
   for (const token of scene.tokens) {
     // The same skip as `drawTokens`: a token with no name drawn under it is
     // better than a name floating over a board the token is not on.
-    const at = shownPos(scene, token);
+    const at = drawnPos(frame, token);
     if (at === null) continue;
 
     ctx.globalAlpha = alphaFor(token);

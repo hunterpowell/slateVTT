@@ -32,13 +32,12 @@ Everything from 8 on was planned after the original seven: 17 and 18 after 16 la
 existed, and all three were written to overturn something the roadmap already said (each entry names
 what). 28 also overturned part of its own design.
 
-**Everything through 53 is built except 29 and 52.** 25, 26, 34 and 38 were never planned and were
+**Everything through 53 is built except 29.** 25, 26, 34 and 38 were never planned and were
 built out of order; their entries in `docs/history.md` say why. 33 is multi-room, which was
 unscheduled until a Halloween one-shot became the second room it was waiting for.
 
-49–52 were planned on 2026-10-14 from the notes Hunter took running a one-shot as the DM. Build them
-in order, one per session. 49 and 50 are small. 51 changes a boundary in `docs/maps.md` and is the
-largest. 52 is client-only.
+49–52 were planned on 2026-10-14 from the notes Hunter took running a one-shot as the DM, and are
+all built.
 
 53 and 54 came on 2026-10-19 from playtest feedback: Hunter's brother after running sessions on the
 second site, and the main campaign's DM. The same feedback asked for a sidebar of maps, which Hunter
@@ -96,7 +95,7 @@ in play is the scene system.
     `docs/dice.md`.
 50. Round dividers in chat. 2026-10-14. `docs/chat.md`.
 51. Encounters on the shelf. 2026-10-15. `docs/maps.md`, `docs/tokens.md`.
-52. **Not built.** Ghost and path, then move. Design below.
+52. Ghost and path, then move. 2026-10-19. `docs/drawings.md`, `docs/undo.md`.
 53. Players enter their own initiative. 2026-10-19. `docs/tokens.md`.
 54. **Not built.** Pointing at the backdrop: pings, cursors and a fading pen. Design below.
 
@@ -174,44 +173,6 @@ That's also the argument for the switch being an enum on the room rather than a 
 It needs another three-browser driver. `tools/drive-chat.mjs` is the precedent: the assertion is that
 player A is sent a creature and player B isn't, and two connections can't show that. Use fixed debug
 ports, as milestone 26 established.
-
-## 52. Ghost and path, then move
-
-Not built. Hunter wants a move to read as a plan and then an action: drag out where the token is
-going, and have it move when you let go. Today the token follows the pointer on every screen.
-
-Read first: *Distance*, *The trail* and *The wall hint* in `docs/drawings.md`, *Moving several at
-once* in `docs/tokens.md`, and the drag section of `docs/net.md`.
-
-**Client only. The wire and the server don't change.** `MoveToken { dragging }` and `TokenMoved`
-stay as they are, with the same throttle and the same rule against echoing the sender's own frames.
-What changes is how a drag frame is drawn.
-
-- A watcher's `dragging: true` frame updates a ghost position instead of the token's `x, y`. The
-  per-token ruler already records `from` from the first frame, so it can hold the ghost too. The
-  token stays drawn where it was, the ghost is drawn faint where it's going, and the existing trail
-  and reading run between them. A `dragging: false` frame moves the token and ends the ruler, as
-  it does now.
-- The dragger sees the same thing locally: the token stays at its origin and the ghost follows the
-  pointer. On release the token jumps to the cell the server snaps it to.
-- Escape during a drag cancels it by sending the drop at the origin, so every watcher's ghost
-  clears. Check whether a drop that changes nothing adds an undo step. If it does, don't call
-  `remember` when the snapped position is unchanged, and add a test.
-- A group drag draws one ghost per token.
-- Hit-testing during a drag still follows the dragged token through `draggingIds`.
-
-Fog, filters and `was_unseen` don't change, because the frames are the same ones the room already
-decides to send. The wall hint keeps working, because it reads the same two ends.
-
-Verify with a driver and two connections, against a scratch `SLATE_STATE`. Mid-drag, the watcher's
-canvas shows the token at its origin and a ghost at the end of the trail. After the drop, the token
-is at the new cell. After Escape, it's back where it started.
-
-Docs: *The trail* in `docs/drawings.md` and *Drag semantics* in CLAUDE.md, which describes the
-token moving during a drag.
-
-A possible follow-up, not part of this milestone: on drop, slide the token along the trail instead
-of jumping. It's client-only and about twenty lines.
 
 ## 54. Pointing at the backdrop
 

@@ -308,8 +308,8 @@ makes the trail a picture of the reading: a rasterised line is exactly `max + 1`
 is `max × 5`, and both are computed from the same two integers, so they can't disagree. Counting the
 lit squares and reading the label give the same answer.
 
-It also costs nothing. `trailCells` is derived from `ruler.from` and where the token is, both of
-which every client watching the drag already has, so all six screens rasterise the same line with
+It also costs nothing. `trailCells` is derived from `ruler.from` and the ghost (the token, once it
+has landed), both of which every client watching the drag already has, so all six screens rasterise the same line with
 nothing added to the wire or the room. Recording the path would have been *worse* for what this
 feature is for: drag frames are throttled, so a watcher's recording is coarser than the dragger's,
 and the same move would draw differently on each screen.
@@ -327,7 +327,9 @@ fall on whole numbers, which floor to themselves from both directions.
 A wide token traces its centre, one cell across whatever its size. The trail answers "which way did
 it come", and a 4×4 footprint swept over four cells of travel is a smear rather than a path.
 
-**The trail stays about two seconds after the drop, and the line and the reading fade with it.** One
+**The trail stays about two seconds after the token arrives, and the line and the reading fade with
+it.** The fade starts once the slide is over (*The ghost*, below), so the token reaches the end of a
+trail that is still there. One
 alpha covers all three, because they're one annotation, and a halo outliving its line by a frame
 looks like a rendering bug. That's a second timer beside `STALE_MS`, with a different purpose.
 `STALE_MS` is a guess about a client that vanished mid-drag, and this is an intentional pause on a
@@ -358,10 +360,9 @@ hint isn't precise enough to say which step did it.
 
 **Every client draws a ruler for any token it sees moving, not only the one dragging it.** That
 costs nothing on the wire, which is what makes it affordable. `TokenMoved` already says whether a
-frame is a drag or a drop, and a watcher's copy of a token stays at its settled position until the
-first drag frame arrives, so that position *is* the origin. It's read before the frame is applied
-and ignored on every later frame, or the ruler would measure from itself. No command, no event,
-nothing persisted. Nothing can leak either: the frames it's built from are the ones the room already
+frame is a drag or a drop, and a drag frame moves the ghost rather than the token, so a watcher's
+copy of the token stays at its settled position for the whole drag and that position *is* the
+origin. No command, no event, nothing persisted. Nothing can leak either: the frames it's built from are the ones the room already
 decided to send, so a hidden token's ruler goes exactly where a hidden token goes.
 
 A drop frame ends a ruler. The fallback for a client that vanishes mid-drag is a timeout, and it has
@@ -370,9 +371,9 @@ nothing, and silence means "they stopped moving the mouse" far more often than "
 ruler that expires while the DM is still holding a token is worse than a line left on screen for a
 few seconds by a browser that closed.
 
-**A group drag draws one ruler on the dragger's screen and one per token on everyone else's**, and
+**A group drag draws one reading on the dragger's screen and one per token on everyone else's**, and
 that difference is intended, not overlooked. The dragger's client knows which token the pointer went
-down on and starts a ruler for that one alone. A watcher only knows several tokens are moving,
+down on, and only that token's ruler is `measured`; the others carry a ghost and draw nothing else. A watcher only knows several tokens are moving,
 because the frames it builds rulers from are ordinary `TokenMoved`s and none says which was grabbed.
 Making the two agree would need an anchor flag on that message: a new field on the busiest token
 message in the project, spent on a hint that refuses nothing and persists nothing. See *Moving
@@ -381,6 +382,50 @@ several at once* in `docs/tokens.md`.
 A ruler belongs to the board its drag is on, and only the board on screen draws it (`shownBoard`
 again). The DM planning a move on the staged map measures there, and the table, who are sent no such
 frame, see nothing.
+
+### The ghost
+
+**A drag frame moves a ghost, not the token.** On every screen, the dragger's included, the token
+stays where it stands while its art is drawn faint (`GHOST_ALPHA`) with the drag ring where it's
+going, and the ruler, trail and reading run between the two. The drop moves the token. A move reads
+as a plan and then an action, which is what Hunter asked for after running a one-shot.
+
+The ghost is `Ruler::to`, so it shares the ruler's lifecycle: `seen` on a watcher's drag frame, `aim`
+on the dragger's pointermove, cleared by `end`, and taken by `forget`/`forgetExcept` when the token
+goes. That's why a ruler is per token even on the dragger's screen, where a group has one ghost per
+member but one reading (`measured`).
+
+Nothing changed on the wire or in the room's filters. The frames are the ones the room already
+decided to send, and the server still applies drag frames to its own copy of the token; only the
+clients stopped drawing the token there. So anything drawn at a token's position (its name, its hit
+points, a shape anchored to it, solo sight and player view) stays put until the drop.
+
+Three details on the dragger's side:
+
+- **On release the token is put where the ghost was**, without waiting for the server's snap. Left at
+  the origin, it would flick back to where it started for a round trip and then jump.
+- **A press that never moved sends nothing**, on either board. A click to select a creature isn't a
+  move, and on the staged board it mustn't plan one (a player's token has no command to un-plan).
+- **Escape calls the drag off**: every held token that sent a frame is dropped back on its origin,
+  which clears every watcher's ghost and puts the room's copy back where it was. The group stays
+  held; a second Escape clears it. The release that follows does nothing, like the one after a ping.
+
+The undo ring doesn't record a drop that leaves a token where the newest snapshot has it
+(`moved_since_step`). The comparison is with the snapshot and not with the token before the drop,
+because drag frames move the room's copy without being steps: a drag called off lands somewhere
+different from the last frame but the same as the room last recorded. See `docs/undo.md`.
+
+**On the drop the token slides along the line** from its origin instead of appearing at the end:
+150ms a cell, counted as the trail counts them, capped at 1.5s, easing out. It's on every screen,
+the dragger's included. It's drawing only (`slidePos`, read through `drawnPos` in `render.ts` by
+the art, the rings, the name and the hit points). Hit-testing, fog and player view read the real
+position, which the room set on the drop, so sight updates at once while the token is still on its
+way, and a click on a sliding token picks it up where it really is.
+
+The slide lives on the ruler (`slideMs`, set by `end`), so it needs no lifecycle of its own. It can't
+show anything the client wasn't sent, because it runs only between two positions the client already
+held. A token the drop takes out of sight is removed at once (`forget`), and one the drop brings into
+sight appears at the destination. Escape, undo and reconnect don't slide: they have no landed ruler.
 
 ## Ping
 

@@ -961,23 +961,21 @@ function boot(ui: Ui, choice: RoomChoice, alone: boolean): void {
       const token = room.scene.tokens.find((t) => t.id === move.id);
       if (token === undefined) return;
 
-      // Where our copy stands *before* the frame is applied. Until the first
-      // drag frame lands that is the settled position the drag began from, and
-      // this is the only chance to learn it: nothing on the wire says where a
-      // drag started, and the next frame has already moved the token.
-      const from =
-        move.staged && token.stagedPos !== null ? token.stagedPos : { x: token.x, y: token.y };
+      // A drag frame moves the ghost, not the token: the token stays where it
+      // stands until the drop, so the move reads as a plan and then an action.
+      // That also makes where our copy stands the origin, on every frame of the
+      // drag, which nothing on the wire would otherwise say.
       if (move.dragging) {
-        rulers.seen(move.id, from, move.staged, performance.now());
-      } else {
-        // The drop. Ours never reaches here (the server does not echo our own
-        // drag frames), and input.ts has already ended that one on pointerup.
-        rulers.end(move.id, performance.now());
+        const from =
+          move.staged && token.stagedPos !== null ? token.stagedPos : { x: token.x, y: token.y };
+        rulers.seen(move.id, from, { x: move.x, y: move.y }, move.staged, performance.now());
+        return;
       }
+      // The drop. Ours arrives here too, as the server's snap of it, after
+      // input.ts has already ended our ruler on pointerup.
+      rulers.end(move.id, { x: move.x, y: move.y }, performance.now());
 
       // The server is authoritative, including over our own prediction.
-      // Mid-drag frames for the token we are dragging are never sent back to
-      // us, so this is either someone else's move or our own settled drop.
       //
       // The flag says which of the token's two positions this frame is about.
       // Ignoring it would write a plan for the next map onto the board the
@@ -985,9 +983,8 @@ function boot(ui: Ui, choice: RoomChoice, alone: boolean): void {
       if (move.staged) {
         token.stagedPos = { x: move.x, y: move.y };
         // A settled plan can be the token's first, and the token panel offers
-        // *bring to next map* only for a token without one. Not on drag frames:
-        // nothing in the panel reads a plan's position.
-        if (!move.dragging) tokenTool?.update(room.scene);
+        // *bring to next map* only for a token without one.
+        tokenTool?.update(room.scene);
       } else {
         token.x = move.x;
         token.y = move.y;
@@ -1763,7 +1760,6 @@ async function start(
       map,
       now,
       tokenImages,
-      draggingIds: input.draggingIds,
       // Expired here, not in the renderer: a client that disconnected mid-drag
       // sends no drop frame, and nothing else in a frame checks the clock.
       rulers: rulers.active(now),

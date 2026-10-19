@@ -188,6 +188,97 @@ fn a_drag_is_one_step_and_not_thirty() {
     assert_eq!(label(&state).as_deref(), Some("moving a token"));
 }
 
+/// A drag or drop of `t6`, the built-in room's token, on the live board.
+fn move_t6(x: f32, y: f32, dragging: bool) -> ClientMsg {
+    ClientMsg::MoveToken {
+        id: TokenId::new("t6"),
+        x,
+        y,
+        dragging,
+        staged: false,
+    }
+}
+
+#[test]
+fn a_drop_where_the_token_already_stood_is_not_a_step() {
+    // A click to select a creature that twitched a pixel. It drops the token
+    // on its own cell, and filling the ring with those would push out the
+    // steps the DM actually wants back.
+    let mut state = room();
+    let dm = ClientId(1);
+    let mut dm_rx = join_as_dm(&mut state, dm);
+    let watcher = ClientId(2);
+    let mut watcher_rx = join_as_dm(&mut state, watcher);
+    let _ = drain_all(&mut watcher_rx);
+    let at = token(&state, "t6");
+
+    let before = state.undo.len();
+    state.handle(dm, move_t6(at.x + 0.1, at.y - 0.1, false));
+    let _ = drain_all(&mut dm_rx);
+
+    assert_eq!(
+        state.undo.len(),
+        before,
+        "nothing moved, so nothing to undo"
+    );
+    // The drop still goes out. A watcher is drawing a ghost for every frame it
+    // was sent, and the drop is what clears it.
+    assert!(
+        drain_all(&mut watcher_rx).iter().any(|m| matches!(
+            m,
+            ServerMsg::TokenMoved {
+                dragging: false,
+                ..
+            }
+        )),
+        "the drop must still reach a watcher"
+    );
+}
+
+#[test]
+fn a_drag_called_off_is_not_a_step() {
+    // Escape drops the token back on its origin. The room moved it on every
+    // drag frame, so the drop differs from where the last frame left it, and
+    // only a comparison with the ring sees that nothing changed.
+    let mut state = room();
+    let dm = ClientId(1);
+    let mut dm_rx = join_as_dm(&mut state, dm);
+    let at = token(&state, "t6");
+
+    let before = state.undo.len();
+    for step in 1..=4 {
+        state.handle(dm, move_t6(at.x + step as f32, at.y, true));
+        let _ = drain_all(&mut dm_rx);
+    }
+    state.handle(dm, move_t6(at.x, at.y, false));
+    let _ = drain_all(&mut dm_rx);
+
+    assert_eq!(
+        state.undo.len(),
+        before,
+        "a move called off leaves nothing to undo"
+    );
+    let back = token(&state, "t6");
+    assert_eq!((back.x, back.y), (at.x, at.y));
+}
+
+#[test]
+fn a_move_and_a_move_back_are_two_steps() {
+    // The comparison is with the last step, not with where the token began
+    // the session: moving it back is a change the DM may want to undo.
+    let mut state = room();
+    let dm = ClientId(1);
+    let mut dm_rx = join_as_dm(&mut state, dm);
+    let at = token(&state, "t6");
+
+    let before = state.undo.len();
+    state.handle(dm, move_t6(at.x + 3.0, at.y, false));
+    state.handle(dm, move_t6(at.x, at.y, false));
+    let _ = drain_all(&mut dm_rx);
+
+    assert_eq!(state.undo.len(), before + 2);
+}
+
 #[test]
 fn the_ring_stops_at_its_depth_and_undo_is_not_itself_a_step() {
     let mut state = room();

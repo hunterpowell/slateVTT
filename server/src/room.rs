@@ -2133,6 +2133,37 @@ impl RoomState {
         }
     }
 
+    /// Whether a token now stands somewhere other than where the newest undo
+    /// snapshot has it, on the board a drop was for.
+    ///
+    /// Compared with the snapshot rather than the token before the drop,
+    /// because drag frames move the token in the room without being steps. A
+    /// drag called off is dropped back on its origin, which differs from where
+    /// the last drag frame left it but not from the room as last recorded.
+    /// That snapshot is the present (the back of the ring always is), so a
+    /// token it doesn't hold, or an empty ring, counts as moved.
+    fn moved_since_step(&self, id: &TokenId, staged: bool) -> bool {
+        let Some(now) = self.tokens.get(id) else {
+            return true;
+        };
+        let Some(then) = self
+            .undo
+            .back()
+            .and_then(|snapshot| snapshot.state.tokens.iter().find(|t| t.id == *id))
+        else {
+            return true;
+        };
+        if staged {
+            now.staged_pos != then.staged_pos
+        } else {
+            Pos { x: now.x, y: now.y }
+                != Pos {
+                    x: then.x,
+                    y: then.y,
+                }
+        }
+    }
+
     /// What the DM's undo would take back, or `None` when the ring holds only
     /// the state they are in.
     fn undo_label(&self) -> Option<String> {
@@ -2279,6 +2310,15 @@ impl RoomState {
         // Read before `apply` because this describes the command, and `apply`
         // consumes it.
         let did = undid(&msg);
+        let dropped = match &msg {
+            ClientMsg::MoveToken {
+                id,
+                dragging: false,
+                staged,
+                ..
+            } => Some((id.clone(), *staged)),
+            _ => None,
+        };
 
         let mut events = self.apply(origin, msg);
         if let Some(before) = before {
@@ -2296,7 +2336,12 @@ impl RoomState {
         // `refresh_fog` may have grown `revealed`. That set is on disk, so a
         // snapshot taken before it would restore the party's memory to one drop
         // earlier every time.
-        if let Some(did) = did.filter(|_| dirty) {
+        //
+        // A drop that lands where the token already stood changed nothing: a
+        // click to select it, or a drag called off with Escape, which the
+        // client ends by dropping it back where it started.
+        let moved = dropped.is_none_or(|(id, staged)| self.moved_since_step(&id, staged));
+        if let Some(did) = did.filter(|_| dirty && moved) {
             self.remember(did);
             events.push(Event::UndoChanged);
         }

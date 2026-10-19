@@ -415,9 +415,13 @@ Token movement uses two message rates:
 - On drop: `MoveToken { dragging: false }`. This snaps to the grid and marks the room dirty
   for persistence.
 
-The client predicts locally: it moves its own token immediately rather than waiting for the
-round trip, and corrects only if the server rejects. **The server must not echo drag frames
-back to the sender**; doing so causes visible rubber-banding.
+A drag frame moves a ghost, not the token, on every screen: the token stays where it stands and
+moves on the drop, sliding along the line on every screen (drawing only: fog and hit-testing use
+the real position at once). The ghost and the slide live on the token's ruler. On release the dragger puts its own token where the ghost was without waiting for the
+round trip. Escape mid-drag drops every held token back on its origin, and a drop that leaves a
+token where the newest undo snapshot has it is no undo step. **The server must not echo drag
+frames back to the sender**; doing so causes visible rubber-banding. See *The ghost* in
+`docs/drawings.md`.
 
 `MoveToken` and `TokenMoved` both carry `staged`, saying which of the token's two positions the
 frame refers to. Code on either side of that one branch doesn't know there are two.

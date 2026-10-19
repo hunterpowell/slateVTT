@@ -10,7 +10,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
-import { createRulers, feetMoved, rulerAlpha, trailCells } from './ruler.js';
+import { createRulers, feetMoved, rulerAlpha, slideDuration, slidePos, trailCells } from './ruler.js';
 
 const at = (x: number, y: number) => ({ x, y });
 const ORIGIN = at(0, 0);
@@ -97,10 +97,10 @@ test('the trail starts in the cell the token left and ends in the one it reached
 
 test('a ruler is solid while it runs and fades once it has landed', () => {
   const rulers = createRulers();
-  rulers.begin('t1', at(1, 1), false);
+  rulers.begin('t1', at(1, 1), false, true);
   assert.equal(rulerAlpha(must(rulers.active(0).get('t1'), 'a live ruler'), 0), 1);
 
-  rulers.end('t1', 1_000);
+  rulers.end('t1', at(1, 1), 1_000);
   const landed = must(rulers.active(1_000).get('t1'), 'a landed ruler');
   assert.equal(rulerAlpha(landed, 1_000), 1);
   assert.equal(rulerAlpha(landed, 2_000), 0.5);
@@ -109,17 +109,17 @@ test('a ruler is solid while it runs and fades once it has landed', () => {
 
 test('a drop starts a ruler fading rather than deleting it', () => {
   const rulers = createRulers();
-  rulers.begin('t1', at(1, 1), false);
-  rulers.end('t1', 0);
+  rulers.begin('t1', at(1, 1), false, true);
+  rulers.end('t1', at(1, 1), 0);
   assert.ok(rulers.active(1_999).has('t1'), 'still lingering');
   assert.ok(!rulers.active(2_001).has('t1'), 'gone once it has faded');
 });
 
 test('a second drop does not restart the fade on a move nobody made', () => {
   const rulers = createRulers();
-  rulers.begin('t1', at(1, 1), false);
-  rulers.end('t1', 0);
-  rulers.end('t1', 1_500);
+  rulers.begin('t1', at(1, 1), false, true);
+  rulers.end('t1', at(1, 1), 0);
+  rulers.end('t1', at(1, 1), 1_500);
   assert.ok(!rulers.active(2_001).has('t1'));
 });
 
@@ -128,24 +128,24 @@ test('a landed ruler is not also swept as stale', () => {
   // a ruler that has landed has stopped receiving frames by definition, so
   // applying that guess to it would delete the trail everyone is looking at.
   const rulers = createRulers();
-  rulers.seen('t1', at(1, 1), false, 0);
-  rulers.end('t1', 20_000);
+  rulers.seen('t1', at(1, 1), at(1, 1), false, 0);
+  rulers.end('t1', at(1, 1), 20_000);
   assert.ok(rulers.active(20_001).has('t1'), 'landed long after the last drag frame');
 });
 
 test('a watcher keeps the origin from the first frame it saw', () => {
   const rulers = createRulers();
-  rulers.seen('t1', at(1, 1), false, 0);
-  rulers.seen('t1', at(4, 4), false, 100);
+  rulers.seen('t1', at(1, 1), at(1, 1), false, 0);
+  rulers.seen('t1', at(4, 4), at(4, 4), false, 100);
   const ruler = rulers.active(100).get('t1');
   assert.deepEqual(ruler?.from, { x: 1, y: 1 }, 'measured from itself otherwise');
 });
 
 test('a fresh drag on a still-fading ruler takes the new origin', () => {
   const rulers = createRulers();
-  rulers.seen('t1', at(1, 1), false, 0);
-  rulers.end('t1', 100);
-  rulers.seen('t1', at(4, 4), false, 200);
+  rulers.seen('t1', at(1, 1), at(1, 1), false, 0);
+  rulers.end('t1', at(1, 1), 100);
+  rulers.seen('t1', at(4, 4), at(4, 4), false, 200);
   const ruler = rulers.active(200).get('t1');
   assert.deepEqual(ruler?.from, { x: 4, y: 4 });
   assert.equal(ruler?.endedAt, null, 'running again, not still fading');
@@ -153,22 +153,98 @@ test('a fresh drag on a still-fading ruler takes the new origin', () => {
 
 test('a drag nobody has sent a frame for in a long while is dropped', () => {
   const rulers = createRulers();
-  rulers.seen('t1', at(1, 1), false, 0);
+  rulers.seen('t1', at(1, 1), at(1, 1), false, 0);
   assert.ok(rulers.active(14_999).has('t1'), 'a pause is not a disconnection');
   assert.ok(!rulers.active(15_001).has('t1'));
 });
 
 test('our own drag never goes stale, having a pointerup to end it', () => {
   const rulers = createRulers();
-  rulers.begin('t1', at(1, 1), false);
+  rulers.begin('t1', at(1, 1), false, true);
   assert.ok(rulers.active(10_000_000).has('t1'));
 });
 
 test('a token that vanished mid-drag takes its trail with it', () => {
   const rulers = createRulers();
-  rulers.begin('t1', at(1, 1), false);
+  rulers.begin('t1', at(1, 1), false, true);
   rulers.forget('t1');
   assert.ok(!rulers.active(0).has('t1'), 'a line pointing at where it went, otherwise');
+});
+
+test('a watcher ghost follows each frame while the token stays at the origin', () => {
+  const rulers = createRulers();
+  rulers.seen('t1', at(1, 1), at(2, 1), false, 0);
+  rulers.seen('t1', at(1, 1), at(5, 3), false, 100);
+  const ruler = must(rulers.active(100).get('t1'), 'a live ruler');
+  assert.deepEqual(ruler.from, { x: 1, y: 1 });
+  assert.deepEqual(ruler.to, { x: 5, y: 3 }, 'the latest frame');
+  assert.equal(ruler.measured, true, 'a watcher measures every token it sees moving');
+});
+
+test('our own ghost starts on the token and follows aim', () => {
+  const rulers = createRulers();
+  rulers.begin('t1', at(1, 1), false, true);
+  assert.deepEqual(rulers.active(0).get('t1')?.to, { x: 1, y: 1 });
+  rulers.aim('t1', at(3, 4));
+  assert.deepEqual(rulers.active(0).get('t1')?.to, { x: 3, y: 4 });
+});
+
+test('a group member other than the anchor is a ghost without a reading', () => {
+  const rulers = createRulers();
+  rulers.begin('anchor', at(1, 1), false, true);
+  rulers.begin('other', at(2, 1), false, false);
+  assert.equal(rulers.active(0).get('anchor')?.measured, true);
+  assert.equal(rulers.active(0).get('other')?.measured, false);
+});
+
+test('a drop clears the ghost, and aim cannot bring it back', () => {
+  const rulers = createRulers();
+  rulers.begin('t1', at(1, 1), false, true);
+  rulers.aim('t1', at(3, 1));
+  rulers.end('t1', at(1, 1), 0);
+  assert.equal(rulers.active(0).get('t1')?.to, null, 'the token is at the far end now');
+  rulers.aim('t1', at(6, 1));
+  assert.equal(rulers.active(0).get('t1')?.to, null, 'a landed move does not move again');
+});
+
+test('a slide takes longer the further it goes, up to a cap', () => {
+  assert.equal(slideDuration(at(1.5, 1.5), at(1.5, 1.5)), 0, 'nothing to slide');
+  assert.equal(slideDuration(at(1.5, 1.5), at(2.5, 1.5)), 150);
+  assert.equal(slideDuration(at(1.5, 1.5), at(4.5, 4.5)), 450, 'a diagonal counts its cells');
+  assert.equal(slideDuration(at(1.5, 1.5), at(40.5, 1.5)), 1_500, 'a long dash is capped');
+});
+
+test('a landed token slides from its origin to where it is, and stops there', () => {
+  const rulers = createRulers();
+  rulers.begin('t1', at(0, 0), false, true);
+  rulers.end('t1', at(4, 0), 1_000); // 600ms
+  const ruler = must(rulers.active(1_000).get('t1'), 'a landed ruler');
+  const dest = at(4, 0);
+
+  assert.deepEqual(slidePos(ruler, dest, 1_000), { x: 0, y: 0 }, 'it starts at the origin');
+  const half = slidePos(ruler, dest, 1_300).x;
+  assert.ok(half > 2 && half < 4, `eases out, so it is past halfway at half time (${half})`);
+  assert.deepEqual(slidePos(ruler, dest, 1_600), dest, 'and arrives on time');
+  assert.deepEqual(slidePos(ruler, dest, 9_000), dest);
+});
+
+test('a token is drawn where it is while its drag still runs', () => {
+  const rulers = createRulers();
+  rulers.begin('t1', at(0, 0), false, true);
+  rulers.aim('t1', at(4, 0));
+  const ruler = must(rulers.active(0).get('t1'), 'a live ruler');
+  assert.deepEqual(slidePos(ruler, at(0, 0), 0), { x: 0, y: 0 });
+});
+
+test('the trail holds while the token slides, and fades once it has arrived', () => {
+  const rulers = createRulers();
+  rulers.begin('t1', at(0, 0), false, true);
+  rulers.end('t1', at(10, 0), 0); // 1500ms
+  const ruler = must(rulers.active(0).get('t1'), 'a landed ruler');
+  assert.equal(rulerAlpha(ruler, 1_400), 1, 'still sliding');
+  assert.equal(rulerAlpha(ruler, 2_500), 0.5, 'halfway through the fade');
+  assert.ok(rulers.active(3_400).has('t1'));
+  assert.ok(!rulers.active(3_600).has('t1'), 'gone once slide and fade are both over');
 });
 
 /** `assert.ok` is declared without `asserts`, deliberately — narrowing would

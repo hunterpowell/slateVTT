@@ -75,6 +75,10 @@ The exclusions `persists` can't express:
   through it. Without this, the second press would return to where the first started.
 - `Hello`, the three ephemeral commands (`Sketch`, `Ping`, `MoveCursor`), and `Say` and `Roll`
   persist nothing either. Their `None` is a second guard, not the only one.
+- **A drop that leaves a token where the newest snapshot has it is not a step** (`moved_since_step`).
+  A click that twitched a pixel sends one, and so does Escape calling a drag off. The snapshot is the
+  reference, not the token before the drop, because drag frames move the room's copy without being
+  steps. The `TokenMoved` still goes out, since watchers need it to clear the ghost. Milestone 52.
 
 **The labels are `&'static str` and aren't built from the room.** A name looked up at push time is
 the name after the change, so undoing a rename would offer to undo the new name.

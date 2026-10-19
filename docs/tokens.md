@@ -148,8 +148,8 @@ gains a second meaning:
 - So does Escape, which is what that key means to every tool in the rail. A group is something
   being held, and Escape is how you let go of anything held here. A board with walls traced across
   every square may not have an empty square to click on, which the previous rule alone doesn't
-  cover. A drag already in progress is unaffected: it captured its members at pointerdown and moves
-  as one from then on, so Escape mid-drag still completes the move, as it always has for one token.
+  cover. Escape during a drag calls the drag off instead and leaves the group held, so one press does
+  one thing (*The ghost* in `docs/drawings.md`).
 
 A shift-click is **local and silent**: it takes effect on the way down, has no drag, and sends
 nothing. For that reason it's checked before the ping timer and must stay there. Holding a
@@ -165,8 +165,8 @@ cell off its starting spacing. That's `snap_to_cell` depending on how wide a tok
 alternative is a second copy of that rule on the client, which the project avoids by keeping the
 server the only place snapping happens.
 
-A group gets one ruler, not one per member: the anchor's, the token the pointer actually went
-down on. A distance reading is a question about one creature, and six lines with six labels is a
+A group gets one reading, not one per member: the anchor's, the token the pointer actually went
+down on. Every member gets a ghost (*The ghost* in `docs/drawings.md`). A distance reading is a question about one creature, and six lines with six labels is a
 board nobody can read. This only applies to the *dragger's* screen, though. Every other client builds
 its rulers from the `TokenMoved` frames it receives, and nothing on the wire says which token was
 grabbed, so the table sees one ruler per moving token. The alternative was marking the anchor on the

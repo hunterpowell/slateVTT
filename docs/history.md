@@ -2554,6 +2554,37 @@ at a time.
   `ClearPlan` is refused for one, the panel offers neither button for one, and
   `every_party_token_comes_to_the_next_map` tests it.
 
+### 52: ghost and path, then move
+
+From Hunter's notes running a one-shot as the DM. Planned 2026-10-14, built 2026-10-19. A token
+followed the pointer on every screen; Hunter wanted a move to read as a plan and then an action.
+
+- A drag frame moves a ghost held on the token's ruler (`Ruler::to`), not the token. Rulers became
+  per token on the dragger's screen too, with `measured` keeping one reading for a group. Design in
+  *The ghost* in `docs/drawings.md`.
+- **Planned as client-only, and wasn't quite.** The roadmap said to check whether a drop that
+  changes nothing adds an undo step. It did, and not only for Escape: every plain click on a token
+  sent a drop, so selecting a creature pushed a "moving a token" step. The fix compares with the
+  newest undo snapshot, since the room's copy has moved with the drag frames by the time a cancelled
+  drag drops back on its origin. Comparing with the token before the drop would have counted that as
+  a move.
+- A press that never moved now sends no drop at all, on the live board as well as the staged one.
+- Escape used to leave a drag running, and `docs/tokens.md` said so. Hunter chose that it calls the
+  drag off and leaves the group held.
+- Hunter chose the ghost's look: the token's art at 40% with the drag ring. The drag ring and shadow
+  moved off the token and `draggingIds` went with them.
+- `drive-ghost.mjs` checks it on the player's canvas. Mid-drag the origin cell changed 34% (the
+  ruler's line crossing it) against 100% after the drop, and one undo after an Escape took back the
+  real move.
+- The follow-up the roadmap listed was built the same day at Hunter's request: on the drop the token
+  slides along the line, 150ms a cell capped at 1.5s, on every screen. Drawing only; sight updates on
+  the drop as before. The trail's fade now starts when the slide ends.
+- `drive-ghost.mjs`'s slide check first counted any change in the cells between, and passed with
+  slides switched off: the trail starts fading on the drop and changes every pixel. It now counts
+  the grey an artless token is filled with, which read 0% with slides off and 97% with them on.
+- Left open: in player view, Escape also turns player view off, because `fogtool.ts` listens for the
+  same key.
+
 ### 53: players enter their own initiative
 
 From playtest feedback (Hunter's brother, running sessions on the second site). Built 2026-10-19. The

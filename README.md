@@ -189,6 +189,7 @@ which token is standing on a given square.
 | `drive-fog.mjs`    | Fog of war, room lighting, and what a player's client never fetched | both     |
 | `drive-names.mjs`  | The names-under-tokens switch, on both boards at once              | both     |
 | `drive-ruler.mjs`  | The movement trail, the diagonal switch, the initiative panel      | both     |
+| `drive-ghost.mjs`  | A drag drawing a ghost while the token stays put, the slide on the drop, Escape calling it off, and the undo that skips it | both     |
 | `drive-ping.mjs`   | The hold that pings, and the ring reaching an unexplored corner    | both     |
 | `drive-draw.mjs`   | The line and pen tools: a pen stroke reaching the DM only when it's finished, and erasing a stroke by clicking beside it | both     |
 | `drive-select.mjs` | Shift-click and box selection, the group drag that moves them together, and Delete removing them | both     |
