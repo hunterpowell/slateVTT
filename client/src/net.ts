@@ -79,6 +79,8 @@ export interface Handlers {
    *  ground the party has not explored never arrives), so anything that
    *  arrives may be drawn without further checks. */
   onCursorMoved(cursor: Extract<ServerMsg, { type: 'cursor_moved' }>): void;
+  /** Somebody pinged, pointed or drew on the backdrop. Never our own. */
+  onPointed(pointed: Extract<ServerMsg, { type: 'pointed' }>): void;
   /** Somebody said something we are party to, including our own: the one
    *  relayed frame in this protocol that is echoed to its sender. Nothing here
    *  is filtered: the server decided we may hold this line. */
@@ -269,6 +271,9 @@ export function connect(roomId: string, on: Handlers): Net {
         break;
       case 'cursor_moved':
         on.onCursorMoved(msg);
+        break;
+      case 'pointed':
+        on.onPointed(msg);
         break;
       case 'said':
         on.onSaid(msg.line);

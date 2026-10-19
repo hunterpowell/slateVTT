@@ -201,7 +201,7 @@ which token is standing on a given square.
 | `drive-notes.mjs`  | The scratchpad: one person in two tabs, and the DM holding none of it | three    |
 | `drive-presence.mjs` | Who is connected, the colour a player picks, and being told it's your turn | three    |
 | `drive-cursors.mjs` | Everybody's pointer, and the DM's *not* reaching the table over unexplored ground | both     |
-| `drive-backdrop.mjs` | A picture in front of the table, and the board being unchanged when it comes down | both     |
+| `drive-backdrop.mjs` | A picture in front of the table, pointing at it from two windows, and the board being unchanged when it comes down | both     |
 | `drive-library.mjs` | Adding an image to a library and removing it again; the one driver that tests the disk | DM       |
 | `drive-rooms.mjs`  | Two rooms on one server: the picker, and one board's tokens being absent from the other | both     |
 | `drive-roster.mjs` | The DM adding, renaming and removing a player, seen on that player's screen; on a one-room site, no room picker | both     |

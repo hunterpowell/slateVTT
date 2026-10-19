@@ -2600,3 +2600,25 @@ DM was typing in every player's roll as it was called out.
 - Done in the same session: the ping ring got a solid black border (3px each side of the ring; it was
   a 60% halo showing about 1.5px), because it blended into dark maps. Cursors kept the lighter halo.
   Whether pings also need motion or a different shape is still open.
+
+### 54: pointing at the backdrop
+
+From playtest feedback (the main campaign's DM, who was showing a building and wanted to mark which
+window was broken). Built 2026-10-19. Design in *Pointing at it* in `docs/maps.md`.
+
+- Built as designed: one `Point { gesture }` / `Pointed { by, gesture }` pair, positions as `Frac`,
+  nothing stored. Kept strokes and a setting were both declined before building; the reasons are in
+  `docs/maps.md`.
+- `simplifyPath` couldn't be reused as written. Its tolerance is in cells (0.04), which in fraction
+  space is 4% of the picture, and it assumes an implied origin. It became a wrapper over
+  `simplifyLine(points, tolerance, cap)`, and a stroke passes 0.002.
+- `cursor_seen`'s switch half became `hand_shown`, so the backdrop's pointer gets the DM switch
+  without a dummy `Pos` for the fog half.
+- `Pings` gained `clear()`, so a backdrop change drops the rings as well as the strokes and pointers.
+- `drive-backdrop.mjs` now opens the player in a taller window and finds the picture on each canvas
+  from the letterbox colour, rather than by the client's arithmetic. It also picks a still, since a
+  looping video changes every pixel. A ping changed 1983 pixels at the aimed spot on the player's
+  screen and 0 elsewhere; the stroke 551 and 0, then 0 after it faded.
+- Left open: the picture is drawn across the whole window, so on the DM's screen part of it is under
+  the left rail and the right-hand column, and can't be pointed at there. That was true of the
+  backdrop before this milestone.

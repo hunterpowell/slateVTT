@@ -25,7 +25,8 @@ would load the file into every session.
 - Tracks initiative order and the current turn
 - Lets the DM prepare the next map out of sight of the table, then promote it
 - Lets the DM show everyone a picture in place of the board during stretches with nothing to
-  move, without disturbing the board underneath
+  move, without disturbing the board underneath, and lets anyone ping, point or draw a fading
+  stroke on it
 - Lets anyone measure a distance, draw a spell area, a line or a freehand mark, or ping a spot so
   everyone sees it
 - Lets the DM trace walls and doors, and limits what the table sees to what their own tokens have
@@ -628,7 +629,7 @@ two readers and must agree. `iso-fixed` is a client-side gesture, not room state
 must stay flat: no depth sorting, wall height, sprite anchoring or elevation.
 
 → `docs/maps.md` before touching `maptool.ts`, `calibrate.ts`, `library.rs`, `library.ts`,
-`drawBackdrop`, `shownBackdrop`, `fog::basis`, `gridBasis`/`shapeOf`, `gridFromEdge`,
+`drawBackdrop`, `shownBackdrop`, `backdrop.ts`, `pointing.ts`, `Point`/`Pointed`/`Gesture`/`Frac`, `fog::basis`, `gridBasis`/`shapeOf`, `gridFromEdge`,
 `shownPos`/`leavesOnPromote`, `shelve_tokens`/`file_encounter`/`restore_tokens`/
 `remove_unplanned_monsters`, or `SetMap`/`MapInfo`/`GridShape`/`SetBackdrop`/`Prepared`/`ClearPlan` on the
 server.

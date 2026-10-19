@@ -2401,3 +2401,207 @@ fn a_backdrop_url_is_bounded_like_a_map_url() {
     // And `None` isn't an empty URL. It means the board.
     assert!(state.check(dm, &show(None)).is_ok());
 }
+
+// --- pointing at the backdrop -------------------------------------------
+//
+// Pings, pointers and pen strokes on the picture. Nothing here is stored, so
+// half of these assert a frame that didn't leave. See *Pointing at it* in
+// `docs/maps.md`.
+
+fn at(x: f32, y: f32) -> Frac {
+    Frac { x, y }
+}
+
+fn point(gesture: Gesture) -> ClientMsg {
+    ClientMsg::Point { gesture }
+}
+
+fn stroke() -> Gesture {
+    Gesture::Stroke(vec![at(0.25, 0.5), at(0.3, 0.45), at(0.4, 0.5)])
+}
+
+/// Every backdrop gesture one connection was sent, in order.
+fn pointed(rx: &mut mpsc::Receiver<ServerMsg>) -> Vec<(Owner, Gesture)> {
+    drain(rx)
+        .into_iter()
+        .filter_map(|msg| match msg {
+            ServerMsg::Pointed { by, gesture } => Some((by, gesture)),
+            _ => None,
+        })
+        .collect()
+}
+
+#[test]
+fn a_gesture_on_the_backdrop_reaches_everyone_but_the_sender() {
+    let mut state = room();
+    let mut dm = join_as_dm(&mut state, ClientId(1));
+    let mut saelyn = join_as_player(&mut state, ClientId(2), "saelyn");
+    let mut cleodara = join_as_player(&mut state, ClientId(3), "cleodara");
+    state.handle(ClientId(1), show(Some(CAMPFIRE)));
+    settle(&mut [&mut dm, &mut saelyn, &mut cleodara]);
+
+    let saelyns = Owner::Player(PlayerId::new("saelyn"));
+    for gesture in [
+        Gesture::Ping(at(0.5, 0.25)),
+        Gesture::Cursor(at(0.75, 0.0)),
+        stroke(),
+    ] {
+        state.handle(ClientId(2), point(gesture.clone()));
+        let sent = vec![(saelyns.clone(), gesture)];
+        assert_eq!(pointed(&mut dm), sent);
+        assert_eq!(pointed(&mut cleodara), sent);
+        assert!(
+            pointed(&mut saelyn).is_empty(),
+            "their own mark is already on their screen; an echo would restart it"
+        );
+    }
+}
+
+#[test]
+fn with_no_backdrop_up_a_gesture_is_dropped_not_refused() {
+    // The DM taking the picture down while somebody is mid-stroke is a normal
+    // race. The stroke goes nowhere, and nobody gets a red banner for it.
+    let mut state = room();
+    let mut dm = join_as_dm(&mut state, ClientId(1));
+    let mut saelyn = join_as_player(&mut state, ClientId(2), "saelyn");
+    settle(&mut [&mut dm, &mut saelyn]);
+
+    assert!(state.check(ClientId(2), &point(stroke())).is_ok());
+    state.handle(ClientId(2), point(stroke()));
+
+    assert!(
+        drain(&mut dm).is_empty(),
+        "a stroke on a picture nobody has"
+    );
+    assert!(
+        drain(&mut saelyn).is_empty(),
+        "the sender was told something about a gesture that went nowhere"
+    );
+}
+
+#[test]
+fn a_pointer_on_the_backdrop_obeys_both_cursor_switches() {
+    // The switches are about hands, not boards, so they hold on the picture
+    // too. A ping and a stroke are chosen gestures and go through regardless,
+    // as a ping does on the board.
+    let mut state = room();
+    let mut dm = join_as_dm(&mut state, ClientId(1));
+    let mut saelyn = join_as_player(&mut state, ClientId(2), "saelyn");
+    let mut cleodara = join_as_player(&mut state, ClientId(3), "cleodara");
+    state.handle(ClientId(1), show(Some(CAMPFIRE)));
+
+    state.handle(ClientId(1), ClientMsg::SetShowCursors { show: false });
+    settle(&mut [&mut dm, &mut saelyn, &mut cleodara]);
+    state.handle(ClientId(2), point(Gesture::Cursor(at(0.5, 0.5))));
+    assert!(
+        pointed(&mut dm).is_empty(),
+        "pointers are off for everybody"
+    );
+    assert!(pointed(&mut cleodara).is_empty());
+    state.handle(ClientId(2), point(Gesture::Ping(at(0.5, 0.5))));
+    assert_eq!(pointed(&mut cleodara).len(), 1, "a ping is not a pointer");
+
+    state.handle(ClientId(1), ClientMsg::SetShowCursors { show: true });
+    state.handle(ClientId(1), ClientMsg::SetShowDmCursor { show: false });
+    settle(&mut [&mut dm, &mut saelyn, &mut cleodara]);
+    state.handle(ClientId(1), point(Gesture::Cursor(at(0.5, 0.5))));
+    assert!(
+        pointed(&mut saelyn).is_empty(),
+        "the DM put their pointer away, and it showed on the picture"
+    );
+    state.handle(ClientId(2), point(Gesture::Cursor(at(0.5, 0.5))));
+    assert_eq!(
+        pointed(&mut cleodara).len(),
+        1,
+        "the DM's switch took a player's pointer with it"
+    );
+    state.handle(ClientId(1), point(stroke()));
+    assert_eq!(
+        pointed(&mut saelyn).len(),
+        1,
+        "the DM's pointer switch swallowed a stroke"
+    );
+}
+
+#[test]
+fn nothing_about_a_gesture_is_kept() {
+    // No save, no undo step, nothing for a latecomer. That is what keeps the
+    // feature small; a stored stroke would need all three decided.
+    let mut state = room();
+    let _dm = join_as_dm(&mut state, ClientId(1));
+    let _saelyn = join_as_player(&mut state, ClientId(2), "saelyn");
+    state.handle(ClientId(1), show(Some(CAMPFIRE)));
+    let depth = state.undo.len();
+
+    for (who, gesture) in [
+        (ClientId(2), stroke()),
+        (ClientId(2), Gesture::Ping(at(0.1, 0.1))),
+        (ClientId(1), Gesture::Cursor(at(0.9, 0.9))),
+        (ClientId(1), stroke()),
+    ] {
+        assert!(
+            !state.handle(who, point(gesture)),
+            "a gesture marked the room for a disk write"
+        );
+    }
+    assert_eq!(state.undo.len(), depth, "a gesture became an undo step");
+
+    let mut late = join_as_player(&mut state, ClientId(3), "cleodara");
+    assert!(
+        !drain_all(&mut late)
+            .iter()
+            .any(|msg| matches!(msg, ServerMsg::Pointed { .. })),
+        "a latecomer was handed a stroke made before they arrived"
+    );
+}
+
+#[test]
+fn a_point_off_the_picture_is_refused() {
+    let mut state = room();
+    let _saelyn = join_as_player(&mut state, ClientId(1), "saelyn");
+    let refused = |gesture: Gesture| state.check(ClientId(1), &point(gesture)).is_err();
+
+    assert!(refused(Gesture::Ping(at(1.01, 0.5))));
+    assert!(refused(Gesture::Cursor(at(0.5, -0.01))));
+    assert!(refused(Gesture::Ping(at(f32::NAN, 0.5))));
+    assert!(refused(Gesture::Cursor(at(f32::INFINITY, 0.5))));
+    assert!(refused(Gesture::Stroke(vec![at(0.5, 0.5), at(0.5, 2.0)])));
+    assert!(
+        refused(Gesture::Stroke(vec![at(0.5, 0.5)])),
+        "a stroke going nowhere"
+    );
+    let many: Vec<Frac> = (0..=MAX_PATH_POINTS)
+        .map(|i| at(i as f32 / MAX_PATH_POINTS as f32, 0.5))
+        .collect();
+    assert!(refused(Gesture::Stroke(many.clone())), "one point too many");
+
+    // Both edges are on the picture.
+    assert!(!refused(Gesture::Ping(at(0.0, 1.0))));
+    assert!(!refused(Gesture::Stroke(many[..MAX_PATH_POINTS].to_vec())));
+}
+
+#[test]
+fn the_longest_stroke_fits_in_a_frame() {
+    // Long fractions on every point, so nothing here is cheaper to serialise
+    // than the real thing. `check` never sees a frame the socket dropped.
+    let points: Vec<Frac> = (0..MAX_PATH_POINTS)
+        .map(|i| at(0.123_456_79 + i as f32 * 1e-4, 0.987_654_3))
+        .collect();
+    let frame = serde_json::json!({
+        "type": "point",
+        "gesture": Gesture::Stroke(points),
+    });
+    let bytes = serde_json::to_vec(&frame).expect("encodes");
+
+    let parsed: ClientMsg = serde_json::from_slice(&bytes).expect("the server parses its own");
+    assert!(matches!(
+        &parsed,
+        ClientMsg::Point { gesture: Gesture::Stroke(points) } if points.len() == MAX_PATH_POINTS
+    ));
+    assert!(
+        bytes.len() <= crate::MAX_WS_MESSAGE_BYTES,
+        "the longest legal stroke is {} bytes and the frame cap is {}",
+        bytes.len(),
+        crate::MAX_WS_MESSAGE_BYTES,
+    );
+}

@@ -1,3 +1,5 @@
+import type { Stroke } from './backdrop.js';
+import { backdropFit, fracToScreen, strokeAlpha } from './backdrop.js';
 import type { Box, CalShape, IsoShape } from './calibrate.js';
 import { isoDiamond } from './calibrate.js';
 import type { Camera, GridSpec, Rect, Vec2 } from './coords.js';
@@ -19,7 +21,7 @@ import { cursorAlpha } from './cursors.js';
 import { isColour, MARKER_HUES, MARKERS } from './markers.js';
 import type { Ping } from './pings.js';
 import { colourOf, EDGE_INSET_PX, edgeMarker, nameOf, ringAlpha, ringRadius } from './pings.js';
-import type { Colours, FogPaint, Hp, Marker, RosterEntry } from './protocol.js';
+import type { Colours, FogPaint, Frac, Hp, Marker, Owner, RosterEntry } from './protocol.js';
 import type { Ruler } from './ruler.js';
 import { feetMoved, rulerAlpha, slidePos, trailCells } from './ruler.js';
 import type { Board, Scene, Token } from './scene.js';
@@ -256,6 +258,16 @@ const CURSOR_TEXT_GAP = 5;
 const CURSOR_ALPHA = 0.55;
 /** Between a shape's far point and its reading. */
 const SHAPE_TEXT_GAP = 8;
+/**
+ * A pen stroke on the backdrop, in screen pixels. A fixed width, not a fraction
+ * of the picture, so it reads the same on a phone as on a monitor. The halo is
+ * the ruler's, so a stroke shows on a bright sky and a dark cellar alike.
+ */
+const PEN_WIDTH = 3;
+const PEN_HALO_WIDTH = 7;
+const PEN_HALO = 'rgba(0, 0, 0, 0.65)';
+/** Between a stroke's last point and the name under it. */
+const PEN_TEXT_GAP = 8;
 
 /**
  * Traced walls, and the doors hung in them.
@@ -408,25 +420,142 @@ export function drawBackdrop(
   ctx: CanvasRenderingContext2D,
   view: Viewport,
   img: HTMLImageElement | HTMLVideoElement,
+  marks: BackdropFrame,
 ): void {
-  const w = view.width * view.dpr;
-  const h = view.height * view.dpr;
-
   ctx.setTransform(1, 0, 0, 1, 0, 0);
   ctx.fillStyle = VOID;
-  ctx.fillRect(0, 0, w, h);
+  ctx.fillRect(0, 0, view.width * view.dpr, view.height * view.dpr);
 
-  // A video's `width` is its layout attribute, not its frame size. The frame
-  // loop draws every animation frame while covered, so a video plays by being
-  // drawn again here and needs nothing else.
-  const iw = img instanceof HTMLVideoElement ? img.videoWidth : img.width;
-  const ih = img instanceof HTMLVideoElement ? img.videoHeight : img.height;
-  // A zero-sized image is a broken one; `drawImage` would throw on the divide.
-  if (iw === 0 || ih === 0) return;
+  // `backdropFit` is the one place the letterbox is worked out, so a mark made
+  // on one screen lands on the same spot of the picture on every other. A
+  // picture with no size is a broken one, and `drawImage` would throw on it.
+  const fit = backdropFit(view, pictureSize(img));
+  if (fit === null) return;
+  ctx.setTransform(view.dpr, 0, 0, view.dpr, 0, 0);
+  ctx.drawImage(img, fit.x, fit.y, fit.w, fit.h);
+  drawBackdropMarks(ctx, fit, marks);
+}
 
-  const scale = Math.min(w / iw, h / ih);
-  const drawn = { w: iw * scale, h: ih * scale };
-  ctx.drawImage(img, (w - drawn.w) / 2, (h - drawn.h) / 2, drawn.w, drawn.h);
+/**
+ * How big a backdrop is. A video's `width` is its layout attribute, not its
+ * frame size. The frame loop draws every animation frame while covered, so a
+ * video plays by being drawn again in `drawBackdrop` and needs nothing else.
+ */
+export function pictureSize(img: HTMLImageElement | HTMLVideoElement): {
+  width: number;
+  height: number;
+} {
+  return img instanceof HTMLVideoElement
+    ? { width: img.videoWidth, height: img.videoHeight }
+    : { width: img.width, height: img.height };
+}
+
+/** What is drawn on the backdrop besides the picture. See `backdrop.ts`. */
+export interface BackdropFrame {
+  pings: readonly Ping[];
+  cursors: readonly Cursor[];
+  strokes: readonly Stroke[];
+  /** Our own stroke while the pen is down, or null. */
+  drawing: readonly Frac[] | null;
+  me: Owner;
+  roster: readonly RosterEntry[];
+  colours: Colours;
+  now: number;
+}
+
+/**
+ * Rings, pointers and pen strokes on the picture, in CSS pixels through the
+ * fit rectangle. The board's own marks and helpers, minus the edge arrows: the
+ * whole picture is always on screen.
+ *
+ * Nothing here is filtered, for `drawPings`' reason and `drawCursors`': the
+ * room has already dropped any pointer the switches withhold, and a picture has
+ * no fog.
+ */
+function drawBackdropMarks(ctx: CanvasRenderingContext2D, fit: Rect, frame: BackdropFrame): void {
+  const { roster, colours, now } = frame;
+  ctx.save();
+  ctx.lineJoin = 'round';
+  ctx.lineCap = 'round';
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'top';
+
+  ctx.font = CURSOR_FONT;
+  for (const stroke of frame.strokes) {
+    const alpha = strokeAlpha(stroke, now);
+    if (alpha <= 0) continue;
+    ctx.globalAlpha = alpha;
+    drawPenStroke(ctx, fit, stroke.points, stroke.owner, roster, colours);
+  }
+  if (frame.drawing !== null) {
+    ctx.globalAlpha = 1;
+    drawPenStroke(ctx, fit, frame.drawing, frame.me, roster, colours);
+  }
+
+  for (const cursor of frame.cursors) {
+    const alpha = cursorAlpha(cursor, now);
+    if (alpha <= 0) continue;
+    const at = fracToScreen(fit, cursor.at);
+    const colour = colourOf(cursor.owner, roster, colours);
+    ctx.globalAlpha = alpha * CURSOR_ALPHA;
+    drawDot(ctx, at, colour);
+    label(ctx, nameOf(cursor.owner, roster), at.x, at.y + CURSOR_R_PX + CURSOR_TEXT_GAP, colour);
+  }
+
+  // Last, as on the board: a ring is somebody saying "look here".
+  ctx.font = PING_FONT;
+  for (const ping of frame.pings) {
+    const alpha = ringAlpha(ping, now);
+    const radius = ringRadius(ping, now);
+    if (alpha <= 0 || radius <= 0) continue;
+    const at = fracToScreen(fit, ping.at);
+    const colour = colourOf(ping.owner, roster, colours);
+    ctx.globalAlpha = alpha;
+    ctx.beginPath();
+    ctx.arc(at.x, at.y, radius, 0, TAU);
+    ctx.strokeStyle = PING_HALO;
+    ctx.lineWidth = PING_HALO_WIDTH;
+    ctx.stroke();
+    ctx.strokeStyle = colour;
+    ctx.lineWidth = PING_WIDTH;
+    ctx.stroke();
+    label(ctx, nameOf(ping.owner, roster), at.x, at.y + radius + PING_TEXT_GAP, colour);
+  }
+
+  ctx.restore();
+}
+
+/** One pen stroke in its owner's colour over a dark halo, with their name
+ *  under its last point, because colour alone doesn't tell seven people apart. */
+function drawPenStroke(
+  ctx: CanvasRenderingContext2D,
+  fit: Rect,
+  points: readonly Frac[],
+  owner: Owner,
+  roster: readonly RosterEntry[],
+  colours: Colours,
+): void {
+  const first = points[0];
+  const last = points[points.length - 1];
+  if (first === undefined || last === undefined) return;
+  const colour = colourOf(owner, roster, colours);
+
+  ctx.beginPath();
+  const start = fracToScreen(fit, first);
+  ctx.moveTo(start.x, start.y);
+  for (const point of points) {
+    const at = fracToScreen(fit, point);
+    ctx.lineTo(at.x, at.y);
+  }
+  ctx.strokeStyle = PEN_HALO;
+  ctx.lineWidth = PEN_HALO_WIDTH;
+  ctx.stroke();
+  ctx.strokeStyle = colour;
+  ctx.lineWidth = PEN_WIDTH;
+  ctx.stroke();
+
+  const end = fracToScreen(fit, last);
+  label(ctx, nameOf(owner, roster), end.x, end.y + PEN_TEXT_GAP, colour);
 }
 
 export function render(ctx: CanvasRenderingContext2D, view: Viewport, frame: Frame): void {

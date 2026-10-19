@@ -135,6 +135,21 @@ export interface WirePos {
   y: number;
 }
 
+/** A point on the backdrop, as a fraction of the picture's natural width and
+ *  height, `0..1` from the top left. `Frac` on the server: a third coordinate
+ *  space, typed apart from `WirePos` so the two can't be swapped. */
+export interface Frac {
+  x: number;
+  y: number;
+}
+
+/** A ping, a pointer or a pen stroke on the backdrop. Adjacently tagged on the
+ *  Rust side, so a stroke's points are under `at` like the other two's point. */
+export type Gesture =
+  | { kind: 'ping'; at: Frac }
+  | { kind: 'cursor'; at: Frac }
+  | { kind: 'stroke'; at: Frac[] };
+
 /**
  * A mark the DM puts on a creature: six colours, and `dead`.
  *
@@ -555,6 +570,10 @@ export type ServerMsg =
    *  chose to make and a cursor is just where the mouse is. The room decides
    *  that; whatever arrives may be drawn. */
   | { type: 'cursor_moved'; by: Owner; at: WirePos }
+  /** Somebody pointed at the backdrop. Never our own, as with `pinged`. A
+   *  `cursor` here has been through the same two switches as `cursor_moved`;
+   *  there is no fog on a picture to filter by. */
+  | { type: 'pointed'; by: Owner; gesture: Gesture }
   /** Pointers are drawn on every board now, or they are not.
    *
    *  Like `names_changed`, but this one also changes what this client sends:
@@ -799,6 +818,10 @@ export type ClientMsg =
    *  and these whenever the mouse moves. No frame ends one; each recipient
    *  drops a cursor that stops arriving, on its own timer. */
   | { type: 'move_cursor'; at: WirePos }
+  /** A ping, a pointer or a finished pen stroke on the backdrop. Relayed to
+   *  everyone else and stored by nobody; the room drops it if no backdrop is up.
+   *  See `pointing.ts`. */
+  | { type: 'point'; gesture: Gesture }
   /** Keep the shape just swept. No id: the server assigns it, like a token's.
    *  `points` is a `path`'s corners, refused on any other kind. A `path` is
    *  never sent as a `sketch`: it isn't watched while it is drawn. */

@@ -513,6 +513,9 @@ clutter this feature is most at risk of. The canvas clips them for free.
 Cursors are drawn under the ping rings and over everything else, which is the right order for the
 two gestures. Nothing is drawn while previewing, for the same reason pings and shapes aren't.
 
+A pointer over the backdrop travels as a `Point` gesture, not `MoveCursor`, and obeys both
+switches (through `hand_shown`) but no fog. See *Pointing at it* in `docs/maps.md`.
+
 **If the board looks cluttered with seven pointers on it, adjust the decay first.** The roadmap
 says so explicitly, and it's the number to lower before anything else here is reconsidered.
 

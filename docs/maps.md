@@ -642,3 +642,53 @@ the map and token panels, rather than required by the rail's rule.
 
 `drive-backdrop.mjs` is the browser test. Its last two checks matter most: the board's pixels before
 the picture went up and after it came down must be identical.
+
+### Pointing at it
+
+Anyone can ping, show their pointer, and draw a pen stroke on the backdrop. A stroke holds for about
+six seconds and fades over two. The code is `backdrop.ts` (positions and the marks), `pointing.ts`
+(the gesture) and `drawBackdrop`, and on the server `ClientMsg::Point`, `Event::Pointed` and
+`ServerMsg::Pointed`.
+
+**A stroke is a gesture, not a drawing, so nothing is stored.** No list on `RoomState`, nothing on
+`Saved` or in `snapshot_for`, not in `persists` or `moves_sight`, no undo step, no erasing. A
+latecomer misses a stroke the way they miss a ping. Kept strokes were considered and declined: they
+need a list a backdrop change clears, a save and undo decision, and erase permissions, which is a
+second drawing system attached to a picture. **If kept marks are asked for, the answer is to load the
+picture as a map.** There's no setting either, since a mark that disappears by itself can't clutter
+anything. `show_cursors` and `show_dm_cursor` still apply to a pointer on the picture, because they're
+about hands, not boards.
+
+Positions are `Frac`: `x` and `y` in `0..=1` across the picture's natural width and height. The
+backdrop has no grid and no camera, and each window letterboxes it differently, so a fraction of the
+image is the one position every screen agrees on. It's a type of its own for the reason `Px` is.
+`backdropFit` is the only place the letterbox is worked out, and both `drawBackdrop` and the gesture
+go through it. The room refuses non-finite values, anything outside `0..=1`, and a stroke of fewer
+than two or more than `MAX_PATH_POINTS` points.
+
+On the wire it's one pair, `Point { gesture }` and `Pointed { by, gesture }`, with `Gesture::Ping`,
+`Cursor` or `Stroke`. Reusing `Ping` and `MoveCursor` with a board-or-picture position was rejected:
+it changes two existing messages and makes every reader of them branch. It goes to everyone but the
+sender, with the colour looked up from `by` as a ping's is. There's no fog check, because a picture
+has none and everyone is looking at the same one. A `Cursor` goes through `show_cursors` and
+`hand_shown` (the switch half of `cursor_seen`). **With no backdrop up it's dropped in `message_for`,
+not refused in `check`**: the DM taking the picture down mid-stroke is a normal race, and an error
+banner for it is worse than a lost gesture. A stroke is sent whole on release and never sketched,
+like a `Path`, simplified by `simplifyLine` at a tolerance in fractions rather than cells.
+
+On the client, **the stage keeps `pointer-events: none`**, so no board handler has to know about the
+backdrop. `#pointing` is a transparent element over the stage, shown only under `body.covered`, with
+its own handler. A hold of `HOLD_MS` within `HOLD_SLOP_PX` pings; past the slop it's a stroke. No tool
+needs arming, since a drag on a picture can't mean anything else. The right and middle buttons do
+nothing, and a second finger is ignored. Strokes are a fixed 3px on screen in the sender's own hue,
+not the draw panel's swatch, with their name under the last point.
+
+Preview wins here too: `covered` is off while the DM previews, so the overlay is hidden, nothing is
+sent, and `onPointed` drops whatever arrives while `shownBackdrop` is null. When the backdrop comes
+down or changes, `reloadBackdrop` clears every mark and abandons a stroke in progress, because a mark
+made on one picture means nothing on the next.
+
+The tests are the pointing block in `room/tests/maps.rs`, `backdrop.test.ts` (the fit and the
+round trip in a wide and a tall window), and the pointing checks in `drive-backdrop.mjs`, which open
+the player in a different-shaped window and find the picture on each canvas from the letterbox
+colour.

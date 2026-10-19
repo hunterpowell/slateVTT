@@ -17,10 +17,10 @@ use uuid::Uuid;
 
 use crate::fog::{self, Cell, FogView, Override, OverrideView};
 use crate::protocol::{
-    Calibration, ChatLine, ChatTo, ClientId, ClientMsg, Colours, Diagonals, GridShape, Hp,
-    Initiative, InitiativeEntry, MapInfo, Marker, Origin, Owner, PALETTE, PlayerId, Pos, Prepared,
-    RoomView, RosterEntry, RosterSlot, ServerMsg, Shape, ShapeId, ShapeKind, StagedView, Token,
-    TokenId, TokenView, Wall, WallId, WallKind,
+    Calibration, ChatLine, ChatTo, ClientId, ClientMsg, Colours, Diagonals, Frac, Gesture,
+    GridShape, Hp, Initiative, InitiativeEntry, MapInfo, Marker, Origin, Owner, PALETTE, PlayerId,
+    Pos, Prepared, RoomView, RosterEntry, RosterSlot, ServerMsg, Shape, ShapeId, ShapeKind,
+    StagedView, Token, TokenId, TokenView, Wall, WallId, WallKind,
 };
 use crate::store::{Saved, SavedNote, Store};
 
@@ -575,6 +575,13 @@ enum Event {
     /// removed when it stops moving. Nothing in the room records where a pointer
     /// was.
     CursorMoved { by: ClientId, owner: Owner, at: Pos },
+    /// Somebody pointed at the backdrop. `by` and `owner` as on `Pinged`. The
+    /// room holds none of it; `message_for` drops it when no backdrop is up.
+    Pointed {
+        by: ClientId,
+        owner: Owner,
+        gesture: Gesture,
+    },
     /// The drawn shapes changed. Payload-free like `InitiativeChanged`, for two
     /// reasons: the list is short, and the table's copy differs from the DM's.
     ///
@@ -1309,6 +1316,9 @@ fn persists(event: &Event) -> bool {
         | Event::SketchEnded { .. }
         | Event::Pinged { .. }
         | Event::CursorMoved { .. }
+        // The backdrop's gestures, for the reasons above: a stroke fades on
+        // each screen by itself, so the room never holds one.
+        | Event::Pointed { .. }
         | Event::Said { .. }
         | Event::PresenceChanged
         // Music is like `Said`, not like the short-lived events: the room holds
@@ -1410,6 +1420,8 @@ fn undid(msg: &ClientMsg) -> Option<&'static str> {
         // Where a pointer is isn't a step in anything. It persists nothing, so
         // this arm is the second guard, not the rule.
         | ClientMsg::MoveCursor { .. }
+        // A gesture on the backdrop fades by itself and is never stored.
+        | ClientMsg::Point { .. }
         // Nothing anybody said is the DM's to take back. This persists nothing,
         // so `persists` would refuse it anyway.
         | ClientMsg::Say { .. }
@@ -1525,6 +1537,9 @@ fn moves_sight(msg: &ClientMsg) -> bool {
         // Pointing at a room doesn't light it. Don't flip this arm: a ping on
         // unexplored ground stays a ring over black.
         | ClientMsg::Ping { .. }
+        // Pointing at the picture is further from the board than pointing at
+        // it.
+        | ClientMsg::Point { .. }
         // Chat isn't on the board. The fog doesn't apply to it.
         | ClientMsg::Say { .. }
         // Nor does a roll, which arrives in the log as a chat line.
@@ -1722,6 +1737,36 @@ fn path_points(kind: ShapeKind, points: &[Pos]) -> Result<(), String> {
                 "a shape can reach at most {} feet",
                 MAX_SHAPE_CELLS as i32 * 5
             ));
+        }
+    }
+    Ok(())
+}
+
+/// A gesture's points: on the picture, and a stroke no longer than a freehand
+/// path.
+///
+/// `0..=1` is the whole bound. Nothing is stored, so this protects the other
+/// six screens rather than a save file: a point off the picture would draw
+/// over the letterbox bars, or nowhere.
+fn gesture_fields(gesture: &Gesture) -> Result<(), String> {
+    let points = match gesture {
+        Gesture::Ping(at) | Gesture::Cursor(at) => std::slice::from_ref(at),
+        Gesture::Stroke(points) => {
+            if points.len() < 2 {
+                return Err("a stroke needs somewhere to go".to_owned());
+            }
+            if points.len() > MAX_PATH_POINTS {
+                return Err(format!(
+                    "a stroke can have at most {MAX_PATH_POINTS} points"
+                ));
+            }
+            points.as_slice()
+        }
+    };
+    for &Frac { x, y } in points {
+        finite(&[x, y])?;
+        if !(0.0..=1.0).contains(&x) || !(0.0..=1.0).contains(&y) {
+            return Err("that point is not on the picture".to_owned());
         }
     }
     Ok(())
@@ -2942,29 +2987,33 @@ impl RoomState {
     /// well.
     ///
     /// `show_dm_cursor` widens the same case: the fog decides *where* the DM's
-    /// pointer is withheld, and the switch says "everywhere". It's read after
-    /// the two early yeses and before the `map.fog` guard, so it works on an
-    /// unfogged map, which is mostly when a DM would reach for it.
+    /// pointer is withheld, and the switch says "everywhere". It's read
+    /// (`hand_shown`) before the `map.fog` guard, so it works on an unfogged
+    /// map, which is mostly when a DM would reach for it.
     ///
     /// The `map.fog` guard is the same as `shape_seen`'s: `known` is empty on an
     /// unfogged map, so without it the DM's pointer would vanish from every
     /// player's board the moment fog was switched off.
     fn cursor_seen(&self, by: &Owner, at: Pos, to_dm: bool) -> bool {
-        if to_dm || !matches!(by, Owner::Dm) {
-            return true;
-        }
-        // A DM who has put their pointer away is withheld from a player
-        // everywhere, not only over the dark. It's read here and not in `check`
-        // because it governs what one hand at the table shows, not what any
-        // client may send.
-        if !self.show_dm_cursor {
+        if !self.hand_shown(by, to_dm) {
             return false;
         }
-        if !self.map.fog {
+        if to_dm || !matches!(by, Owner::Dm) || !self.map.fog {
             return true;
         }
         let px = fog::grid_to_px(&self.map, at.x, at.y);
         self.known.contains(&fog::cell_of(&self.map, px))
+    }
+
+    /// Whether `show_dm_cursor` lets this recipient see this pointer: no only
+    /// for the DM's pointer, to a player, with the switch off.
+    ///
+    /// The half of `cursor_seen` that isn't about the fog, and so the whole of
+    /// it on the backdrop, which has none. Read here and not in `check` because
+    /// it governs what one hand at the table shows, not what any client may
+    /// send.
+    fn hand_shown(&self, by: &Owner, to_dm: bool) -> bool {
+        to_dm || !matches!(by, Owner::Dm) || self.show_dm_cursor
     }
 
     /// Where the party is looking from, in grid units.
@@ -3645,6 +3694,11 @@ impl RoomState {
             // these. Refusing it here would turn the switch into a stream of
             // red banners on whichever tab was open when it was flipped.
             ClientMsg::MoveCursor { at } => finite(&[at.x, at.y]),
+
+            // Anyone may point, and no check reads the room: whether a backdrop
+            // is up is the filter's question, so a stroke finished as the DM
+            // took the picture down is dropped rather than refused.
+            ClientMsg::Point { gesture } => gesture_fields(gesture),
 
             ClientMsg::AddShape {
                 kind,
@@ -4737,6 +4791,17 @@ impl RoomState {
                 None => Vec::new(),
             },
 
+            // Like `MoveCursor`: only reads `self`, and invents no sender, since
+            // a `Cursor` gesture goes through the DM's pointer switch.
+            ClientMsg::Point { gesture } => match self.clients.get(&origin) {
+                Some(client) => vec![Event::Pointed {
+                    by: origin,
+                    owner: drawn_by(client),
+                    gesture,
+                }],
+                None => Vec::new(),
+            },
+
             // One run in, one segment per gap between its corners out. The run
             // itself is not stored (it was how the DM drew, not what the map
             // holds), so one bad segment of a long trace can be erased without
@@ -4994,6 +5059,7 @@ impl RoomState {
                 | Event::SketchEnded { .. }
                 | Event::Pinged { .. }
                 | Event::CursorMoved { .. }
+                | Event::Pointed { .. }
                 | Event::Said { .. }
                 | Event::NotesChanged { .. }
                 | Event::ShapesChanged
@@ -5716,6 +5782,25 @@ impl RoomState {
             .then(|| ServerMsg::CursorMoved {
                 by: owner.clone(),
                 at: *at,
+            }),
+
+            // Like `Pinged`, with no fog to ask: a picture has none, and
+            // everyone is looking at the same one. Two drops, neither refused in
+            // `check`. With no backdrop up there is nothing to point at, which
+            // is a race with the DM taking it down rather than a mistake. And a
+            // pointer obeys the same two switches on the picture as on the
+            // board, since they are about hands, not boards.
+            Event::Pointed { by, owner, gesture } => (recipient != *by
+                && self.backdrop.is_some()
+                && match gesture {
+                    Gesture::Cursor(_) => {
+                        self.show_cursors && self.hand_shown(owner, self.is_dm(recipient))
+                    }
+                    Gesture::Ping(_) | Gesture::Stroke(_) => true,
+                })
+            .then(|| ServerMsg::Pointed {
+                by: owner.clone(),
+                gesture: gesture.clone(),
             }),
 
             // Withheld from one player and sent to another. The filtered

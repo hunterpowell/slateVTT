@@ -98,6 +98,9 @@ export interface Pings {
    * tell the two apart and has no reason to.
    */
   active(now: number): readonly Ping[];
+  /** Drops every ring and the hold. For the backdrop's rings, which mean
+   *  nothing once the picture they were made on has gone. */
+  clear(): void;
 }
 
 export function createPings(me: Owner): Pings {
@@ -131,6 +134,11 @@ export function createPings(me: Owner): Pings {
       // empty array it returned last frame and allocates nothing.
       if (live.length > 0) live = live.filter((p) => now - p.startedAt < LIFE_MS);
       return holding === null ? live : [...live, holding];
+    },
+
+    clear() {
+      live = [];
+      holding = null;
     },
   };
 }

@@ -1,3 +1,5 @@
+import type { BackdropMarks } from './backdrop.js';
+import { backdropFit, createBackdropMarks } from './backdrop.js';
 import type { Camera, Rect, Vec2 } from './coords.js';
 import { gridToWorld, playRect, screenToWorld, worldToGrid } from './coords.js';
 import type { Chat } from './chat.js';
@@ -41,6 +43,7 @@ import { overridesFromWire } from './overrides.js';
 import type { Panel } from './panel.js';
 import { createPanel } from './panel.js';
 import { createPicker } from './picker.js';
+import { createPointing } from './pointing.js';
 import type { RoomChoice } from './rooms.js';
 import { createRoomPicker, fetchRooms } from './rooms.js';
 import type { Cursors } from './cursors.js';
@@ -52,12 +55,13 @@ import { createPresence, ownerOf } from './presence.js';
 import type {
   ClientMsg,
   Initiative,
+  Owner,
   RosterEntry,
   TokenMoved,
   WireToken,
 } from './protocol.js';
 import type { Viewport } from './render.js';
-import { drawBackdrop, render } from './render.js';
+import { drawBackdrop, pictureSize, render } from './render.js';
 import type { Rulers } from './ruler.js';
 import { createRulers } from './ruler.js';
 import type { Board, Scene, Token } from './scene.js';
@@ -89,6 +93,8 @@ import { trackKeyboard } from './viewport.js';
 interface Ui {
   canvas: HTMLCanvasElement;
   ctx: CanvasRenderingContext2D;
+  /** Over the stage, shown only while a backdrop covers it. See `pointing.ts`. */
+  pointing: HTMLElement;
   hud: HTMLElement;
   /** In the bottom-right corner, for everyone: the camera is per client, so
    *  this is too. */
@@ -284,6 +290,7 @@ function findUi(): Ui {
   return {
     canvas,
     ctx,
+    pointing: need('#pointing'),
     hud: need('#hud'),
     fitBoard: need<HTMLButtonElement>('#fit-board'),
     gestureHint: need<HTMLButtonElement>('#hint'),
@@ -576,6 +583,10 @@ function boot(ui: Ui, choice: RoomChoice, alone: boolean): void {
   // And for the rings, except that this one can't be built until Welcome,
   // because it has to know which ring is ours.
   let pings: Pings | null = null;
+  // The same three marks on the backdrop, held apart from the board's so
+  // nothing pointed at a picture is drawn on a map. Built at Welcome for the
+  // rings' reason.
+  let backdropMarks: BackdropMarks | null = null;
 
   const picker = createPicker(ui.picker, (playerId) => {
     // Not stored yet: only a Welcome proves the server accepted the claim.
@@ -669,11 +680,10 @@ function boot(ui: Ui, choice: RoomChoice, alone: boolean): void {
 
       // Built here and not beside the rulers, because it needs to know who we
       // are: every ring it holds is attributed, ours included.
-      pings = createPings(
-        identity.playerId === null
-          ? { kind: 'dm' }
-          : { kind: 'player', id: identity.playerId },
-      );
+      const me: Owner =
+        identity.playerId === null ? { kind: 'dm' } : { kind: 'player', id: identity.playerId };
+      pings = createPings(me);
+      backdropMarks = createBackdropMarks(me);
 
       // One Welcome per connection (identity cannot change once set), so this
       // runs once. Assigned synchronously so a delta arriving straight after
@@ -938,6 +948,7 @@ function boot(ui: Ui, choice: RoomChoice, alone: boolean): void {
         fogTool,
         pings,
         cursors,
+        backdropMarks,
         // The cast list, which every connection is sent and which nothing
         // changes after this frame. It turns anybody's `Owner` into a name and
         // a colour on their ring. A player holds it too: they have to be able
@@ -1050,7 +1061,10 @@ function boot(ui: Ui, choice: RoomChoice, alone: boolean): void {
       room.scene.showCursors = show;
       // Otherwise pointers already on the board would stay for the couple of
       // seconds their decay takes, which looks like the switch didn't work.
-      if (!show) cursors.clear();
+      if (!show) {
+        cursors.clear();
+        backdropMarks?.cursors.clear();
+      }
       tableTool?.update(room.scene);
     },
 
@@ -1189,6 +1203,26 @@ function boot(ui: Ui, choice: RoomChoice, alone: boolean): void {
     // pointer is removed when its frames stop arriving, not by any frame.
     onCursorMoved: (cursor) => cursors.moved(cursor.by, cursor.at, performance.now()),
 
+    // Somebody pointed at the backdrop. Dropped while we aren't showing one,
+    // which is a DM previewing the staged map (preview wins) or a picture still
+    // downloading: a mark held until later would land on a picture it wasn't
+    // made on, or appear seconds late.
+    onPointed: ({ by, gesture }) => {
+      if (room === null || backdropMarks === null || shownBackdrop(room.scene) === null) return;
+      const now = performance.now();
+      switch (gesture.kind) {
+        case 'ping':
+          backdropMarks.pings.add(by, gesture.at, now);
+          break;
+        case 'cursor':
+          backdropMarks.cursors.moved(by, gesture.at, now);
+          break;
+        case 'stroke':
+          backdropMarks.addStroke(by, gesture.at, now);
+          break;
+      }
+    },
+
     // Somebody said something we are party to, including ourselves: the one
     // relayed frame echoed to its sender. Nothing about a line of text is
     // predicted locally: the room decides where a line lands in the log.
@@ -1296,7 +1330,10 @@ function boot(ui: Ui, choice: RoomChoice, alone: boolean): void {
 
       // An undo can turn the cursor switch back off, and the pointers already
       // drawn are not room state to restore. Same as `onCursorsChanged`.
-      if (!scene.showCursors) cursors.clear();
+      if (!scene.showCursors) {
+        cursors.clear();
+        backdropMarks?.cursors.clear();
+      }
 
       panel?.update(room.initiative, scene);
       tokenTool?.update(scene);
@@ -1438,6 +1475,7 @@ async function start(
   fogTool: FogTool | null,
   pings: Pings,
   cursors: Cursors,
+  backdropMarks: BackdropMarks,
   roster: readonly RosterEntry[],
   presence: Presence,
 ): Promise<Stage> {
@@ -1540,6 +1578,23 @@ async function start(
     createGestures(ui.gestureHint),
   );
 
+  // The backdrop's own handler, on the element over the stage. The board's
+  // handlers above never see an event while a picture is up.
+  const pointing = createPointing(
+    ui.pointing,
+    ui.canvas,
+    backdropMarks,
+    () =>
+      backdrop === null
+        ? null
+        : backdropFit(
+            { width: ui.canvas.clientWidth, height: ui.canvas.clientHeight },
+            pictureSize(backdrop),
+          ),
+    () => scene.showCursors,
+    send,
+  );
+
   // Delete removes every token with a selection ring: the group, the token the
   // panel is editing, or both. The renderer draws them as one
   // selection and this deletes them as one. Backspace too, because that is the
@@ -1592,6 +1647,10 @@ async function start(
       const url = shownBackdrop(scene);
       if (url === backdropUrl) return;
       backdropUrl = url;
+      // A mark made on the last picture means nothing on the next one, and a
+      // stroke half drawn on it is abandoned unsent.
+      pointing.reset();
+      backdropMarks.clear();
       // Cleared, not kept, so the frame loop cannot draw the *previous* picture
       // between one being chosen and it arriving.
       backdrop = null;
@@ -1736,15 +1795,25 @@ async function start(
       lastCovered = covered;
       document.body.classList.toggle('covered', covered);
     }
+    // Read once and passed down, so the sweep below and the fade the renderer
+    // draws cannot disagree about what time it is within one frame.
+    const now = performance.now();
+
     if (backdrop !== null) {
-      drawBackdrop(ui.ctx, view, backdrop);
+      drawBackdrop(ui.ctx, view, backdrop, {
+        pings: backdropMarks.pings.active(now),
+        cursors: backdropMarks.cursors.active(now),
+        strokes: backdropMarks.strokes(now),
+        drawing: backdropMarks.drawing,
+        me: backdropMarks.me,
+        roster,
+        colours: presence.colours,
+        now,
+      });
       requestAnimationFrame(frame);
       return;
     }
 
-    // Read once and passed down, so the sweep below and the fade the renderer
-    // draws cannot disagree about what time it is within one frame.
-    const now = performance.now();
     // The mirror, read per frame like everything else here. Narrowed on the way
     // into the renderer, not held as a second scene, because a copy that
     // outlived a frame would have to be kept in step with the deltas, and the

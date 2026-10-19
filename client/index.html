@@ -1608,6 +1608,27 @@
         pointer-events: none;
       }
 
+      /* What takes the picture's input instead: the same box as the stage,
+         and nothing at all while the board is showing, so it never stands
+         between a hand and the board. Preview takes priority over the
+         backdrop, and the class is off while the DM previews, so this is
+         hidden then too. */
+      #pointing {
+        display: none;
+        position: fixed;
+        left: 0;
+        top: 0;
+        width: 100vw;
+        height: 100vh;
+        height: 100dvh;
+        cursor: crosshair;
+        touch-action: none;
+      }
+
+      body.covered #pointing {
+        display: block;
+      }
+
       /* And everything else that describes the board goes with it. A zoom
          percentage and a cell coordinate floating over a campfire are the same
          lie a panel describing an off-screen token would be — and the hint
@@ -2678,6 +2699,9 @@
   </head>
   <body>
     <canvas id="stage"></canvas>
+    <!-- Over the stage while a backdrop is up, to take the pings, pointers and
+         pen strokes the covered stage no longer receives. See `pointing.ts`. -->
+    <div id="pointing"></div>
     <!-- The room's one track. Declared here rather than built in `sound.ts` so
          that it is one element for the life of the page — an element built per
          track is an element that can end up playing two at once.

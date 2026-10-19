@@ -14,13 +14,19 @@
 // visible half — that the board comes back looking like itself, on a second
 // connection the DM's client knows nothing about, and that while the picture is
 // up the DM can still be looking at the dungeon they are preparing.
+//
+// It also points at the picture: a ping, a pen stroke and a pointer made in the
+// DM's window have to land on the same spot of it in the player's, which is a
+// different shape, and the stroke has to be gone once it fades.
 
 import { open, checks } from './cdp.mjs';
 
 const [, , base = 'http://127.0.0.1:3000', secret = 'test-secret'] = process.argv;
 
 const dm = await open(`${base}/?room=campaign&dm=${secret}`, { port: 9333 });
-const player = await open(`${base}/?room=campaign`, { port: 9334 });
+// A taller, narrower window than the DM's, so the two letterbox the picture
+// differently and a mark landing on the same spot of it means something.
+const player = await open(`${base}/?room=campaign`, { port: 9334, width: 900, height: 1100 });
 const { check, note, verdict } = checks();
 
 await dm.wait(2500); // the map image, the socket, and the first frame
@@ -101,7 +107,13 @@ const files = await dm.evaluate(
 note(`${files} backdrop(s) in the library`);
 check('the library listed something to pick', files > 0, true);
 
-await dm.evaluate(`document.querySelector('#table-backdrop-list .map-library-pick').click(); "ok"`);
+// A still, not a looping video: the pointing checks below count pixels that
+// changed, and a video changes all of them.
+await dm.evaluate(`(() => {
+  const picks = [...document.querySelectorAll('#table-backdrop-list .map-library-pick')];
+  (picks.find(b => !b.title.endsWith('.webm')) ?? picks[0]).click();
+  return "ok";
+})()`);
 await dm.wait(1800); // the pick, the round trip, the image, a frame on both
 
 const dmUp = await fingerprint(dm);
@@ -135,6 +147,170 @@ check(
 check(
   'and neither is the offer to fit a board that is not on screen',
   await player.evaluate(`document.getElementById('fit-board').offsetParent === null`),
+  true,
+);
+
+// --- pointing at it ---------------------------------------------------------
+//
+// A ping, a pen stroke and a pointer on the picture, made in the DM's window and
+// looked for in the player's, which is a different shape. A position is a
+// fraction of the picture, so each mark has to land on the same spot of it on
+// both, wherever the two windows put their letterbox bars.
+
+/**
+ * Where the picture is on a canvas, in CSS pixels, found from the pixels: the
+ * letterbox bars are `VOID` and the picture is everything else. Read off the
+ * screen rather than worked out the way the client does, so a client that got
+ * its own arithmetic wrong can't agree with itself here.
+ */
+const pictureBox = (session) =>
+  session.evaluate(`(() => {
+    const c = document.getElementById('stage');
+    const d = c.getContext('2d').getImageData(0, 0, c.width, c.height).data;
+    let x0 = c.width, y0 = c.height, x1 = -1, y1 = -1;
+    for (let y = 0; y < c.height; y += 2) {
+      for (let x = 0; x < c.width; x += 2) {
+        const i = (y * c.width + x) * 4;
+        if (Math.abs(d[i] - 11) + Math.abs(d[i + 1] - 13) + Math.abs(d[i + 2] - 16) <= 6) continue;
+        if (x < x0) x0 = x;
+        if (x > x1) x1 = x;
+        if (y < y0) y0 = y;
+        if (y > y1) y1 = y;
+      }
+    }
+    const dpr = c.width / c.clientWidth;
+    return { x: x0 / dpr, y: y0 / dpr, w: (x1 - x0) / dpr, h: (y1 - y0) / dpr };
+  })()`);
+
+/** Where a fraction of the picture is in one window. */
+const on = (box, f) => ({ x: box.x + f.x * box.w, y: box.y + f.y * box.h });
+
+/** Keeps this frame in the page, to count what changes against it. */
+const remember = (session) =>
+  session.evaluate(`(() => {
+    const c = document.getElementById('stage');
+    window.__slateBefore = c.getContext('2d').getImageData(0, 0, c.width, c.height);
+    return "ok";
+  })()`);
+
+/** How many pixels within `half` CSS pixels of a spot differ from the frame
+ *  `remember` kept. A difference, not a reading: the picture's own colours say
+ *  nothing about whether a mark is on it. */
+const changedNear = (session, at, half = 40) =>
+  session.evaluate(`(() => {
+    const c = document.getElementById('stage');
+    const dpr = c.width / c.clientWidth;
+    const now = c.getContext('2d').getImageData(0, 0, c.width, c.height).data;
+    const was = window.__slateBefore.data;
+    const x0 = Math.max(0, Math.round((${at.x} - ${half}) * dpr));
+    const x1 = Math.min(c.width, Math.round((${at.x} + ${half}) * dpr));
+    const y0 = Math.max(0, Math.round((${at.y} - ${half}) * dpr));
+    const y1 = Math.min(c.height, Math.round((${at.y} + ${half}) * dpr));
+    let n = 0;
+    for (let y = y0; y < y1; y++) {
+      for (let x = x0; x < x1; x++) {
+        const i = (y * c.width + x) * 4;
+        const diff = Math.abs(now[i] - was[i]) + Math.abs(now[i + 1] - was[i + 1])
+          + Math.abs(now[i + 2] - was[i + 2]);
+        if (diff > 60) n++;
+      }
+    }
+    return n;
+  })()`);
+
+const mouse = (session, type, at, buttons) =>
+  session.send('Input.dispatchMouseEvent', {
+    type, x: at.x, y: at.y, button: 'left', buttons, clickCount: 1,
+  });
+
+const dmPic = await pictureBox(dm);
+const playerPic = await pictureBox(player);
+note(
+  `the picture is ${Math.round(dmPic.w)}x${Math.round(dmPic.h)} at ${Math.round(dmPic.x)},` +
+    `${Math.round(dmPic.y)} for the DM and ${Math.round(playerPic.w)}x${Math.round(playerPic.h)} ` +
+    `at ${Math.round(playerPic.x)},${Math.round(playerPic.y)} for the player`,
+);
+check(
+  'the two windows put the picture in different places',
+  Math.abs(dmPic.w - playerPic.w) > 50 || Math.abs(dmPic.y - playerPic.y) > 50,
+  true,
+);
+
+// Clear of the DM's left rail and right-hand column, which sit over the canvas.
+const PING = { x: 0.5, y: 0.35 };
+const STROKE_FROM = { x: 0.42, y: 0.55 };
+const STROKE_TO = { x: 0.62, y: 0.7 };
+const STROKE_MID = { x: 0.52, y: 0.625 };
+const POINTER = { x: 0.58, y: 0.42 };
+// Nowhere anything is drawn, as the baseline every count above is read against.
+const QUIET = { x: 0.2, y: 0.85 };
+
+const dmPing = on(dmPic, PING);
+check(
+  "the backdrop's own element is what is under the DM's hand there",
+  await dm.evaluate(`document.elementFromPoint(${dmPing.x}, ${dmPing.y}).id`),
+  'pointing',
+);
+
+await remember(player);
+await mouse(dm, 'mousePressed', dmPing, 1);
+await dm.wait(700); // past HOLD_MS
+await mouse(dm, 'mouseReleased', dmPing, 0);
+await player.wait(250);
+const ringThere = await changedNear(player, on(playerPic, PING));
+const ringQuiet = await changedNear(player, on(playerPic, QUIET));
+note(`the ring changed ${ringThere} pixels where it was aimed and ${ringQuiet} elsewhere`);
+check(
+  "a hold on the DM's picture rings the same spot of the player's",
+  ringThere > 150 && ringQuiet < 10,
+  true,
+);
+
+await remember(player);
+await remember(dm);
+await mouse(dm, 'mousePressed', on(dmPic, STROKE_FROM), 1);
+for (let i = 1; i <= 8; i++) {
+  const t = i / 8;
+  await mouse(dm, 'mouseMoved', on(dmPic, {
+    x: STROKE_FROM.x + (STROKE_TO.x - STROKE_FROM.x) * t,
+    y: STROKE_FROM.y + (STROKE_TO.y - STROKE_FROM.y) * t,
+  }), 1);
+  await dm.wait(20);
+}
+await mouse(dm, 'mouseReleased', on(dmPic, STROKE_TO), 0);
+await player.wait(250);
+const strokeThere = await changedNear(player, on(playerPic, STROKE_MID));
+const strokeQuiet = await changedNear(player, on(playerPic, QUIET));
+note(`the stroke changed ${strokeThere} pixels across its middle and ${strokeQuiet} elsewhere`);
+check(
+  "a drag on the DM's picture draws through the same spot of the player's",
+  strokeThere > 100 && strokeQuiet < 10,
+  true,
+);
+check(
+  'and the DM sees their own, with no tool armed',
+  (await changedNear(dm, on(dmPic, STROKE_MID))) > 100,
+  true,
+);
+
+await player.wait(9000); // the stroke's hold and fade
+check(
+  "the stroke is gone from the player's picture once it fades",
+  (await changedNear(player, on(playerPic, STROKE_MID))) < 10,
+  true,
+);
+check(
+  "and from the DM's",
+  (await changedNear(dm, on(dmPic, STROKE_MID))) < 10,
+  true,
+);
+
+await remember(player);
+await dm.move(on(dmPic, POINTER).x, on(dmPic, POINTER).y);
+await player.wait(200);
+check(
+  "the DM's pointer shows over the same spot of the player's picture",
+  (await changedNear(player, on(playerPic, POINTER), 25)) > 20,
   true,
 );
 

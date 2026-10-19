@@ -382,6 +382,36 @@ pub struct Px {
     pub y: f32,
 }
 
+/// A point on the backdrop, as a fraction of the picture's natural width and
+/// height: `0..=1` on both axes, from the top left.
+///
+/// The third coordinate space, and a type of its own for the reason `Px` is
+/// one. The backdrop has no grid and no camera, and every window letterboxes
+/// it differently, so this is the one position seven screens agree on. Never
+/// persisted. See *Pointing at it* in `docs/maps.md`.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+pub struct Frac {
+    pub x: f32,
+    pub y: f32,
+}
+
+/// Something somebody did on the backdrop: the board's three short-lived
+/// marks, moved onto the picture.
+///
+/// Adjacently tagged like `Origin`, because a newtype variant over a list
+/// can't be internally tagged.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "kind", content = "at", rename_all = "snake_case")]
+pub enum Gesture {
+    /// A ring, as `Ping` draws on the board.
+    Ping(Frac),
+    /// Where a hand is, as `MoveCursor` sends on the board.
+    Cursor(Frac),
+    /// A pen stroke, sent whole on release and faded by each client on its
+    /// own clock. Bounded by `MAX_PATH_POINTS`, like a freehand `Path`.
+    Stroke(Vec<Frac>),
+}
+
 /// A mark the DM puts on a creature, named for its colour and nothing else.
 ///
 /// What "red" means tonight is between the DM and the table. A variant called
@@ -1467,6 +1497,22 @@ pub enum ClientMsg {
         at: Pos,
     },
 
+    /// A ping, a pointer or a pen stroke on the backdrop.
+    ///
+    /// One command for all three, instead of `Ping` and `MoveCursor` carrying a
+    /// board-or-picture position: that would change the shape of two existing
+    /// messages and make every reader of them branch. This leaves the board's
+    /// gestures untouched.
+    ///
+    /// Nothing in the room keeps one, so a latecomer misses a stroke the way
+    /// they miss a ping. **Dropped, not refused, when no backdrop is up**: the
+    /// DM taking the picture down mid-stroke is a normal race, and an error
+    /// banner for it is worse than a lost gesture. See *Pointing at it* in
+    /// `docs/maps.md`.
+    Point {
+        gesture: Gesture,
+    },
+
     /// Say something: to the table, or to one person.
     ///
     /// One command for both, because a whisper and a shout differ only in
@@ -1962,6 +2008,16 @@ pub enum ServerMsg {
         at: Pos,
     },
 
+    /// Somebody pointed at the backdrop. Not echoed to the sender, for
+    /// `Pinged`'s reason, and the colour is looked up from `by` as a ping's is.
+    ///
+    /// No fog filter: a picture has none, and everyone is looking at the same
+    /// one. A `Cursor` still goes through the two pointer switches.
+    Pointed {
+        by: Owner,
+        gesture: Gesture,
+    },
+
     /// Somebody said something you are party to.
     ///
     /// **Sent to the sender as well**, unlike `Pinged` and `Sketch`. Those two
@@ -2069,6 +2125,7 @@ mod tests {
             ClientMsg::ClearShapes => "clear_shapes",
             ClientMsg::Ping { .. } => "ping",
             ClientMsg::MoveCursor { .. } => "move_cursor",
+            ClientMsg::Point { .. } => "point",
             ClientMsg::Say { .. } => "say",
             ClientMsg::Roll { .. } => "roll",
             ClientMsg::SetNotes { .. } => "set_notes",
@@ -2116,6 +2173,7 @@ mod tests {
             ServerMsg::OverridesChanged { .. } => "overrides_changed",
             ServerMsg::Pinged { .. } => "pinged",
             ServerMsg::CursorMoved { .. } => "cursor_moved",
+            ServerMsg::Pointed { .. } => "pointed",
             ServerMsg::Said { .. } => "said",
             ServerMsg::NotesChanged { .. } => "notes_changed",
             ServerMsg::Restored { .. } => "restored",
@@ -2193,6 +2251,7 @@ mod tests {
         "move_token",
         "next_turn",
         "ping",
+        "point",
         "previous_turn",
         "promote_staged",
         "remove_from_initiative",
@@ -2236,6 +2295,7 @@ mod tests {
         "notes_changed",
         "overrides_changed",
         "pinged",
+        "pointed",
         "presence",
         "restored",
         "roster_changed",

@@ -300,10 +300,20 @@ function segmentDistance(a: Vec2, b: Vec2, px: number, py: number): number {
  * origin, which is the implied first corner and is never returned.
  */
 export function simplifyPath(points: readonly Vec2[]): Vec2[] {
-  const all = [{ x: 0, y: 0 }, ...points];
-  for (let tolerance = PATH_TOLERANCE; ; tolerance *= 2) {
-    const kept = douglasPeucker(all, tolerance).slice(1);
-    if (kept.length <= MAX_PATH_POINTS) return kept;
+  // The origin is a kept corner that isn't sent, so it doesn't count to the cap.
+  return simplifyLine([{ x: 0, y: 0 }, ...points], PATH_TOLERANCE, MAX_PATH_POINTS + 1).slice(1);
+}
+
+/**
+ * `simplifyPath` with the tolerance and the cap given: every point is sent,
+ * the first included. For a line in a space that isn't cells, such as a
+ * backdrop stroke (`pointing.ts`), where `PATH_TOLERANCE` would be a few
+ * percent of the picture.
+ */
+export function simplifyLine(points: readonly Vec2[], tolerance: number, cap: number): Vec2[] {
+  for (let t = tolerance; ; t *= 2) {
+    const kept = douglasPeucker(points, t);
+    if (kept.length <= cap) return kept;
   }
 }
 

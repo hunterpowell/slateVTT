@@ -432,7 +432,8 @@ sight appears at the destination. Escape, undo and reconnect don't slide: they h
 Hold the left mouse button with no tool armed and a ring appears where everyone can see it. It's
 Foundry's gesture, chosen because half the table has already used it. The code is `pings.ts` on the
 client and `ClientMsg::Ping`, `Event::Pinged` and `ServerMsg::Pinged` on the server, and nothing
-else.
+else. A ping on the backdrop is a different message, `Point`, with a position on the picture
+instead of the board; see *Pointing at it* in `docs/maps.md`.
 
 ### It's told apart by duration, not by target
 

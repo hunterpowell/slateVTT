@@ -54,7 +54,7 @@ const DRAG_SEND_INTERVAL_MS = 40;
  * Seven clients make this affordable. If it ever isn't, the room's
  * `show_cursors` switch is the coarse control and this number the fine one.
  */
-const CURSOR_SEND_INTERVAL_MS = 33;
+export const CURSOR_SEND_INTERVAL_MS = 33;
 /** How far the pointer may wander during a click on a shape before it counts as
  *  a sweep instead. A hand on a mouse is never perfectly still. */
 const DRAW_CLICK_SLOP_PX = 4;
@@ -69,7 +69,7 @@ const DRAW_CLICK_SLOP_PX = 4;
  * and checked first on every move, means a ping can never fire after a sketch
  * frame has gone out.
  */
-const HOLD_SLOP_PX = DRAW_CLICK_SLOP_PX;
+export const HOLD_SLOP_PX = DRAW_CLICK_SLOP_PX;
 /** How near a wall a click has to land to hit it, in *screen* pixels, so a
  *  segment stays as easy to hit zoomed out as zoomed in. */
 const WALL_HIT_PX = 8;
