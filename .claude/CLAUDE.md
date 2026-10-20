@@ -561,9 +561,8 @@ staged fog preview would be client-only. **Don't put it in the room.**
 the DM's client over data it already has. Solo shows one creature's sight. Mirror (*player
 view*) shows the table's board via `asTable`, the client-side counterpart of `snapshot_for`; it
 isn't a security boundary. `SOLO_SIGHT` has been off since milestone 34. Split sight is
-`ROADMAP.md` milestone 29, built experimentally on the `fog-of-war` branch: see *Split sight* in
-`docs/fog.md`. Under it the DM is sent each player's fog (`fog_by`) and player view picks a
-player.
+milestone 29: see *Split sight* in `docs/fog.md`. Under it the DM is sent each player's fog
+(`fog_by`) and player view picks a player.
 
 → `docs/fog.md` before touching `fog.rs`, `fog.ts`, `solo.ts`, `mirror.ts`, `overrides.ts`,
 `fogtool.ts`, `unseen_by`, `with_fringe`, `shape_seen`, `refresh_fog`,

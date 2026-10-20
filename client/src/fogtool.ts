@@ -73,10 +73,10 @@ const MAX_FILL_CELLS = 8_000;
  * redundant. `solo.ts`, its tests and the render path are unchanged and still
  * correct; only the button is gone.
  *
- * Milestone 29 brings it back. Once `visible` is per-player there is no single
- * table's board to mirror, player view has to name somebody, and "what can
- * this creature see" becomes the useful question. Flip this to `true` then,
- * and see *Solo sight* in `docs/fog.md`, which is still the design.
+ * Milestone 29 was expected to bring it back and didn't: under split sight
+ * player view names a player, which answers the same question for the board
+ * that matters. If it's ever flipped to `true`, *Solo sight* in `docs/fog.md`
+ * is still the design.
  *
  * Hidden, not greyed: this panel greys a control to mean "not on this board",
  * which the DM can change. A button that can never be pressed isn't that.

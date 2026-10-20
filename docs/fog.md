@@ -868,17 +868,18 @@ answer is already on screen.
 >
 > Nothing else was removed. `solo.ts`, `solo.test.ts`, `frame.solo` and `drawFog`'s branch are
 > unchanged and still correct; only the way in is switched off, and everything below is still the
-> design. **Milestone 29 is what brings it back**: once `visible` is per-player there's no single
-> table's board to mirror, player view has to name someone, and *can the rogue see it* stops being
-> the narrow version of anything. `drive-panels.mjs` asserts the button is unreachable, and that
-> check fails the day the const flips.
+> design. Milestone 29 was expected to bring it back, since under split sight there's no single
+> table's board to mirror. It didn't: player view names a player instead (*Player view names a
+> player*), which answers the question for the board that matters. `drive-panels.mjs` asserts the
+> button is unreachable, and that check fails the day the const flips.
 
 Milestone 26, all in `solo.ts`. The DM arms *sight check* in the fog panel, clicks a creature, and
 their own board stops showing the table's wash and shows that creature's line of sight instead. It
 answers the question that actually comes up at a table (*can the rogue see it*), and it's the only
 part of per-player fog worth having.
 
-**Per-player fog itself stays refused**, and this is why refusing it costs nothing. The architecture
+Milestone 26 refused per-player fog. Milestone 29 later built it behind a switch with `Party` as the
+default (see *Split sight*), and this reasoning is why it's a switch. The architecture
 would allow it: per-client `mpsc`, `snapshot_for`, and `FogView` is already built per recipient. The
 cost is in play. `unseen_by` would become `unseen_by(client)` at six call sites, `FogView`
 would stop being the one message identical for everyone, and there's no defensible answer for what
@@ -946,9 +947,8 @@ see it* was nearly always asking what the table's board looks like. See the note
 *Solo sight* above; that's the version this replaced, not one that was wrong.
 
 It's worth having because the fog is party-shared. There's exactly one answer to "what can the table
-see", so a mirror of it is a fact rather than a choice between six. That's also the line that would
-have to be re-argued if milestone 29 ever made `visible` per-player: `asTable` is where a player's
-name would have to go, and the feature would need a justification it doesn't need today.
+see", so a mirror of it is a fact rather than a choice between six. Under split sight there are six
+answers, so `asTable` takes a player's name; see *Player view names a player*.
 
 **Client-only, and nothing goes in the room.** No command, event or filter; the server doesn't know
 the DM is looking at this and must not learn. That's `solo.ts`'s rule and `previewing`'s before it.
@@ -1133,10 +1133,11 @@ working in the other direction: a required field is a question the type system m
 
 ## Split sight
 
-Milestone 29, experimental. `vision: Vision` on `RoomState`, `Party` by default, set by the DM on
-the table tab with `SetVision`. Under `Split`, a player is sent creatures and fog by what their
+Milestone 29, built 2026-10-19. `vision: Vision` on `RoomState`, `Party` by default, set by the DM
+on the table tab with `SetVision`. Under `Split`, a player is sent creatures and fog by what their
 own tokens can see, so the rogue scouting ahead sees the ambush and the rest of the table doesn't.
-`ROADMAP.md` has the design argument; this section is what was built.
+The design argument (why the switch, why only `visible` splits) is milestone 29 in
+`docs/history.md`; this section is what was built.
 
 **Only `visible` splits.** `revealed` and `known` stay party-shared, so the explored map is still
 the party's map: Torrin's board shows the corridor Saelyn walked, dimmed, with nothing standing in
@@ -1297,8 +1298,8 @@ the monster walks over, which shows the first answer wasn't a page that fetched 
   - Fog already does the practical work: a player who can't see into a room doesn't drag a token
     into it.
 - No light sources, no per-token vision, no darkvision; one radius per map. **Milestone 39 added the
-  first of those, and the second came with it** (see *Light sources*). The third is still refused,
-  and *Three fields on the map* says why a light isn't darkvision.
+  first of those, and 29 the second** (`vision_ft`; see *Light and vision*). Darkvision is still
+  refused beyond its geometry, and *Three fields on the map* says where that line is.
 - **No undo.** The fill previews instead, which was the cheaper answer to the same problem: the
   mistake worth protecting against is the one nobody sees coming, and a region shown in the colour it
   would land in before it lands is one the DM has already seen. Milestone 22 later added the DM's

@@ -18,9 +18,9 @@
 // it drove: milestone 34 hid the solo sight check, since player view answers the
 // same question about the whole table. What it used to assert — the DM's board
 // changing while the *player's* moves by nothing at all — is worth reading in
-// `git log` on the day milestone 29 turns the button back on. Until then this
-// driver has one subject and a second browser it keeps only to prove the fold is
-// one client's own business.
+// `git log` if the button is ever turned back on (milestone 29 left it off).
+// Until then this driver has one subject and a second browser it keeps only to
+// prove the fold is one client's own business.
 
 import { open, checks } from './cdp.mjs';
 import { latticeOrBail } from './board.mjs';

@@ -8,8 +8,8 @@ This is a record, so parts of it describe code that has since changed. Where it 
 `.claude/CLAUDE.md` or another file in `docs/`, those are current. Read the entries for a subsystem
 before redesigning it, alongside its docs file.
 
-The last section, *Designs written before building*, keeps five designs as they were written in
-advance, with notes where the build went differently.
+The last section, *Designs written before building*, keeps designs as they were written in advance,
+with notes where the build went differently.
 
 ## 8. Map library
 
@@ -859,7 +859,8 @@ already built per recipient. The cost is to play, not code. `unseen_by_table` be
 and there's no defensible answer for what the DM's own board should then show, which usually means
 the question was posed wrong. What a table actually asks is narrower and has one answer: *can the
 rogue see it*. That's `solo.ts`. It's client-only and needed no command, no event, no filter and no
-Rust. *(Milestone 29 reopens this; its design in `ROADMAP.md` explains why.)*
+Rust. *(Milestone 29 reopened this and built per-player `visible` behind a switch; its design, under
+*Designs written before building*, explains why.)*
 
 It can't leak because a player's client holds no walls, so it couldn't compute this if it tried.
 That's `crossesWall`'s argument for the movement hint, word for word. Every piece already existed:
@@ -1358,7 +1359,8 @@ uses what the client already has.
 Milestone 29 is the entry this one relates to. If `visible` ever becomes per-player, `asTable` is
 where a name has to go, and this feature would need a defence it doesn't need now. 26 answered the
 objection that ruled out per-player fog; this one makes it less needed, since the question a DM
-actually asks (what's on their screens) now has a button.
+actually asks (what's on their screens) now has a button. *(29 made it per-player, and player view
+now names a player under split sight.)*
 
 What building it found:
 
@@ -1379,7 +1381,8 @@ What building it found:
 Then it took the sight check off the panel, days later, based on using it: a DM reaching for *can the
 rogue see it* was nearly always asking what the table's board looks like, which is now one button.
 `SOLO_SIGHT` in `fogtool.ts` is the whole of the change; `solo.ts`, its tests and the render path are
-untouched, and milestone 29 is what turns it back on, for the reason its design gives.
+untouched, and milestone 29 is what turns it back on, for the reason its design gives. *(29 left it
+off; see its notes.)*
 `drive-panels.mjs` lost its solo half and gained a check that fails when the const flips.
 
 ## 35. The controls pass
@@ -2320,6 +2323,107 @@ The rest held as written:
 Two things the design didn't foresee, both covered under milestone 16: the fill runs on the *client*
 and the command carries cells rather than a seed, and the override travels like the walls rather than
 like the fog. Those two turned out to be what the feature is about.
+
+### 29: party sight and split sight
+
+Written 2026-08-18 with 27 and 28, built 2026-10-19 on the `fog-of-war` branch and merged. What
+shipped is *Split sight* in `docs/fog.md`. Notes in italics mark where the build differed.
+
+What building it found that the design didn't anticipate:
+
+- **A friend out of your view is withheld like a monster.** The design talked only about creatures.
+  Withholding party members too follows from what a player would actually know, and their
+  initiative row is kept, with a `RowLabel` in place of the token the client doesn't hold.
+- **Milestone 39's `light_ft` had to split into `light_ft` and `vision_ft`.** On a player's token it
+  replaced the map's radius; elsewhere it was a light. Under party sight those give the same cells,
+  and under split sight they don't (darkvision is private, a torch isn't). Hunter chose the model,
+  including that a player's own lantern never shortens their sight.
+- **Getting each frame's content right wasn't enough.** Re-sending an unchanged frame to a player
+  tells them a friend's view changed, so every frame `refresh_fog` emits is wrapped in
+  `Event::Narrowed` and goes only to the players whose board it changes.
+- `SetRoster` joined `moves_sight`, because a new slot has no `visible_by` entry until a recompute.
+- Left open: `delete_token`'s panel events aren't narrowed, and the cost was measured on a desktop
+  rather than the Pi. Both are in *What it doesn't do yet* in `docs/fog.md`.
+
+The design as written:
+
+A switch between today's party-shared fog and a per-player `visible`, so the rogue scouting ahead
+sees what the rest of the table doesn't.
+
+This reopens a question milestone 26 answered no, and it can be reopened because 26 answered its own
+closing argument. That argument was *"there is no defensible answer for what the DM's own board
+should then show"*, and `solo.ts`, which shipped in the same milestone, is that answer: the DM's
+board shows the party union, and the sight check is how they ask about one creature. That stays true
+under either setting, so the tool built instead of this feature is what makes it defensible.
+
+**Building this means turning the sight check back on**: `SOLO_SIGHT` in `fogtool.ts`, which
+milestone 34 switched off. That's consistent with why it went off. The check went off because player
+view answers *what is the table looking at* for the whole party at once, and once `visible` is
+per-player there's no single answer for it to mirror. Player view then has to name somebody, and
+asking about one creature is no longer a narrower version of anything. Each of the two controls is
+redundant exactly while the other one gives the accurate answer. *(It stayed off. Player view names
+a player instead, picked under its button, and that answers the question for the board that
+matters.)*
+
+What hasn't been answered is the objection in the fog design as originally written (*Fog of war*
+above): "Five people narrating to each other on Discord get nothing out of per-player fog but
+confusion and five times the state." That's why this is a switch and not a replacement, and why it's
+the middle of three possible depths rather than the deepest.
+
+### Three depths, and why the middle one
+
+- **Creatures only.** `unseen_by_table` becomes `unseen_by(&Identity, ...)`, the fog picture stays
+  identical for everybody, and only *which creatures you're sent* changes. By far the cheapest, and
+  it needs no client code, since it's exactly what `hidden` already does. Rejected as too little: a
+  lit room with a creature silently missing from it looks the same as an empty room, and the table
+  can't tell which they're looking at.
+- **Per-player `visible`.** What ships. `revealed` and `known` stay party-shared and persisted
+  exactly as now, so the explored map stays the party's map. That keeps the board navigable, and it
+  stops a player who owns no token from staring at a black screen.
+- **Full per-player, `revealed` too.** Three sets times seven, persisted times seven, and each
+  player's map becomes a different map. This is the version the fog design argues against by name,
+  and that argument hasn't weakened.
+
+### The switch is on `RoomState`, on the table tab
+
+`fog`, `vision_ft` and `lighting` are on `MapInfo` because each is a fact about the dungeon's
+geometry: open ground versus rooms. Whether the party splits vision is a fact about how this table
+plays, like `show_names` and `diagonals`, and milestone 26's rule is that a panel mirrors where its
+field lives. It's an enum with a `Party` default, like `Lighting`, so no existing save changes
+behaviour. *(Built as `vision: Vision` and `SetVision`.)*
+
+The counter-argument is real and was declined: on `MapInfo` it would sit beside the other three sight
+fields and get per-URL memory for free. Recorded so it isn't argued again.
+
+### The cost is more than the six call sites it looks like
+
+Read this part first. Milestone 26 counted `unseen_by_table` becoming `unseen_by(client)` at six
+sites and stopped there. Two more things follow, and neither is small:
+
+- **`struct Sight` gains a per-identity dimension.** It's the snapshot of "what the table held a
+  moment ago" that `refresh_fog` compares against, and its three fields (`fog`, `seen`, `shapes`) are
+  each one answer for the whole table. Under split sight each becomes an answer per recipient, or the
+  room can't work out which client is owed which frame. *(`seen` and `shapes` became per player, and
+  `fog` became `fogs()`, one frame per viewer.)*
+- **So `was_unseen` stops being a bool.** CLAUDE.md: *"Every `was_unseen` on an event asks the same
+  question, evaluated before the change it describes."* Under split sight it's a different answer per
+  recipient. Milestone 16a recorded what missing one of those sites costs (a `TokenRemoved` naming an
+  id a client has never held, which reveals that the id exists), and that was the last time this
+  question changed shape. This would be the third. *(It became `held_by: Holders`, the set of roster
+  players who held the token, read per recipient by `held`.)*
+
+`visible` also gets a per-player counterpart, memory-only and derived on boot like `known`. The union
+is still needed: `revealed` takes the union of all sight, and the DM's board still shows the whole
+party's. *(`visible_by`. The DM is also sent every player's frame as `fog_by`, which the design
+didn't name, so player view can show the board a named player has.)*
+
+`FogView` stops being the one message identical for every recipient while the switch is on. Three
+files say that in prose and need amending rather than deleting, because under `Party` it still holds.
+That's also the argument for the switch being an enum on the room rather than a rewrite.
+
+It needs another three-browser driver. `tools/drive-chat.mjs` is the precedent: the assertion is that
+player A is sent a creature and player B isn't, and two connections can't show that. Use fixed debug
+ports, as milestone 26 established. *(`tools/drive-split.mjs`.)*
 
 ### 45: marquee, right-drag pan, trackpads
 

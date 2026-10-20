@@ -1,8 +1,8 @@
 // Solo sight: what one creature can see, on the DM's screen and nobody else's.
 //
-// The DM's adjudication view: can the rogue see it. The table's fog stays
-// party-shared (per-player fog is `ROADMAP.md` milestone 29); this answers the
-// narrower question for one creature. Hidden behind `SOLO_SIGHT` in
+// The DM's adjudication view: can the rogue see it. This answers the question
+// for one creature; split sight's per-player fog comes from the server instead
+// (`fog_by`, milestone 29). Hidden behind `SOLO_SIGHT` in
 // `fogtool.ts` while player view (`mirror.ts`) covers the same need.
 //
 // **Client-only, and nothing goes in the room.** This is a second raycast over

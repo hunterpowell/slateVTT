@@ -20,7 +20,8 @@ replaces Foundry for one group that only needs a shared map, tokens, and turn or
   the edge of the screen for anyone looking somewhere else
 - Walls and doors the DM traces over the map, which block line of sight but never movement
 - Fog of war: the table sees what their own tokens can see and remembers where they have
-  been, with a DM override to reveal or black out a room by hand
+  been, with a DM override to reveal or black out a room by hand. The DM can also split it, so
+  each player sees only what their own tokens can see while the explored map stays shared
 - Two ways for a map to be lit: line of sight from each token, or the whole room a token is
   standing in, where an open door lets the light through and a shut one seals it
 - Whisper and shout: a player says something to the table or privately to the DM, the DM whispers
@@ -33,7 +34,8 @@ replaces Foundry for one group that only needs a shared map, tokens, and turn or
   with nothing to move, which leaves the board untouched underneath
 - One looping music track the DM picks, at a volume each person sets for themselves
 - Coloured markers on a token, and an X for a dead one, that everyone can see
-- Square or isometric grids, and tokens that carry a light of their own
+- Square or isometric grids, tokens that carry a light of their own, and player tokens that see
+  further than the map's setting
 - Who's connected, a prompt when it's your turn, a colour each player picks, and everyone's pointer
   on everyone's board
 - Undo for the DM, ten changes deep, and a player view that redraws the DM's board as the table

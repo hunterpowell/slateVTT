@@ -32,7 +32,7 @@ Everything from 8 on was planned after the original seven: 17 and 18 after 16 la
 existed, and all three were written to overturn something the roadmap already said (each entry names
 what). 28 also overturned part of its own design.
 
-**Everything through 54 is built except 29.** 25, 26, 34 and 38 were never planned and were
+**Everything through 54 is built.** 25, 26, 34 and 38 were never planned and were
 built out of order; their entries in `docs/history.md` say why. 33 is multi-room, which was
 unscheduled until a Halloween one-shot became the second room it was waiting for.
 
@@ -69,7 +69,7 @@ in play is the scene system.
 27. The presence pass: connected players, "your turn", reconnect on drop, player-picked colours.
     2026-08-19. `docs/presence.md`.
 28. Cursors. 2026-08-19. `docs/presence.md`.
-29. **Not built.** Party sight and split sight. Design below.
+29. Party sight and split sight. 2026-10-19. `docs/fog.md`.
 30. The backdrop. 2026-08-22. `docs/maps.md`.
 31. Prepared maps, remembered per URL. 2026-08-22. `docs/maps.md`.
 32. Writable libraries. 2026-08-22. `docs/maps.md`.
@@ -98,81 +98,6 @@ in play is the scene system.
 52. Ghost and path, then move. 2026-10-19. `docs/drawings.md`, `docs/undo.md`.
 53. Players enter their own initiative. 2026-10-19. `docs/tokens.md`.
 54. Pointing at the backdrop: pings, cursors and a fading pen. 2026-10-19. `docs/maps.md`.
-
-## 29. Party sight and split sight
-
-Not built. A switch between today's party-shared fog and a per-player `visible`, so the rogue
-scouting ahead sees what the rest of the table doesn't.
-
-This reopens a question milestone 26 answered no, and it can be reopened because 26 answered its own
-closing argument. That argument was *"there is no defensible answer for what the DM's own board
-should then show"*, and `solo.ts`, which shipped in the same milestone, is that answer: the DM's
-board shows the party union, and the sight check is how they ask about one creature. That stays true
-under either setting, so the tool built instead of this feature is what makes it defensible.
-
-**Building this means turning the sight check back on**: `SOLO_SIGHT` in `fogtool.ts`, which
-milestone 34 switched off. That's consistent with why it went off. The check went off because player
-view answers *what is the table looking at* for the whole party at once, and once `visible` is
-per-player there's no single answer for it to mirror. Player view then has to name somebody, and
-asking about one creature is no longer a narrower version of anything. Each of the two controls is
-redundant exactly while the other one gives the accurate answer.
-
-What hasn't been answered is the objection in the fog design as originally written (*Fog of war* in
-`docs/history.md`): "Five people narrating to each other on Discord get nothing out of per-player fog
-but confusion and five times the state." That's why this is a switch and not a replacement, and why
-it's the middle of three possible depths rather than the deepest.
-
-### Three depths, and why the middle one
-
-- **Creatures only.** `unseen_by_table` becomes `unseen_by(&Identity, ...)`, the fog picture stays
-  identical for everybody, and only *which creatures you're sent* changes. By far the cheapest, and
-  it needs no client code, since it's exactly what `hidden` already does. Rejected as too little: a
-  lit room with a creature silently missing from it looks the same as an empty room, and the table
-  can't tell which they're looking at.
-- **Per-player `visible`.** What ships. `revealed` and `known` stay party-shared and persisted
-  exactly as now, so the explored map stays the party's map. That keeps the board navigable, and it
-  stops a player who owns no token from staring at a black screen.
-- **Full per-player, `revealed` too.** Three sets times seven, persisted times seven, and each
-  player's map becomes a different map. This is the version the fog design argues against by name,
-  and that argument hasn't weakened.
-
-### The switch is on `RoomState`, on the table tab
-
-`fog`, `vision_ft` and `lighting` are on `MapInfo` because each is a fact about the dungeon's
-geometry: open ground versus rooms. Whether the party splits vision is a fact about how this table
-plays, like `show_names` and `diagonals`, and milestone 26's rule is that a panel mirrors where its
-field lives. It's an enum with a `Party` default, like `Lighting`, so no existing save changes
-behaviour.
-
-The counter-argument is real and was declined: on `MapInfo` it would sit beside the other three sight
-fields and get per-URL memory for free. Recorded so it isn't argued again.
-
-### The cost is more than the six call sites it looks like
-
-Read this part first. Milestone 26 counted `unseen_by_table` becoming `unseen_by(client)` at six
-sites and stopped there. Two more things follow, and neither is small:
-
-- **`struct Sight` gains a per-identity dimension.** It's the snapshot of "what the table held a
-  moment ago" that `refresh_fog` compares against, and its three fields (`fog`, `seen`, `shapes`) are
-  each one answer for the whole table. Under split sight each becomes an answer per recipient, or the
-  room can't work out which client is owed which frame.
-- **So `was_unseen` stops being a bool.** CLAUDE.md: *"Every `was_unseen` on an event asks the same
-  question, evaluated before the change it describes."* Under split sight it's a different answer per
-  recipient. Milestone 16a recorded what missing one of those sites costs (a `TokenRemoved` naming an
-  id a client has never held, which reveals that the id exists), and that was the last time this
-  question changed shape. This would be the third.
-
-`visible` also gets a per-player counterpart, memory-only and derived on boot like `known`. The union
-is still needed: `revealed` takes the union of all sight, and the DM's board still shows the whole
-party's.
-
-`FogView` stops being the one message identical for every recipient while the switch is on. Three
-files say that in prose and need amending rather than deleting, because under `Party` it still holds.
-That's also the argument for the switch being an enum on the room rather than a rewrite.
-
-It needs another three-browser driver. `tools/drive-chat.mjs` is the precedent: the assertion is that
-player A is sent a creature and player B isn't, and two connections can't show that. Use fixed debug
-ports, as milestone 26 established.
 
 ## Unscheduled
 
@@ -230,6 +155,10 @@ Smaller things the record leaves open. Each is explained in its milestone's entr
 - `SLATE_STATE` as a directory, if there are ever enough rooms to want one (33). A DM secret per room
   was the other half of this line; a link for somebody who mustn't reach the campaign now gets a
   second site instead (46).
+- Under split sight, deleting a token still re-sends every player's initiative and shapes panels,
+  because `delete_token`'s events aren't narrowed the way `refresh_fog`'s are. Nothing leaks, but
+  it can tell a player that something only a friend could see changed (29).
+- Split sight's cost per drop was measured on a desktop, not on the Pi (29).
 
 ## Lessons from building
 
@@ -255,6 +184,8 @@ Patterns that recur across subsystems. Each is explained in the milestone named,
 - Before gating a new gesture on `is_dm`, check whether the hit test already limits it (25).
 - A filter that stops asking about a role has to ask about a pair, and the pair includes the sender
   (23).
+- A filter that answers per recipient also has to decide who is sent anything. An unchanged frame
+  re-sent still tells the recipient that something changed somewhere (29).
 - The undo ring may only hold state the person undoing wrote. Keeping something off the disk keeps it
   off the ring for free (22, 41).
 - Invariant 4 fails safe only through redaction. The first public field on a redacted type needs a
