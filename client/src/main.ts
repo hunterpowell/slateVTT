@@ -231,6 +231,8 @@ interface Ui {
     hp: HTMLInputElement;
     hpMax: HTMLInputElement;
     light: HTMLInputElement;
+    visionField: HTMLElement;
+    vision: HTMLInputElement;
     art: HTMLInputElement;
     artText: HTMLElement;
     artPreview: HTMLElement;
@@ -426,6 +428,8 @@ function findUi(): Ui {
       hp: need<HTMLInputElement>('#token-hp'),
       hpMax: need<HTMLInputElement>('#token-hp-max'),
       light: need<HTMLInputElement>('#token-light'),
+      visionField: need('#token-vision-field'),
+      vision: need<HTMLInputElement>('#token-vision'),
       art: need<HTMLInputElement>('#token-art'),
       artText: need('#token-art-text'),
       artPreview: need('#token-art-preview'),

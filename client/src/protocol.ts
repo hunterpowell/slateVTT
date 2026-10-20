@@ -200,6 +200,10 @@ export interface WireToken {
    *  does reaches them as fog, as the walls do. Also null for a DM's token
    *  that carries none, which can't be told apart, as with `hp`. */
   light_ft: number | null;
+  /** How far this token sees, in feet, replacing the map's radius, or null for
+   *  the map's. Only ever set on a player's token, and null for a player
+   *  always, for the light's reason. */
+  vision_ft: number | null;
   /** Where this token lands when the staged map is promoted, or null for one
    *  staying put. Null for a player always: a plan is a cell on a map they have
    *  not been shown. */
@@ -739,6 +743,8 @@ export type ClientMsg =
       hidden: boolean;
       hp: Hp | null;
       light_ft: number | null;
+      /** Refused on a token the DM owns. */
+      vision_ft: number | null;
       /** Usually empty. It is here so that duplicating a marked creature is one
        *  command, which is the only time it is non-empty. */
       markers: Marker[];
@@ -760,6 +766,8 @@ export type ClientMsg =
       hidden: boolean;
       hp: Hp | null;
       light_ft: number | null;
+      /** Refused on a token the DM owns. */
+      vision_ft: number | null;
       /** The whole set, not a toggle. This command replaces the token, so
        *  every sender has to pass the current markers through, which is why
        *  there is no `set_markers`. Required, not optional, so the compiler

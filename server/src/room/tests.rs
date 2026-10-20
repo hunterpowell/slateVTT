@@ -101,6 +101,7 @@ fn create(name: &str, size: f32, owner: Owner) -> ClientMsg {
         hidden: false,
         hp: None,
         light_ft: None,
+        vision_ft: None,
         markers: Vec::new(),
         staged: false,
     }
@@ -126,6 +127,7 @@ fn with(msg: ClientMsg, set: impl FnOnce(&mut bool, &mut bool)) -> ClientMsg {
         y,
         hp,
         light_ft,
+        vision_ft,
         markers,
     } = msg
     else {
@@ -142,6 +144,7 @@ fn with(msg: ClientMsg, set: impl FnOnce(&mut bool, &mut bool)) -> ClientMsg {
         hidden,
         hp,
         light_ft,
+        vision_ft,
         markers,
         staged,
     }
@@ -160,6 +163,7 @@ fn edit(token: &Token) -> ClientMsg {
         hidden: token.hidden,
         hp: token.hp,
         light_ft: token.light_ft,
+        vision_ft: token.vision_ft,
         markers: token.markers.clone(),
     }
 }
@@ -175,6 +179,7 @@ fn set_hidden(token: &Token, want: bool) -> ClientMsg {
             owner,
             hp,
             light_ft,
+            vision_ft,
             markers,
             ..
         } => ClientMsg::UpdateToken {
@@ -186,6 +191,7 @@ fn set_hidden(token: &Token, want: bool) -> ClientMsg {
             hidden: want,
             hp,
             light_ft,
+            vision_ft,
             markers,
         },
         other => other,

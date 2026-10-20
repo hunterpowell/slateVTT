@@ -3018,8 +3018,8 @@
           <span class="token-hp-of">/</span>
           <input id="token-hp-max" type="number" step="1" placeholder="—" aria-label="Maximum hit points" />
         </div>
-        <!-- A radius on the token: a lantern for one the party owns, and what
-             makes a brazier a light at all for anything else. Blank for the
+        <!-- A radius the token lights, for whoever can see it: a lantern, a
+             brazier, a goblin's torch, the same on every token. Blank for the
              overwhelming majority, which carry none. -->
         <label class="token-field">
           <span>light</span>
@@ -3031,6 +3031,22 @@
             max="500"
             placeholder="none"
             aria-label="How far this token lights the board, in feet"
+          />
+          <span class="token-hp-of">ft</span>
+        </label>
+        <!-- How far a player's token sees, in place of the map's radius. Under
+             split sight it's theirs alone, which is what makes it darkvision
+             and not a light. Hidden for a DM token: the server refuses one. -->
+        <label id="token-vision-field" class="token-field">
+          <span>sees</span>
+          <input
+            id="token-vision"
+            type="number"
+            step="5"
+            min="5"
+            max="500"
+            placeholder="map"
+            aria-label="How far this token sees, in feet, instead of the map's radius"
           />
           <span class="token-hp-of">ft</span>
         </label>

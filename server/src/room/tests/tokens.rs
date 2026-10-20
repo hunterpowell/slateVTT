@@ -76,6 +76,7 @@ fn resizing_a_token_moves_it_onto_the_right_lattice() {
             hidden: false,
             hp: None,
             light_ft: None,
+            vision_ft: None,
             markers: Vec::new(),
         },
     );
@@ -112,6 +113,7 @@ fn an_edit_that_leaves_the_size_alone_leaves_the_position_alone() {
             hidden: false,
             hp: None,
             light_ft: None,
+            vision_ft: None,
             markers: Vec::new(),
         },
     );
@@ -144,6 +146,7 @@ fn handing_a_token_to_a_player_lets_them_move_it_and_taking_it_back_does_not() {
         hidden: false,
         hp: None,
         light_ft: None,
+        vision_ft: None,
         markers: Vec::new(),
     };
 
@@ -176,6 +179,7 @@ fn a_player_cannot_touch_the_lifecycle_at_all() {
                 hidden: false,
                 hp: None,
                 light_ft: None,
+                vision_ft: None,
                 markers: Vec::new(),
             },
             ClientMsg::DeleteToken {
@@ -214,6 +218,7 @@ fn a_players_refused_edit_changes_nothing() {
             hidden: false,
             hp: None,
             light_ft: None,
+            vision_ft: None,
             markers: Vec::new(),
         },
     );
@@ -313,6 +318,7 @@ fn a_token_that_does_not_exist_cannot_be_edited_or_deleted() {
                     hidden: false,
                     hp: None,
                     light_ft: None,
+                    vision_ft: None,
                     markers: Vec::new(),
                 }
             )
@@ -389,6 +395,7 @@ fn token_art_has_to_live_on_this_server() {
         hidden: false,
         hp: None,
         light_ft: None,
+        vision_ft: None,
         markers: Vec::new(),
         staged: false,
     };
@@ -609,6 +616,7 @@ fn a_hidden_monster_is_nowhere_in_the_json_a_player_is_sent() {
                     max: 4242,
                 }),
                 light_ft: None,
+                vision_ft: None,
                 markers: Vec::new(),
                 staged,
             },
@@ -664,6 +672,7 @@ fn editing_an_already_hidden_token_tells_the_table_nothing() {
                 hidden,
                 hp,
                 light_ft,
+                vision_ft,
                 ..
             } => ClientMsg::UpdateToken {
                 id,
@@ -674,6 +683,7 @@ fn editing_an_already_hidden_token_tells_the_table_nothing() {
                 hidden,
                 hp,
                 light_ft,
+                vision_ft,
                 markers: Vec::new(),
             },
             other => other,
@@ -796,6 +806,7 @@ fn hit_points_reach_the_dm_and_nobody_else() {
                     max: 59,
                 }),
                 light_ft: None,
+                vision_ft: None,
                 markers: Vec::new(),
             },
             other => other,
@@ -855,6 +866,7 @@ fn hit_points_are_bounded() {
             hidden,
             hp,
             light_ft: None,
+            vision_ft: None,
             markers: Vec::new(),
         },
         other => other,
@@ -1033,6 +1045,7 @@ fn set_markers(token: &Token, want: &[Marker]) -> ClientMsg {
             hidden,
             hp,
             light_ft,
+            vision_ft,
             ..
         } => ClientMsg::UpdateToken {
             id,
@@ -1043,6 +1056,7 @@ fn set_markers(token: &Token, want: &[Marker]) -> ClientMsg {
             hidden,
             hp,
             light_ft,
+            vision_ft,
             markers: want.to_vec(),
         },
         other => other,
@@ -1184,13 +1198,15 @@ fn the_largest_token_edit_fits_in_a_frame() {
         "name": "x".repeat(MAX_TOKEN_NAME_LEN),
         "img": format!("/{}", "y".repeat(MAX_URL_LEN - 1)),
         "size": 4.0,
-        "owner": Owner::Dm,
+        // A player's, because only theirs may carry `vision_ft`.
+        "owner": Owner::Player(PlayerId::new("saelyn")),
         "hidden": true,
         "hp": Hp {
             current: -MAX_HP,
             max: MAX_HP,
         },
         "light_ft": fog::MAX_VISION_FT,
+        "vision_ft": fog::MAX_VISION_FT,
         "markers": Marker::ALL,
     });
     let bytes = serde_json::to_vec(&frame).expect("encodes");

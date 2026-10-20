@@ -46,6 +46,7 @@ function token(id: string, cx: number, cy: number, over: Partial<Token> = {}): T
     hidden: false,
     hp: null,
     lightFt: null,
+    visionFt: null,
     stagedPos: null,
     stagedOnly: false,
     ...over,

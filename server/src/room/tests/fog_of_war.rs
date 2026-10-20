@@ -1490,6 +1490,7 @@ fn light_at(name: &str, x: f32, light_ft: f32) -> ClientMsg {
         hidden: false,
         hp: None,
         light_ft: Some(light_ft),
+        vision_ft: None,
         markers: Vec::new(),
         staged: false,
     }
@@ -1565,22 +1566,125 @@ fn swinging_a_door_open_switches_the_light_behind_it_on() {
 }
 
 #[test]
-fn a_lantern_on_a_player_token_replaces_the_maps_radius() {
-    // The other half of one field: on a token the party owns it is not a gate
-    // at all, it is how far that token sees. Never gated, because their own
-    // eyes are not something they have to catch sight of first.
+fn a_players_own_vision_replaces_the_maps_radius() {
+    // `vision_ft` on a token the party owns is how far that token sees.
     let mut state = fog_room(10.0);
     let _dm = join_as_dm(&mut state, ClientId(1));
     assert!(!sees_the_ogre(&state), "two cells does not reach four");
 
+    let mut keen = token(&state, "p");
+    keen.vision_ft = Some(60.0);
+    state.handle(ClientId(1), edit(&keen));
+
+    assert!(sees_the_ogre(&state), "twelve cells does");
+}
+
+#[test]
+fn a_lantern_adds_to_its_carriers_sight_and_never_shortens_it() {
+    // A player's lantern is a light like a brazier's, gated like one, and it
+    // passes because they can see their own token. So it lights past their
+    // eyes on a dark map, and a short one on a bright map costs them nothing.
+    let mut state = fog_room(10.0);
+    let _dm = join_as_dm(&mut state, ClientId(1));
     let mut carrying = token(&state, "p");
     carrying.light_ft = Some(60.0);
     state.handle(ClientId(1), edit(&carrying));
-
     assert!(
         sees_the_ogre(&state),
-        "the lantern is what the party sees by now"
+        "the lantern reaches what her eyes don't"
     );
+
+    let mut state = fog_room(60.0);
+    let _dm = join_as_dm(&mut state, ClientId(1));
+    assert!(sees_the_ogre(&state));
+    let mut carrying = token(&state, "p");
+    carrying.light_ft = Some(5.0);
+    state.handle(ClientId(1), edit(&carrying));
+    assert!(
+        sees_the_ogre(&state),
+        "a five-foot candle doesn't cut sixty feet of sight to five"
+    );
+}
+
+#[test]
+fn only_a_players_token_may_carry_a_vision_radius() {
+    // A monster's eyes give the party nothing, so the number would be read by
+    // nothing. Both commands, and the edit that hands a token back to the DM.
+    let mut state = fog_room(30.0);
+    let mut dm = join_as_dm(&mut state, ClientId(1));
+    let refused = |dm: &mut mpsc::Receiver<ServerMsg>| {
+        drain(dm).iter().any(|msg| {
+            matches!(msg, ServerMsg::Error { message }
+                if message == "only a player's token sees for the table")
+        })
+    };
+
+    state.handle(
+        ClientId(1),
+        ClientMsg::CreateToken {
+            name: "Owlbear".to_owned(),
+            img: String::new(),
+            size: 2.0,
+            owner: Owner::Dm,
+            x: 9.5,
+            y: 1.5,
+            hidden: false,
+            hp: None,
+            light_ft: None,
+            vision_ft: Some(60.0),
+            markers: Vec::new(),
+            staged: false,
+        },
+    );
+    assert!(refused(&mut dm), "a create");
+    assert!(!state.tokens.values().any(|t| t.name == "Owlbear"));
+
+    let mut ogre = token(&state, "m");
+    ogre.vision_ft = Some(60.0);
+    state.handle(ClientId(1), edit(&ogre));
+    assert!(refused(&mut dm), "an edit");
+    assert_eq!(token(&state, "m").vision_ft, None);
+
+    let mut keen = token(&state, "p");
+    keen.vision_ft = Some(60.0);
+    state.handle(ClientId(1), edit(&keen));
+    keen.owner = Owner::Dm;
+    state.handle(ClientId(1), edit(&keen));
+    assert!(refused(&mut dm), "handing it back without clearing it");
+    assert_eq!(
+        token(&state, "p").owner,
+        Owner::Player(PlayerId::new("saelyn"))
+    );
+}
+
+#[test]
+fn a_players_copy_of_a_token_never_carries_its_vision() {
+    // The light's rule, and her own token is the one that has it: a player
+    // isn't told even their own number, as with `hp`.
+    let mut state = fog_room(30.0);
+    let _dm = join_as_dm(&mut state, ClientId(1));
+    let mut rx = join_as_player(&mut state, ClientId(2), "saelyn");
+    let mut keen = token(&state, "p");
+    keen.vision_ft = Some(60.0);
+    state.handle(ClientId(1), edit(&keen));
+
+    let seen = |view: &RoomView| {
+        view.tokens
+            .iter()
+            .find(|t| t.id.0 == "p")
+            .map(|t| t.vision_ft)
+    };
+    assert_eq!(seen(&state.snapshot_for(&Identity::Dm)), Some(Some(60.0)));
+    assert_eq!(seen(&state.snapshot_for(&as_player("saelyn"))), Some(None));
+
+    let told = drain(&mut rx)
+        .into_iter()
+        .filter_map(|msg| match msg {
+            ServerMsg::TokenChanged { token } if token.id.0 == "p" => Some(token.vision_ft),
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(told, vec![None], "the delta says as little");
 }
 
 #[test]
@@ -1641,6 +1745,7 @@ fn one_light_never_switches_on_the_next() {
             hidden: false,
             hp: None,
             light_ft: Some(30.0),
+            vision_ft: None,
             markers: Vec::new(),
             staged: false,
         },
@@ -2025,6 +2130,30 @@ fn under_split_sight_a_friends_lantern_lights_for_whoever_can_see_them() {
 }
 
 #[test]
+fn under_split_sight_a_players_vision_is_theirs_alone() {
+    // The difference from a lantern. A dark map, Saelyn sees sixty feet and
+    // Torrin ten. She sees the ogre; he doesn't, and doesn't see her either,
+    // because her eyes light nothing for anyone else.
+    let mut state = two_scouts(Vision::Split);
+    let _dm = join_as_dm(&mut state, ClientId(1));
+    state.map.vision_ft = 10.0;
+    if let Some(p) = state.tokens.get_mut(&TokenId::new("p")) {
+        p.vision_ft = Some(60.0);
+    }
+    state.recompute_sight();
+
+    assert!(names(&state.snapshot_for(&as_player("saelyn"))).contains(&"Ogre"));
+    let view = state.snapshot_for(&as_player("torrin"));
+    let torrin = names(&view);
+    assert!(!torrin.contains(&"Ogre"), "got {torrin:?}");
+    assert!(!torrin.contains(&"Saelyn"), "got {torrin:?}");
+    assert!(
+        state.visible.contains(&OGRE_CELL),
+        "while the DM's board, the party's union, still shows what she sees"
+    );
+}
+
+#[test]
 fn under_split_sight_a_friend_out_of_view_keeps_their_initiative_row() {
     let mut state = two_scouts(Vision::Split);
     for (token, value) in [("p", 15), ("m", 12), ("q", 9)] {
@@ -2197,6 +2326,115 @@ fn under_split_sight_renaming_a_monster_reaches_only_whoever_can_see_it() {
     assert!(!mentions_the_ogre(&his), "got {his:?}");
 }
 
+/// A drop, from the DM, onto a settled cell.
+fn drop_at(state: &mut RoomState, id: &str, x: f32, y: f32) {
+    state.handle(
+        ClientId(1),
+        ClientMsg::MoveToken {
+            id: TokenId::new(id),
+            x,
+            y,
+            dragging: false,
+            staged: false,
+        },
+    );
+}
+
+#[test]
+fn under_split_sight_a_player_whose_view_did_not_change_is_sent_nothing() {
+    // Both scouts see the ogre, which has a row and an aura. Torrin walks off
+    // and loses it; Saelyn still sees it, so nothing about it is news to her,
+    // and a frame would tell her that Torrin's view just changed.
+    let mut state = two_scouts(Vision::Split);
+    let mut dm = join_as_dm(&mut state, ClientId(1));
+    drop_at(&mut state, "q", 5.5, 5.5);
+    state.handle(
+        ClientId(1),
+        ClientMsg::SetInitiative {
+            token: TokenId::new("m"),
+            value: 12,
+        },
+    );
+    state.handle(
+        ClientId(1),
+        ClientMsg::AddShape {
+            kind: ShapeKind::Circle,
+            from: Origin::Token(TokenId::new("m")),
+            to: Pos { x: 2.0, y: 0.0 },
+            color: "#ff8c42e6".to_owned(),
+            points: Vec::new(),
+        },
+    );
+    assert_eq!(state.shapes.len(), 1, "the aura is on the board");
+    let mut saelyn = join_as_player(&mut state, ClientId(2), "saelyn");
+    let mut torrin = join_as_player(&mut state, ClientId(3), "torrin");
+    settle(&mut [&mut dm, &mut saelyn, &mut torrin]);
+
+    drop_at(&mut state, "q", 5.5, 13.5);
+
+    let his = drain(&mut torrin);
+    assert!(
+        his.iter()
+            .any(|msg| matches!(msg, ServerMsg::TokenRemoved { id } if id.0 == "m")),
+        "Torrin loses the ogre, got {his:?}"
+    );
+    assert!(
+        his.iter()
+            .any(|msg| matches!(msg, ServerMsg::InitiativeChanged { .. }))
+            && his
+                .iter()
+                .any(|msg| matches!(msg, ServerMsg::ShapesChanged { .. })),
+        "and its row and aura with it, got {his:?}"
+    );
+
+    let hers = drain(&mut saelyn);
+    assert!(
+        !hers.iter().any(|msg| matches!(
+            msg,
+            ServerMsg::TokenChanged { .. }
+                | ServerMsg::InitiativeChanged { .. }
+                | ServerMsg::ShapesChanged { .. }
+        )),
+        "Saelyn's board is as it was, got {hers:?}"
+    );
+
+    assert!(
+        drain(&mut dm)
+            .iter()
+            .any(|msg| matches!(msg, ServerMsg::InitiativeChanged { .. })),
+        "the DM is still sent it, so player view repaints"
+    );
+}
+
+#[test]
+fn under_split_sight_a_friend_pacing_out_of_view_sends_no_fog() {
+    // Torrin steps back and forth over ground already explored. His own frame
+    // changes each time; `known` doesn't, so Saelyn's frame doesn't either.
+    let mut state = two_scouts(Vision::Split);
+    let _dm = join_as_dm(&mut state, ClientId(1));
+    drop_at(&mut state, "q", 2.5, 13.5);
+    drop_at(&mut state, "q", 1.5, 12.5);
+    let mut saelyn = join_as_player(&mut state, ClientId(2), "saelyn");
+    let mut torrin = join_as_player(&mut state, ClientId(3), "torrin");
+    settle(&mut [&mut saelyn, &mut torrin]);
+
+    drop_at(&mut state, "q", 2.5, 13.5);
+
+    assert!(
+        drain(&mut torrin)
+            .iter()
+            .any(|msg| matches!(msg, ServerMsg::FogChanged { .. })),
+        "Torrin's own sight moved with him"
+    );
+    let hers = drain(&mut saelyn);
+    assert!(
+        !hers
+            .iter()
+            .any(|msg| matches!(msg, ServerMsg::FogChanged { .. })),
+        "Saelyn's frame is the one she holds, got {hers:?}"
+    );
+}
+
 #[test]
 fn under_split_sight_a_monsters_drag_frames_reach_only_whoever_can_see_it() {
     let (mut state, _dm, mut saelyn, mut torrin) = two_scouts_joined(Vision::Split);
@@ -2338,4 +2576,185 @@ fn under_split_sight_a_promote_tells_each_player_their_own_news() {
             .any(|msg| matches!(msg, ServerMsg::TokenChanged { token } if token.id.0 == "m")),
         "got {his:?}"
     );
+}
+
+/// Gives the ogre a row in the turn order and an aura, from the DM.
+fn ogre_in_the_fight(state: &mut RoomState) {
+    state.handle(
+        ClientId(1),
+        ClientMsg::SetInitiative {
+            token: TokenId::new("m"),
+            value: 12,
+        },
+    );
+    state.handle(
+        ClientId(1),
+        ClientMsg::AddShape {
+            kind: ShapeKind::Circle,
+            from: Origin::Token(TokenId::new("m")),
+            to: Pos { x: 2.0, y: 0.0 },
+            color: "#ff8c42e6".to_owned(),
+            points: Vec::new(),
+        },
+    );
+}
+
+fn rebuilds_a_panel(frames: &[ServerMsg]) -> bool {
+    frames.iter().any(|msg| {
+        matches!(
+            msg,
+            ServerMsg::InitiativeChanged { .. } | ServerMsg::ShapesChanged { .. }
+        )
+    })
+}
+
+#[test]
+fn under_split_sight_handing_a_monster_over_brings_its_row_and_aura() {
+    // Saelyn sees the ogre and Torrin doesn't. Handing it to Torrin makes it
+    // his own, so it is in his sight wherever it stands, and the row and aura
+    // come with it. Nothing about Saelyn's board changed.
+    let (mut state, _dm, mut saelyn, mut torrin) = two_scouts_joined(Vision::Split);
+    ogre_in_the_fight(&mut state);
+    settle(&mut [&mut saelyn, &mut torrin]);
+
+    let mut ogre = token(&state, "m");
+    ogre.owner = Owner::Player(PlayerId::new("torrin"));
+    state.handle(ClientId(1), edit(&ogre));
+
+    let his = drain(&mut torrin);
+    assert!(
+        his.iter()
+            .any(|msg| matches!(msg, ServerMsg::TokenChanged { token } if token.id.0 == "m")),
+        "got {his:?}"
+    );
+    assert!(
+        his.iter().any(|msg| matches!(
+            msg,
+            ServerMsg::InitiativeChanged { initiative }
+                if initiative.entries.iter().any(|e| e.token.0 == "m")
+        )),
+        "the row comes with it, got {his:?}"
+    );
+    assert!(
+        his.iter().any(|msg| matches!(
+            msg,
+            ServerMsg::ShapesChanged { shapes } if !shapes.is_empty()
+        )),
+        "and the aura, got {his:?}"
+    );
+
+    let hers = drain(&mut saelyn);
+    assert!(
+        !rebuilds_a_panel(&hers),
+        "Saelyn held the ogre before and after, got {hers:?}"
+    );
+}
+
+#[test]
+fn renaming_a_monster_in_the_dark_sends_the_table_nothing() {
+    // Party sight. The ogre has a row and an aura but stands out of reach, so
+    // the table holds neither. A rebuild on the rename would tell them the DM
+    // just touched something they can't see.
+    let mut state = fog_room(10.0);
+    let mut dm = join_as_dm(&mut state, ClientId(1));
+    ogre_in_the_fight(&mut state);
+    assert!(!sees_the_ogre(&state), "the ogre is in the dark");
+    let mut saelyn = join_as_player(&mut state, ClientId(2), "saelyn");
+    settle(&mut [&mut dm, &mut saelyn]);
+
+    let mut ogre = token(&state, "m");
+    ogre.name = "Ogre Chieftain".to_owned();
+    state.handle(ClientId(1), edit(&ogre));
+
+    let hers = drain(&mut saelyn);
+    assert!(hers.is_empty(), "got {hers:?}");
+}
+
+#[test]
+fn splitting_the_sight_of_a_party_standing_together_still_sends_the_dm_each_players_fog() {
+    // Torrin stands on Saelyn's cell, and they are the whole roster, so each
+    // player's own sight is the party's and no player's frame changes. The
+    // DM's does: player view has nothing to draw until `fog_by` arrives.
+    let mut state = fog_room(30.0);
+    state.roster = roster_from(&[("saelyn", "Saelyn"), ("torrin", "Torrin")]);
+    state.tokens.insert(
+        TokenId::new("q"),
+        Token {
+            id: TokenId::new("q"),
+            name: "Torrin".to_owned(),
+            x: 1.5,
+            y: 1.5,
+            owner: Owner::Player(PlayerId::new("torrin")),
+            ..Token::default()
+        },
+    );
+    state.recompute_sight();
+    let mut dm = join_as_dm(&mut state, ClientId(1));
+    let mut saelyn = join_as_player(&mut state, ClientId(2), "saelyn");
+    let mut torrin = join_as_player(&mut state, ClientId(3), "torrin");
+    settle(&mut [&mut dm, &mut saelyn, &mut torrin]);
+
+    state.handle(
+        ClientId(1),
+        ClientMsg::SetVision {
+            vision: Vision::Split,
+        },
+    );
+
+    let to_dm = drain(&mut dm);
+    assert!(
+        to_dm.iter().any(|msg| matches!(
+            msg,
+            ServerMsg::FogChanged { fog_by, .. }
+                if fog_by.contains_key(&PlayerId::new("saelyn"))
+                    && fog_by.contains_key(&PlayerId::new("torrin"))
+        )),
+        "got {to_dm:?}"
+    );
+    for (who, rx) in [("saelyn", &mut saelyn), ("torrin", &mut torrin)] {
+        let frames = drain(rx);
+        assert!(
+            !frames
+                .iter()
+                .any(|msg| matches!(msg, ServerMsg::FogChanged { .. })),
+            "{who}'s board is as it was, got {frames:?}"
+        );
+    }
+}
+
+#[test]
+fn under_split_sight_a_slot_added_to_the_roster_sees_what_the_dm_lit() {
+    let (mut state, mut dm, mut saelyn, mut torrin) = two_scouts_joined(Vision::Split);
+    state.handle(ClientId(1), paint(&[OGRE_CELL], Some(Override::Lit)));
+    settle(&mut [&mut dm, &mut saelyn, &mut torrin]);
+
+    let mut roster = state.roster.clone();
+    roster.push(RosterEntry {
+        id: PlayerId::new("brin"),
+        name: "Brin".to_owned(),
+    });
+    state.handle(ClientId(1), ClientMsg::SetRoster { roster });
+
+    assert!(
+        names(&state.snapshot_for(&as_player("brin"))).contains(&"Ogre"),
+        "a lit square is lit for a player with no token too"
+    );
+    let to_dm = drain(&mut dm);
+    assert!(
+        to_dm.iter().any(|msg| matches!(
+            msg,
+            ServerMsg::FogChanged { fog_by, .. } if fog_by.contains_key(&PlayerId::new("brin"))
+        )),
+        "player view has a frame for the new slot, got {to_dm:?}"
+    );
+    for (who, rx) in [("saelyn", &mut saelyn), ("torrin", &mut torrin)] {
+        let frames = drain(rx);
+        assert!(
+            !frames.iter().any(|msg| matches!(
+                msg,
+                ServerMsg::FogChanged { .. } | ServerMsg::TokenChanged { .. }
+            )),
+            "{who}'s board is as it was, got {frames:?}"
+        );
+    }
 }

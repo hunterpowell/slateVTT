@@ -60,8 +60,8 @@ pub const MAX_VISION_FT: f32 = 500.0;
 /// differently on each side.
 ///
 /// **`radius_ft` is `None` for "as far as this map lets anyone see".** The
-/// fallback lives here, not at the call sites, so `room.rs` can pass
-/// `token.light_ft` unchanged for a party member and for a brazier alike. The
+/// fallback lives here, not at the call sites, so `room.rs` can pass a party
+/// member's `vision_ft` unchanged. A light always has a radius of its own. The
 /// `?? vision_ft` rule exists once, in `radius_cells`.
 #[derive(Debug, Clone, Copy)]
 pub struct Source {

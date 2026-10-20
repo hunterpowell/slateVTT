@@ -38,6 +38,9 @@ export interface TokenToolUi {
   hp: HTMLInputElement;
   hpMax: HTMLInputElement;
   light: HTMLInputElement;
+  /** Shown only while the owner picked is a player. */
+  visionField: HTMLElement;
+  vision: HTMLInputElement;
   art: HTMLInputElement;
   artText: HTMLElement;
   artPreview: HTMLElement;
@@ -131,6 +134,13 @@ export function createTokenTool(
     ui.artClear.hidden = art === '';
   };
 
+  /** The vision box is offered only for a player's token, the one kind that
+   *  sees for the table. Read off the picker, so changing the owner shows or
+   *  hides it before anything is saved. */
+  const showVision = (): void => {
+    ui.visionField.hidden = ui.owner.value === DM_OWNER;
+  };
+
   /** Puts a token into the form, or clears it back to a token-to-be. */
   const show = (token: Token | null): void => {
     ui.name.value = token?.name ?? '';
@@ -142,6 +152,9 @@ export function createTokenTool(
     ui.hpMax.value = token?.hp === undefined || token.hp === null ? '' : String(token.hp.max);
     ui.light.value =
       token?.lightFt === undefined || token.lightFt === null ? '' : String(token.lightFt);
+    ui.vision.value =
+      token?.visionFt === undefined || token.visionFt === null ? '' : String(token.visionFt);
+    showVision();
     ui.hidden.checked = token?.hidden ?? false;
     art = token?.img ?? '';
     marks = token?.markers ?? [];
@@ -280,6 +293,18 @@ export function createTokenTool(
     return Number.isFinite(ft) ? ft : null;
   };
 
+  /**
+   * How far this token sees, or null for the map's radius. Always null for a
+   * token going to the DM, whatever the hidden box still holds, because the
+   * server refuses a vision radius on one: handing a keen-eyed player's token
+   * back to the DM clears it in the same edit.
+   */
+  const visionFt = (): number | null => {
+    if (ui.owner.value === DM_OWNER) return null;
+    const ft = Number.parseFloat(ui.vision.value);
+    return Number.isFinite(ft) ? ft : null;
+  };
+
   const save = (): void => {
     const name = ui.name.value.trim();
     if (name === '') {
@@ -300,6 +325,7 @@ export function createTokenTool(
         hidden: ui.hidden.checked,
         hp: hitPoints(),
         light_ft: lightFt(),
+        vision_ft: visionFt(),
         markers: marks,
       });
       return;
@@ -321,6 +347,7 @@ export function createTokenTool(
       hidden: ui.hidden.checked,
       hp: hitPoints(),
       light_ft: lightFt(),
+      vision_ft: visionFt(),
       markers: marks,
       // The slot on screen, the same way `set_map` reads it. Building the
       // ambush for next week's room means standing on next week's map.
@@ -341,6 +368,7 @@ export function createTokenTool(
   ui.name.addEventListener('keydown', saveOnEnter);
   ui.size.addEventListener('keydown', saveOnEnter);
   ui.owner.addEventListener('keydown', saveOnEnter);
+  ui.owner.addEventListener('change', showVision);
   // The two that get typed into mid-combat. Subtracting a hit is: click the
   // token, type the new total, Enter.
   ui.hp.addEventListener('keydown', saveOnEnter);
@@ -397,6 +425,7 @@ export function createTokenTool(
       hidden: token.hidden,
       hp: token.hp,
       light_ft: token.lightFt,
+      vision_ft: token.visionFt,
       markers: token.markers,
       // The slot on screen, the same way the create above reads it. Copying
       // the ambush's first goblin means standing on next week's map.
@@ -535,9 +564,12 @@ export function createTokenTool(
       // to push back, and a number that silently does nothing is worse than a
       // box that won't take one. The placeholder carries the reason, because
       // the hint below is only rewritten when a token is put into the form.
+      // The vision box beside it, for the same reason.
       const fogged = shownBoard(next).fog;
       ui.light.disabled = !fogged;
       ui.light.placeholder = fogged ? 'none' : 'unfogged map';
+      ui.vision.disabled = !fogged;
+      ui.vision.placeholder = fogged ? 'map' : 'unfogged map';
 
       // A token deleted out from under the panel (by this DM on another tab,
       // or by this one) leaves the form describing something that is gone.

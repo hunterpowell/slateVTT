@@ -366,6 +366,9 @@ mod tests {
                 // A lantern. Not `None`, because that is what a missing field
                 // decodes to, so a round trip that dropped it would pass.
                 light_ft: Some(30.0),
+                // Darkvision, for the same reason. The owner above is a player,
+                // so this is a token that could hold one.
+                vision_ft: Some(60.0),
                 // Not empty, for the same reason as `light_ft`. Two, not one,
                 // because a list can round-trip its length wrongly.
                 markers: vec![Marker::Red, Marker::Blue],

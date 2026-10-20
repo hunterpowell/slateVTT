@@ -1298,6 +1298,7 @@ fn an_edit_reaches_both_boards_at_once() {
             hidden,
             hp,
             light_ft,
+            vision_ft,
             ..
         } => ClientMsg::UpdateToken {
             id,
@@ -1308,6 +1309,7 @@ fn an_edit_reaches_both_boards_at_once() {
             hidden,
             hp,
             light_ft,
+            vision_ft,
             markers: Vec::new(),
         },
         other => other,
@@ -1618,6 +1620,7 @@ fn create_goblin(name: &str) -> ClientMsg {
             y,
             hidden,
             light_ft,
+            vision_ft,
             markers,
             staged,
             ..
@@ -1631,6 +1634,7 @@ fn create_goblin(name: &str) -> ClientMsg {
             hidden,
             hp: Some(Hp { current: 7, max: 7 }),
             light_ft,
+            vision_ft,
             markers,
             staged,
         },
@@ -1649,6 +1653,7 @@ fn wound(token: &Token, current: i32) -> ClientMsg {
             owner,
             hidden,
             light_ft,
+            vision_ft,
             markers,
             ..
         } => ClientMsg::UpdateToken {
@@ -1660,6 +1665,7 @@ fn wound(token: &Token, current: i32) -> ClientMsg {
             hidden,
             hp: Some(Hp { current, max: 7 }),
             light_ft,
+            vision_ft,
             markers,
         },
         other => other,

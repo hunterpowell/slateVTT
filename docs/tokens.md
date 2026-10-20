@@ -304,12 +304,12 @@ their panel. It applies whoever owns the token. A uniform filter is worth more t
 the DM from hiding a player's own token, which is just a strange thing to do.
 
 `light_ft: Option<f32>` is the third field, and it's shaped exactly like `hp`. It's how far
-this token lights the board: a lantern on a token the party owns, and what makes a brazier a light
-at all on any other token. It reaches the DM and nobody else, and `None` means both "carries no
-light" and "you're not the DM". The table learns what a light does from the fog it casts, the same
+this token lights the board, whoever owns it: a lantern, a brazier, a goblin's torch. Beside it,
+`vision_ft` is how far a player's token sees, and is refused on any other. Both reach the DM and
+nobody else, and `None` means both "none set" and "you're not the DM". The table learns what a light does from the fog it casts, the same
 argument the walls make. `docs/fog.md` has the rule and the line-of-sight check. What belongs here
 is that **`UpdateToken` replaces the token whole**, so anything building one from a token it already
-has must carry this field through, or it puts the lantern out. The damage box on the initiative row
+has must carry these fields through, or it puts the lantern out. The damage box on the initiative row
 builds one, and it's the case the compiler caught.
 
 `hp: Option<Hp>` reaches the DM and nobody else, on every token including a player's own.
@@ -351,9 +351,13 @@ row with no token draws as a raw id: the monster the DM just hid, advertised by 
 always on screen. `current` is an id, and an id is data. The round number isn't a secret and is sent
 as is; the table sees the turn pass to something they can't see, which is what's happening.
 
-**So hiding a token that's in the order also emits `InitiativeChanged`**, as deleting one does.
-Nothing else about a token edit rebuilds the panel, so without it the table keeps a row naming a
-token their client has just been told to forget.
+**So hiding a token that's in the order also sends `InitiativeChanged`**, as deleting one does.
+Without it the table keeps a row naming a token their client has just been told to forget. For an
+edit it comes from `refresh_fog` (`UpdateToken` is in `moves_sight`), which compares who held the
+token before and after, per player. The `UpdateToken` arm used to emit it itself, comparing the
+sight-aware `held_by` with `Token::unseen`, which skips line of sight. That rebuilt the table's
+panel when the DM renamed a monster standing in the dark, and missed the row when a hand-over under
+split sight showed the token to its new owner.
 
 **Removing the last row is the same as Clear**, round counter included. Before milestone 49 it
 nulled `current` and left `round` alone, and Clear is hidden while the panel is folded, so a DM who

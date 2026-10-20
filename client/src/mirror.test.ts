@@ -57,6 +57,7 @@ function token(id: string, cx: number, cy: number, over: Partial<Token> = {}): T
     hidden: false,
     hp: null,
     lightFt: null,
+    visionFt: null,
     stagedPos: null,
     stagedOnly: false,
     ...over,
@@ -158,6 +159,7 @@ test('what survives is redacted, field for field', () => {
       token('boss', 1, 1, {
         hp: { current: 30, max: 44 },
         lightFt: 40,
+        visionFt: 60,
         stagedPos: { x: 9, y: 9 },
       }),
     ],
@@ -168,6 +170,7 @@ test('what survives is redacted, field for field', () => {
   // A lantern is the DM's authoring like the walls are; what it does reaches
   // the table as fog, which is already on the board underneath.
   assert.equal(shown?.lightFt, null);
+  assert.equal(shown?.visionFt, null);
   assert.equal(shown?.stagedPos, null);
   assert.equal(shown?.stagedOnly, false);
   assert.equal(shown?.hidden, false);
@@ -295,6 +298,16 @@ test('under split sight the mirror shows one player’s board, friends included'
   assert.deepEqual(ids(asTable(s, 'saelyn')), ['saelyn-tok', 'ogre'], 'Torrin is out of her sight');
   assert.deepEqual(ids(asTable(s, 'torrin')), ['torrin-tok'], 'and he sees only himself');
   assert.equal(asTable(s, 'torrin').fog?.cells, s.fogBy.get('torrin')?.cells, 'by his own fog');
+});
+
+test('under split sight a player with no frame is drawn dark, not unfogged', () => {
+  // A null fog is an unfogged map and draws the whole board. A gap in `fogBy`
+  // has to fail towards showing the DM less.
+  const s = split([saelyn, token('ogre', 1, 1)]);
+  const brin = asTable(s, 'brin');
+  assert.notEqual(brin.fog, null);
+  assert.equal(brin.fog?.w, 0, 'an unexplored map');
+  assert.deepEqual(ids(brin), [], 'and nobody is in sight');
 });
 
 test('under split sight a friend out of view keeps a labelled initiative row', () => {

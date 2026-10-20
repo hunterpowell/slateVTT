@@ -287,9 +287,10 @@ struct Token {
     id: TokenId, name: String, x: f32, y: f32, owner: Owner, img: String, size: f32,
     /// Sent to everyone, unlike the fields below. A set in practice. `docs/tokens.md`.
     markers: Vec<Marker>,
-    /// DM-only, all three. `light_ft` replaces the map's `vision_ft` for a token a
-    /// player owns, and makes any other token a light source. `docs/fog.md`.
-    hidden: bool, hp: Option<Hp>, light_ft: Option<f32>,
+    /// DM-only, all four. `light_ft` lights for whoever can see the token, on any
+    /// token; `vision_ft`, a player's token only, replaces the map's radius and is
+    /// its owner's alone under split sight. `docs/fog.md`, *Light and vision*.
+    hidden: bool, hp: Option<Hp>, light_ft: Option<f32>, vision_ft: Option<f32>,
     /// DM-only, both. `docs/tokens.md`.
     staged_pos: Option<Pos>, staged_only: bool,
 }
@@ -537,9 +538,11 @@ writing to `revealed` would save a cell no ray reached.
 Two modes answer the same question. `Dynamic` raycasts to cell centres. It isn't shadowcasting
 because a wall is an arbitrary segment, and rasterising it blocks sight on both sides. `Room`
 flood-fills, unioned with the raycast, bounded by every traced segment, open or shut.
-`fog::sight_cells` is the only reader of `lighting`. Radius is Euclidean. A token can carry a
-light (`light_ft`), which counts only if the party has line of sight to it, at any distance.
-Without that check, a promote would show the table every lit room.
+`fog::sight_cells` is the only reader of `lighting`. Radius is Euclidean. Any token can carry a
+light (`light_ft`), which counts only for whoever has line of sight to it, at any distance; a
+player's own lantern passes that check, so it never shortens their sight. Without it, a promote
+would show the table every lit room. A player's token can have its own sight radius
+(`vision_ft`), which lights nothing for anyone else.
 
 `fog`, `vision_ft` and `lighting` live on `MapInfo`, remembered per URL and sent with `SetMap`;
 there is no `SetFog`. `FogView` is one string, identical for every recipient including the DM

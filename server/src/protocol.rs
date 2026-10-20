@@ -127,7 +127,7 @@ pub struct MapInfo {
     /// can't make that mistake whatever `vision_ft` loads as.
     pub fog: bool,
     /// How far a player-owned token sees, in feet. One radius for the map; a
-    /// token's `light_ft` replaces it. Nothing here knows the word
+    /// player token's own `vision_ft` replaces it. Nothing here knows the word
     /// "darkvision".
     ///
     /// Read only when `fog` is on, so its default is a playable number rather
@@ -509,16 +509,24 @@ pub struct Token {
     /// How far this token lights the board, in feet, or `None` for a token that
     /// carries no light of its own.
     ///
-    /// One field doing two things. On a token a player owns it *replaces*
-    /// `MapInfo::vision_ft` (a lantern). On anything else it is what makes the
-    /// token a source at all: a brazier, a torch on a wall, a goblin carrying
-    /// one. `fog::Source` is where the two become one rule.
+    /// The same on every token, whoever owns it: a brazier, a goblin's torch
+    /// and Saelyn's lantern all light for whoever can see the token, through
+    /// the gate in `sight_sources`. It never changes how far its carrier sees;
+    /// that's `vision_ft`. See `docs/fog.md`, *Light and vision*.
     ///
     /// DM-only, like `hp` beside it. What a light does reaches the table as fog,
     /// the same argument the walls make: the geometry is the DM's authoring and
     /// the shadow it casts is what the table plays with. So `None` here means
     /// both "carries no light" and "you are not the DM".
     pub light_ft: Option<f32>,
+    /// How far this token sees, in feet, replacing `MapInfo::vision_ft`, or
+    /// `None` to see as far as the map lets anyone.
+    ///
+    /// **Only on a token a player owns**, which `token_fields` enforces: a
+    /// monster's eyes never give the party sight, so the number would be read
+    /// by nothing. Under split sight it is its owner's alone, which is the
+    /// difference from `light_ft`. DM-only, like the light.
+    pub vision_ft: Option<f32>,
     /// Where this token lands when the staged map is promoted, in grid units
     /// like `x, y`. `None` is "staying where it is".
     ///
@@ -560,6 +568,7 @@ impl Default for Token {
             hidden: false,
             hp: None,
             light_ft: None,
+            vision_ft: None,
             staged_pos: None,
             staged_only: false,
         }
@@ -603,6 +612,9 @@ pub struct TokenView {
     /// what a light does reaches them as fog. Also `None` for a DM's token that
     /// carries none; the client can't tell the two apart, as with `hp`.
     pub light_ft: Option<f32>,
+    /// `None` for a player, always, for the light's reason. Also `None` for a
+    /// token that sees as far as the map does.
+    pub vision_ft: Option<f32>,
     /// `None` for a player, always: a plan for a map they can't see is a fact
     /// about that map. Also `None` for a DM whose token is staying put.
     pub staged_pos: Option<Pos>,
@@ -632,6 +644,7 @@ impl Token {
             hidden: self.hidden,
             hp: if is_dm { self.hp } else { None },
             light_ft: if is_dm { self.light_ft } else { None },
+            vision_ft: if is_dm { self.vision_ft } else { None },
             staged_pos: if is_dm { self.staged_pos } else { None },
             staged_only: is_dm && self.staged_only,
         }
@@ -1259,6 +1272,9 @@ pub enum ClientMsg {
         /// How far this token lights the board, or `None` for one carrying no
         /// light. A brazier is built in one command, like the ambush above.
         light_ft: Option<f32>,
+        /// How far it sees, or `None` for the map's radius. Refused on a token
+        /// the DM owns.
+        vision_ft: Option<f32>,
         /// What it is marked with. Usually empty on a create; it is here rather
         /// than left to a follow-up edit so that duplicating a marked creature
         /// is one command, which is the only time it is non-empty.
@@ -1293,6 +1309,9 @@ pub enum ClientMsg {
         /// Shared by both boards like every other field here: a lantern is a
         /// fact about the creature and not about which map it is standing on.
         light_ft: Option<f32>,
+        /// Shared the same way. Refused on a token the DM owns, so handing a
+        /// token back to the DM clears it in the same edit.
+        vision_ft: Option<f32>,
         /// The whole set, not a toggle. This command replaces the token, so a
         /// client sending it has to carry every field through. That makes a
         /// `SetMarkers` unnecessary and a marker toggle an ordinary edit, as the

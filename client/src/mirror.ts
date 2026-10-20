@@ -123,12 +123,17 @@ export function tableInitiative(
 }
 
 /** The scene with `as`'s own fog in place of the party's, under split sight. A
- *  player with no frame sees no current sight, which shows the DM less than
- *  more: the safe direction for a mirror. */
+ *  player with no frame is drawn as an unexplored map, which shows the DM less
+ *  than more: the safe direction for a mirror. Not `null`, which is an unfogged
+ *  map and draws the whole board. */
 function through(scene: Scene, as: string | null): Scene {
   if (as === null || scene.vision !== 'split') return scene;
-  return { ...scene, fog: scene.fogBy.get(as) ?? (scene.live.fog ? null : scene.fog) };
+  return { ...scene, fog: scene.fogBy.get(as) ?? (scene.live.fog ? UNEXPLORED : scene.fog) };
 }
+
+/** What an unexplored map packs to: an empty rectangle, which the renderer
+ *  fills solid. */
+const UNEXPLORED: Fog = { x: 0, y: 0, w: 0, h: 0, cells: '', shade: null, table: null };
 
 /**
  * Whether the table cannot see this token at all: `unseen_by` under party
@@ -254,6 +259,7 @@ function redact(token: Token): Token {
     hidden: false,
     hp: null,
     lightFt: null,
+    visionFt: null,
     stagedPos: null,
     stagedOnly: false,
   };

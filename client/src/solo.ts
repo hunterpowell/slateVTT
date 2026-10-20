@@ -73,10 +73,14 @@ export function soloSight(
   // the same split as `visible_cells` on the server: a radius set in feet is a
   // whole number of cells, and the cells sitting exactly on it must land the
   // same way on both sides of the viewer.
-  // This token's own light if it carries one, otherwise the map's radius. This
-  // repeats `fog::Source::radius_cells` on the server, and the two have to
-  // agree, or the sight check answers a different question from the fog.
-  const radiusCells = (token.lightFt ?? board.visionFt) / FEET_PER_CELL;
+  // This token's own vision if it has one, otherwise the map's radius, and its
+  // lantern if that reaches further. On the server the lantern is a second
+  // source at the same spot, which it can always see, so the two answers are
+  // the same cells; this is the larger radius in one sweep. It has to agree
+  // with `party_sources` and `sight_sources`, or the sight check answers a
+  // different question from the fog.
+  const radiusCells =
+    Math.max(token.visionFt ?? board.visionFt, token.lightFt ?? 0) / FEET_PER_CELL;
   // `maxSpan`, not the cell size, because the pixel radius bounds the wall
   // cull, and a ray of `n` cells reaches furthest along the lattice's longest
   // axis. On a square grid the two are the same number.

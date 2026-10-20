@@ -53,6 +53,10 @@ export interface Token {
    *  out in the room and arrives already packed. `solo.ts` is the one reader,
    *  because the DM's sight check casts rays of its own. */
   lightFt: number | null;
+  /** How far this token sees, replacing the map's radius, or null for the
+   *  map's. Only a player's token has one. Null on every token for a player,
+   *  and read by `solo.ts` alone, like the light. */
+  visionFt: number | null;
   /** Where this token lands when the staged map is promoted, or null for one
    *  staying put. Null on every token for a player. In grid units like `x, y`:
    *  a plan is a cell, which makes recalibrating the staged map after placing
@@ -441,6 +445,7 @@ function tokenFromWire(t: WireToken): Token {
     hidden: t.hidden,
     hp: t.hp,
     lightFt: t.light_ft,
+    visionFt: t.vision_ft,
     stagedPos: t.staged_pos,
     stagedOnly: t.staged_only,
   };

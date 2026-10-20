@@ -163,6 +163,7 @@ function damageField(token: Token, hp: Hp, send: (msg: ClientMsg) => void): HTML
       // here would clear the token's light or wipe its markers on the next
       // hit.
       light_ft: token.lightFt,
+      vision_ft: token.visionFt,
       markers: token.markers,
     });
   });
@@ -470,6 +471,7 @@ export function createPanel(
                     hidden: marks.hidden,
                     hp: marks.hp,
                     light_ft: marks.lightFt,
+                    vision_ft: marks.visionFt,
                     markers: next,
                   });
                 },

@@ -595,7 +595,10 @@ there. The last two are sent only when something actually changed. An unconditio
 on every step would tell the table that *something happened* every time anyone moved.
 
 A token the command has already reported on isn't reported twice: those events carry their own
-`was_unseen`, computed with the same question. **`TokenMoved` is not on that list.** Walking out of
+`was_unseen`, computed with the same question. Its initiative row is still decided here, because
+the command can't know who holds the token after the recompute (a token handed to a player is in
+their sight wherever it stands). Its anchored shapes need nothing extra: `shapes_seen` compares
+every shape. **`TokenMoved` is not on that list.** Walking out of
 the light is *how* a creature stops being visible, and the move frame has just been withheld from
 exactly the recipients who now need to be told it's gone.
 
@@ -740,15 +743,14 @@ notes that it protects a field being *added* and does nothing for one changing s
 every restored room going pitch black. A switch that defaults to off can't cause that, whatever
 `vision_ft` loads as, so the radius can default to a playable 60 feet instead of a defensive number.
 
-`vision_ft` is now the **fallback** rather than the only answer: a token with a `light_ft` sees by
-that instead, through `fog::Source::radius_cells`, and that's all a lantern is. The map still holds
-the number every token without one uses, so a save that predates lights is unchanged and a map with
+`vision_ft` is the **fallback** rather than the only answer: a player's token with a `vision_ft`
+of its own sees by that instead, through `fog::Source::radius_cells`. The map still holds
+the number every token without one uses, so a save that predates it is unchanged and a map with
 no lights costs exactly what it did.
 
-Nothing here knows the word "darkvision", even so. A radius on a token isn't a creature's eyes: it's
-a light, it lights for everyone, and a light nobody is carrying only counts when the party can see
-it. Per-token *darkvision* would need a radius that lights for its owner alone, which is milestone
-29's per-player `visible` and still isn't built.
+Nothing here knows the word "darkvision", even so. A token's `vision_ft` is how far it sees, and
+under split sight it's its owner's alone, which is the part of darkvision that's geometry. The rest
+(dim light as bright, colour) is rules knowledge. See *Light and vision*.
 
 ## On screen
 
@@ -1047,17 +1049,17 @@ anyone moved.
 
 ## Light sources
 
-Milestone 39. A radius on a token, which does two things:
+Milestone 39. A radius on a token that lights the board, the same on every token:
 
 ```rust
 light_ft: Option<f32>,   // on `Token`, DM-only, `None` for almost everything
 ```
 
-- On a token **a player owns** it replaces `MapInfo::vision_ft` for that token. A lantern.
-- On **anything else** it's what makes the token a source at all. A brazier, a torch on a wall, a
-  goblin carrying one.
+A brazier, a torch on a wall, a goblin carrying one, a player's lantern. Milestone 39 also had it
+replace a player token's sight radius; milestone 29 split that into `vision_ft`, and *Light and
+vision* under *Split sight* says why.
 
-`fog::Source` is where those become one rule: `radius_ft: Option<f32>`, `None` meaning *as far as
+`fog::Source` carries each source's reach: `radius_ft: Option<f32>`, `None` meaning *as far as
 this map lets anyone see*, which is what every source in `fog.rs` was before this. The sweeps used to
 take `&[Pos]` and read one radius above the loop; they now take `&[Source]` and read it inside.
 Nothing else in `visible_cells` or `lit_cells` changed, and the cells-not-pixels comparison that
@@ -1083,8 +1085,8 @@ corner no straight line does, and a brazier in the room you're standing in shoul
 not a pillar is in the way.
 
 ```text
-party    player-owned tokens, radius light_ft ?? vision_ft   ungated
-lights   anything else with a light                          active when seen
+party    player-owned tokens, radius vision_ft ?? map vision_ft   ungated
+lights   every token with a light, the party's own included      active when seen
 rays     sight_cells(party ∪ active)
 ```
 
@@ -1113,8 +1115,8 @@ A room with no lights costs exactly what it did. `sight_sources` returns the par
 nothing carries a light, which is almost always; only when something does is the extra sweep for the
 gate paid.
 
-`solo.ts` applies the same `light_ft ?? visionFt` on the client, because the DM's sight check is a
-second raycast over the same data and the two have to agree. `mirror.ts` nulls it in `redact`, which
+`solo.ts` applies the same radii on the client (see *Light and vision*), because the DM's sight
+check is a second raycast over the same data and the two have to agree. `mirror.ts` nulls it in `redact`, which
 matches `view_for(false)` field for field. The client computes nothing else with it.
 
 ### On the panel, and the one thing that bit
@@ -1164,12 +1166,36 @@ carries a `RowLabel` (name and portrait) instead. The label is view-only: the ro
 never hold one, and `skip_serializing_if` keeps it out of the save. A friend the DM *hid* or staged
 still leaves the panel, as a monster does, because that's the DM's decision rather than geometry.
 
-**A friend's lantern lights for whoever can see them.** Asked of one player, `sight_sources` treats
-another player's `light_ft` as a light like a brazier, behind the same gate: line of sight from
-this player's own tokens, at any distance, or their own reach. So Torrin, too far to see by his own
-eyes, sees Saelyn and the room her lantern lights as long as nothing stands between them. Her
-vision without a lantern is hers alone. Asked of the party, every player token is already a
-source, so nothing changes under `Party`, and the union over players is still the party's answer.
+### Light and vision
+
+Two radii on a token, and neither one's meaning depends on who owns it:
+
+- `light_ft`, on any token, lights the board for whoever can see the token, through the gate in
+  `sight_sources`. A brazier, a goblin's torch and Saelyn's lantern are the same thing.
+- `vision_ft`, on a player's token only, is how far it sees, replacing the map's radius. Under
+  split sight it's its owner's alone. `vision_field` refuses it on a DM token, because a monster's
+  eyes give the party nothing and the number would be read by nothing; the token tab hides the
+  box for one.
+
+**A player's own lantern goes through the gate like every other light, and passes**, because
+their own token is one of the eyes the gate looks from. So it adds to their sight and never
+shortens it: a five-foot candle on a sixty-foot map leaves them seeing sixty. A friend's lantern
+passes for whoever can see the friend (line of sight from their own tokens at any distance, or
+their own reach), so Torrin, too far to see by his own eyes, sees Saelyn and the room her lantern
+lights as long as nothing stands between them. Her vision is hers alone. Under `Party` every
+player's eyes go into one list and the lights pass the same gate, so the party's answer is still
+the union over players.
+
+`light_ft` used to do both jobs: on a player's token it *replaced* the map's radius, on anything
+else it was a light. Under party sight the two give the same cells, which is why one field worked.
+Split sight is where they differ (darkvision is private, a torch isn't), and replacing the radius
+also made a torch shorten its carrier's sight on a bright map. Saves weren't converted: a player
+token's old `light_ft` loads as a lantern, and a DM who meant it as darkvision re-enters it as
+vision.
+
+`solo.ts` takes the larger of the token's vision (or the map's) and its light in one sweep. On the
+server they're two sources at the same spot, and the light always passes its carrier's gate, so
+the cells are the same.
 
 ### Player view names a player
 
@@ -1179,6 +1205,12 @@ so this needs no filter, and it is sent whether or not player view is open: the 
 doesn't learn what the DM is looking at. A picker under the player view button, shown only under
 `Split`, chooses whose board `asTable` and `tableInitiative` build, applying that frame and the
 own-tokens-only rule. It defaults to the first roster player.
+
+**Flipping the switch always sends the DM a `FogChanged`**, through `Sight.vision`, even when no
+player's frame changed. With the whole roster standing together each player's sight is the union,
+so `fogs()` compares equal and nothing else would deliver `fog_by`. A player with no frame in
+`fog_by` is drawn as an unexplored map (`UNEXPLORED` in `mirror.ts`), not as `null`, which is an
+unfogged map and would show the DM the whole board.
 
 Computing each player's sight on the DM's client instead (as `solo.ts` does for one creature) was
 the alternative. It would need the light gate and the overrides written twice, and a mirror that
@@ -1197,19 +1229,30 @@ written once per player. `held(identity, held_by)` is the per-recipient read in 
 DM holds everything. `CreateToken` and a restored encounter carry an empty set.
 
 `Sight` and `shown` gained the same dimension: `seen` and `shapes` are per player, and `fog` is
-`fogs()`, every distinct frame in the room (the party's, plus one per player under `Split`).
-`refresh_fog` reports a token as flipped if anyone's answer changed, as one `TokenChanged`
-carrying `held_by`, and `message_for` works out each player's frame. A player missing from the
-`before` record counts as having held nothing, which covers a slot added to the roster since the
-last recompute.
+`fogs()`, the frame each viewer holds (the party's, and one per roster player, which under
+`Party` is the party's again). `refresh_fog` reports a token as flipped if anyone's answer
+changed, as one `TokenChanged` carrying `held_by`, and `message_for` works out each player's
+frame. A player missing from the `before` record counts as having held nothing, which covers a
+slot added to the roster since the last recompute. `SetRoster` is in `moves_sight` for this: a
+new slot has no `visible_by` entry until a recompute, so it would miss the cells the DM lit and
+player view would have no frame for it.
+
+**Every frame `refresh_fog` emits is wrapped in `Event::Narrowed`**, naming the players whose
+board it changes: those whose fog frame differs, whose answer for a flipped token changed, or (for
+initiative and shapes) whose answer changed for a token in the order or under an aura, plus whose
+set of visible shapes changed. A player it doesn't name is sent nothing. Sent to everyone, a
+player who still sees the ogre is re-sent it when a friend loses sight of it, which tells them
+the friend's view just changed. The DM is sent every one: their frame carries every player's fog,
+and player view repaints on them. `under_split_sight_a_player_whose_view_did_not_change_is_sent_nothing`
+and `under_split_sight_a_friend_pacing_out_of_view_sends_no_fog` assert it.
 
 ### What it doesn't do yet
 
-- **A player whose own view didn't change can still be sent a frame.** `FogChanged`,
-  `ShapesChanged`, `InitiativeChanged` and a flipped `TokenChanged` go to everyone, built per
-  recipient. Each one carries only what that player may see, so nothing leaks, but a redundant
-  frame does tell them *something* changed for someone. Narrowing these would mean events that
-  name their recipients.
+- **Deleting a token still rebuilds every player's panels.** The `InitiativeChanged` and
+  `ShapesChanged` that `delete_token` emits aren't narrowed the way `refresh_fog`'s are, so a
+  player who never held the token is sent an unchanged panel. Nothing leaks, but under split
+  sight it can tell one player that something only a friend could see just changed. Hiding one
+  no longer does: an edit's panels come from `refresh_fog`.
 - **The sight check stays off.** The roadmap expected `SOLO_SIGHT` to come back with this
   milestone; player view naming a player answers the same question for the board that matters,
   so it hasn't been turned on.

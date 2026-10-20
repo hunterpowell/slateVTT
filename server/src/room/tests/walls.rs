@@ -337,10 +337,13 @@ fn a_map_load_with_nothing_traced_announces_nothing() {
 
     let events = state.apply(ClientId(1), set_map("/uploads/cave.webp", 70.0, 0.0, 0.0));
 
+    // Seen through `Narrowed`, which is how `refresh_fog` sends a shapes frame.
+    let quiet = |e: &Event| match e {
+        Event::Narrowed { event, .. } => !matches!(**event, Event::ShapesChanged),
+        e => !matches!(e, Event::WallsChanged { .. } | Event::ShapesChanged),
+    };
     assert!(
-        !events
-            .iter()
-            .any(|e| matches!(e, Event::WallsChanged { .. } | Event::ShapesChanged)),
+        events.iter().all(quiet),
         "swept a board that was already empty: {events:?}"
     );
 }

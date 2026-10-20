@@ -77,8 +77,8 @@ const refusal =
         ? 'the board has walls traced on it'
         : [...state.overrides.cells].some((c) => c !== '-')
           ? 'the board has fog painted on it'
-          : state.tokens.some((t) => t.light_ft !== null)
-            ? 'something on the board carries a light'
+          : state.tokens.some((t) => t.light_ft !== null || t.vision_ft !== null)
+            ? 'something on the board carries a light or its own vision'
             : state.initiative.entries.length > 0
               ? 'an initiative order is already running'
               : state.staged !== null

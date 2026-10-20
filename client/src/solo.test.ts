@@ -45,8 +45,14 @@ function board(over: Partial<Board> = {}): Board {
   };
 }
 
-/** A creature standing in the centre of cell `(cx, cy)`, carrying `lightFt`. */
-function token(cx: number, cy: number, lightFt: number | null = null): Token {
+/** A creature standing in the centre of cell `(cx, cy)`, carrying `lightFt`
+ *  and seeing `visionFt`. */
+function token(
+  cx: number,
+  cy: number,
+  lightFt: number | null = null,
+  visionFt: number | null = null,
+): Token {
   return {
     id: 't1',
     name: 'Rogue',
@@ -59,6 +65,7 @@ function token(cx: number, cy: number, lightFt: number | null = null): Token {
     hidden: false,
     hp: null,
     lightFt,
+    visionFt,
     stagedPos: null,
     stagedOnly: false,
   };
@@ -87,19 +94,20 @@ test('an untraced board is lit to the radius and no further', () => {
   assert.ok(!seen.has('6,6'), 'the reach is a circle and not a square');
 });
 
-test('a token carrying a light sees by that and not by the map', () => {
-  // `fog::Source::radius_cells` on the server, asked of the DM's own raycast:
-  // the sight check has to answer the question the fog it stands in for
-  // answers, and since milestone 39 that question has a per-token radius in it.
+test('a token sees by its own vision, and its lantern only ever adds', () => {
+  // `party_sources` and `sight_sources` on the server, asked of the DM's own
+  // raycast: the sight check has to answer the question the fog it stands in
+  // for answers.
   const dim = board({ visionFt: 10 });
   assert.ok(!lit(soloSight(token(4, 4), dim, [], SIZE)).has('7,4'), 'two cells');
+  assert.ok(lit(soloSight(token(4, 4, null, 30), dim, [], SIZE)).has('7,4'), 'six by its eyes');
+  assert.ok(lit(soloSight(token(4, 4, 30), dim, [], SIZE)).has('7,4'), 'six by its lantern');
 
-  const carrying = lit(soloSight(token(4, 4, 30), dim, [], SIZE));
-  assert.ok(carrying.has('7,4'), 'six cells by its own lantern');
-  assert.ok(
-    lit(soloSight(token(4, 4, 5), board({ visionFt: 100 }), [], SIZE)).size <
-      lit(soloSight(token(4, 4), board({ visionFt: 100 }), [], SIZE)).size,
-    'and it replaces the map\'s number rather than widening it',
+  const bright = board({ visionFt: 100 });
+  assert.equal(
+    lit(soloSight(token(4, 4, 5), bright, [], SIZE)).size,
+    lit(soloSight(token(4, 4), bright, [], SIZE)).size,
+    "a short lantern does not cut the map's radius down to its own",
   );
 });
 
