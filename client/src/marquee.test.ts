@@ -64,6 +64,8 @@ function scene(over: Partial<Scene> = {}): Scene {
     overrides: { x: 0, y: 0, w: 0, h: 0, tint: null },
     showNames: true,
     diagonals: 'equal',
+    fogBy: new Map(),
+    vision: 'party',
     showCursors: true,
     showDmCursor: true,
     backdrop: null,

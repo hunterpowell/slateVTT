@@ -66,6 +66,7 @@ const CLIENT_TAGS: Record<ClientMsg['type'], true> = {
   set_show_cursors: true,
   set_show_dm_cursor: true,
   set_show_names: true,
+  set_vision: true,
   sketch: true,
   toggle_door: true,
   undo: true,
@@ -102,6 +103,7 @@ const SERVER_TAGS: Record<ServerMsg['type'], true> = {
   token_moved: true,
   token_removed: true,
   undo_changed: true,
+  vision_changed: true,
   walls_changed: true,
   welcome: true,
 };

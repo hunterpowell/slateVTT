@@ -335,7 +335,7 @@ creating a hidden token announce nothing.
 "Unseen" rather than "hidden", because there are three reasons now. `Token::unseen()` is
 `hidden || staged_only`, the two reasons that are facts about the token. The third is line of
 sight, a fact about the room, so the question every filter asks is
-`RoomState::unseen_by_table(&Token)`, which is `token.unseen() || !self.in_sight(token)`.
+`RoomState::unseen_by(&Token)`, which is `token.unseen() || !self.in_sight(token)`.
 `snapshot_for`, `initiative_for` and all three `message_for` arms go through it. A creature the DM
 took off the board, one that was never on it, and one the party can't see are different facts, and
 they combine; anything that filters on one and forgets another is a leak. **Calling
@@ -415,7 +415,7 @@ the order" refusal names the token, which is safe because it's only reachable fo
 holds.
 
 A player's own token can still be refused: the DM can hide it, and a staged-only one isn't in this
-fight. Both are covered by `unseen_by_table`, the same question every filter asks.
+fight. Both are covered by `unseen_by`, the same question every filter asks.
 
 On the client it's the DM's add form, shown to a player with the dropdown narrowed to their own
 tokens not yet in the order (`ownsToken`). Their scene already holds only what the table can see, so
@@ -656,7 +656,7 @@ rather than `WallsChanged`, applied to one token: who may set it is a permission
 it says isn't a secret.
 
 It needs no filter of its own, and couldn't usefully have one. A creature the table can't see takes
-its marks with it through `unseen_by_table`, like every other fact about it, so the negative
+its marks with it through `unseen_by`, like every other fact about it, so the negative
 assertion holds without any code defending it.
 `a_mark_on_a_creature_the_table_cannot_see_reaches_nobody` tests it because the doc makes the claim,
 not because anything branches on it.

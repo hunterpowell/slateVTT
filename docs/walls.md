@@ -128,7 +128,7 @@ maps each owning its own geometry. A promote *moves* one wall list into the othe
 Three things made walls the cheapest subsystem to stage. The first is the one that generalises:
 
 - **Walls reach the DM or nobody**, so there was no filter to widen. A staged wall added no new
-  visibility surface. Compare `staged_only`, which added a third reason to `unseen_by_table` and
+  visibility surface. Compare `staged_only`, which added a third reason to `unseen_by` and
   changed the meaning of `was_unseen` at four sites. The section above is unchanged and now covers
   twice as many walls.
 - **The whole slot leaves in one message.** `ServerMsg::StagedChanged` carries the bundle rather

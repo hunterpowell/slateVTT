@@ -43,7 +43,7 @@
 import type { Rect, Vec2 } from './coords.js';
 import { playRect } from './coords.js';
 import { fillFrom } from './overrides.js';
-import type { ClientMsg, FogPaint, Lighting } from './protocol.js';
+import type { ClientMsg, FogPaint, Lighting, RosterEntry } from './protocol.js';
 import type { Board, Scene, Token } from './scene.js';
 import { shownBoard, shownWalls, showingStaged } from './scene.js';
 
@@ -108,6 +108,9 @@ export interface FogToolUi {
   sight: HTMLButtonElement;
   /** Player view: the whole board as the table is looking at it. */
   view: HTMLButtonElement;
+  /** Whose board player view shows, under split sight. Hidden otherwise,
+   *  because under party sight every player's board is the same. */
+  viewAs: HTMLSelectElement;
 }
 
 export interface FogTool {
@@ -141,6 +144,9 @@ export interface FogTool {
    * sight. See `mirror.ts`.
    */
   readonly playerView: boolean;
+  /** Whose board player view mirrors: a roster slug under split sight, null
+   *  for the party's (and always null under party sight). */
+  readonly viewingAs: string | null;
 
   /** Where the pointer is, in grid units, or null when it has left the canvas.
    *  Recomputes the fill only when it crosses into a different cell. */
@@ -214,6 +220,8 @@ export function createFogTool(
    *  frame and reads the flag itself; the initiative panel isn't, and it
    *  mirrors too (see `tableInitiative`). */
   onView: () => void = () => {},
+  /** The cast, for player view's picker. */
+  cast: () => readonly RosterEntry[] = () => [],
 ): FogTool {
   let scene: Scene | null = null;
   let brush: FogBrush | null = null;
@@ -235,6 +243,17 @@ export function createFogTool(
    *  replace the DM's own board, and it excludes the other two by hand (see
    *  the button's handler). */
   let playerView = false;
+  /** The picker's choice, kept while sight is shared so it comes back. */
+  let pickedAs: string | null = null;
+  /** The cast the picker's options were built from, so they are rebuilt only
+   *  when it changes and never while the DM has the list open. */
+  let castKey = '';
+
+  const viewingAs = (): string | null => {
+    if (scene?.vision !== 'split') return null;
+    const slugs = cast().map((p) => p.id);
+    return pickedAs !== null && slugs.includes(pickedAs) ? pickedAs : (slugs[0] ?? null);
+  };
 
   const buttons = new Map<FogBrush, HTMLButtonElement>();
   const modes = new Map<Lighting, HTMLButtonElement>();
@@ -328,6 +347,23 @@ export function createFogTool(
     // and a monster the DM staged out of sight is hidden on a lit board too.
     ui.view.disabled = on === null || previewing;
     ui.view.classList.toggle('is-on', playerView);
+    const players = cast();
+    const key = players.map((p) => `${p.id}=${p.name}`).join('|');
+    if (key !== castKey) {
+      castKey = key;
+      ui.viewAs.replaceChildren(
+        ...players.map((p) => {
+          const option = document.createElement('option');
+          option.value = p.id;
+          option.textContent = p.name;
+          return option;
+        }),
+      );
+    }
+    const as = viewingAs();
+    ui.viewAs.hidden = as === null;
+    if (as !== null) ui.viewAs.value = as;
+    const asName = players.find((p) => p.id === as)?.name ?? null;
     ui.view.setAttribute('aria-pressed', String(playerView));
     for (const [b, button] of buttons) {
       button.disabled = locked;
@@ -352,7 +388,9 @@ export function createFogTool(
       ? // Says what is missing, not what is there, because what is there looks
         // like an ordinary board. A DM who forgets they are in here will go
         // looking for a monster that is on their board and not on this one.
-        'Showing the board as the table sees it — their fog, and nothing they are not sent. Your walls, painted squares, hit points and hidden creatures are still there behind it.'
+        asName !== null
+        ? `Showing the board as ${asName} sees it — their own sight, and nothing they are not sent. Your walls, painted squares, hit points and hidden creatures are still there behind it.`
+        : 'Showing the board as the table sees it — their fog, and nothing they are not sent. Your walls, painted squares, hit points and hidden creatures are still there behind it.'
       : checking
       ? 'Click a creature to see the board as it does. Geometry only — your painted squares are not applied.'
       : sightId !== null
@@ -493,6 +531,13 @@ export function createFogTool(
     paint();
   });
 
+  // Picking a player changes the mirror if it is up, and is remembered if not.
+  ui.viewAs.addEventListener('change', () => {
+    pickedAs = ui.viewAs.value;
+    if (playerView) onView();
+    paint();
+  });
+
   ui.gesture.addEventListener('click', () => {
     gesture = gesture === 'fill' ? 'paint' : 'fill';
     clearPreview();
@@ -576,6 +621,9 @@ export function createFogTool(
     get playerView() {
       return playerView;
     },
+    get viewingAs() {
+      return viewingAs();
+    },
 
     check(token) {
       if (!checking) return;
@@ -624,7 +672,11 @@ export function createFogTool(
 
     update(next) {
       const wasStaged = staged();
+      const wasAs = viewingAs();
       scene = next;
+      // Sight switched between shared and split under the mirror: the
+      // initiative panel isn't redrawn every frame, so it is told.
+      if (playerView && viewingAs() !== wasAs) onView();
       // A brush left in hand over a map that has just lost its fog can do
       // nothing, which is also why the tab goes inert. Previewing isn't one of
       // those cases: the staged board has a mask of its own to paint.

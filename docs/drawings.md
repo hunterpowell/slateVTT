@@ -123,7 +123,7 @@ covers adding, erasing and clearing, and three changes that come from elsewhere:
   `loading` flag that tells those two apart for the calibration table and the staged plans. A
   promote counts as a load.
 
-`shapes_for` withholds a shape whose anchor the recipient can't see, through `unseen_by_table`, so
+`shapes_for` withholds a shape whose anchor the recipient can't see, through `unseen_by`, so
 all three reasons apply. **This is fog's rule arriving early, and it had to**: the roadmap filed
 anchor visibility under fog, but `hidden` already existed, and an aura on a monster the DM took off
 the board shows that monster's position in colour. It fails closed: an anchor that isn't in the

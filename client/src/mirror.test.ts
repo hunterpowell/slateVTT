@@ -93,6 +93,8 @@ function scene(over: Partial<Scene> = {}): Scene {
     overrides: { x: 0, y: 0, w: 4, h: 4, tint: null },
     showNames: true,
     diagonals: 'equal',
+    fogBy: new Map(),
+    vision: 'party',
     showCursors: true,
     showDmCursor: true,
     backdrop: null,
@@ -267,4 +269,56 @@ test('the mirror leaves the room’s own scene alone', () => {
   assert.deepEqual(s.tokens[0]?.hp, { current: 30, max: 44 });
   assert.equal(s.walls.length, 1);
   assert.equal(s.shapes.length, 1);
+});
+
+// --- split sight ------------------------------------------------------------
+
+/** Two players under split sight. Saelyn's own frame has (1, 1) in sight;
+ *  Torrin's has nothing in sight at all, only the shared explored map. */
+function split(tokens: Token[]): Scene {
+  const dark = ['####', '#oo#', '####', '####'].join('');
+  return scene({
+    vision: 'split',
+    tokens,
+    fogBy: new Map([
+      ['saelyn', fog()],
+      ['torrin', fog({ cells: dark })],
+    ]),
+  });
+}
+
+const saelyn = token('saelyn-tok', 1, 1, { owner: { kind: 'player', id: 'saelyn' }, name: 'Saelyn' });
+const torrin = token('torrin-tok', 3, 3, { owner: { kind: 'player', id: 'torrin' }, name: 'Torrin' });
+
+test('under split sight the mirror shows one player’s board, friends included', () => {
+  const s = split([saelyn, torrin, token('ogre', 1, 1)]);
+  assert.deepEqual(ids(asTable(s, 'saelyn')), ['saelyn-tok', 'ogre'], 'Torrin is out of her sight');
+  assert.deepEqual(ids(asTable(s, 'torrin')), ['torrin-tok'], 'and he sees only himself');
+  assert.equal(asTable(s, 'torrin').fog?.cells, s.fogBy.get('torrin')?.cells, 'by his own fog');
+});
+
+test('under split sight a friend out of view keeps a labelled initiative row', () => {
+  const s = split([saelyn, torrin, token('ogre', 1, 1)]);
+  const order: Initiative = {
+    entries: [
+      { token: 'saelyn-tok', value: 18 },
+      { token: 'ogre', value: 12 },
+      { token: 'torrin-tok', value: 9 },
+    ],
+    current: 'saelyn-tok',
+    round: 1,
+  };
+  const his = tableInitiative(order, s, 'torrin');
+  assert.deepEqual(his.entries, [
+    { token: 'saelyn-tok', value: 18, label: { name: 'Saelyn', img: '' } },
+    { token: 'torrin-tok', value: 9 },
+  ]);
+  assert.equal(his.current, 'saelyn-tok');
+
+  // A friend the DM hid is withheld like a monster.
+  const hidden = split([{ ...saelyn, hidden: true }, torrin, token('ogre', 1, 1)]);
+  assert.deepEqual(
+    tableInitiative(order, hidden, 'torrin').entries.map((e) => e.token),
+    ['torrin-tok'],
+  );
 });

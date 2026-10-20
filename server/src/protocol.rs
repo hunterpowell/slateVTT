@@ -490,7 +490,7 @@ pub struct Token {
     /// **Public, unlike the four fields below it**, because a mark nobody at
     /// the table can see isn't a mark. It needs no filtering of its own because
     /// it can't outlive its token: a creature the table can't see takes its
-    /// pips with it, through `unseen_by_table` like everything else about it.
+    /// pips with it, through `unseen_by` like everything else about it.
     ///
     /// The only list on a token. It is a *set* in practice: `token_fields`
     /// refuses duplicates, which also bounds its length, since `Marker::ALL` is
@@ -638,7 +638,7 @@ impl Token {
     }
 
     /// Whether the token is withheld from the table for either of its own two
-    /// reasons. **Filters call `RoomState::unseen_by_table`, not this**: it adds
+    /// reasons. **Filters call `RoomState::unseen_by`, not this**: it adds
     /// line of sight, the third reason, and calling this directly leaks.
     ///
     /// `hidden` is a creature the DM took off the board; `staged_only` is one
@@ -706,6 +706,24 @@ pub enum Diagonals {
     /// turn: nothing here holds a creature's movement budget, and the first
     /// diagonal of anything anyone measures costs five.
     Alternating,
+}
+
+/// Whose sight a player's board shows: the whole party's, or their own tokens'.
+///
+/// Room-wide and the DM's to set, like `Diagonals`: it's a fact about how this
+/// table plays, not about the dungeon, so it isn't on `MapInfo` beside `fog`.
+/// `revealed` and `known` stay party-shared either way; only `visible` (and so
+/// which creatures a player is sent) splits. See *Split sight* in
+/// `docs/fog.md`.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Vision {
+    /// One `visible` for the whole party. The default, so a save written before
+    /// this field existed reads as it did.
+    #[default]
+    Party,
+    /// A player sees creatures only where their own tokens have sight.
+    Split,
 }
 
 /// Where a shape's first point is.
@@ -934,6 +952,21 @@ pub struct InitiativeEntry {
     /// Whatever the table rolled. The DM types it, or `RollInitiative` throws a
     /// flat d20 for a monster; nothing here knows what the number means.
     pub value: i32,
+    /// How to draw a party member's row when this recipient wasn't sent their
+    /// token (split sight). View-only: `initiative_for` fills it on the copy it
+    /// sends, the room's own entries never hold one, and so it is never saved.
+    /// See *Split sight* in `docs/fog.md`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub label: Option<RowLabel>,
+}
+
+/// A row's name and portrait, sent in place of a token the recipient doesn't
+/// hold. Only ever a party member's: a monster's row is withheld instead.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct RowLabel {
+    pub name: String,
+    pub img: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -1046,6 +1079,9 @@ pub struct RoomView {
     /// every other type here, because the encoding is most of what there is to
     /// explain, and splitting the two would leave a string nothing explains.
     pub fog: Option<FogView>,
+    /// Each player's own fog, under split sight, for the DM's player view.
+    /// Empty for a player, and for everyone under party sight.
+    pub fog_by: BTreeMap<PlayerId, FogView>,
     /// The cells the DM has overridden by hand, and **empty for a player,
     /// always**, as `walls` is.
     ///
@@ -1073,6 +1109,10 @@ pub struct RoomView {
     /// counting convention the table shares, so the only way this can be wrong
     /// is a client holding a different one from its neighbour.
     pub diagonals: Diagonals,
+    /// Whether each player sees by their own tokens or by the party's. The same
+    /// value for everyone: the switch isn't a secret, what it produces is, and
+    /// that's filtered per recipient.
+    pub vision: Vision,
     /// Whether everybody's pointer is drawn on everybody's board.
     ///
     /// The same value for everyone, for the same reason. It is on the view
@@ -1279,6 +1319,12 @@ pub enum ClientMsg {
     /// dungeon.
     SetDiagonals {
         diagonals: Diagonals,
+    },
+    /// Party sight or split sight. DM-only and room-wide like `SetDiagonals`,
+    /// but unlike it this one changes what a ray reaches for whom, so it's in
+    /// `moves_sight`.
+    SetVision {
+        vision: Vision,
     },
 
     /// Whether everybody's pointer is drawn on everybody's board. DM-only, and
@@ -1789,6 +1835,12 @@ pub enum ServerMsg {
     DiagonalsChanged {
         diagonals: Diagonals,
     },
+    /// Party or split sight now. Identical for every recipient, like
+    /// `DiagonalsChanged`; the fog and tokens it changes follow as their own
+    /// filtered frames.
+    VisionChanged {
+        vision: Vision,
+    },
 
     /// There is a picture in front of the table now, or there isn't.
     ///
@@ -1954,6 +2006,8 @@ pub enum ServerMsg {
     /// worth thirty a second on the way.
     FogChanged {
         fog: Option<FogView>,
+        /// As `RoomView::fog_by`: the DM's alone, and only under split sight.
+        fog_by: BTreeMap<PlayerId, FogView>,
     },
     /// Every cell the DM has overridden by hand, packed. The whole rectangle
     /// rather than a delta, for the reason `WallsChanged` carries the whole list.
@@ -2110,6 +2164,7 @@ mod tests {
             ClientMsg::DeleteToken { .. } => "delete_token",
             ClientMsg::SetShowNames { .. } => "set_show_names",
             ClientMsg::SetDiagonals { .. } => "set_diagonals",
+            ClientMsg::SetVision { .. } => "set_vision",
             ClientMsg::SetShowCursors { .. } => "set_show_cursors",
             ClientMsg::SetShowDmCursor { .. } => "set_show_dm_cursor",
             ClientMsg::SetBackdrop { .. } => "set_backdrop",
@@ -2156,6 +2211,7 @@ mod tests {
             ServerMsg::MapChanged { .. } => "map_changed",
             ServerMsg::NamesChanged { .. } => "names_changed",
             ServerMsg::DiagonalsChanged { .. } => "diagonals_changed",
+            ServerMsg::VisionChanged { .. } => "vision_changed",
             ServerMsg::BackdropChanged { .. } => "backdrop_changed",
             ServerMsg::AudioChanged { .. } => "audio_changed",
             ServerMsg::CursorsChanged { .. } => "cursors_changed",
@@ -2273,6 +2329,7 @@ mod tests {
         "set_show_cursors",
         "set_show_dm_cursor",
         "set_show_names",
+        "set_vision",
         "sketch",
         "toggle_door",
         "undo",
@@ -2308,6 +2365,7 @@ mod tests {
         "token_moved",
         "token_removed",
         "undo_changed",
+        "vision_changed",
         "walls_changed",
         "welcome",
     ];

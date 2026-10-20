@@ -68,6 +68,7 @@ import type { Board, Scene, Token } from './scene.js';
 import {
   adoptView,
   boardFromWire,
+  fogByFromWire,
   stagedFromWire,
   removeToken,
   sceneFromView,
@@ -218,6 +219,7 @@ interface Ui {
     clear: HTMLButtonElement;
     sight: HTMLButtonElement;
     view: HTMLButtonElement;
+    viewAs: HTMLSelectElement;
   };
   tokentool: {
     root: HTMLElement;
@@ -248,6 +250,7 @@ interface Ui {
     root: HTMLElement;
     names: HTMLInputElement;
     diagonals: HTMLSelectElement;
+    vision: HTMLSelectElement;
     cursors: HTMLInputElement;
     dmCursor: HTMLInputElement;
     backdrop: {
@@ -411,6 +414,7 @@ function findUi(): Ui {
       clear: need<HTMLButtonElement>('#fog-clear'),
       sight: need<HTMLButtonElement>('#fog-sight'),
       view: need<HTMLButtonElement>('#fog-view'),
+      viewAs: need<HTMLSelectElement>('#fog-view-as'),
     },
     tokentool: {
       root: need('#tokentool'),
@@ -441,6 +445,7 @@ function findUi(): Ui {
       root: need('#tabletool'),
       names: need<HTMLInputElement>('#table-names'),
       diagonals: need<HTMLSelectElement>('#table-diagonals'),
+      vision: need<HTMLSelectElement>('#table-vision'),
       cursors: need<HTMLInputElement>('#table-cursors'),
       dmCursor: need<HTMLInputElement>('#table-dm-cursor'),
       backdrop: {
@@ -892,7 +897,8 @@ function boot(ui: Ui, choice: RoomChoice, alone: boolean): void {
           // panel is redrawn only when something arrives, so it is told. One
           // line instead of a mirrored scene passed through the four places
           // that call `panel.update`, where a fifth caller could forget it.
-          () => panel?.mirror(fogTool?.playerView ?? false),
+          () => panel?.mirror(fogTool?.playerView ?? false, fogTool?.viewingAs ?? null),
+          () => roster ?? [],
         );
         fogTool.update(room.scene);
 
@@ -1087,6 +1093,16 @@ function boot(ui: Ui, choice: RoomChoice, alone: boolean): void {
       tableTool?.update(room.scene);
     },
 
+    // Only the panel reads this. Whatever the switch changes on this board
+    // arrives as the fog and token frames that follow it.
+    onVisionChanged: (vision) => {
+      if (room === null) return;
+      room.scene.vision = vision;
+      tableTool?.update(room.scene);
+      // Player view's picker is offered only under split sight.
+      fogTool?.update(room.scene);
+    },
+
     // A picture went up in front of the table, or came down. **Nothing about
     // the board is touched here**: the map, the walls, the drawings and
     // everywhere the party has explored are unchanged behind it.
@@ -1170,6 +1186,8 @@ function boot(ui: Ui, choice: RoomChoice, alone: boolean): void {
       chat?.recast();
       tokenTool?.recast();
       tableTool?.recast();
+      // Player view lists the cast.
+      if (room !== null) fogTool?.update(room.scene);
     },
 
     // Somebody else's sweep. Never our own: the server does not echo it, for
@@ -1273,9 +1291,10 @@ function boot(ui: Ui, choice: RoomChoice, alone: boolean): void {
     // Nothing here decides who is drawn. A creature the table cannot see is
     // absent from the token list entirely (invariant 4). This is only the
     // terrain.
-    onFogChanged: (fog) => {
+    onFogChanged: (fog, fogBy) => {
       if (room === null) return;
       room.scene.fog = fogFromWire(fog, identity.isDm);
+      room.scene.fogBy = fogByFromWire(fogBy, identity.isDm);
     },
 
     // Never reaches a player, like the walls: this is what the DM decided, and
@@ -1823,7 +1842,7 @@ async function start(
     const playerView = fogTool?.playerView ?? false;
     render(ui.ctx, view, {
       cam,
-      scene: playerView ? asTable(scene) : scene,
+      scene: playerView ? asTable(scene, fogTool?.viewingAs ?? null) : scene,
       playerView,
       identity,
       map,

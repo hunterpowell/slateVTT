@@ -93,7 +93,7 @@ fn tokens_are_counted_whole_rather_than_as_the_table_sees_them() {
     state.handle(dm, create_hidden("ogre"));
 
     // This is the DM's own ops view, behind its own key, so it counts what
-    // the room is holding. Filtering it through `unseen_by_table` would make
+    // the room is holding. Filtering it through `unseen_by` would make
     // the number answer a question nobody asked it.
     assert_eq!(
         state.status(false, &healthy()).tokens,

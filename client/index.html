@@ -2364,6 +2364,21 @@
         white-space: nowrap;
       }
 
+      .fog-view-as {
+        display: block;
+        width: 100%;
+        margin-top: 6px;
+        padding: 3px 4px;
+        border: 1px solid #2b3038;
+        border-radius: 4px;
+        background: #171a1f;
+        color: #d8d2c4;
+      }
+
+      .fog-view-as[hidden] {
+        display: none;
+      }
+
       .fog-sight:disabled {
         opacity: 0.45;
         cursor: default;
@@ -2426,7 +2441,8 @@
          fog panel's own label-and-control rows use. The token panel's 40px label
          column fits "name" and "owner" and not "diagonals", and that mismatch is
          what the deleted width override was working around. */
-      .table-diagonals {
+      .table-diagonals,
+      .table-vision {
         margin-top: 10px;
       }
 
@@ -2510,7 +2526,8 @@
         margin-bottom: 0;
       }
 
-      #table-diagonals {
+      #table-diagonals,
+      #table-vision {
         padding: 3px 4px;
         border: 1px solid #2b3038;
         border-radius: 4px;
@@ -3151,6 +3168,9 @@
         >
           player view
         </button>
+        <!-- Whose board, under split sight. Hidden under shared sight, where
+             every player's board is the same. -->
+        <select id="fog-view-as" class="fog-view-as" title="Whose board player view shows" hidden></select>
         <p class="map-hint" id="fog-hint"></p>
       </aside>
       <!-- DM only, and last on the strip: the least-touched panel during play.
@@ -3200,6 +3220,21 @@
           </select>
         </label>
         <p class="map-hint">How the ruler charges a diagonal step. Everyone's ruler, not just yours.</p>
+        <!-- Room-wide like the diagonals, and on this tab rather than the fog
+             panel for the same reason: it's how the table plays, not a fact
+             about the map. See *Split sight* in docs/fog.md. -->
+        <label class="map-cells-label table-vision">
+          <span>sight</span>
+          <select id="table-vision">
+            <option value="party">shared</option>
+            <option value="split">each their own</option>
+          </select>
+        </label>
+        <p class="map-hint">
+          With fog on, shared shows everyone whatever any party member can see. Each their own
+          shows a player only the creatures their own tokens can see. Explored ground is
+          always shared.
+        </p>
         <!-- The same widget the map and token panels use, a third folder over.
              It is on this panel and not the map one because a backdrop is not a
              map: it belongs to the room rather than to either board, and the

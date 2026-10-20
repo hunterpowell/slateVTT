@@ -14,7 +14,7 @@ use tokio::fs;
 use crate::fog::{FogView, OverrideView};
 use crate::protocol::{
     Colours, Diagonals, Initiative, MapInfo, Owner, Prepared, RosterEntry, Shape, StagedView,
-    Token, Wall,
+    Token, Vision, Wall,
 };
 
 /// What actually goes to disk.
@@ -92,6 +92,10 @@ pub struct Saved {
     /// before this field existed, so the container's default is already what the
     /// room was doing. The variants are ordered to make that true.
     pub diagonals: Diagonals,
+    /// Party sight or split sight. Room-wide, and the DM's to set. Needs no
+    /// default of its own for the reason `diagonals` doesn't: `Vision::Party`
+    /// is what every room did before this field existed.
+    pub vision: Vision,
     /// Whether everybody's pointer is drawn on everybody's board. Room-wide, and
     /// the DM's to set.
     ///
@@ -374,6 +378,7 @@ mod tests {
                 entries: vec![InitiativeEntry {
                     token: TokenId::new("t1"),
                     value: 18,
+                    label: None,
                 }],
                 current: Some(TokenId::new("t1")),
                 round: 4,
@@ -424,6 +429,8 @@ mod tests {
             // Alternating: `Equal` is what a missing field decodes to, so a
             // round trip that lost this would pass.
             diagonals: Diagonals::Alternating,
+            // Split: `Party` is what a missing field decodes to.
+            vision: Vision::Split,
             // Off: this defaults to `true`, so a round trip that dropped it
             // would come back on.
             show_cursors: false,

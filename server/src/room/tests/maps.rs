@@ -1803,7 +1803,7 @@ fn a_promote_takes_the_old_maps_monsters_with_it() {
 
 #[test]
 fn a_monster_the_table_never_saw_leaves_without_a_word() {
-    // `delete_token` asks `was_unseen` before the sweep clears the fog. Asked
+    // `delete_token` reads `held_by` before the sweep clears the fog. Asked
     // after it, or of `Token::unseen`, the table would be sent a removal for
     // an id it never held.
     let mut state = fog_room(10.0); // too short to reach the ogre

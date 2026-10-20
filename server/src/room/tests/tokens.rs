@@ -918,10 +918,16 @@ fn a_hidden_creatures_row_is_not_on_the_tables_initiative_panel() {
     }
     state.handle(ClientId(1), set_hidden(&token(&state, "t6"), true));
 
-    assert_eq!(order(&state.initiative_for(true)), ["t1", "t6", "t7"]);
-    assert_eq!(order(&state.initiative_for(false)), ["t1", "t7"]);
     assert_eq!(
-        state.initiative_for(false).round,
+        order(&state.initiative_for(&Identity::Dm)),
+        ["t1", "t6", "t7"]
+    );
+    assert_eq!(
+        order(&state.initiative_for(&as_player("saelyn"))),
+        ["t1", "t7"]
+    );
+    assert_eq!(
+        state.initiative_for(&as_player("saelyn")).round,
         state.initiative.round,
         "the round is not a secret"
     );
@@ -941,9 +947,9 @@ fn the_turn_is_withheld_while_it_belongs_to_something_hidden() {
     state.handle(ClientId(1), set_hidden(&token(&state, "t6"), true));
     state.handle(ClientId(1), ClientMsg::NextTurn);
 
-    assert_eq!(current(&state.initiative_for(true)), Some("t6"));
+    assert_eq!(current(&state.initiative_for(&Identity::Dm)), Some("t6"));
     assert_eq!(
-        current(&state.initiative_for(false)),
+        current(&state.initiative_for(&as_player("saelyn"))),
         None,
         "a token id is data, even when it is only the turn marker"
     );
@@ -1073,7 +1079,7 @@ fn the_dm_marks_a_creature_and_the_table_is_shown_it() {
 fn a_mark_on_a_creature_the_table_cannot_see_reaches_nobody() {
     // Markers are public and this still holds, because it isn't a fact about
     // the field: a token the table can't see takes everything about it away,
-    // through `unseen_by_table` like every other field on it. Asserted because
+    // through `unseen_by` like every other field on it. Asserted because
     // the claim is made, not because anything here branches on it.
     let mut state = room();
     let _dm = join_as_dm(&mut state, ClientId(1));

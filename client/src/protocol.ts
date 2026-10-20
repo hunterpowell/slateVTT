@@ -268,6 +268,10 @@ export interface WireWall {
 export interface InitiativeEntry {
   token: string;
   value: number;
+  /** A party member's name and portrait, sent in place of a token this client
+   *  wasn't sent (split sight), so the row still reads as a person. Absent on
+   *  every row whose token this client holds. */
+  label?: { name: string; img: string };
 }
 
 export interface Initiative {
@@ -325,6 +329,9 @@ export interface WireRoomView {
    *  the DM's alone; a player can only infer the geometry from the edges of
    *  this. */
   fog: WireFog | null;
+  /** Each player's own fog under split sight, for the DM's player view. Empty
+   *  for a player, and for everyone under party sight. */
+  fog_by: Record<string, WireFog>;
   /** The cells the DM has painted over the fog by hand. Empty for a player,
    *  always, like the walls and unlike the fog. The walls and this are what the
    *  DM authored; the fog is what they produce. */
@@ -341,6 +348,10 @@ export interface WireRoomView {
    *  counting convention only half the table holds is worse than either
    *  convention. */
   diagonals: Diagonals;
+  /** Whether a player sees creatures by the whole party's sight or only their
+   *  own tokens'. The same value for everyone; what it changes arrives as
+   *  ordinary fog and token frames, filtered per player by the server. */
+  vision: Vision;
   /** Whether everybody's pointer is drawn on everybody's board.
    *
    *  The same value for everyone, and it also decides whether this client
@@ -422,6 +433,11 @@ export interface WireRoomView {
  * geometry, and stay Euclidean on both settings.
  */
 export type Diagonals = 'equal' | 'alternating';
+
+/** Party sight or split sight. `Vision` on the server; see *Split sight* in
+ *  `docs/fog.md`. Nothing on the client computes with it: the server already
+ *  sent each player the fog and creatures that are theirs. */
+export type Vision = 'party' | 'split';
 
 /**
  * Where something typed is going. `ChatTo` on the server.
@@ -511,6 +527,8 @@ export type ServerMsg =
   /** The ruler charges diagonals differently now. Echoed to the DM who set it,
    *  for the same reason as `names_changed`. */
   | { type: 'diagonals_changed'; diagonals: Diagonals }
+  /** Party or split sight now. Echoed to the DM, like `diagonals_changed`. */
+  | { type: 'vision_changed'; vision: Vision }
   /** There is a picture in front of the table now, or there is not.
    *
    *  Like `names_changed`: identical for everyone, echoed to the DM who put it
@@ -607,7 +625,7 @@ export type ServerMsg =
   /** What the party can see now, and everywhere they have been. Null once the
    *  map is not fogged. Reaches everyone, unlike the walls, and only on a drop,
    *  never on a drag frame. */
-  | { type: 'fog_changed'; fog: WireFog | null }
+  | { type: 'fog_changed'; fog: WireFog | null; fog_by: Record<string, WireFog> }
   /** Every cell the DM has overridden. DM connections only: a player is not
    *  sent this frame at all, for the same reason as `walls_changed`. What they
    *  are sent is the resulting `fog_changed`. */
@@ -759,6 +777,8 @@ export type ClientMsg =
    *  on `set_map`, for the reason above: the table's counting convention
    *  doesn't change with the map. */
   | { type: 'set_diagonals'; diagonals: Diagonals }
+  /** DM-only. Whether each player sees by their own tokens or the party's. */
+  | { type: 'set_vision'; vision: Vision }
   /** DM-only. Whether everybody's pointer is drawn on everybody's board.
    *
    *  The switch stops the relay, not just the drawing, so a client told `false`

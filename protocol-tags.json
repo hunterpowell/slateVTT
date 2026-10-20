@@ -54,6 +54,7 @@
     "set_show_cursors",
     "set_show_dm_cursor",
     "set_show_names",
+    "set_vision",
     "sketch",
     "toggle_door",
     "undo",
@@ -89,6 +90,7 @@
     "token_moved",
     "token_removed",
     "undo_changed",
+    "vision_changed",
     "walls_changed",
     "welcome"
   ]

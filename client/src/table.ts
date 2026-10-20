@@ -3,8 +3,8 @@
 //
 // **A panel holds the controls for the struct its fields live on**: `MapInfo`
 // is the map tab, `Token` is the token tab, and room-wide `RoomState` fields
-// are this one. `show_names`, `diagonals`, `show_cursors` and `show_dm_cursor`
-// are `RoomState` fields. Don't move them back under the token panel's form,
+// are this one. `show_names`, `diagonals`, `vision`, `show_cursors` and
+// `show_dm_cursor` are `RoomState` fields. Don't move them back under the token panel's form,
 // which describes one selected creature.
 //
 // Named "table" and not "room" because `Lighting::Room` is a fog mode one tab
@@ -32,7 +32,7 @@
 // server re-checks every command regardless.
 
 import { createLibraryList, type LibraryUi } from './library.js';
-import type { ClientMsg, Diagonals, RosterEntry } from './protocol.js';
+import type { ClientMsg, Diagonals, RosterEntry, Vision } from './protocol.js';
 import { createRosterEditor, type RosterEditorUi } from './roster.js';
 import type { Scene } from './scene.js';
 
@@ -40,6 +40,9 @@ export interface TableToolUi {
   root: HTMLElement;
   names: HTMLInputElement;
   diagonals: HTMLSelectElement;
+  /** Party or split sight. On this tab and not the fog panel because it's how
+   *  the table plays, not a fact about the map. */
+  vision: HTMLSelectElement;
   cursors: HTMLInputElement;
   /** Just the DM's pointer. A separate checkbox, not a third state on the one
    *  above: "everybody's pointers" and "the DM's pointer" are two questions,
@@ -99,6 +102,11 @@ export function createTableTool(
   // the check that matters.
   ui.diagonals.addEventListener('change', () => {
     send({ type: 'set_diagonals', diagonals: ui.diagonals.value as Diagonals });
+  });
+
+  // The same, and the same cast.
+  ui.vision.addEventListener('change', () => {
+    send({ type: 'set_vision', vision: ui.vision.value as Vision });
   });
 
   // Also sent, not applied. This is the one control here whose effect isn't
@@ -178,6 +186,7 @@ export function createTableTool(
       // follow the room whether the change came from this tab or another.
       ui.names.checked = scene.showNames;
       ui.diagonals.value = scene.diagonals;
+      ui.vision.value = scene.vision;
       ui.cursors.checked = scene.showCursors;
       ui.dmCursor.checked = scene.showDmCursor;
       // Greyed while every pointer is off, as the fog panel does. The value is

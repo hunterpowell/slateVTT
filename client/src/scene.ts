@@ -12,11 +12,13 @@ import type {
   Lighting,
   Marker,
   Owner,
+  Vision,
   WireGridShape,
   WireMapInfo,
   WireRoomView,
   WireStaged,
   WireToken,
+  WireFog,
 } from './protocol.js';
 import type { Shape } from './shapes.js';
 import { shapeFromWire } from './shapes.js';
@@ -139,6 +141,9 @@ export interface Scene {
    *  It is not a filter. A creature the table cannot see is absent from `tokens`
    *  entirely; this is the *terrain*, and nothing here decides who is drawn. */
   fog: Fog | null;
+  /** Each player's own fog, by roster slug, under split sight. Only ever
+   *  filled on the DM's client, for player view; empty otherwise. */
+  fogBy: Map<string, Fog>;
   /** The cells the DM has painted over that fog by hand. Always empty for a
    *  player, like `walls` and unlike `fog`: the walls and this are what the DM
    *  authored, and the fog is what the table gets to see of both.
@@ -160,6 +165,9 @@ export interface Scene {
    *  it is how the table counts, not a property of the image they are counting
    *  over. */
   diagonals: Diagonals;
+  /** Party or split sight. Only the table panel reads it; the fog and tokens
+   *  this client holds are already the ones it was sent. */
+  vision: Vision;
   /** Whether everybody's pointer is drawn on everybody's board. Room-wide and
    *  the same for every client, and here and not on `Board`, like `showNames`.
    *
@@ -299,14 +307,29 @@ function fromView(view: WireRoomView, isDm: boolean): Omit<Scene, 'previewing'> 
     shapes: view.shapes.map(shapeFromWire),
     walls: view.walls.map(wallFromWire),
     fog: fogFromWire(view.fog, isDm),
+    fogBy: fogByFromWire(view.fog_by, isDm),
     overrides: overridesFromWire(view.overrides),
     showNames: view.show_names,
     diagonals: view.diagonals,
+    vision: view.vision,
     showCursors: view.show_cursors,
     showDmCursor: view.show_dm_cursor,
     backdrop: view.backdrop,
     audio: view.audio,
   };
+}
+
+/** `fog_by` off the wire, each frame built like `fog`. */
+export function fogByFromWire(
+  wire: Record<string, WireFog> | undefined,
+  isDm: boolean,
+): Map<string, Fog> {
+  const out = new Map<string, Fog>();
+  for (const [player, fog] of Object.entries(wire ?? {})) {
+    const built = fogFromWire(fog, isDm);
+    if (built !== null) out.set(player, built);
+  }
+  return out;
 }
 
 export function sceneFromView(view: WireRoomView, isDm: boolean): Scene {

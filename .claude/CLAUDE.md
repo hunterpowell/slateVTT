@@ -380,8 +380,8 @@ leaves the room. It's the same split as `Event`/`ServerMsg` and `RoomState`/`Roo
 fails safe: a secret added to `Token` and forgotten here is simply missing from the wire, which
 shows up as the DM's own client lacking a field.
 
-Unfiltered messages (identical for every recipient): `fog` (party-shared, nothing to build per
-client), every room-wide setting, `here`, `colours` and `roster`. Who may set those is a permission
+Unfiltered messages (identical for every recipient): `fog` under party sight (nothing to build
+per client; under split sight it's per player), every room-wide setting, `here`, `colours` and `roster`. Who may set those is a permission
 question; their values aren't secret. Everything else is filtered. Two fields have different
 content per recipient, rather than the room's copy with rows removed: `chat` and `notes`.
 
@@ -439,12 +439,13 @@ group) with one confirm, as N ordinary deletes; `N` advances the turn. Both keys
 the DM because the commands they send are DM-only, and both are ignored while typing in a field
 via `typingIn`, which every global key except Escape checks.
 
-**`RoomState::unseen_by_table(&Token)` is the only question any filter should ask.** It covers
-`hidden`, `staged_only` *and* line of sight, which is why it lives on `RoomState` and not
-`Token`. Calling `Token::unseen` directly checks two of the three reasons, which leaks. Every
-`was_unseen` on an event asks the same question, evaluated before the change it describes (for
-a promote, before the sweep). Getting it wrong sends the table a `TokenRemoved` for an id it
-never had.
+**`RoomState::unseen_by(&Identity, &Token)` is the only question any filter should ask.** It
+covers `hidden`, `staged_only` *and* line of sight, which is why it lives on `RoomState` and not
+`Token`, and it's asked of a recipient because under split sight two players can disagree.
+Calling `Token::unseen` directly checks two of the three reasons, which leaks. Every `held_by`
+on an event (the players who held the token) asks the same question, evaluated before the change
+it describes (for a promote, before the sweep). Getting it wrong sends a player a `TokenRemoved`
+for an id they never had.
 
 `markers` is the only extra token field sent to players, and it travels in
 `CreateToken`/`UpdateToken`, with no command, event, `message_for` arm or fixture entry of its
@@ -485,7 +486,7 @@ and draws in the player's own colour; every other tool (the line tool too, which
 kind) keeps its shape in the picked swatch. A tool is a row in `TOOLS`, not a kind. A sketch in
 progress is sent on the wire but not stored in the room (`Sketch` carries `drawing`, as
 `MoveToken` carries `dragging`). **A path is never sketched**: it goes out whole on release, and
-the server refuses a `Path` sketch. No staged shapes. `shapes_for` withholds an anchored shape via `unseen_by_table`, and an unanchored
+the server refuses a `Path` sketch. No staged shapes. `shapes_for` withholds an anchored shape via `unseen_by`, and an unanchored
 one unless a cell it covers is `known`.
 
 A cell is five feet, counted in cells crossed. `Diagonals` is the DM's setting and affects only
@@ -526,7 +527,9 @@ moves both onto the board.
 ## Fog of war
 
 Three party-shared sets of cells: `revealed` (ever seen), `known` (`revealed` widened one cell
-by `with_fringe`, so traced walls show on screen) and `visible` (seen now). **Terrain is gated on
+by `with_fringe`, so traced walls show on screen) and `visible` (seen now). Under split sight
+(`vision`, a room-wide switch on the table tab) each player also gets their own `visible_by`
+entry and is sent tokens (friends' included, bar their own) and fog by it; `revealed`, `known` and the DM's board stay shared. **Terrain is gated on
 `known`, creatures on `visible`.** Vision comes from tokens a player owns. `with_fringe` never
 touches `visible` or `revealed`: widening `visible` would show the ogre behind the wall, and
 writing to `revealed` would save a cell no ray reached.
@@ -539,8 +542,8 @@ light (`light_ft`), which counts only if the party has line of sight to it, at a
 Without that check, a promote would show the table every lit room.
 
 `fog`, `vision_ft` and `lighting` live on `MapInfo`, remembered per URL and sent with `SetMap`;
-there is no `SetFog`. `FogView` is one string, identical for every recipient including the DM:
-the wall geometry is the secret, and the shadow is what the table plays with. **Recompute on the
+there is no `SetFog`. `FogView` is one string, identical for every recipient including the DM
+under party sight: the wall geometry is the secret, and the shadow is what the table plays with. **Recompute on the
 drop, never on a drag frame**; `moves_sight` is the counterpart of `persists`. `forget_fog` runs
 on load, promote, recalibration and play-area change; `ResetFog` does the same and also clears
 the overrides.
@@ -554,11 +557,13 @@ staged fog preview would be client-only. **Don't put it in the room.**
 `solo.ts` and `mirror.ts` are client-only and must stay that way. They run a second raycast on
 the DM's client over data it already has. Solo shows one creature's sight. Mirror (*player
 view*) shows the table's board via `asTable`, the client-side counterpart of `snapshot_for`; it
-isn't a security boundary. `SOLO_SIGHT` has been off since milestone 34. Per-player fog is
-`ROADMAP.md` milestone 29; read it before arguing from "party-shared".
+isn't a security boundary. `SOLO_SIGHT` has been off since milestone 34. Split sight is
+`ROADMAP.md` milestone 29, built experimentally on the `fog-of-war` branch: see *Split sight* in
+`docs/fog.md`. Under it the DM is sent each player's fog (`fog_by`) and player view picks a
+player.
 
 → `docs/fog.md` before touching `fog.rs`, `fog.ts`, `solo.ts`, `mirror.ts`, `overrides.ts`,
-`fogtool.ts`, `unseen_by_table`, `with_fringe`, `shape_seen`, `refresh_fog`,
+`fogtool.ts`, `unseen_by`, `with_fringe`, `shape_seen`, `refresh_fog`,
 `sight_cells`/`lit_cells`, `Source`/`in_line_of_sight`, `party_sources`/`sight_sources`, or
 `moves_sight`.
 
@@ -764,7 +769,7 @@ can't assume which map it was written against. The README lists them.
 - Stay within the milestone currently being worked on. Don't scaffold future milestones or add
   abstraction for features that aren't being built yet. The invariants here and the design in
   `ROADMAP.md` are the only forward-looking work allowed.
-- **A change to a permission, a visibility filter, or a `was_unseen` isn't finished until a test
+- **A change to a permission, a visibility filter, or a `held_by` isn't finished until a test
   asserts what a client was _not_ sent.** That assertion belongs in the server suite;
   `drive-player.mjs` asks the same question of a real browser.
 - Prefer the smaller change. Prefer deleting code to adding a flag.

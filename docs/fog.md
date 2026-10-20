@@ -4,7 +4,7 @@ What the party can see, and what they remember seeing. Milestone 15 added walls 
 fog is what reads them.
 
 `.claude/CLAUDE.md` is loaded into every session; this file is not. **Read it before touching
-`fog.rs`, `fog.ts`, `solo.ts`, `mirror.ts`, `overrides.ts`, `fogtool.ts`, `unseen_by_table`,
+`fog.rs`, `fog.ts`, `solo.ts`, `mirror.ts`, `overrides.ts`, `fogtool.ts`, `unseen_by`,
 `with_fringe`, `recompute_sight`, `sight_sources`, `refresh_fog`, or the `moves_sight` gate.**
 Several of those are where a leak would go unnoticed, and the coordinate handling in `fog.rs` looks
 like a mistake and isn't one.
@@ -38,9 +38,11 @@ you can't be navigated.
 is made of. That matters: it lets one character per cell describe both facts, which is what
 `FogView` does (below).
 
-**Fog is party-shared, not per-player.** One set of each, the union over every player-owned token.
+**Fog is party-shared by default.** One set of each, the union over every player-owned token.
 Five people narrating to each other on Discord get nothing from per-player fog but confusion and
 five times the state, and the DM would have to reason about five answers to "can they see this".
+Milestone 29 adds a switch that splits `visible` (and only `visible`) per player; see *Split
+sight*. Everything above and below describes the party's sets, which exist under either setting.
 
 Vision comes from tokens a player *owns*, so handing a token over grants sight with no extra rule,
 and taking it back removes it. A player's own token is always visible to the table. It would be
@@ -52,7 +54,7 @@ only when the party can see that token. See *Light sources*. Nothing between her
 changes because of it, since the gate is applied to the source list and nothing downstream knows
 there are two kinds of source.
 
-`party_sources` asks `Token::unseen`, not `unseen_by_table`: what the party can see can't be an
+`party_sources` asks `Token::unseen`, not `unseen_by`: what the party can see can't be an
 input to computing what the party can see. `sight_sources` asks the same of a light, then asks a
 second question that *is* about what the party can see. That's the one place in this file where the
 order matters.
@@ -162,7 +164,7 @@ The roadmap asked for the override to land as *a different answer from `in_sight
 another clause, and it does. `Dark` subtracts from `visible`, so `in_sight` (which asks whether any
 cell a token covers is in `visible`) says no by itself, and the token leaves the table's board by
 the same path `hidden` has used since milestone 11. `Lit` adds to `visible` and gets a yes the same
-way. **`unseen_by_table` is still one line**, and nothing downstream of it knows overrides exist.
+way. **`unseen_by` is still one line**, and nothing downstream of it knows overrides exist.
 
 Two consequences follow:
 
@@ -320,7 +322,7 @@ Room      flood ∪ rays         …or when a walk does
 `fog::sight_cells` is the only place the mode is read, so `recompute_sight` makes a single call and
 **nothing downstream knows there are two.** The mode changes what the party can see, not what any
 of it means: `revealed`, `known` and `visible` are built from the answer exactly as before, the
-fringe still widens `known`, the DM's mask is still applied after, and `unseen_by_table` is
+fringe still widens `known`, the DM's mask is still applied after, and `unseen_by` is
 unchanged. It added no arm in `message_for`, no field on the wire beyond `MapInfo`, and no second
 derived set.
 
@@ -526,8 +528,8 @@ as a map are: the shape of the dungeon is visible in the string.
 mean by it (the same approach as `staged` being `None`), so turning fog off needs no second field on
 the wire.
 
-**The same value reaches everyone.** Fog is party-shared, so there's one answer and nothing
-per-client to build; the `Event::FogChanged` arm of `message_for` doesn't filter. `WallsChanged` next
+**The same value reaches everyone under party sight.** There's one answer and nothing
+per-client to build (*Split sight* is the exception); the `Event::FogChanged` arm of `message_for` doesn't filter. `WallsChanged` next
 to it does the opposite, and the pair sums up the design: the wall geometry is the secret, and the
 shadow it casts is what the table plays with. Players infer the floor plan from the edges of the
 fog, which is why walls stay out of their snapshot even though the fog shows the walls' effect.
@@ -537,7 +539,7 @@ fog, which is why walls stay out of their snapshot even though the fog shows the
 `Token::unseen` used to be the question every filter asked. It's now two of the three reasons.
 
 ```rust
-fn unseen_by_table(&self, token: &Token) -> bool {
+fn unseen_by(&self, token: &Token) -> bool {
     token.unseen() || !self.in_sight(token)     // hidden || staged_only || out of sight
 }
 ```
@@ -561,7 +563,7 @@ This was the expensive half of the milestone, and milestone 11's note predicted 
 
 Every event carrying `was_unseen` answers "did the table hold this token a moment ago". That used to
 be `Token::unseen()`, read just before the field it describes was overwritten. With fog it has to be
-`unseen_by_table`, and there were four sites:
+`unseen_by`, and there were four sites:
 
 - `UpdateToken` reads it **before taking the mutable borrow**, since the question needs `&self`.
 - `delete_token` reads it **before the removal**, since afterwards neither half can be asked.
@@ -876,7 +878,7 @@ part of per-player fog worth having.
 
 **Per-player fog itself stays refused**, and this is why refusing it costs nothing. The architecture
 would allow it: per-client `mpsc`, `snapshot_for`, and `FogView` is already built per recipient. The
-cost is in play. `unseen_by_table` would become `unseen_by(client)` at six call sites, `FogView`
+cost is in play. `unseen_by` would become `unseen_by(client)` at six call sites, `FogView`
 would stop being the one message identical for everyone, and there's no defensible answer for what
 the *DM's* board should then show, which usually means the question was posed wrong. Six people
 narrating to each other gain nothing from five answers unless the party splits, and a split is one
@@ -955,7 +957,7 @@ something.
 
 `asTable` is the client-side counterpart of `snapshot_for`, and each line matches one on the server:
 
-- Tokens go through `unseenByTable`, which is `unseen_by_table`: all three reasons, combined the same
+- Tokens go through `unseenByTable`, which is `unseen_by`: all three reasons, combined the same
   way, including `in_sight`'s shortcut for a player's own token. `footprint` is `fog::covered_cells`
   with the same nudge, so an ogre leaning into a lit corridor stays.
 - What survives is `redact`, which is `Token::view_for(false)` field for field.
@@ -1126,6 +1128,114 @@ changed.
 already has, and `UpdateToken` replaces the token whole, so a field left out of that send would put
 out a lantern on the first hit that lands. The compiler caught it. That's the `TokenView` argument
 working in the other direction: a required field is a question the type system makes somebody answer.
+
+## Split sight
+
+Milestone 29, experimental. `vision: Vision` on `RoomState`, `Party` by default, set by the DM on
+the table tab with `SetVision`. Under `Split`, a player is sent creatures and fog by what their
+own tokens can see, so the rogue scouting ahead sees the ambush and the rest of the table doesn't.
+`ROADMAP.md` has the design argument; this section is what was built.
+
+**Only `visible` splits.** `revealed` and `known` stay party-shared, so the explored map is still
+the party's map: Torrin's board shows the corridor Saelyn walked, dimmed, with nothing standing in
+it. `visible` itself stays the party union too, because the DM's board draws it and `revealed`
+grows from it. Each player's own set is `visible_by`, memory-only and empty under `Party`.
+
+`recompute_sight` sweeps once per roster player under `Split` and takes the union as the party's
+rays. That's the same answer the single sweep gives, because every source is somebody's token and
+both halves of the light gate (line of sight from any source, or any source's reach) are unions
+over sources. `split_sight_still_shares_what_the_party_has_explored` asserts the equality. The
+DM's mask applies to every player's set as it does to the party's.
+
+**Under split sight a party member out of your view is withheld like a monster.** `in_sight`'s
+early return covers only the asker's own tokens under `Split` (any player's under `Party`, where
+every player token is a source and the answer is the same). The board shows what the players would
+realistically know: a scout can describe a room, which is why `known` is shared, but not exactly
+where they or anything else is standing in it, and the party can say they're moving up without the
+scout seeing where. That assumes the party can talk to each other, which at this table they can.
+
+What follows from it: anything drawn anchored to a friend out of view is withheld with them. Your
+own tokens never leave your board, so the "your turn" notice is unaffected.
+
+**Their initiative row stays.** The turn order is how the table plays, and a friend isn't a secret,
+so `initiative_for` keeps a party member's row when only line of sight withholds their token. The
+panel names rows by looking the token up, and this client doesn't hold one, so the kept row
+carries a `RowLabel` (name and portrait) instead. The label is view-only: the room's own entries
+never hold one, and `skip_serializing_if` keeps it out of the save. A friend the DM *hid* or staged
+still leaves the panel, as a monster does, because that's the DM's decision rather than geometry.
+
+**A friend's lantern lights for whoever can see them.** Asked of one player, `sight_sources` treats
+another player's `light_ft` as a light like a brazier, behind the same gate: line of sight from
+this player's own tokens, at any distance, or their own reach. So Torrin, too far to see by his own
+eyes, sees Saelyn and the room her lantern lights as long as nothing stands between them. Her
+vision without a lantern is hers alone. Asked of the party, every player token is already a
+source, so nothing changes under `Party`, and the union over players is still the party's answer.
+
+### Player view names a player
+
+Under `Split` the DM is sent each player's own frame as `fog_by` (on `RoomView` and on
+`FogChanged`, keyed by roster slug, empty for a player and under `Party`). The DM may see anything,
+so this needs no filter, and it is sent whether or not player view is open: the server still
+doesn't learn what the DM is looking at. A picker under the player view button, shown only under
+`Split`, chooses whose board `asTable` and `tableInitiative` build, applying that frame and the
+own-tokens-only rule. It defaults to the first roster player.
+
+Computing each player's sight on the DM's client instead (as `solo.ts` does for one creature) was
+the alternative. It would need the light gate and the overrides written twice, and a mirror that
+disagreed with the server would show the DM a board no player has. Sending the server's own answer
+can't disagree with it.
+
+### One question per recipient
+
+`unseen_by_table(token)` became `unseen_by(identity, token)`. The DM gets `false`, which is the
+`is_dm ||` every filter used to write out for itself. Every filter, `snapshot_for`, `initiative_for`,
+`shapes_for`, both oracle guards in `check` and every `message_for` arm ask it of the recipient.
+
+**`was_unseen: bool` became `held_by: Holders`**, the set of roster players who held the token
+before the change. Under `Party` every player gives the same answer, so this is the old bool
+written once per player. `held(identity, held_by)` is the per-recipient read in `message_for`; the
+DM holds everything. `CreateToken` and a restored encounter carry an empty set.
+
+`Sight` and `shown` gained the same dimension: `seen` and `shapes` are per player, and `fog` is
+`fogs()`, every distinct frame in the room (the party's, plus one per player under `Split`).
+`refresh_fog` reports a token as flipped if anyone's answer changed, as one `TokenChanged`
+carrying `held_by`, and `message_for` works out each player's frame. A player missing from the
+`before` record counts as having held nothing, which covers a slot added to the roster since the
+last recompute.
+
+### What it doesn't do yet
+
+- **A player whose own view didn't change can still be sent a frame.** `FogChanged`,
+  `ShapesChanged`, `InitiativeChanged` and a flipped `TokenChanged` go to everyone, built per
+  recipient. Each one carries only what that player may see, so nothing leaks, but a redundant
+  frame does tell them *something* changed for someone. Narrowing these would mean events that
+  name their recipients.
+- **The sight check stays off.** The roadmap expected `SOLO_SIGHT` to come back with this
+  milestone; player view naming a player answers the same question for the board that matters,
+  so it hasn't been turned on.
+- **Cost:** under `Split` a drop costs one sweep per roster player instead of one, plus the light
+  gate's sweep per player when anything carries a light. `Party` costs what it did. Measured on
+  a desktop in a release build (2026-10-19), on a 60×60-cell dungeon with 720 wall segments, six
+  players and four braziers, timing a whole drop through `handle` with seven clients connected:
+  0.45 to 3.7 ms under `Party` and 0.87 to 5.7 ms under `Split`, the high end being `Room`
+  lighting with the party spread out. The extra is mostly bookkeeping rather than raycasting:
+  `fogs()` packs a frame per player on both sides of the command, and `shapes_seen` and `shown`
+  ask per player. Those are the places to look first if the Pi is ever slow. Not measured on the
+  Pi itself.
+
+### Testing it
+
+The server suite's split-sight tests in `fog_of_war.rs` assert the not-sent half for every path
+that carries `held_by` (create, edit, delete, drag, promote, the flip in `refresh_fog`), plus the
+switch, undo, a restart, the lantern gate, the labelled row and `fog_by`. Two deliberate
+breakages were checked against them: making `held` answer yes for everyone fails three, and giving
+every player the party's sight fails thirteen.
+
+`tools/drive-split.mjs` is the three-browser driver. It arranges the board through a second DM
+socket speaking the protocol, because a driver may not assume where tokens stand, and drives the
+switch, the picker and the panels through the pages. Its sharpest check is `drive-fog.mjs`'s: the
+monster's art was fetched by one player's page and never by the other's, and then is fetched once
+the monster walks over, which shows the first answer wasn't a page that fetched nothing.
 
 ## What milestone 16 did not do
 

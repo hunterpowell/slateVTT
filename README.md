@@ -198,6 +198,7 @@ which token is standing on a given square.
 | `drive-undo.mjs`   | The DM's undo reaching the table, and not rebuilding their page    | both     |
 | `drive-panels.mjs` | The initiative panel folding, `n` advancing the turn, the damage box, a player entering their own roll, token markers, and the sight check no longer being offered | both     |
 | `drive-chat.mjs`   | Whisper and shout, and the loaner die, each absent from a *third* person's page; the round rules surviving a reload | three    |
+| `drive-split.mjs`  | Split sight: a monster reaching one player's page and not another's, a friend's initiative row kept, player view naming a player | three    |
 | `drive-notes.mjs`  | The scratchpad: one person in two tabs, and the DM holding none of it | three    |
 | `drive-presence.mjs` | Who is connected, the colour a player picks, and being told it's your turn | three    |
 | `drive-cursors.mjs` | Everybody's pointer, and the DM's *not* reaching the table over unexplored ground | both     |

@@ -12,10 +12,11 @@
 // the DM was already sent, with everything the server would have withheld
 // taken back out of the scene around it.
 //
-// It works because the fog is party-shared. There is one answer to "what can
-// the table see", so a mirror of it is a fact, not a choice between six
-// boards. If milestone 29 makes `visible` per-player, this file has to name a
-// player, and the feature has to be argued again.
+// Under party sight there is one answer to "what can the table see", so a
+// mirror of it is a fact, not a choice between six boards. Under split sight
+// it names a player: the server sends the DM each player's fog (`fogBy`) and
+// this applies the same rules to that frame. See *Split sight* in
+// `docs/fog.md`.
 //
 // **Client-only, and nothing goes in the room.** No command, no event, no
 // filter: the server does not know the DM is looking at this and must not
@@ -55,19 +56,20 @@ const NO_OVERRIDES: Overrides = { x: 0, y: 0, w: 0, h: 0, tint: null };
  * *drawn*, and that belongs to the renderer (see `Fog.table` and `drawFog`).
  * This decides what is on the board, not how dark it is.
  */
-export function asTable(scene: Scene): Scene {
-  const shown = scene.tokens.filter((token) => !unseenByTable(scene, token)).map(redact);
+export function asTable(scene: Scene, as: string | null = null): Scene {
+  const eyes = through(scene, as);
+  const shown = scene.tokens.filter((token) => !unseenByTable(eyes, token, as)).map(redact);
   const ids = new Set(shown.map((token) => token.id));
 
   return {
-    ...scene,
+    ...eyes,
     // A player is never previewing, because they are never sent a staged board
     // to preview. One null withholds the next dungeon's image, its walls and its
     // paint together, as it does on the wire.
     previewing: false,
     staged: null,
     tokens: shown,
-    shapes: scene.shapes.filter((shape) => shapeSeen(scene, ids, shape)),
+    shapes: scene.shapes.filter((shape) => shapeSeen(eyes, ids, shape)),
     // `WallsChanged`'s rule: the geometry is the secret and the shadow it casts
     // is what the table plays with. Empty is also what an untraced map looks
     // like, so this matches a player's copy.
@@ -86,30 +88,59 @@ export function asTable(scene: Scene): Scene {
  * shown by the one panel that is always on screen. The server's version exists
  * to prevent that, and it is why `current` is cleared along with the row.
  */
-export function tableInitiative(initiative: Initiative, scene: Scene): Initiative {
-  const unseen = new Set(
-    scene.tokens.filter((token) => unseenByTable(scene, token)).map((token) => token.id),
+export function tableInitiative(
+  initiative: Initiative,
+  scene: Scene,
+  as: string | null = null,
+): Initiative {
+  const eyes = through(scene, as);
+  const unseen = new Map(
+    scene.tokens
+      .filter((token) => unseenByTable(eyes, token, as))
+      .map((token) => [token.id, token]),
   );
   if (unseen.size === 0) return initiative;
 
+  // A party member out of sight keeps their row, labelled, as `initiative_for`
+  // does. Only line of sight is waived: one the DM hid goes.
+  const label = (id: string): { name: string; img: string } | null => {
+    const token = unseen.get(id);
+    if (token === undefined || token.owner.kind !== 'player') return null;
+    if (token.hidden || token.stagedOnly) return null;
+    return { name: token.name, img: token.img };
+  };
+  const kept = (id: string): boolean => !unseen.has(id) || label(id) !== null;
+
   const current = initiative.current;
   return {
-    entries: initiative.entries.filter((entry) => !unseen.has(entry.token)),
-    current: current !== null && unseen.has(current) ? null : current,
+    entries: initiative.entries.filter((entry) => kept(entry.token)).map((entry) => {
+      const named = unseen.has(entry.token) ? label(entry.token) : null;
+      return named === null ? entry : { ...entry, label: named };
+    }),
+    current: current !== null && !kept(current) ? null : current,
     round: initiative.round,
   };
 }
 
+/** The scene with `as`'s own fog in place of the party's, under split sight. A
+ *  player with no frame sees no current sight, which shows the DM less than
+ *  more: the safe direction for a mirror. */
+function through(scene: Scene, as: string | null): Scene {
+  if (as === null || scene.vision !== 'split') return scene;
+  return { ...scene, fog: scene.fogBy.get(as) ?? (scene.live.fog ? null : scene.fog) };
+}
+
 /**
- * Whether the table cannot see this token at all: `unseen_by_table`, the only
- * question any filter on the server asks.
+ * Whether the table cannot see this token at all: `unseen_by` under party
+ * sight, the only question any filter on the server asks. Under split sight
+ * this is still the party's answer, which no single player is sent.
  *
  * The same three reasons apply here, and they take the scene as well as the
  * token for the same reason: two are facts about the creature and the third is
  * a fact about where everybody is standing.
  */
-export function unseenByTable(scene: Scene, token: Token): boolean {
-  return token.hidden || token.stagedOnly || !inSight(scene, token);
+export function unseenByTable(scene: Scene, token: Token, as: string | null = null): boolean {
+  return token.hidden || token.stagedOnly || !inSight(scene, token, as);
 }
 
 /**
@@ -126,8 +157,13 @@ export function unseenByTable(scene: Scene, token: Token): boolean {
  * That is the safe direction for a mirror, where the failure that matters is a
  * DM who thinks the table can't see something it can.
  */
-function inSight(scene: Scene, token: Token): boolean {
-  if (!scene.live.fog || token.owner.kind === 'player') return true;
+function inSight(scene: Scene, token: Token, as: string | null): boolean {
+  if (!scene.live.fog) return true;
+  // Under split sight only the player's own tokens are always in sight, as in
+  // `in_sight`.
+  if (token.owner.kind === 'player') {
+    if (scene.vision !== 'split' || as === null || token.owner.id === as) return true;
+  }
   const fog: Fog | null = scene.fog;
   if (fog === null) return false;
   return footprint(token).some(([cx, cy]) => cellVisible(fog, cx, cy));

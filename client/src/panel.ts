@@ -23,7 +23,7 @@ export interface Panel {
    * in. This panel is redrawn only when something arrives, so it has to be
    * told. Both go through the same two functions (see `mirror.ts`).
    */
-  mirror(on: boolean): void;
+  mirror(on: boolean, as: string | null): void;
 }
 
 interface PanelUi {
@@ -285,6 +285,8 @@ export function createPanel(
   let last: { initiative: Initiative; scene: Scene } | null = null;
   /** The DM is looking at the table's board, so this shows the table's rows. */
   let mirrored = false;
+  /** Whose board, under split sight; null for the party's. */
+  let mirroredAs: string | null = null;
 
   /** Redraws from whatever was last handed over. Used by the chevron and by
    *  the mirror turning on or off. */
@@ -299,9 +301,10 @@ export function createPanel(
   });
 
   const panel: Panel = {
-    mirror(on) {
-      if (on === mirrored) return;
+    mirror(on, as) {
+      if (on === mirrored && as === mirroredAs) return;
       mirrored = on;
+      mirroredAs = as;
       repaint();
     },
 
@@ -314,8 +317,8 @@ export function createPanel(
         // The order first, from the scene the DM holds. The unfiltered token
         // list says which rows have to go; the filtered one would find nothing
         // to drop.
-        initiative = tableInitiative(initiative, scene);
-        scene = asTable(scene);
+        initiative = tableInitiative(initiative, scene, mirroredAs);
+        scene = asTable(scene, mirroredAs);
       }
 
       ui.collapse.setAttribute('aria-expanded', String(!collapsed));
@@ -336,7 +339,10 @@ export function createPanel(
 
       const tokenFor = (id: string): Token | undefined =>
         scene.tokens.find((t: Token) => t.id === id);
-      const nameOf = (id: string): string => tokenFor(id)?.name ?? id;
+      // A party member out of this player's sight has a row and no token here,
+      // so the row carries their name and portrait itself.
+      const labelOf = (id: string) => initiative.entries.find((e) => e.token === id)?.label;
+      const nameOf = (id: string): string => tokenFor(id)?.name ?? labelOf(id)?.name ?? id;
 
       ui.round.textContent = `Round ${initiative.round}`;
 
@@ -388,7 +394,7 @@ export function createPanel(
           // download, since the browser already has this URL from the canvas.
           const art = document.createElement('span');
           art.className = 'init-art';
-          const src = token?.img ?? '';
+          const src = token?.img ?? entry.label?.img ?? '';
           if (src !== '') art.style.backgroundImage = `url("${src}")`;
 
           // Name over bar. Two lines, not one row of three things, because the

@@ -93,9 +93,13 @@ fn a_tiny_token_settles_in_the_middle_of_a_square() {
 
 #[test]
 fn originator_is_spared_drag_echoes_but_not_the_drop() {
-    let state = room();
+    let mut state = room();
     let me = ClientId(1);
     let them = ClientId(2);
+    // Joined, because the filter asks who a recipient is and sends nothing to
+    // a socket it doesn't know.
+    let _dm = join_as_dm(&mut state, me);
+    let _player = join_as_player(&mut state, them, "saelyn");
 
     let drag = Event::TokenMoved {
         id: TokenId::new("t1"),

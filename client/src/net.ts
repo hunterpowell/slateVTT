@@ -8,6 +8,7 @@ import type {
   RosterSlot,
   ServerMsg,
   TokenMoved,
+  Vision,
   Welcome,
   WireFog,
   WireMapInfo,
@@ -38,6 +39,8 @@ export interface Handlers {
   /** The ruler charges diagonals differently now. Called on every connection,
    *  for the same reason as `onNamesChanged`. */
   onDiagonalsChanged(diagonals: Diagonals): void;
+  /** Party or split sight now. Called on every connection. */
+  onVisionChanged(vision: Vision): void;
   /** Pointers are drawn on every board now, or they are not. Called on every
    *  connection. Unlike the two above, it changes what this client *sends*,
    *  because with it off the room relays nothing. */
@@ -97,7 +100,7 @@ export interface Handlers {
   /** What the party can see, or null on an unfogged map. Called on every
    *  connection, unlike the walls: fog is party-shared, so the DM and the table
    *  are sent the same frame. */
-  onFogChanged(fog: WireFog | null): void;
+  onFogChanged(fog: WireFog | null, fogBy: Record<string, WireFog>): void;
   /** The cells the DM has overridden by hand. Only ever called on a DM
    *  connection, like the walls: this is what the DM decided, not what the
    *  table is shown. */
@@ -233,6 +236,9 @@ export function connect(roomId: string, on: Handlers): Net {
       case 'diagonals_changed':
         on.onDiagonalsChanged(msg.diagonals);
         break;
+      case 'vision_changed':
+        on.onVisionChanged(msg.vision);
+        break;
       case 'cursors_changed':
         on.onCursorsChanged(msg.show);
         break;
@@ -288,7 +294,7 @@ export function connect(roomId: string, on: Handlers): Net {
         on.onWallsChanged(msg.walls, msg.staged);
         break;
       case 'fog_changed':
-        on.onFogChanged(msg.fog);
+        on.onFogChanged(msg.fog, msg.fog_by);
         break;
       case 'restored':
         on.onRestored(msg.state);

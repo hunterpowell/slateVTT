@@ -367,6 +367,7 @@ fn a_line_carries_the_round_only_while_a_turn_is_being_taken() {
     state.initiative.entries.push(InitiativeEntry {
         token: TokenId::new("t1"),
         value: 12,
+        label: None,
     });
     state.handle(ClientId(2), shout("12"));
 
