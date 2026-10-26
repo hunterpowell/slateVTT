@@ -23,6 +23,8 @@ import {
   storePlayerId,
   storeRoom,
   takeDmSecret,
+  readSitsAsPlayer,
+  storeSitsAsPlayer,
   takeRoomFromUrl,
 } from './identity.js';
 import { attachInput } from './input.js';
@@ -108,6 +110,7 @@ interface Ui {
   whoami: HTMLElement;
   whoamiName: HTMLElement;
   whoamiSwitch: HTMLButtonElement;
+  whoamiSeat: HTMLButtonElement;
   panel: {
     root: HTMLElement;
     round: HTMLElement;
@@ -305,6 +308,7 @@ function findUi(): Ui {
     whoami: need('#whoami'),
     whoamiName: need('#whoami-name'),
     whoamiSwitch: need<HTMLButtonElement>('#whoami-switch'),
+    whoamiSeat: need<HTMLButtonElement>('#whoami-seat'),
     panel: {
       root: need('#initiative'),
       round: need('#init-round'),
@@ -546,7 +550,15 @@ function boot(ui: Ui, choice: RoomChoice, alone: boolean): void {
   // Read and strip the DM secret before anything else can screenshot the URL.
   // A reload comes back through this with no `?dm=` and reads the secret from
   // `localStorage`, so the DM comes back as the DM after a dropped socket.
-  const dmSecret = takeDmSecret();
+  //
+  // A browser holding the secret can sit in a player's seat instead (the
+  // whoami chip's seat button). A `?dm=` link puts it back in the DM's, for
+  // `takeDmSecret`'s reason that a fresh link beats what is stored, and it is
+  // also the way out from the character picker, where the chip isn't shown.
+  const linkedAsDm = new URL(location.href).searchParams.has('dm');
+  const heldSecret = takeDmSecret();
+  if (linkedAsDm) storeSitsAsPlayer(choice.id, false);
+  const dmSecret = readSitsAsPlayer(choice.id) ? null : heldSecret;
 
   let room: Room | null = null;
   let panel: Panel | null = null;
@@ -619,6 +631,16 @@ function boot(ui: Ui, choice: RoomChoice, alone: boolean): void {
     const url = new URL(location.href);
     url.searchParams.delete('room');
     location.replace(`${url.pathname}${url.search}${url.hash}`);
+  });
+
+  // Only a browser holding the secret has a second seat, so a real player's
+  // chip never shows this. It reloads rather than re-sending `hello`, because
+  // identity is fixed per socket and `onWelcome` builds the UI once.
+  ui.whoamiSeat.hidden = heldSecret === null;
+  ui.whoamiSeat.textContent = dmSecret === null ? 'as DM' : 'as player';
+  ui.whoamiSeat.addEventListener('click', () => {
+    storeSitsAsPlayer(choice.id, dmSecret !== null);
+    location.reload();
   });
 
   // Both no-ops until a board exists, like lookAt: the stage owns the camera

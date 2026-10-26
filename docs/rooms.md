@@ -220,8 +220,8 @@ skipped, because the DM holds no slot and there's nothing to ask afterwards.
 
 **The secret is kept.** This is *switch campaign*, not *leave the DM seat*. The reload goes back
 through `takeDmSecret`, the DM comes back as the DM in whichever room they pick, and the character
-picker never appears. A *leave the DM seat* would be one more line here and still isn't wanted; see
-the cost paragraph in the next section.
+picker never appears. Taking a player's seat without forgetting the secret is the seat button's job;
+see *A player's seat in the DM's browser*.
 
 Showing the button is only safe because the DM's reload now keeps the DM's identity, and the order
 mattered. The second argument for hiding the button (that a reloaded DM came back anonymous) had to
@@ -266,6 +266,22 @@ the room and the player id, and forgetting the secret too is one line.
 the second argument for hiding it but not the first, and widening a reconnect fix into a UI change
 was scope that milestone didn't need. The first argument then failed on the Pi too; see *The switch
 button* above, where it's now shown to the DM as well.
+
+### A player's seat in the DM's browser
+
+A browser holding the secret shows a second button on the whoami chip, `as player` or `as DM`. It
+writes `slate.seat.<room>` and reloads. While that key says `player`, `boot` sends `hello` with no
+secret, so the server sees an ordinary player and the character picker or stored slot takes over.
+The secret stays in storage, which is what makes the way back one click.
+
+- **Scoped by room**, like the claimed slot: the same person can run one room on a site and play in
+  another.
+- **A `?dm=` link clears it** for the room it opens. A fresh link beats what's stored, as it does for
+  the secret, and it's the only way out from the character picker, where the chip isn't shown.
+- **Only the client changes.** The server can't tell this seat from a real player's, so it's sent
+  exactly what that player is sent. That's why it's a useful check, and also why it needs no new
+  test of what a client wasn't sent. The fog tab's *player view* (`mirror.ts`) answers a different
+  question on the DM's own socket; see `docs/fog.md`.
 
 ## What it cost the drivers
 

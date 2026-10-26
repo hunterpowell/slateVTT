@@ -269,7 +269,8 @@
         user-select: none;
       }
 
-      #whoami-switch {
+      #whoami-switch,
+      #whoami-seat {
         border: 0;
         padding: 2px 6px;
         border-radius: 3px;
@@ -280,7 +281,8 @@
         cursor: pointer;
       }
 
-      #whoami-switch:hover {
+      #whoami-switch:hover,
+      #whoami-seat:hover {
         background: rgba(255, 255, 255, 0.15);
         color: #d8d2c4;
       }
@@ -2682,7 +2684,8 @@
         body.player .draw-tool,
         body.player #draw-fold,
         body.player #chat-send,
-        body.player #whoami-switch {
+        body.player #whoami-switch,
+        body.player #whoami-seat {
           min-height: 40px;
         }
 
@@ -2732,6 +2735,7 @@
     <div id="whoami" hidden>
       <span id="whoami-name"></span>
       <button id="whoami-switch" type="button">switch</button>
+      <button id="whoami-seat" type="button" hidden></button>
     </div>
     <!-- Before the character picker in the document as it is in the sequence:
          a slot is claimed in a room, so the room is chosen first. -->

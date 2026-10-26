@@ -713,7 +713,8 @@ person and the DM's presence can be represented. Not on `Saved`; sent wherever t
 changes. Absent people are dimmed. **"It's your turn" is client-only and must not fire on a
 `Welcome` or a `Restored`**, which is why `turn.ts` has both `update` and `adopt`. A dropped
 socket backs off and reloads the page. The DM comes back as the DM via `takeDmSecret` in
-`localStorage`. Reloading is intentional, because `onWelcome` builds the UI once per socket.
+`localStorage`, unless that browser took a player's seat in that room (the whoami chip's seat
+button; `docs/rooms.md`). Reloading is intentional, because `onWelcome` builds the UI once per socket.
 
 Players pick their colour: an index into the closed `PLAYER_HUES`, public, duplicates allowed,
 refused for the DM at three layers. Everyone's pointer is drawn: `MoveCursor` at ~30Hz, relayed

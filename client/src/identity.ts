@@ -103,6 +103,35 @@ export function forgetPlayerId(roomId: string): void {
   }
 }
 
+/**
+ * Whether a browser holding the DM secret joins this room as a player instead.
+ *
+ * Scoped by room for `playerKey`'s reason: the same person can run one room on
+ * this site and play in another. Absent means the DM's seat, so a browser that
+ * never touched the button behaves as it always did. The secret is not touched;
+ * this decides only whether `hello` sends it.
+ */
+function seatKey(roomId: string): string {
+  return `slate.seat.${roomId}`;
+}
+
+export function readSitsAsPlayer(roomId: string): boolean {
+  try {
+    return localStorage.getItem(seatKey(roomId)) === 'player';
+  } catch {
+    return false;
+  }
+}
+
+export function storeSitsAsPlayer(roomId: string, asPlayer: boolean): void {
+  try {
+    if (asPlayer) localStorage.setItem(seatKey(roomId), 'player');
+    else localStorage.removeItem(seatKey(roomId));
+  } catch {
+    console.warn('could not remember which seat you took; this browser will rejoin as the DM');
+  }
+}
+
 export function readStoredRoom(): string | null {
   try {
     return localStorage.getItem(ROOM_KEY);
