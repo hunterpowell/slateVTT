@@ -20,7 +20,7 @@ const HERE = dirname(fileURLToPath(import.meta.url));
 const read = (f) => JSON.parse(readFileSync(join(HERE, f), 'utf8'));
 
 const srd = read('srd.json');
-const index = createIndex(merge(srd, read('extra.json')));
+const index = createIndex(merge(srd, read('extra.json'), read('optional.json')));
 const names = (q) => index.search(q).hits.map((s) => s.name);
 
 // The SRD alone, which records every tier-B field on every entry it holds.
@@ -172,6 +172,37 @@ test('a hand-typed entry replaces the SRD one of the same name', () => {
   assert.equal(overridden.spells.length, srd.length, 'override must not add a row');
   assert.ok(overridden.search('artificer').hits.some((s) => s.name === 'Fireball'));
   assert.ok(!index.search('artificer').hits.some((s) => s.name === 'Fireball'));
+});
+
+test("Tasha's expanded lists add a class without replacing the entry", () => {
+  const command = index.spells.find((s) => s.name === 'Command');
+  assert.deepEqual(command.classes, ['cleric', 'paladin', 'bard']);
+  assert.deepEqual(command.optional, ['bard']);
+  assert.ok(command.text.length > 0, 'the SRD text survives');
+  assert.ok(names('bard 1').includes('Command'));
+  assert.equal(index.spells.length, 477, 'an addition must not add a row');
+});
+
+test("the artificer has Tasha's whole list, SRD spells included", () => {
+  // 71 SRD spells from `ARTIFICER` and 24 from `extra.json`, as the book prints it.
+  assert.equal(index.search('artificer').hits.length, 95);
+  const cure = index.spells.find((s) => s.name === 'Cure Wounds');
+  assert.ok(cure.classes.includes('artificer'));
+  assert.equal(cure.optional, undefined, 'the artificer list is not an optional one');
+  assert.ok(names('artificer -optional').includes('Cure Wounds'));
+});
+
+test('optional is checked against the classes the query names', () => {
+  // Command is a cleric spell and an optional bard one.
+  assert.ok(names('bard optional').includes('Command'));
+  assert.ok(!names('bard -optional').includes('Command'));
+  assert.ok(names('cleric -optional').includes('Command'));
+  assert.ok(!names('cleric optional').includes('Command'));
+  assert.ok(!names('-optional').includes('Command'));
+  assert.ok(!names('optional').includes('Fireball'));
+
+  // A prefix names a class here as it does everywhere else.
+  assert.deepEqual(names('wiz optional'), ['Augury', 'Enhance Ability', 'Speak with Dead', 'Divination']);
 });
 
 test('the PHB name finds a spell the SRD renamed', () => {

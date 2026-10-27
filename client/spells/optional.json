@@ -1,0 +1,58 @@
+{
+  "bard": [
+    "Color Spray", "Command",
+    "Aid", "Enlarge/Reduce", "Mirror Image",
+    "Mass Healing Word", "Slow",
+    "Phantasmal Killer",
+    "Telepathic Bond",
+    "Heroes' Feast",
+    "Prismatic Spray",
+    "Antipathy/Sympathy",
+    "Prismatic Wall"
+  ],
+  "cleric": [
+    "Aura of Vitality",
+    "Aura of Life", "Aura of Purity",
+    "Sunbeam",
+    "Sunburst",
+    "Power Word Heal"
+  ],
+  "druid": [
+    "Protection from Evil and Good",
+    "Augury", "Continual Flame", "Enlarge/Reduce",
+    "Aura of Vitality", "Elemental Weapon", "Revivify",
+    "Divination", "Fire Shield",
+    "Cone of Cold",
+    "Flesh to Stone",
+    "Symbol",
+    "Incendiary Cloud"
+  ],
+  "paladin": [
+    "Gentle Repose", "Prayer of Healing", "Warding Bond"
+  ],
+  "ranger": [
+    "Entangle", "Searing Smite",
+    "Aid", "Enhance Ability", "Gust of Wind", "Magic Weapon",
+    "Elemental Weapon", "Meld Into Stone", "Revivify",
+    "Dominate Beast",
+    "Greater Restoration"
+  ],
+  "sorcerer": [
+    "Grease",
+    "Flame Blade", "Flaming Sphere", "Magic Weapon",
+    "Vampiric Touch",
+    "Fire Shield",
+    "Arcane Hand",
+    "Flesh to Stone", "Freezing Sphere",
+    "Demiplane"
+  ],
+  "warlock": [
+    "Mislead", "Planar Binding", "Teleportation Circle",
+    "Gate", "Weird"
+  ],
+  "wizard": [
+    "Augury", "Enhance Ability",
+    "Speak with Dead",
+    "Divination"
+  ]
+}

@@ -43,6 +43,7 @@
     "level": 0,
     "school": "conjuration",
     "classes": [
+      "artificer",
       "sorcerer",
       "wizard"
     ],
@@ -80,6 +81,7 @@
     "level": 2,
     "school": "abjuration",
     "classes": [
+      "artificer",
       "cleric",
       "paladin"
     ],
@@ -116,6 +118,7 @@
     "level": 1,
     "school": "abjuration",
     "classes": [
+      "artificer",
       "ranger",
       "wizard"
     ],
@@ -155,6 +158,7 @@
     "level": 2,
     "school": "transmutation",
     "classes": [
+      "artificer",
       "sorcerer",
       "wizard"
     ],
@@ -338,6 +342,7 @@
     "level": 5,
     "school": "transmutation",
     "classes": [
+      "artificer",
       "bard",
       "sorcerer",
       "wizard"
@@ -512,6 +517,7 @@
     "level": 4,
     "school": "divination",
     "classes": [
+      "artificer",
       "cleric",
       "wizard"
     ],
@@ -551,6 +557,7 @@
     "level": 5,
     "school": "evocation",
     "classes": [
+      "artificer",
       "wizard"
     ],
     "time": "action",
@@ -594,6 +601,7 @@
     "level": 2,
     "school": "abjuration",
     "classes": [
+      "artificer",
       "wizard"
     ],
     "time": "action",
@@ -1202,6 +1210,7 @@
     "level": 3,
     "school": "transmutation",
     "classes": [
+      "artificer",
       "sorcerer",
       "wizard"
     ],
@@ -1237,6 +1246,7 @@
     "level": 2,
     "school": "illusion",
     "classes": [
+      "artificer",
       "sorcerer",
       "wizard"
     ],
@@ -2383,6 +2393,7 @@
     "level": 2,
     "school": "evocation",
     "classes": [
+      "artificer",
       "cleric",
       "wizard"
     ],
@@ -2564,6 +2575,7 @@
     "level": 3,
     "school": "conjuration",
     "classes": [
+      "artificer",
       "cleric",
       "druid",
       "paladin"
@@ -2679,6 +2691,7 @@
     "level": 5,
     "school": "illusion",
     "classes": [
+      "artificer",
       "sorcerer",
       "wizard"
     ],
@@ -2727,6 +2740,7 @@
     "level": 1,
     "school": "evocation",
     "classes": [
+      "artificer",
       "bard",
       "cleric",
       "druid",
@@ -2766,6 +2780,7 @@
     "level": 0,
     "school": "evocation",
     "classes": [
+      "artificer",
       "bard",
       "sorcerer",
       "wizard"
@@ -2842,6 +2857,7 @@
     "level": 2,
     "school": "transmutation",
     "classes": [
+      "artificer",
       "druid",
       "ranger",
       "sorcerer",
@@ -3073,6 +3089,7 @@
     "level": 1,
     "school": "divination",
     "classes": [
+      "artificer",
       "bard",
       "cleric",
       "druid",
@@ -3235,6 +3252,7 @@
     "level": 1,
     "school": "illusion",
     "classes": [
+      "artificer",
       "bard",
       "sorcerer",
       "wizard"
@@ -3353,6 +3371,7 @@
     "level": 3,
     "school": "abjuration",
     "classes": [
+      "artificer",
       "bard",
       "cleric",
       "druid",
@@ -3394,7 +3413,7 @@
     "level": 4,
     "school": "divination",
     "classes": [
-      "druid"
+      "cleric"
     ],
     "time": "action",
     "trigger": null,
@@ -3778,6 +3797,7 @@
     "level": 2,
     "school": "transmutation",
     "classes": [
+      "artificer",
       "bard",
       "cleric",
       "druid",
@@ -3822,6 +3842,7 @@
     "level": 2,
     "school": "transmutation",
     "classes": [
+      "artificer",
       "sorcerer",
       "wizard"
     ],
@@ -3974,6 +3995,7 @@
     "level": 1,
     "school": "transmutation",
     "classes": [
+      "artificer",
       "sorcerer",
       "warlock",
       "wizard"
@@ -4048,6 +4070,7 @@
     "level": 4,
     "school": "transmutation",
     "classes": [
+      "artificer",
       "wizard"
     ],
     "time": "10min",
@@ -4083,6 +4106,7 @@
     "level": 1,
     "school": "evocation",
     "classes": [
+      "artificer",
       "druid"
     ],
     "time": "action",
@@ -4120,6 +4144,7 @@
     "level": 4,
     "school": "conjuration",
     "classes": [
+      "artificer",
       "wizard"
     ],
     "time": "action",
@@ -4159,6 +4184,7 @@
     "level": 1,
     "school": "necromancy",
     "classes": [
+      "artificer",
       "sorcerer",
       "wizard"
     ],
@@ -4235,6 +4261,7 @@
     "level": 1,
     "school": "transmutation",
     "classes": [
+      "artificer",
       "bard",
       "sorcerer",
       "wizard"
@@ -4497,6 +4524,7 @@
     "level": 0,
     "school": "evocation",
     "classes": [
+      "artificer",
       "sorcerer",
       "wizard"
     ],
@@ -4850,6 +4878,7 @@
     "level": 3,
     "school": "transmutation",
     "classes": [
+      "artificer",
       "sorcerer",
       "warlock",
       "wizard"
@@ -5047,6 +5076,7 @@
     "level": 4,
     "school": "abjuration",
     "classes": [
+      "artificer",
       "bard",
       "cleric",
       "druid",
@@ -5389,6 +5419,7 @@
     "level": 3,
     "school": "abjuration",
     "classes": [
+      "artificer",
       "bard",
       "cleric",
       "wizard"
@@ -5467,6 +5498,7 @@
     "level": 1,
     "school": "conjuration",
     "classes": [
+      "artificer",
       "wizard"
     ],
     "time": "action",
@@ -5539,6 +5571,7 @@
     "level": 5,
     "school": "abjuration",
     "classes": [
+      "artificer",
       "bard",
       "cleric",
       "druid"
@@ -5667,6 +5700,7 @@
     "level": 0,
     "school": "divination",
     "classes": [
+      "artificer",
       "cleric",
       "druid"
     ],
@@ -5902,6 +5936,7 @@
     "level": 3,
     "school": "transmutation",
     "classes": [
+      "artificer",
       "sorcerer",
       "wizard"
     ],
@@ -6010,6 +6045,7 @@
     "level": 2,
     "school": "transmutation",
     "classes": [
+      "artificer",
       "bard",
       "druid"
     ],
@@ -6421,6 +6457,7 @@
     "level": 1,
     "school": "divination",
     "classes": [
+      "artificer",
       "bard",
       "wizard"
     ],
@@ -6701,6 +6738,7 @@
     "level": 2,
     "school": "illusion",
     "classes": [
+      "artificer",
       "bard",
       "sorcerer",
       "warlock",
@@ -6776,6 +6814,7 @@
     "level": 1,
     "school": "transmutation",
     "classes": [
+      "artificer",
       "druid",
       "ranger",
       "sorcerer",
@@ -6886,6 +6925,7 @@
     "level": 2,
     "school": "abjuration",
     "classes": [
+      "artificer",
       "bard",
       "cleric",
       "druid",
@@ -6923,6 +6963,7 @@
     "level": 2,
     "school": "transmutation",
     "classes": [
+      "artificer",
       "sorcerer",
       "wizard"
     ],
@@ -6959,6 +7000,7 @@
     "level": 0,
     "school": "evocation",
     "classes": [
+      "artificer",
       "bard",
       "cleric",
       "sorcerer",
@@ -7153,6 +7195,7 @@
     "level": 1,
     "school": "transmutation",
     "classes": [
+      "artificer",
       "bard",
       "druid",
       "ranger",
@@ -7225,6 +7268,7 @@
     "level": 0,
     "school": "conjuration",
     "classes": [
+      "artificer",
       "bard",
       "sorcerer",
       "warlock",
@@ -7386,6 +7430,7 @@
     "level": 2,
     "school": "illusion",
     "classes": [
+      "artificer",
       "bard",
       "wizard"
     ],
@@ -7423,6 +7468,7 @@
     "level": 2,
     "school": "transmutation",
     "classes": [
+      "artificer",
       "paladin",
       "wizard"
     ],
@@ -7759,6 +7805,7 @@
     "level": 0,
     "school": "transmutation",
     "classes": [
+      "artificer",
       "bard",
       "cleric",
       "druid",
@@ -7797,6 +7844,7 @@
     "level": 0,
     "school": "transmutation",
     "classes": [
+      "artificer",
       "bard",
       "sorcerer",
       "wizard"
@@ -8550,6 +8598,7 @@
     "level": 0,
     "school": "conjuration",
     "classes": [
+      "artificer",
       "druid",
       "sorcerer",
       "warlock",
@@ -8737,6 +8786,7 @@
     "level": 0,
     "school": "transmutation",
     "classes": [
+      "artificer",
       "bard",
       "sorcerer",
       "warlock",
@@ -8878,6 +8928,7 @@
     "level": 4,
     "school": "abjuration",
     "classes": [
+      "artificer",
       "wizard"
     ],
     "time": "10min",
@@ -9040,6 +9091,7 @@
     "level": 3,
     "school": "abjuration",
     "classes": [
+      "artificer",
       "cleric",
       "druid",
       "ranger",
@@ -9114,6 +9166,7 @@
     "level": 2,
     "school": "abjuration",
     "classes": [
+      "artificer",
       "cleric",
       "druid",
       "paladin",
@@ -9151,6 +9204,7 @@
     "level": 1,
     "school": "transmutation",
     "classes": [
+      "artificer",
       "cleric",
       "druid",
       "paladin"
@@ -9259,6 +9313,7 @@
     "level": 0,
     "school": "evocation",
     "classes": [
+      "artificer",
       "sorcerer",
       "wizard"
     ],
@@ -9419,6 +9474,7 @@
     "level": 4,
     "school": "evocation",
     "classes": [
+      "artificer",
       "wizard"
     ],
     "time": "action",
@@ -9457,6 +9513,7 @@
     "level": 0,
     "school": "abjuration",
     "classes": [
+      "artificer",
       "cleric",
       "druid"
     ],
@@ -9569,6 +9626,7 @@
     "level": 3,
     "school": "conjuration",
     "classes": [
+      "artificer",
       "cleric",
       "paladin"
     ],
@@ -9603,6 +9661,7 @@
     "level": 2,
     "school": "transmutation",
     "classes": [
+      "artificer",
       "wizard"
     ],
     "time": "action",
@@ -9675,6 +9734,7 @@
     "level": 1,
     "school": "abjuration",
     "classes": [
+      "artificer",
       "cleric"
     ],
     "time": "bonus",
@@ -9799,6 +9859,7 @@
     "level": 4,
     "school": "conjuration",
     "classes": [
+      "artificer",
       "wizard"
     ],
     "time": "action",
@@ -9836,6 +9897,7 @@
     "level": 2,
     "school": "divination",
     "classes": [
+      "artificer",
       "bard",
       "sorcerer",
       "wizard"
@@ -10164,6 +10226,7 @@
     "level": 0,
     "school": "evocation",
     "classes": [
+      "artificer",
       "sorcerer",
       "wizard"
     ],
@@ -10438,6 +10501,7 @@
     "level": 0,
     "school": "necromancy",
     "classes": [
+      "artificer",
       "cleric"
     ],
     "time": "action",
@@ -10583,6 +10647,7 @@
     "level": 2,
     "school": "transmutation",
     "classes": [
+      "artificer",
       "sorcerer",
       "warlock",
       "wizard"
@@ -10771,6 +10836,7 @@
     "level": 4,
     "school": "transmutation",
     "classes": [
+      "artificer",
       "cleric",
       "druid",
       "wizard"
@@ -10806,6 +10872,7 @@
     "level": 4,
     "school": "abjuration",
     "classes": [
+      "artificer",
       "druid",
       "ranger",
       "sorcerer",
@@ -11884,6 +11951,7 @@
     "level": 5,
     "school": "evocation",
     "classes": [
+      "artificer",
       "druid",
       "sorcerer",
       "wizard"
@@ -12001,6 +12069,7 @@
     "level": 3,
     "school": "transmutation",
     "classes": [
+      "artificer",
       "druid",
       "ranger",
       "sorcerer",
@@ -12037,6 +12106,7 @@
     "level": 3,
     "school": "transmutation",
     "classes": [
+      "artificer",
       "cleric",
       "druid",
       "ranger",
@@ -12074,6 +12144,7 @@
     "level": 2,
     "school": "conjuration",
     "classes": [
+      "artificer",
       "sorcerer",
       "wizard"
     ],

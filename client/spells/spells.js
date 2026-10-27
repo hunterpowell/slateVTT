@@ -15,8 +15,8 @@
 
 import { createIndex, merge } from './query.js';
 
-const [srd, extra] = await Promise.all(
-  ['srd.json', 'extra.json'].map((f) => fetch(f).then((r) => r.json())),
+const [srd, extra, optional] = await Promise.all(
+  ['srd.json', 'extra.json', 'optional.json'].map((f) => fetch(f).then((r) => r.json())),
 );
 
 // `text.json` is the prose for the hand-typed half, and it is **not committed**
@@ -36,7 +36,7 @@ for (const entry of extra) {
   if (held) Object.assign(entry, { text: held.text, higher: held.higher });
 }
 
-const index = createIndex(merge(srd, extra));
+const index = createIndex(merge(srd, extra, optional));
 
 // ---------------------------------------------------------------- rendering
 
@@ -91,6 +91,8 @@ function render(spell) {
   const body = el('div', 'body');
   const chips = el('div', 'facts');
   for (const f of facts(spell)) chips.append(el('span', 'chip', f));
+  // Which of the classes in the summary came from Tasha's expanded lists.
+  if (spell.optional) chips.append(el('span', 'chip', `optional: ${spell.optional.join(', ')}`));
   // Not yet checked against the book. A chip among the facts rather than a tag
   // on the row: it is a fact about the *entry* rather than about the spell, and
   // it belongs where you are reading the entry. Quiet on purpose — see the

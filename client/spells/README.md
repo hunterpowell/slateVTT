@@ -27,6 +27,7 @@ to the page number.
 |---|---|
 | `srd.json` | **Generated; don't hand-edit.** 319 PHB spells with full text, from SRD 5.1 |
 | `extra.json` | Xanathar's, Tasha's and non-SRD PHB entries. Header facts and a page, no text |
+| `optional.json` | Tasha's expanded spell lists: class → spell names, added on load |
 | `text.json` | **Not committed.** The prose for `extra.json`, built from the book dumps |
 | `vocab.js` | The closed sets every field is checked against. One copy, three readers |
 | `query.js` | The search. No DOM, so `query.test.mjs` can run it in Node |
@@ -179,17 +180,36 @@ section explains, and this check is what turns one back off if a new entry ever 
 
 ### Naming an existing spell overrides it
 
-An entry whose `name` matches one in `srd.json` **replaces** it. That's how a class list that Tasha's
-changed gets fixed (adding `"artificer"` to a PHB spell, say) without a second mechanism.
+An entry whose `name` matches one in `srd.json` **replaces** it, text included. `text.json` holds
+prose only for `extra.json`'s own spells, so an overridden SRD spell loses its text. To add a class
+to a spell, use `optional.json` (below) if it's from Tasha's expanded lists. Otherwise a fix to
+`build-spells.mjs` is better than an override.
 
-It's also how a typo destroys a PHB entry, so `check-spells.mjs` prints every override by name. Read
-that list; anything on it you didn't mean is a misspelling.
+An override is also how a typo destroys a PHB entry, so `check-spells.mjs` prints every override by
+name. Read that list; anything on it you didn't mean is a misspelling.
+
+### Tasha's expanded spell lists
+
+`optional.json` lists, per class, the spells Tasha's adds to that class as an optional feature.
+`merge()` appends each class to the spell's `classes`, so `bard 1` finds Command, and also records it
+in `optional`, which the row shows as an `optional: bard` chip. The entry itself is untouched, so an
+SRD spell keeps its text.
+
+Only PHB spells are in it. The Tasha's spells marked with an asterisk on those lists already carry
+their classes in `extra.json` as ordinary classes, and stay that way. Names are the data's own, so
+the SRD name where it renamed a spell (`Telepathic Bond`, `Arcane Hand`, `Freezing Sphere`).
+`check-spells.mjs` refuses a name that matches nothing and a class the spell already has.
 
 ## Searching
 
 Type a class, level, school, casting time, book, damage type or ability save, in any order. Schools
 and classes accept a prefix (`wiz`, `necro`). `conc` and `ritual` filter on those. A leading `-`
 negates. Anything unrecognised searches names and text, and `"quoted words"` stay one phrase.
+
+`optional` applies to the classes in the same query: `bard optional` is Tasha's additions to the
+bard, and `bard -optional` is the PHB bard list. **It can't be a test of the spell alone.** Command
+is a cleric spell and an optional bard one, so `cleric -optional` would lose it. With no class named,
+it asks whether the spell is on anyone's expanded list.
 
 Terms for the **same** field widen the result (`fire cold`); terms for **different** fields narrow it
 (`wiz 3`).
@@ -199,6 +219,8 @@ wiz 3 conc          24 spells
 cleric 1 bonus       3 — Healing Word, Sanctuary, Shield of Faith
 sor 2 -conc         12
 wiz cantrip attack   4 — Chill Touch, Fire Bolt, Ray of Frost, Shocking Grasp
+bard 2              28
+bard 2 -optional    25 — without Aid, Enlarge/Reduce, Mirror Image
 "difficult terrain"  a phrase, searched in the prose
 ```
 
@@ -236,6 +258,15 @@ than broken.
   best-effort across SRD entries even though the completeness check treats the field as recorded.
   Hand-typed entries record it properly.
 - **No page numbers on PHB entries.** The SRD doesn't carry them and they weren't guessed.
+- **Upstream has class lists wrong.** It files Divination under druid; the PHB has it as cleric.
+  `CLASS_FIXES` in `build-spells.mjs` corrects it, and fails the build if upstream fixes it first.
+- **SRD 5.1 has no artificer.** `ARTIFICER` in `build-spells.mjs` names the 71 SRD spells on Tasha's
+  artificer list and the build adds the class; the other 24 are `extra.json` entries that record it
+  themselves. It's the artificer's own list, so none of it is tagged optional.
+- **`build-spells.mjs` can't read upstream `main` since September 2026.** 5e-bits changed its damage
+  schema (#1190) and the script stops at Acid Arrow. `srd.json` was last built from commit `fcf94eb`,
+  with `--from` and a copy of `src/2014/en/5e-SRD-Spells.json` at that commit. That reproduces the
+  committed file exactly, so use it until the script is taught the new schema.
 - **`damage: ["weapon"]`** means "the weapon's own type", for Conjure Barrage and Conjure Volley. A
   spell that lets you *choose* a type instead lists every type it could be, so `fire` finds Chromatic
   Orb.

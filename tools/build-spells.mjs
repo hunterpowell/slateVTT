@@ -99,6 +99,42 @@ const ALIASES = {
   'Tiny Hut': ["Leomund's Tiny Hut"],
 };
 
+/**
+ * Class lists upstream has wrong, as `[what upstream says, what the PHB says]`.
+ *
+ * Divination is a cleric spell in the PHB, and Tasha's adds it to the druid's
+ * expanded list, which it wouldn't need to if druids already had it. Each entry
+ * is asserted to still be wrong upstream, so a fix there fails the build rather
+ * than leaving a rule nobody needs.
+ */
+const CLASS_FIXES = {
+  Divination: [['druid'], ['cleric']],
+};
+
+/**
+ * The SRD spells on Tasha's artificer list, by level, under their SRD names.
+ *
+ * SRD 5.1 predates the artificer, so upstream names none. The list's Xanathar's
+ * and Tasha's spells are in `extra.json`, which records the class itself. Each
+ * name is asserted to exist, and to still lack the class upstream.
+ */
+const ARTIFICER = [
+  'Acid Splash', 'Dancing Lights', 'Fire Bolt', 'Guidance', 'Light', 'Mage Hand', 'Mending',
+  'Message', 'Poison Spray', 'Prestidigitation', 'Ray of Frost', 'Resistance', 'Shocking Grasp',
+  'Spare the Dying',
+  'Alarm', 'Cure Wounds', 'Detect Magic', 'Disguise Self', 'Expeditious Retreat', 'Faerie Fire',
+  'False Life', 'Feather Fall', 'Grease', 'Identify', 'Jump', 'Longstrider',
+  'Purify Food and Drink', 'Sanctuary',
+  'Aid', 'Alter Self', 'Arcane Lock', 'Blur', 'Continual Flame', 'Darkvision', 'Enhance Ability',
+  'Enlarge/Reduce', 'Heat Metal', 'Invisibility', 'Lesser Restoration', 'Levitate', 'Magic Mouth',
+  'Magic Weapon', 'Protection from Poison', 'Rope Trick', 'See Invisibility', 'Spider Climb', 'Web',
+  'Blink', 'Create Food and Water', 'Dispel Magic', 'Fly', 'Glyph of Warding', 'Haste',
+  'Protection From Energy', 'Revivify', 'Water Breathing', 'Water Walk',
+  'Arcane Eye', 'Fabricate', 'Freedom of Movement', 'Secret Chest', 'Faithful Hound',
+  'Private Sanctum', 'Resilient Sphere', 'Stone Shape', 'Stoneskin',
+  'Animate Objects', 'Arcane Hand', 'Creation', 'Greater Restoration', 'Wall of Stone',
+];
+
 const fail = (spell, what) => {
   throw new Error(`${spell}: unrecognised ${what} — upstream changed, update tools/build-spells.mjs`);
 };
@@ -128,6 +164,17 @@ function components(spell) {
   return joined;
 }
 
+function classes(spell) {
+  const upstream = spell.classes.map((c) => c.index).sort();
+  if (upstream.includes('artificer')) fail(spell.name, 'artificer class — ARTIFICER is now redundant');
+  const fix = CLASS_FIXES[spell.name];
+  if (fix && upstream.join() !== fix[0].join()) {
+    fail(spell.name, `class list ${upstream} — CLASS_FIXES expected ${fix[0]}`);
+  }
+  const fixed = fix ? fix[1] : upstream;
+  return ARTIFICER.includes(spell.name) ? ['artificer', ...fixed].sort() : fixed;
+}
+
 function convert(spell) {
   const time = TIMES[spell.casting_time];
   if (!time) fail(spell.name, `casting time ${JSON.stringify(spell.casting_time)}`);
@@ -136,7 +183,7 @@ function convert(spell) {
     name: spell.name,
     level: spell.level,
     school: spell.school.index,
-    classes: spell.classes.map((c) => c.index).sort(),
+    classes: classes(spell),
     time,
     // SRD 5.1 prints reactions as a bare "1 reaction" with the trigger buried in
     // the prose, so there is never one to lift. Hand-typed entries carry theirs.
@@ -195,6 +242,12 @@ for (const [field, allowed] of [
 const produced = new Set(spells.map((s) => s.name));
 for (const name of Object.keys(ALIASES)) {
   if (!produced.has(name)) fail(name, 'alias target — no spell of that name was produced');
+}
+for (const name of Object.keys(CLASS_FIXES)) {
+  if (!produced.has(name)) fail(name, 'class fix target — no spell of that name was produced');
+}
+for (const name of ARTIFICER) {
+  if (!produced.has(name)) fail(name, 'artificer spell — no spell of that name was produced');
 }
 
 for (const s of spells) {

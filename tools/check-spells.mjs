@@ -109,10 +109,9 @@ for (const entry of extra) {
   seen.add(entry.name);
 }
 
-// An `extra.json` entry whose name matches an SRD one replaces it, which is how
-// a class list Tasha's changed gets fixed. It is also how a typo'd new spell
-// quietly destroys a PHB entry — so every override is printed to be eyeballed,
-// never merely allowed.
+// An `extra.json` entry whose name matches an SRD one replaces it, text and all.
+// It is also how a typo'd new spell quietly destroys a PHB entry — so every
+// override is printed to be eyeballed, never merely allowed.
 const srdNames = new Set(srd.map((s) => s.name));
 const overrides = extra.filter((e) => srdNames.has(e.name)).map((e) => e.name);
 
@@ -122,6 +121,25 @@ if (overrides.length) {
   console.log(`\noverriding ${overrides.length} SRD entr${overrides.length === 1 ? 'y' : 'ies'} — check each is deliberate:`);
   for (const name of overrides) console.log(`  ${name}`);
 }
+
+// Tasha's expanded lists. A name that matches nothing is a spell that silently
+// never gains its class, and one that already has the class is a book misread.
+const optional = read('optional.json');
+const byName = new Map(
+  [...srd.filter((s) => !extra.some((e) => e.name === s.name)), ...extra].map((s) => [s.name, s]),
+);
+let additions = 0;
+for (const [klass, names] of Object.entries(optional)) {
+  oneOf('optional.json', 'class', klass, vocab.CLASSES);
+  if (new Set(names).size !== names.length) complain(`optional.json ${klass}`, 'names a spell twice');
+  for (const name of names) {
+    const spell = byName.get(name);
+    if (!spell) complain(`optional.json ${klass}`, `"${name}" matches no spell — use the SRD name where it renamed one`);
+    else if (spell.classes.includes(klass)) complain(`optional.json ${klass}`, `"${name}" is already a ${klass} spell`);
+    else additions++;
+  }
+}
+console.log(`\n${additions} optional class additions from Tasha's`);
 
 const unchecked = extra.filter((e) => e.verified === false);
 if (unchecked.length) {

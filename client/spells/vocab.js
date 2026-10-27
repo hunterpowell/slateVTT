@@ -18,8 +18,8 @@ export const SCHOOLS = [
 
 /**
  * SRD 5.1 is the 2014 list and knows eight; artificer is here because Tasha's
- * added it and an `extra.json` entry is how that gets said. See the override
- * rule in `check-spells.mjs`.
+ * added it. `ARTIFICER` in `build-spells.mjs` gives it to the SRD spells on its
+ * list, and `extra.json` entries record it themselves.
  */
 export const CLASSES = [
   'artificer', 'bard', 'cleric', 'druid', 'paladin',
