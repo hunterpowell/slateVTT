@@ -84,20 +84,19 @@ const MODES: readonly { mode: WallMode; label: string; hint: string; title: stri
     label: 'wall',
     hint: 'Click each corner. Double-click to finish.',
     title:
-      'Click each corner. Double-click or Enter to finish, Backspace to take one back, Escape to abandon the run. Hold Alt to place off the grid corners.',
+      'Click each corner. Double-click or Enter to finish, Backspace to remove the last corner, Escape to cancel. Alt places off the grid.',
   },
   {
     mode: 'door',
     label: 'door',
-    hint: 'Traced shut. Click a door to swing it.',
-    title:
-      'Trace a door the same way — it is traced shut. Clicking a door you have already hung opens or closes it instead of starting a run.',
+    hint: 'Click each corner. Doors start shut.',
+    title: 'Trace like a wall. Doors start shut.',
   },
   {
     mode: 'erase',
     label: 'erase',
     hint: 'Click a segment to remove it.',
-    title: 'Click a segment to take it off the map. One segment at a time, not the whole run.',
+    title: 'Click a segment to remove it.',
   },
 ];
 
@@ -144,8 +143,8 @@ export function createWallTool(
     ui.hint.textContent =
       mode === null
         ? staged
-          ? 'Tracing the map being prepared. Click any door to swing it.'
-          : 'Trace walls here. Click any door to swing it.'
+          ? 'Tracing the next map. Click a door to open or shut it.'
+          : 'Click a door to open or shut it.'
         : (MODES.find((m) => m.mode === mode)?.hint ?? '');
   };
 

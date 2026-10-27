@@ -155,7 +155,7 @@ export function createRosterEditor(
     name.value = entry.name;
     name.maxLength = MAX_PLAYER_NAME_LEN;
     name.dataset['id'] = entry.id;
-    name.title = `${entry.name}'s id is ${entry.id}, which stays the same if you rename them.`;
+    name.title = `id: ${entry.id}`;
     name.setAttribute('aria-label', `rename ${entry.name}`);
     // On `change`, which is a blur or Enter, not every keystroke: a rename is
     // one decision, and sending half a name would rename a character on six

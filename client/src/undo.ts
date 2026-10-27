@@ -61,10 +61,7 @@ export function createUndo(ui: UndoUi, send: (msg: ClientMsg) => void): Undo {
     // The label is all the button says, so an empty ring gets its own text
     // instead of a sentence with a hole in it.
     ui.button.textContent = label === null ? 'nothing to undo' : `undo: ${label}`;
-    ui.button.title =
-      label === null
-        ? 'Nothing has changed yet this session.'
-        : `Put the room back the way it was before ${label}. There is no redo.`;
+    ui.button.title = label === null ? '' : 'There is no redo.';
   };
 
   const fire = (): void => {

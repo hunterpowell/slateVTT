@@ -155,7 +155,7 @@ check(
 check(
   'and the hint says the board is open',
   await dm.evaluate('document.querySelector("#fog-hint").textContent'),
-  'The table sees the whole board.',
+  'Fog is off.',
 );
 
 // Fog on and the torches short, *before* the player joins — so what they are

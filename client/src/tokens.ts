@@ -233,17 +233,17 @@ export function createTokenTool(
   const hintFor = (token: Token | null): string => {
     if (token === null) {
       return previewing()
-        ? 'Built on the next map only. The table meets it on promote.'
-        : 'Click a token on the map to edit it.';
+        ? 'New tokens go on the next map.'
+        : 'Click a token to edit it.';
     }
     if (!previewing()) {
       return scene?.staged != null && leavesOnPromote(token)
-        ? 'Drag it on the map to move it. It is removed on promote unless brought to the next map.'
-        : 'Drag it on the map to move it.';
+        ? 'Removed on promote unless brought to the next map.'
+        : '';
     }
     return token.stagedOnly
-      ? 'Drag it to place it for the next map.'
-      : 'Drag it to plan where it lands on promote.';
+      ? 'On the next map only.'
+      : 'Drag to plan where it lands on promote.';
   };
 
   function select(id: string | null): void {

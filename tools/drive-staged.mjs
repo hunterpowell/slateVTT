@@ -272,7 +272,7 @@ check(
 check(
   'and the panel says which board it is tracing',
   await text(dm, '#wall-hint'),
-  'Tracing the map being prepared. Click any door to swing it.',
+  'Tracing the next map. Click a door to open or shut it.',
 );
 // **The one check in this script a re-run can change, since milestone 31.** The
 // shelf hands a staged map back whatever was last traced on *it*, so a second
@@ -342,7 +342,7 @@ check('and a radius with it', await disabled(dm, '#fog-vision'), false);
 check(
   'the hint says what painting here means',
   await text(dm, '#fog-hint'),
-  'Painting the map being prepared. This is what the party gets when it lands.',
+  'Painting the next map.',
 );
 // Reset is the one control that stays live-only: half of it is forgetting where
 // the *party* explored, and they have not explored this map.
@@ -412,7 +412,7 @@ check('and the board’s own wall went with the map it traced', afterPromote.inc
 check(
   'the panel is back to describing the board',
   await text(dm, '#wall-hint'),
-  'Trace walls here. Click any door to swing it.',
+  'Click a door to open or shut it.',
 );
 
 // --- put the room back --------------------------------------------------------

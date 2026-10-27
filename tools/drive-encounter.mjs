@@ -151,7 +151,7 @@ check('the kobold is selected', await tokenAt(dm, live, k), kobold);
 check('bring to next map is offered for it', await hidden('token-bring'), false);
 check(
   'and the hint says what happens without it',
-  (await dm.evaluate('document.getElementById("token-hint").textContent')).includes('removed on promote'),
+  (await dm.evaluate('document.getElementById("token-hint").textContent')).includes('Removed on promote'),
   true,
 );
 

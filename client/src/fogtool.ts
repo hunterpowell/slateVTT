@@ -167,24 +167,22 @@ const BRUSHES: readonly { brush: FogBrush; label: string; title: string }[] = [
   {
     brush: 'explored',
     label: 'ground',
-    title:
-      'Hand the party the shape of these squares, dimmed, without whatever is standing on them.',
+    title: 'Shown dimmed, without the creatures on them.',
   },
   {
     brush: 'lit',
     label: 'lit',
-    title: 'Hand the party these squares and whatever is standing on them.',
+    title: 'Shown in full, creatures included.',
   },
   {
     brush: 'dark',
     label: 'dark',
-    title:
-      'Black these squares out whatever their torches reach, and take what they remember of them too.',
+    title: 'Hidden, even if lit or explored.',
   },
   {
     brush: 'clear',
     label: 'clear',
-    title: 'Hand these squares back to line of sight.',
+    title: 'Back to line of sight.',
   },
 ];
 
@@ -194,13 +192,13 @@ const MODES: readonly { mode: Lighting; label: string; title: string }[] = [
   {
     mode: 'dynamic',
     label: 'sight',
-    title: 'A token sees what it has a straight line to, out to its radius.',
+    title: 'Line of sight, out to the vision radius.',
   },
   {
     mode: 'room',
     label: 'room',
     title:
-      'A token lights the whole room it is standing in, out to its radius, and sees through open doors into the next one. Every wall and door you traced bounds a room — an archway is a door left open.',
+      'A token lights the whole room it stands in, out to the vision radius. Traced walls and doors bound each room.',
   },
 ];
 
@@ -389,33 +387,33 @@ export function createFogTool(
         // like an ordinary board. A DM who forgets they are in here will go
         // looking for a monster that is on their board and not on this one.
         asName !== null
-        ? `Showing the board as ${asName} sees it — their own sight, and nothing they are not sent. Your walls, painted squares, hit points and hidden creatures are still there behind it.`
-        : 'Showing the board as the table sees it — their fog, and nothing they are not sent. Your walls, painted squares, hit points and hidden creatures are still there behind it.'
+        ? `Viewing as ${asName}. Your walls, painted squares, hit points and hidden creatures aren't shown.`
+        : "Viewing as the table. Your walls, painted squares, hit points and hidden creatures aren't shown."
       : checking
-      ? 'Click a creature to see the board as it does. Geometry only — your painted squares are not applied.'
+      ? 'Click a creature to see what it sees. Painted squares are ignored.'
       : sightId !== null
-        ? `Showing what ${watched?.name ?? 'that creature'} can see right now. Click the button to go back to the table's board.`
+        ? `What ${watched?.name ?? 'that creature'} can see.`
         : on?.fog !== true
         ? previewing
-          ? 'The map being prepared is unfogged; the table will see all of it.'
-          : 'The table sees the whole board.'
+          ? 'The next map is unfogged.'
+          : 'Fog is off.'
         : brush === null
           ? previewing
             ? // Says what this is, because nothing on screen shows it: there is
               // no wash under the tint on a map nobody has cast a ray on.
               // Without this line the DM is painting a dungeon that appears to
               // be fully lit.
-              'Painting the map being prepared. This is what the party gets when it lands.'
+              'Painting the next map.'
             : lighting === 'room'
               ? // Names the boundary, not the door, because that is the rule the
                 // DM needs to trace a dungeon that lights as they meant: a room
                 // that lit further than expected has a gap in its wall, and the
                 // fix is a segment across the gap.
-                `Player tokens light the room they are in, out to ${ui.vision.value} ft, and see through open doors. Every wall and door you trace bounds a room.`
-              : `Player tokens light ${ui.vision.value} ft, and walls and shut doors stop it.`
+                `Player tokens light the room they are in, out to ${ui.vision.value} ft.`
+              : `Player tokens see ${ui.vision.value} ft. Walls and shut doors block it.`
           : gesture === 'fill'
-            ? 'Click a room to fill it — every wall and door bounds it, open or shut. Escape puts the brush down.'
-            : 'Drag over the squares to paint them.';
+            ? 'Click a room to fill it. Escape to stop.'
+            : 'Drag to paint.';
   };
 
   /** The cells a fill from here would cover. Recomputed only when the pointer

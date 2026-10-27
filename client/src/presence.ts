@@ -116,8 +116,8 @@ export function createPresence(
       const present = here.has(key);
       chip.classList.toggle('is-away', !present);
       chip.title = present
-        ? `${nameOf(owner, roster)} is here.`
-        : `${nameOf(owner, roster)} is not connected.`;
+        ? nameOf(owner, roster)
+        : `${nameOf(owner, roster)} (not connected)`;
       dot.style.backgroundColor = colourOf(owner, roster, colours);
     }
     // Only ever built for a player, so a DM's strip has nothing to close.
@@ -186,7 +186,7 @@ export function createPresence(
       swatch.className = 'presence-swatch';
       swatch.dataset['colour'] = String(at);
       swatch.style.backgroundColor = hue;
-      swatch.title = 'Draw in this colour.';
+      swatch.title = 'Your colour';
       swatch.setAttribute('aria-label', `colour ${at + 1}`);
       swatch.addEventListener('click', () => {
         // Nothing is predicted locally: the swatch updates when the room says

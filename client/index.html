@@ -2412,8 +2412,6 @@
         cursor: pointer;
       }
 
-      /* The hint above it belongs to the checkbox above it, so this one needs
-         the gap the second control in a stack of pairs would otherwise lose. */
       .table-cursors {
         margin-top: 10px;
       }
@@ -2423,19 +2421,12 @@
          reason: "including yours" is not a question the DM has to answer while
          nobody's pointer is being drawn, and a control that vanishes is one
          they go looking for. */
-      .table-dm-cursor,
-      .table-dm-cursor-hint {
+      .table-dm-cursor {
+        margin-top: 10px;
         margin-left: 18px;
       }
 
-      /* The gap `.table-cursors` needs and for its reason: the hint above this
-         one belongs to the checkbox above it. */
-      .table-dm-cursor {
-        margin-top: 10px;
-      }
-
-      .table-dm-cursor:has(input:disabled),
-      .table-dm-cursor:has(input:disabled) + .table-dm-cursor-hint {
+      .table-dm-cursor:has(input:disabled) {
         opacity: 0.5;
       }
 
@@ -2795,7 +2786,7 @@
         <input id="init-value" type="number" step="1" placeholder="d20" aria-label="Initiative" />
         <button type="submit">set</button>
       </form>
-      <button id="init-roll" type="button" hidden title="A d20 for every monster not in the order yet, logged to you alone">
+      <button id="init-roll" type="button" hidden title="A d20 for each monster not yet in the order, whispered to you">
         roll monsters
       </button>
       <button id="init-clear" type="button" hidden>clear order</button>
@@ -2855,8 +2846,7 @@
                — it is words because somebody has to know what to do about it. -->
           <p id="sound-blocked" hidden>Click the speaker to start the music.</p>
           <p class="map-hint">
-            Yours alone. Nobody else's screen hears what you set here, and the DM cannot set it
-            for you.
+            Only affects your screen.
           </p>
         </section>
         <!-- One box of text, yours, and nobody else is ever sent it — see
@@ -3099,10 +3089,10 @@
              stands on, and "leave behind" takes it away again. One of the two
              shows for a DM token on the board while a map is staged; neither
              shows for a player's token, which always comes along. -->
-        <button id="token-bring" class="map-button" type="button" title="Keep this creature on promote, planned at its current cell" hidden>bring to next map</button>
-        <button id="token-leave" class="map-button" type="button" title="Drop this creature's plan, so the promote removes it" hidden>leave behind</button>
+        <button id="token-bring" class="map-button" type="button" title="Keep on promote, at its current cell" hidden>bring to next map</button>
+        <button id="token-leave" class="map-button" type="button" title="Remove on promote" hidden>leave behind</button>
         <button id="token-new" class="map-subtle" type="button" hidden>+ new token</button>
-        <p class="map-hint" id="token-hint">Click a token on the map to edit it.</p>
+        <p class="map-hint" id="token-hint">Click a token to edit it.</p>
       </aside>
       <!-- DM only, and the walls it traces reach nobody else at all — a player
            is not sent one, so there is nothing on their board for this panel to
@@ -3155,14 +3145,14 @@
         </div>
         <div id="fog-brushes" class="fog-brushes"></div>
         <div class="wall-foot">
-          <button id="fog-gesture" class="map-subtle" type="button" title="Click a room to flood it, or drag to paint square by square">
+          <button id="fog-gesture" class="map-subtle" type="button" title="Fill a whole room per click instead of painting squares">
             fill
           </button>
           <button
             id="fog-clear"
             class="map-subtle"
             type="button"
-            title="Forget the party's exploring and your painted squares, and start this map dark"
+            title="Clear explored and painted squares"
           >
             reset all
           </button>
@@ -3184,13 +3174,13 @@
           id="fog-view"
           class="draw-tool fog-sight"
           type="button"
-          title="Show the board exactly as the table sees it: their fog, and none of your walls, painted squares, hit points or hidden creatures"
+          title="Show the board as the table sees it"
         >
           player view
         </button>
         <!-- Whose board, under split sight. Hidden under shared sight, where
              every player's board is the same. -->
-        <select id="fog-view-as" class="fog-view-as" title="Whose board player view shows" hidden></select>
+        <select id="fog-view-as" class="fog-view-as" title="View as" hidden></select>
         <p class="map-hint" id="fog-hint"></p>
       </aside>
       <!-- DM only, and last on the strip: the least-touched panel during play.
@@ -3205,7 +3195,6 @@
           <input id="table-names" type="checkbox" checked />
           <span>names under tokens</span>
         </label>
-        <p class="map-hint">Everyone's board, not just yours.</p>
         <!-- The busiest thing in the room, and the only switch here that stops
              traffic rather than only changing what is drawn: with it off the
              server relays no pointer at all and every client stops sending its
@@ -3214,7 +3203,6 @@
           <input id="table-cursors" type="checkbox" checked />
           <span>pointers on the board</span>
         </label>
-        <p class="map-hint">Everyone's pointer, drawn where their hand is.</p>
         <!-- The switch above narrowed to one hand. Nested under it because it
              is only answerable while pointers are on at all, and dimmed rather
              than hidden when they are not — a control that vanishes is a control
@@ -3225,9 +3213,6 @@
           <input id="table-dm-cursor" type="checkbox" checked />
           <span>including yours</span>
         </label>
-        <p class="map-hint table-dm-cursor-hint">
-          Off keeps your hand off their screens.
-        </p>
         <!-- How the table counts, which is the one thing here the server stores
              and never computes with: the only thing the room is authoritative
              over is that six clients agree. The labels are what people say out
@@ -3239,7 +3224,6 @@
             <option value="alternating">5-10-5</option>
           </select>
         </label>
-        <p class="map-hint">How the ruler charges a diagonal step. Everyone's ruler, not just yours.</p>
         <!-- Room-wide like the diagonals, and on this tab rather than the fog
              panel for the same reason: it's how the table plays, not a fact
              about the map. See *Split sight* in docs/fog.md. -->
@@ -3251,9 +3235,8 @@
           </select>
         </label>
         <p class="map-hint">
-          With fog on, shared shows everyone whatever any party member can see. Each their own
-          shows a player only the creatures their own tokens can see. Explored ground is
-          always shared.
+          Shared: everyone sees what any party token sees. Each their own: a player sees
+          creatures only through their own tokens. Explored ground is always shared.
         </p>
         <!-- The same widget the map and token panels use, a third folder over.
              It is on this panel and not the map one because a backdrop is not a
@@ -3274,8 +3257,7 @@
           back to the board
         </button>
         <p class="map-hint">
-          A picture in front of everyone's board, for the parts of an evening with nothing to move.
-          The board keeps its walls, drawings and fog while it is up.
+          Shown in place of the board. The board underneath is left as it is.
         </p>
         <!-- The same widget a fourth folder over, and the first one holding
              something that is not a picture. It is on this panel because the
@@ -3300,8 +3282,7 @@
           stop the music
         </button>
         <p class="map-hint">
-          One looping track for the room. Everyone hears it at whatever level they set, and
-          anybody who has not turned sound on hears nothing at all.
+          Loops for everyone with sound on.
         </p>
         <!-- The cast: who can join, and what they're called. A room-wide field
              like everything above it. The rows are built by `roster.ts`; a
@@ -3329,8 +3310,7 @@
             <button id="table-roster-add" class="map-button" type="button">add</button>
           </div>
           <p class="map-hint">
-            Who can join. Renaming keeps everything they own. Someone who still owns a token can't be
-            removed: give it to someone else first.
+            A player who still owns a token can't be removed.
           </p>
         </div>
       </aside>
@@ -3348,9 +3328,9 @@
       </aside>
     </div>
     <div id="hud"></div>
-    <div id="preview-tag">NEXT MAP · not on the table</div>
-    <div id="sight-tag">ONE CREATURE'S SIGHT · not the table's board</div>
-    <div id="table-tag">THE TABLE'S BOARD · not everything you hold</div>
+    <div id="preview-tag">NEXT MAP</div>
+    <div id="sight-tag">SIGHT CHECK</div>
+    <div id="table-tag">PLAYER VIEW</div>
     <!-- Outside the dock in the document, because it is what shows when the
          dock does not: a whisper nobody notices is the main way this feature
          fails a table where half the players are not looking at the panel. It

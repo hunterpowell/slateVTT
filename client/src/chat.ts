@@ -278,7 +278,7 @@ export function createChat(
       // character, it fits, and it matches the rail's lowercase tab labels. The
       // full name is on the tooltip.
       chip.textContent = dest.kind === 'player' ? dest.id : dest.kind === 'dm' ? 'DM' : 'table';
-      chip.title = `Send to ${toName(dest, roster)}.`;
+      chip.title = toName(dest, roster);
       chip.addEventListener('click', () => {
         to = dest;
         showDestination();
@@ -312,7 +312,7 @@ export function createChat(
   count.min = '1';
   count.max = String(MAX_DICE);
   count.value = '1';
-  count.title = `How many dice, up to ${MAX_DICE}.`;
+  count.title = `Number of dice (max ${MAX_DICE})`;
   count.setAttribute('aria-label', 'How many dice');
   // Stops keydown for the same reason as `ui.text` below: every tool in the
   // project listens on `window`, and none should fire because somebody typed a
@@ -352,7 +352,7 @@ export function createChat(
     secret.type = 'button';
     secret.className = 'chat-hide';
     secret.textContent = 'hidden roll';
-    secret.title = 'Throw where only you see the result.';
+    secret.title = 'Only you see the result';
     secret.setAttribute('aria-pressed', 'false');
     secret.addEventListener('click', () => {
       hiddenRoll = !hiddenRoll;

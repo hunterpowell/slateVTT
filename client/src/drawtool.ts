@@ -86,31 +86,31 @@ const TOOLS: readonly Tool[] = [
   {
     kind: 'line',
     label: 'measure',
-    hint: 'Drag to measure, in your own colour. Everyone sees it while you hold it; it vanishes when you let go.',
+    hint: 'Drag to measure.',
     keeps: false,
   },
   {
     kind: 'line',
     label: 'line',
-    hint: 'Drag from one end to the other. Stays until somebody erases it.',
+    hint: 'Drag end to end.',
     keeps: true,
   },
   {
     kind: 'path',
     label: 'pen',
-    hint: 'Draw freely. Everyone sees it when you let go.',
+    hint: 'Drag to draw.',
     keeps: true,
   },
   {
     kind: 'circle',
     label: 'circle',
-    hint: 'Drag from the centre out. Stays until somebody erases it.',
+    hint: 'Drag from the centre out.',
     keeps: true,
   },
   {
     kind: 'cone',
     label: 'cone',
-    hint: 'Drag from the point outwards. It is as wide as it is long.',
+    hint: 'Drag from the point out.',
     keeps: true,
   },
   { kind: 'rect', label: 'square', hint: 'Drag corner to corner.', keeps: true },
@@ -157,7 +157,7 @@ export function createDrawTool(
     // takes the left button while it is set, so it needs to be obvious.
     document.body.classList.toggle('drawing', held !== null);
     ui.hint.textContent =
-      held === null ? 'Pick a shape to draw. Click one on the map to erase it.' : held.hint;
+      held === null ? 'Click a drawing to erase it.' : held.hint;
     // Folding never puts the tool down, so the folded button says what is in
     // hand: a finger on the board does something other than pan while it is.
     ui.fold.textContent = held === null ? 'draw' : `draw · ${held.label}`;
