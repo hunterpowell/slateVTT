@@ -655,9 +655,16 @@ six seconds and fades over two. The code is `backdrop.ts` (positions and the mar
 latecomer misses a stroke the way they miss a ping. Kept strokes were considered and declined: they
 need a list a backdrop change clears, a save and undo decision, and erase permissions, which is a
 second drawing system attached to a picture. **If kept marks are asked for, the answer is to load the
-picture as a map.** There's no setting either, since a mark that disappears by itself can't clutter
-anything. `show_cursors` and `show_dm_cursor` still apply to a pointer on the picture, because they're
-about hands, not boards.
+picture as a map.** `show_cursors` and `show_dm_cursor` still apply to a pointer on the picture,
+because they're about hands, not boards.
+
+`player_strokes` (the table tab's *players can draw on it*, default on) lets the DM stop players'
+strokes. The DM's own strokes and everyone's pings are unaffected. It's on `RoomState` and `Saved`, an
+undo step, and unfiltered like the other room-wide switches. The server reads it only in the `Pointed`
+arm of `message_for`, where a player's stroke is dropped rather than refused in `check`: the switch
+can flip while someone is mid-stroke, the same race as the picture coming down. A player's client
+reads it too (`mayStroke` in `pointing.ts`), so with it off a drag past the slop only cancels the
+ping, and a stroke finished after the switch flipped isn't sent or kept on their own screen.
 
 Positions are `Frac`: `x` and `y` in `0..=1` across the picture's natural width and height. The
 backdrop has no grid and no camera, and each window letterboxes it differently, so a fraction of the
@@ -688,7 +695,8 @@ sent, and `onPointed` drops whatever arrives while `shownBackdrop` is null. When
 down or changes, `reloadBackdrop` clears every mark and abandons a stroke in progress, because a mark
 made on one picture means nothing on the next.
 
-The tests are the pointing block in `room/tests/maps.rs`, `backdrop.test.ts` (the fit and the
+The tests are the pointing block in `room/tests/maps.rs` (the switch is
+`with_player_strokes_off_only_the_dm_draws_on_the_backdrop`), `backdrop.test.ts` (the fit and the
 round trip in a wide and a tall window), and the pointing checks in `drive-backdrop.mjs`, which open
 the player in a different-shaped window and find the picture on each canvas from the letterbox
 colour.

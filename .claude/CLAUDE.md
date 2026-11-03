@@ -225,6 +225,9 @@ struct RoomState {
     /// Whether the DM's own pointer is included; checked in `cursor_seen`.
     /// Defaults on.
     show_dm_cursor: bool,
+    /// Whether a player's stroke on the backdrop is relayed; the DM's always is.
+    /// Read only in `message_for`. Defaults on. `docs/maps.md`.
+    player_strokes: bool,
     /// The picture shown instead of the board, or `None`. Nothing else in the
     /// room reads it. `docs/maps.md`.
     backdrop: Option<String>,
@@ -350,7 +353,8 @@ never on a role:
 Walls and fog overrides are the other extreme: DM-only with no per-item rule, and a player is
 never sent one or told one changed. Token creation, deletion, editing, ownership, planning
 (`staged_pos`), map changes, initiative edits other than a player's first entry, the roster, and every room-wide setting
-(`show_names`, `diagonals`, `show_cursors`, `show_dm_cursor`, `backdrop`, `audio`) are DM-only.
+(`show_names`, `diagonals`, `show_cursors`, `show_dm_cursor`, `player_strokes`, `backdrop`, `audio`)
+are DM-only.
 
 The DM owns every library: listing, picking, adding, removing. Every route under `/api` except
 `/api/rooms` requires the DM secret. Players have no credential, and giving them one would be

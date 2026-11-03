@@ -2530,6 +2530,61 @@ fn a_pointer_on_the_backdrop_obeys_both_cursor_switches() {
 }
 
 #[test]
+fn with_player_strokes_off_only_the_dm_draws_on_the_backdrop() {
+    // A player's stroke is dropped, not refused: the switch can flip while
+    // somebody is mid-stroke. Their pings still go out, and so does the DM's
+    // stroke.
+    let mut state = room();
+    let mut dm = join_as_dm(&mut state, ClientId(1));
+    let mut saelyn = join_as_player(&mut state, ClientId(2), "saelyn");
+    let mut cleodara = join_as_player(&mut state, ClientId(3), "cleodara");
+    state.handle(ClientId(1), show(Some(CAMPFIRE)));
+
+    assert!(
+        state
+            .check(ClientId(2), &ClientMsg::SetPlayerStrokes { allow: false })
+            .is_err(),
+        "a player turned off the table's drawing"
+    );
+    state.handle(ClientId(1), ClientMsg::SetPlayerStrokes { allow: false });
+    for rx in [&mut dm, &mut saelyn, &mut cleodara] {
+        assert!(
+            drain(rx)
+                .iter()
+                .any(|msg| matches!(msg, ServerMsg::PlayerStrokesChanged { allow: false })),
+            "every client is told, so a player's page stops offering the stroke"
+        );
+    }
+    assert!(!state.snapshot_for(&as_player("saelyn")).player_strokes);
+
+    assert!(state.check(ClientId(2), &point(stroke())).is_ok());
+    state.handle(ClientId(2), point(stroke()));
+    assert!(
+        pointed(&mut dm).is_empty(),
+        "the DM was sent a player's stroke"
+    );
+    assert!(
+        pointed(&mut cleodara).is_empty(),
+        "a player was sent another player's stroke"
+    );
+
+    state.handle(ClientId(2), point(Gesture::Ping(at(0.5, 0.5))));
+    assert_eq!(
+        pointed(&mut cleodara).len(),
+        1,
+        "the switch took the ping too"
+    );
+
+    state.handle(ClientId(1), point(stroke()));
+    assert_eq!(
+        pointed(&mut saelyn).len(),
+        1,
+        "the DM's own stroke was dropped"
+    );
+    assert_eq!(pointed(&mut cleodara).len(), 1);
+}
+
+#[test]
 fn nothing_about_a_gesture_is_kept() {
     // No save, no undo step, nothing for a latecomer. That is what keeps the
     // feature small; a stored stroke would need all three decided.

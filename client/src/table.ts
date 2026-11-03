@@ -3,8 +3,8 @@
 //
 // **A panel holds the controls for the struct its fields live on**: `MapInfo`
 // is the map tab, `Token` is the token tab, and room-wide `RoomState` fields
-// are this one. `show_names`, `diagonals`, `vision`, `show_cursors` and
-// `show_dm_cursor` are `RoomState` fields. Don't move them back under the token panel's form,
+// are this one. `show_names`, `diagonals`, `vision`, `show_cursors`,
+// `show_dm_cursor` and `player_strokes` are `RoomState` fields. Don't move them back under the token panel's form,
 // which describes one selected creature.
 //
 // Named "table" and not "room" because `Lighting::Room` is a fog mode one tab
@@ -49,6 +49,8 @@ export interface TableToolUi {
    *  and a select answering both would make the common case (all on) cost
    *  reading a menu. */
   dmCursor: HTMLInputElement;
+  /** Whether players may draw strokes on the backdrop. */
+  strokes: HTMLInputElement;
   /** The backdrop picker's disclosure button and list. `root` above is the
    *  panel the widget dims while a pick is in flight. */
   backdrop: Pick<LibraryUi, 'button' | 'list' | 'file' | 'fileText'>;
@@ -128,6 +130,11 @@ export function createTableTool(
     send({ type: 'set_show_dm_cursor', show: ui.dmCursor.checked });
   });
 
+  // Also sent, not applied. The DM's own strokes ignore it.
+  ui.strokes.addEventListener('change', () => {
+    send({ type: 'set_player_strokes', allow: ui.strokes.checked });
+  });
+
   // Also sent, not applied, through the widget the map and token panels use.
   // By the time this runs a pick has copied the file into the uploads
   // directory, so what goes on the wire is the URL it is served at. That is the
@@ -196,6 +203,7 @@ export function createTableTool(
       // such, but the reason is the same: don't show a control as live when
       // it does nothing.
       ui.dmCursor.disabled = !scene.showCursors;
+      ui.strokes.checked = scene.playerStrokes;
       // Read off the room, not remembered from the click, so the DM's second
       // tab agrees with their first, and an undo that takes a backdrop down
       // shows here without any extra code.

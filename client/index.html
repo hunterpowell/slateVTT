@@ -2406,7 +2406,8 @@
          nothing hidden about a label. */
       #table-names,
       #table-cursors,
-      #table-dm-cursor {
+      #table-dm-cursor,
+      #table-strokes {
         margin: 0;
         accent-color: #78beff;
         cursor: pointer;
@@ -2428,6 +2429,10 @@
 
       .table-dm-cursor:has(input:disabled) {
         opacity: 0.5;
+      }
+
+      .table-strokes {
+        margin-bottom: 10px;
       }
 
       /* `.map-cells-label`'s row rather than `.token-field`'s, which is what the
@@ -3259,6 +3264,13 @@
         <p class="map-hint">
           Shown in place of the board. The board underneath is left as it is.
         </p>
+        <!-- Players' pen strokes on the backdrop. The DM's own strokes and
+             everyone's pings go out either way. See *Pointing at it* in
+             docs/maps.md. -->
+        <label class="token-check table-strokes">
+          <input id="table-strokes" type="checkbox" checked />
+          <span>players can draw on it</span>
+        </label>
         <!-- The same widget a fourth folder over, and the first one holding
              something that is not a picture. It is on this panel because the
              field it sets is room-wide: `RoomState` belongs to the table tab

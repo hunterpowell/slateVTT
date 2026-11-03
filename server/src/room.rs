@@ -517,6 +517,8 @@ enum Event {
     /// The DM's pointer is now drawn on the players' boards, or isn't. Same as
     /// the ones above.
     DmCursorChanged,
+    /// Players may now draw on the backdrop, or can't. Same as the ones above.
+    PlayerStrokesChanged,
     /// There is now a picture in front of the table, or there isn't. Same as
     /// the ones above, including that the frame reaches the DM who put it up.
     BackdropChanged,
@@ -1047,6 +1049,10 @@ pub struct RoomState {
     /// everywhere. It doesn't change what a client *sends*, because one client
     /// in seven isn't traffic worth a branch at the send site.
     show_dm_cursor: bool,
+    /// Whether a player's stroke on the backdrop is relayed. Read in the
+    /// `Pointed` arm of `message_for` and nowhere else; the DM's strokes and
+    /// every ping ignore it. Defaults on. `docs/maps.md`, *Pointing at it*.
+    player_strokes: bool,
     /// The picture the table is looking at instead of the board, or `None`.
     ///
     /// Like the switches above, except that it carries a URL, not a flag.
@@ -1319,6 +1325,7 @@ fn persists(event: &Event) -> bool {
         | Event::VisionChanged
         | Event::CursorsChanged
         | Event::DmCursorChanged
+        | Event::PlayerStrokesChanged
         // And the picture the DM left up, for the same reason: a room reopened
         // on Saturday should be looking at whatever it was looking at.
         | Event::BackdropChanged
@@ -1445,6 +1452,7 @@ fn undid(msg: &ClientMsg) -> Option<&'static str> {
         // Named for whose pointer it is, not which way it went, like the
         // backdrop below: "the DM pointer switch" is true either way.
         ClientMsg::SetShowDmCursor { .. } => Some("the DM pointer switch"),
+        ClientMsg::SetPlayerStrokes { .. } => Some("the backdrop drawing switch"),
         // Named for what it is, not which way it went, like the map below:
         // "the backdrop" is true whether the DM put one up or took one down.
         ClientMsg::SetBackdrop { .. } => Some("the backdrop"),
@@ -1583,6 +1591,8 @@ fn moves_sight(msg: &ClientMsg) -> bool {
         // Same for the DM's pointer alone: whose pointers are drawn changes no
         // ray.
         | ClientMsg::SetShowDmCursor { .. }
+        // Strokes on the picture are further from the board than pointers.
+        | ClientMsg::SetPlayerStrokes { .. }
         // A picture in front of the board: the board is still there, lit as it
         // was, with something in front of it.
         | ClientMsg::SetBackdrop { .. }
@@ -2061,6 +2071,7 @@ impl RoomState {
             vision: Vision::Party,
             show_cursors: true,
             show_dm_cursor: true,
+            player_strokes: true,
             backdrop: None,
             audio: None,
             calibrations: HashMap::new(),
@@ -2169,6 +2180,7 @@ impl RoomState {
         self.vision = saved.vision;
         self.show_cursors = saved.show_cursors;
         self.show_dm_cursor = saved.show_dm_cursor;
+        self.player_strokes = saved.player_strokes;
         self.backdrop = saved.backdrop;
         self.calibrations = saved.calibrations;
         // Restored here like everything else, because two field lists would be
@@ -2220,6 +2232,7 @@ impl RoomState {
             vision: self.vision,
             show_cursors: self.show_cursors,
             show_dm_cursor: self.show_dm_cursor,
+            player_strokes: self.player_strokes,
             backdrop: self.backdrop.clone(),
             calibrations: self.calibrations.clone(),
             // Sorted like the tokens: `HashMap` order varies per process, and an
@@ -2392,6 +2405,7 @@ impl RoomState {
             show_cursors: true,
             // On, for the same reason.
             show_dm_cursor: true,
+            player_strokes: true,
             // Nothing in front of the table, the same as a room saved before
             // this field existed.
             backdrop: None,
@@ -2763,6 +2777,7 @@ impl RoomState {
             // A player is sent this and does nothing with it. What reads it back
             // is the DM's own panel, on a second tab or after a refresh.
             show_dm_cursor: self.show_dm_cursor,
+            player_strokes: self.player_strokes,
             // Nothing here to keep from anybody. A join that omitted it would
             // put a fresh page back on the board while the rest of the table
             // looked at the campfire.
@@ -3738,6 +3753,9 @@ impl RoomState {
             ClientMsg::SetShowDmCursor { .. } => {
                 require_dm(client, "set whose pointers the boards draw")
             }
+            ClientMsg::SetPlayerStrokes { .. } => {
+                require_dm(client, "set who may draw on the backdrop")
+            }
 
             // Bounded by the rule `SetMap` bounds a URL with, and nothing else.
             // The picker only sends a path the pick route just handed back, so
@@ -4498,6 +4516,10 @@ impl RoomState {
             ClientMsg::SetShowDmCursor { show } => {
                 self.show_dm_cursor = show;
                 vec![Event::DmCursorChanged]
+            }
+            ClientMsg::SetPlayerStrokes { allow } => {
+                self.player_strokes = allow;
+                vec![Event::PlayerStrokesChanged]
             }
 
             // **This arm must stay this short.** Sweeping the shapes,
@@ -5384,6 +5406,7 @@ impl RoomState {
                 | Event::RosterChanged
                 | Event::CursorsChanged
                 | Event::DmCursorChanged
+                | Event::PlayerStrokesChanged
                 | Event::UndoChanged => None,
             })
             .collect();
@@ -6051,6 +6074,9 @@ impl RoomState {
             Event::DmCursorChanged => Some(ServerMsg::DmCursorChanged {
                 show: self.show_dm_cursor,
             }),
+            Event::PlayerStrokesChanged => Some(ServerMsg::PlayerStrokesChanged {
+                allow: self.player_strokes,
+            }),
 
             // Unfiltered like the settings above. No other event goes with it:
             // covering the board changes no map, no wall, no shape and no cell
@@ -6147,14 +6173,17 @@ impl RoomState {
             // `check`. With no backdrop up there is nothing to point at, which
             // is a race with the DM taking it down rather than a mistake. And a
             // pointer obeys the same two switches on the picture as on the
-            // board, since they are about hands, not boards.
+            // board, since they are about hands, not boards. A player's stroke
+            // obeys `player_strokes`, dropped rather than refused for the same
+            // race: the switch flipped while somebody was mid-stroke.
             Event::Pointed { by, owner, gesture } => (recipient != *by
                 && self.backdrop.is_some()
                 && match gesture {
                     Gesture::Cursor(_) => {
                         self.show_cursors && self.hand_shown(owner, self.is_dm(recipient))
                     }
-                    Gesture::Ping(_) | Gesture::Stroke(_) => true,
+                    Gesture::Stroke(_) => self.player_strokes || matches!(owner, Owner::Dm),
+                    Gesture::Ping(_) => true,
                 })
             .then(|| ServerMsg::Pointed {
                 by: owner.clone(),

@@ -69,6 +69,7 @@ function scene(over: Partial<Scene> = {}): Scene {
     vision: 'party',
     showCursors: true,
     showDmCursor: true,
+    playerStrokes: true,
     backdrop: null,
     audio: null,
     ...over,

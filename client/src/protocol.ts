@@ -369,6 +369,9 @@ export interface WireRoomView {
    *  because the room drops the DM's frames itself. Only the DM's table panel
    *  reads it. */
   show_dm_cursor: boolean;
+  /** Whether players may draw strokes on the backdrop. A player's page reads it
+   *  to stop offering the stroke; the DM's strokes ignore it. */
+  player_strokes: boolean;
   /** The picture the table is looking at instead of the board, or null for the
    *  board.
    *
@@ -607,6 +610,8 @@ export type ServerMsg =
    *  Unlike the frame above, this doesn't change what anyone sends. The only
    *  thing a client does with it is update the DM's own checkbox. */
   | { type: 'dm_cursor_changed'; show: boolean }
+  /** Players may draw on the backdrop now, or they can't. */
+  | { type: 'player_strokes_changed'; allow: boolean }
   /** Somebody said something we are party to: a shout, or a whisper we sent or
    *  received.
    *
@@ -800,6 +805,9 @@ export type ClientMsg =
    *  justify a second condition where pointers are sent, so unlike
    *  `set_show_cursors` nothing here changes what anybody sends. */
   | { type: 'set_show_dm_cursor'; show: boolean }
+  /** DM-only. Whether players may draw strokes on the backdrop. Off, the room
+   *  drops a player's stroke rather than refusing it. */
+  | { type: 'set_player_strokes'; allow: boolean }
   /** DM-only. Put a picture in front of the table, or null to take it away.
    *
    *  Room-wide and not on `set_map`, because a `set_map` is a map load, which

@@ -186,6 +186,9 @@ export interface Scene {
    *  the DM's frames itself, so a player is sent this and does nothing with it.
    *  What reads it is the table panel, putting the DM's own checkbox back. */
   showDmCursor: boolean;
+  /** Whether players may draw strokes on the backdrop. Room-wide; read by
+   *  `pointing.ts` on a player's page and by the DM's table panel. */
+  playerStrokes: boolean;
   /** The picture in front of the table, or null when they are looking at the
    *  board.
    *
@@ -318,6 +321,7 @@ function fromView(view: WireRoomView, isDm: boolean): Omit<Scene, 'previewing'> 
     vision: view.vision,
     showCursors: view.show_cursors,
     showDmCursor: view.show_dm_cursor,
+    playerStrokes: view.player_strokes,
     backdrop: view.backdrop,
     audio: view.audio,
   };

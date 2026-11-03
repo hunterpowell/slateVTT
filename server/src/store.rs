@@ -114,6 +114,10 @@ pub struct Saved {
     /// `false` would take a pointer off six screens without anyone asking.
     #[serde(default = "shown")]
     pub show_dm_cursor: bool,
+    /// Whether players may draw strokes on the backdrop. Defaults on because a
+    /// file written before this field existed came from a room where they could.
+    #[serde(default = "shown")]
+    pub player_strokes: bool,
     /// Everything the DM has prepared, keyed by map URL: the grid they
     /// calibrated, the walls they traced and the fog they painted.
     ///
@@ -158,7 +162,7 @@ pub struct Saved {
     /// second `MapInfo`: there is nothing to calibrate, trace or explore, so no
     /// other field here forks for it.
     ///
-    /// Needs no default of its own, unlike the three `shown` fields. A file
+    /// Needs no default of its own, unlike the four `shown` fields. A file
     /// written before this existed came from a room with no backdrop, and the
     /// container's `None` loads it that way.
     pub backdrop: Option<String>,
@@ -187,9 +191,10 @@ pub struct SavedNote {
     pub text: String,
 }
 
-/// The default for `Saved::show_names`, `Saved::show_cursors` and
-/// `Saved::show_dm_cursor`. Serde wants a function, not a literal, and these are
-/// the three fields here whose safe default is not the container's.
+/// The default for `Saved::show_names`, `Saved::show_cursors`,
+/// `Saved::show_dm_cursor` and `Saved::player_strokes`. Serde wants a function,
+/// not a literal, and these are the four fields here whose safe default is not
+/// the container's.
 fn shown() -> bool {
     true
 }
@@ -439,6 +444,8 @@ mod tests {
             show_cursors: false,
             // Off, for the same reason as `show_cursors`.
             show_dm_cursor: false,
+            // Off, for the same reason again.
+            player_strokes: false,
             calibrations: HashMap::from([(
                 "/uploads/digital-goblin-camp-1a2b3c4d.jpg".to_owned(),
                 Prepared {
@@ -655,6 +662,10 @@ mod tests {
             "and the same again for the DM's own, which is a second switch and \
              not a second reading of the first"
         );
+        assert!(
+            !loaded.player_strokes,
+            "and a table told not to draw on the backdrop stays told"
+        );
 
         // Surviving a restart is what a scratchpad is worth over the Notepad
         // window everyone already has open. Two boxes, kept apart: `Owner` is
@@ -820,6 +831,10 @@ mod tests {
             "a save predating this switch came from a room whose DM's pointer \
              went out with everybody else's, so loading it off would take a \
              pointer off six screens on an upgrade"
+        );
+        assert!(
+            loaded.player_strokes,
+            "a save predating this switch came from a room where players could              draw on the backdrop"
         );
     }
 

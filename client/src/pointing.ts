@@ -46,6 +46,8 @@ export function createPointing(
   fit: () => Rect | null,
   /** The room's pointer switch, read at each send as `input.ts` reads it. */
   showCursors: () => boolean,
+  /** Whether a drag may draw: always for the DM, the room's switch for a player. */
+  mayStroke: () => boolean,
   send: (msg: ClientMsg) => void,
 ): Pointing {
   /** The left button, from going down until it comes up. */
@@ -134,6 +136,12 @@ export function createPointing(
       if (press.timer !== null) window.clearTimeout(press.timer);
       press.timer = null;
       marks.pings.drop();
+      // With drawing off, a drag only cancels the ping, as a moved hold does
+      // on the board.
+      if (!mayStroke()) {
+        press.fired = true;
+        return;
+      }
       const from = fracAt(press.from);
       if (from === null) return;
       marks.drawing = [clampToPicture(from), clampToPicture(at)];
@@ -156,7 +164,9 @@ export function createPointing(
         x: q.x,
         y: q.y,
       }));
-      if (points.length >= 2) {
+      // Read again here: the DM may have switched drawing off mid-stroke,
+      // and the room would drop it anyway.
+      if (points.length >= 2 && mayStroke()) {
         send({ type: 'point', gesture: { kind: 'stroke', at: points } });
         marks.addStroke(marks.me, points, performance.now());
       }

@@ -1142,6 +1142,9 @@ pub struct RoomView {
     /// frame to draw), so this is on the view for the DM's own panel to read
     /// back. Unlike `show_cursors`, it doesn't change what any client *sends*.
     pub show_dm_cursor: bool,
+    /// Whether players may draw strokes on the backdrop. The same value for
+    /// everyone; a player's client reads it to stop offering the stroke.
+    pub player_strokes: bool,
     /// The picture the table is looking at instead of the board, or `None` when
     /// they are looking at the board.
     ///
@@ -1377,6 +1380,14 @@ pub enum ClientMsg {
     /// from each other.
     SetShowDmCursor {
         show: bool,
+    },
+
+    /// Whether players may draw strokes on the backdrop. DM-only. The DM's own
+    /// strokes and everyone's pings are unaffected. Off drops a player's stroke
+    /// in `message_for` rather than refusing it, like `SetShowCursors`. See
+    /// `docs/maps.md`, *Pointing at it*.
+    SetPlayerStrokes {
+        allow: bool,
     },
 
     /// Put a picture in front of the table, or take it away. DM-only.
@@ -1899,6 +1910,11 @@ pub enum ServerMsg {
     DmCursorChanged {
         show: bool,
     },
+    /// Players may draw on the backdrop now, or they can't. Unfiltered, like
+    /// the switches above.
+    PlayerStrokesChanged {
+        allow: bool,
+    },
     /// Somebody joined or left. The whole list, because it is at most seven
     /// names and nothing is predicted locally.
     ///
@@ -2186,6 +2202,7 @@ mod tests {
             ClientMsg::SetVision { .. } => "set_vision",
             ClientMsg::SetShowCursors { .. } => "set_show_cursors",
             ClientMsg::SetShowDmCursor { .. } => "set_show_dm_cursor",
+            ClientMsg::SetPlayerStrokes { .. } => "set_player_strokes",
             ClientMsg::SetBackdrop { .. } => "set_backdrop",
             ClientMsg::SetAudio { .. } => "set_audio",
             ClientMsg::SetRoster { .. } => "set_roster",
@@ -2235,6 +2252,7 @@ mod tests {
             ServerMsg::AudioChanged { .. } => "audio_changed",
             ServerMsg::CursorsChanged { .. } => "cursors_changed",
             ServerMsg::DmCursorChanged { .. } => "dm_cursor_changed",
+            ServerMsg::PlayerStrokesChanged { .. } => "player_strokes_changed",
             ServerMsg::Presence { .. } => "presence",
             ServerMsg::ColoursChanged { .. } => "colours_changed",
             ServerMsg::RosterChanged { .. } => "roster_changed",
@@ -2344,6 +2362,7 @@ mod tests {
         "set_initiative",
         "set_map",
         "set_notes",
+        "set_player_strokes",
         "set_roster",
         "set_show_cursors",
         "set_show_dm_cursor",
@@ -2371,6 +2390,7 @@ mod tests {
         "notes_changed",
         "overrides_changed",
         "pinged",
+        "player_strokes_changed",
         "pointed",
         "presence",
         "restored",

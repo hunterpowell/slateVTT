@@ -258,6 +258,7 @@ interface Ui {
     vision: HTMLSelectElement;
     cursors: HTMLInputElement;
     dmCursor: HTMLInputElement;
+    strokes: HTMLInputElement;
     backdrop: {
       button: HTMLButtonElement;
       list: HTMLElement;
@@ -456,6 +457,7 @@ function findUi(): Ui {
       vision: need<HTMLSelectElement>('#table-vision'),
       cursors: need<HTMLInputElement>('#table-cursors'),
       dmCursor: need<HTMLInputElement>('#table-dm-cursor'),
+      strokes: need<HTMLInputElement>('#table-strokes'),
       backdrop: {
         button: need<HTMLButtonElement>('#table-backdrop'),
         list: need('#table-backdrop-list'),
@@ -1110,6 +1112,13 @@ function boot(ui: Ui, choice: RoomChoice, alone: boolean): void {
       tableTool?.update(room.scene);
     },
 
+    // `pointing.ts` reads this at each stroke, so nothing here has to stop one.
+    onPlayerStrokesChanged: (allow) => {
+      if (room === null) return;
+      room.scene.playerStrokes = allow;
+      tableTool?.update(room.scene);
+    },
+
     // Like `onNamesChanged`: the ruler reads the convention off the scene every
     // time it draws, so a reading already on screen changes on the next frame
     // without anything here recomputing it.
@@ -1637,6 +1646,7 @@ async function start(
             pictureSize(backdrop),
           ),
     () => scene.showCursors,
+    () => identity.isDm || scene.playerStrokes,
     send,
   );
 

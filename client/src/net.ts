@@ -50,6 +50,9 @@ export interface Handlers {
    *  about what this client sends or draws: the room withholds the DM's frames
    *  itself, so a player only stores it. */
   onDmCursorChanged(show: boolean): void;
+  /** Players may draw on the backdrop now, or they can't. Called on every
+   *  connection; a player's pointing handler reads it at the next stroke. */
+  onPlayerStrokesChanged(allow: boolean): void;
   /** There is a picture in front of the table now, or there is not. Called on
    *  every connection. Nothing about the board arrives with it and nothing
    *  needs to: the board is covered, not changed. */
@@ -244,6 +247,9 @@ export function connect(roomId: string, on: Handlers): Net {
         break;
       case 'dm_cursor_changed':
         on.onDmCursorChanged(msg.show);
+        break;
+      case 'player_strokes_changed':
+        on.onPlayerStrokesChanged(msg.allow);
         break;
       case 'backdrop_changed':
         on.onBackdropChanged(msg.url);
